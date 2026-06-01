@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 
 export interface ModelProvider {
@@ -122,12 +122,29 @@ export class ConfigManager {
   private config: AppConfig
 
   constructor() {
-    // 数据目录：便携模式用 exe 同级目录，否则用 userData
-    const portable = join(process.execPath, '..', 'data')
-    console.log('路径是否存在：', existsSync(portable))
-    this.dataDir = existsSync(portable) ? portable : join(app.getPath('userData'), 'data')
+    // 数据目录：便携模式用 exe 同级目录，否则项目同级目录方便管理
+    // const portable = join(process.execPath, '..', 'data')
+    // console.log('路径是否存在：', existsSync(portable))
+    // this.dataDir = existsSync(portable) ? portable : join(app.getPath('userData'), 'data')
+    if (app.isPackaged) {
+      // 1. 如果是生产环境（打包后的 exe），数据目录在 exe 所在的同级目录下
+      // app.getPath('exe') 拿到的是 D:\xxx\your-app.exe，它的 dirname 就是安装包/解压包目录
+      this.dataDir = join(resolve(app.getPath('exe'), '..'), 'data')
+    } else {
+      // 2. 如果是开发模式（npm run dev），数据目录就在当前项目的根目录下的 data 文件夹
+      // process.cwd() 在开发时代表你敲击运行命令的那个项目根目录
+      this.dataDir = join(process.cwd(), 'data')
+    }
+    // ── 🛡️ 安全防御：确保该 data 目录一定存在，不存在就自动创建 ─────────────────
+    if (!existsSync(this.dataDir)) {
+      try {
+        mkdirSync(this.dataDir, { recursive: true })
+        console.log(`[Init] 成功创建本地数据目录: ${this.dataDir}`)
+      } catch (err) {
+        console.error(`[Init] 创建数据目录失败:`, err)
+      }
+    }
     mkdirSync(this.dataDir, { recursive: true })
-
     this.configPath = join(this.dataDir, 'config', 'app.json')
     mkdirSync(join(this.dataDir, 'config'), { recursive: true })
     mkdirSync(join(this.dataDir, 'config', '.openclaw'), { recursive: true })

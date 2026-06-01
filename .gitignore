@@ -5,3 +5,7 @@ release/
 out/
 .DS_Store
 *.log
+logs
+openclaw
+runtime
+config

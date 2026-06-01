@@ -84,7 +84,12 @@ const api = {
     stopPty: (sid: string) => ipcRenderer.invoke('term:pty-stop', sid),
     // 监听主进程推过来的终端流数据
     onPtyChunk: (callback: any) => ipcRenderer.on('term:pty-chunk', (_, data) => callback(data)),
-    onPtyExit: (callback: any) => ipcRenderer.on('term:pty-exit', (_, data) => callback(data))
+    onPtyExit: (callback: any) => ipcRenderer.on('term:pty-exit', (_, data) => callback(data)),
+    // 组件卸载时移除监听，防止内存泄漏
+    removeListeners: () => {
+      ipcRenderer.removeAllListeners('term:pty-chunk')
+      ipcRenderer.removeAllListeners('term:pty-exit')
+    }
   }
 }
 

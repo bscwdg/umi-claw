@@ -176,85 +176,86 @@ function registerIpcHandlers(): void {
 
   // 一键获取token
   ipcMain.handle('claw:get-token', async () => {
-  const userHome = app.getPath('home')                     // C:\Users\遥远而清澈
-  const dataDir = configManager.getDataDir()               // AppData 中的数据目录
-  
-  // ⚡️ 新增：动态获取当前项目/程序运行所在的盘符根目录（如果项目在U盘 D 盘，这里就是 D:\）
-  const currentDriveRoot = parse(process.cwd()).root       // 例如 "D:\\" 或 "E:\\"
-  
-  // 1. 🔍 重新编排嫌疑路径表（加入绝对根目录和盘符根目录逻辑）
-  // 嫌疑 0：你前面在 start() 里亲手给 OpenClaw 指定的配置环境变量路径（最高优先级）
-  const envConfigDir = join(dataDir, 'config', '.openclaw');
+    const userHome = app.getPath('home')                     // C:\Users\遥远而清澈
+    const dataDir = configManager.getDataDir()               // AppData 中的数据目录
 
-  const possiblePaths = [
-    // 💡 优先检查你指定的 env 核心目录
-    join(envConfigDir, 'config.json'),
-    join(envConfigDir, 'openclaw.json'),
-    join(envConfigDir, '..', 'config.json'), // 防止它写在父级
+    // ⚡️ 新增：动态获取当前项目/程序运行所在的盘符根目录（如果项目在U盘 D 盘，这里就是 D:\）
+    const currentDriveRoot = parse(process.cwd()).root       // 例如 "D:\\" 或 "E:\\"
 
-    // 嫌疑 1：用户家目录
-    join(userHome, '.openclaw', 'config.json'),
-    join(userHome, '.openclaw', 'openclaw.json'),
-    join(userHome, 'openclaw', 'config.json'), // 容错：不带点的普通文件夹
-    
-    // 嫌疑 2：AppData 里的应用隔离数据目录
-    join(dataDir, 'config', '.openclaw', 'config.json'),
-    join(dataDir, 'config', '.openclaw', 'openclaw.json'),
-    join(dataDir, 'openclaw', 'config.json'),
-    join(dataDir, 'openclaw', 'openclaw.json'),
-    
-    // 嫌疑 3：当前运行盘符（如 U 盘/D盘/E盘）下的根目录（完美防御 \tmp\ 现象）
-    join(currentDriveRoot, 'tmp', 'openclaw', 'config.json'),
-    join(currentDriveRoot, 'tmp', 'openclaw', 'openclaw.json'),
-    join(currentDriveRoot, '.openclaw', 'config.json'),
-    join(currentDriveRoot, 'openclaw', 'config.json'), // 容错：盘符根目录下不带点的文件夹
-    join(currentDriveRoot, 'tmp', 'openclaw', '.openclaw', 'config.json'),
-    join(currentDriveRoot, 'tmp', 'openclaw', 'openclaw', 'config.json'),
-    
-    // 嫌疑 4：C 盘绝对根目录下的临时文件夹（兜底）
-    'C:\\tmp\\openclaw\\config.json',
-    'C:\\tmp\\openclaw\\openclaw.json',
-    'C:\\.openclaw\\config.json',
-    'C:\\openclaw\\config.json'
-  ]
+    // 1. 🔍 重新编排嫌疑路径表（加入绝对根目录和盘符根目录逻辑）
+    // 嫌疑 0：你前面在 start() 里亲手给 OpenClaw 指定的配置环境变量路径（最高优先级）
+    const envConfigDir = join(dataDir, 'config', '.openclaw');
 
-  console.log('--- 🛡️ 开始全盘多盘符扫描 OpenClaw 配置文件 ---')
-  console.log(`当前检测到的程序运行盘符根目录为: ${currentDriveRoot}`)
-  
-  let finalPath = ''
-  for (const p of possiblePaths) {
-    console.log(`正在检查: ${p} -> ${existsSync(p) ? '【存在 ✅】' : '【不存在 ❌】'}`)
-    if (existsSync(p)) {
-      finalPath = p
-      break 
-    }
-  }
+    const possiblePaths = [
+      // 💡 优先检查你指定的 env 核心目录
+      join(envConfigDir, 'config.json'),
+      join(envConfigDir, 'openclaw.json'),
+      join(envConfigDir, '..', 'config.json'), // 防止它写在父级
 
-  try {
-    if (!finalPath) {
-      throw new Error(
-        `全盘扫描失败。已检查以下路径（含当前盘符 ${currentDriveRoot}）均未发现 config.json：\n` + 
-        possiblePaths.map(p => `- ${p}`).join('\n')
-      )
+      // 嫌疑 1：用户家目录
+      join(userHome, '.openclaw', 'config.json'),
+      join(userHome, '.openclaw', 'openclaw.json'),
+      join(userHome, 'openclaw', 'config.json'), // 容错：不带点的普通文件夹
+
+      // 嫌疑 2：AppData 里的应用隔离数据目录
+      join(dataDir, 'config', '.openclaw', 'config.json'),
+      join(dataDir, 'config', '.openclaw', 'openclaw.json'),
+      join(dataDir, 'openclaw', 'config.json'),
+      join(dataDir, 'openclaw', 'openclaw.json'),
+
+      // 嫌疑 3：当前运行盘符（如 U 盘/D盘/E盘）下的根目录（完美防御 \tmp\ 现象）
+      join(currentDriveRoot, 'tmp', 'openclaw', 'config.json'),
+      join(currentDriveRoot, 'tmp', 'openclaw', 'openclaw.json'),
+      join(currentDriveRoot, '.openclaw', 'config.json'),
+      join(currentDriveRoot, 'openclaw', 'config.json'), // 容错：盘符根目录下不带点的文件夹
+      join(currentDriveRoot, 'tmp', 'openclaw', '.openclaw', 'config.json'),
+      join(currentDriveRoot, 'tmp', 'openclaw', 'openclaw', 'config.json'),
+
+      // 嫌疑 4：C 盘绝对根目录下的临时文件夹（兜底）
+      'C:\\tmp\\openclaw\\config.json',
+      'C:\\tmp\\openclaw\\openclaw.json',
+      'C:\\.openclaw\\config.json',
+      'C:\\openclaw\\config.json'
+    ]
+
+    console.log('--- 🛡️ 开始全盘多盘符扫描 OpenClaw 配置文件 ---')
+    console.log(`当前检测到的程序运行盘符根目录为: ${currentDriveRoot}`)
+
+    let finalPath = ''
+    for (const p of possiblePaths) {
+      console.log(`正在检查: ${p} -> ${existsSync(p) ? '【存在 ✅】' : '【不存在 ❌】'}`)
+      if (existsSync(p)) {
+        finalPath = p
+        break
+      }
     }
 
-    // 2. 命中后读取
-    console.log(`🎯 成功在盘符关联路径中命中配置文件: ${finalPath}`)
-    const configContent = readFileSync(finalPath, 'utf-8')
-    const configJson = JSON.parse(configContent)
-    console.log(configJson,'configJson')
-    const token = configJson?.gateway?.token ? configJson?.gateway?.token : configJson?.gateway?.auth?.token
+    try {
+      if (!finalPath) {
+        throw new Error(
+          `全盘扫描失败。已检查以下路径（含当前盘符 ${currentDriveRoot}）均未发现 config.json：\n` +
+          possiblePaths.map(p => `- ${p}`).join('\n')
+        )
+      }
 
-    if (!token) {
-      throw new Error(`找到了配置文件(${finalPath})，但里面缺失 gateway.token 字段`)
+      // 2. 命中后读取
+      console.log(`🎯 成功在盘符关联路径中命中配置文件: ${finalPath}`)
+      const configContent = readFileSync(finalPath, 'utf-8')
+      const configJson = JSON.parse(configContent)
+      console.log(configJson, 'configJson')
+      const token = configJson?.gateway?.token ? configJson?.gateway?.token : configJson?.gateway?.auth?.token
+
+      if (!token) {
+        throw new Error(`找到了配置文件(${finalPath})，但里面缺失 gateway.token 字段`)
+      }
+
+      return { success: true, token }
+    } catch (err: any) {
+      console.error('获取 Token 内部报错:', err)
+      return { success: false, error: err.message }
     }
+  })
 
-    return { success: true, token }
-  } catch (err: any) {
-    console.error('获取 Token 内部报错:', err)
-    return { success: false, error: err.message }
-  }
-})
 
 }
 
