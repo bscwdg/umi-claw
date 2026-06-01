@@ -333,6 +333,7 @@ export class DownloadManager extends EventEmitter {
     if (installSuccess) {
       // ── 无论什么源，只要成功了，直接拉满到 100% 结束 ──
       this._progress('OpenClaw', `OpenClaw [${activeRegistry.name}] 安装完成`, 90, true);
+      this._ensureOpenClawConfig()
       this._progress('完成', '环境初始化完成！', 100, true);
       return;
     }
@@ -357,6 +358,53 @@ export class DownloadManager extends EventEmitter {
     await new Promise((r) => setTimeout(r, 500))
     this._progress('技能', '技能包安装完成', 98, true)
     await new Promise((r) => setTimeout(r, 500))
+  }
+
+  /**
+   * 初始化openclaw配置文件
+   */
+  private _ensureOpenClawConfig(): void {
+    try {
+      const dataDir = this.configManager.getDataDir()
+      // 精准对接启动脚本的环境变量 OPENCLAW_CONFIG_DIR
+      const configDir = join(dataDir, 'config', '.openclaw')
+      // 确保目录一定存在
+      if (!require('fs').existsSync(configDir)) {
+        require('fs').mkdirSync(configDir, { recursive: true })
+      }
+      const fullSecureConfig = {
+        gateway: {
+          mode: "local",
+          allowUnconfigured: true
+        },
+        // 预防某些配置加载器只认扁平化的 key
+        "gateway.mode": "local",
+        "gateway.allowUnconfigured": true,
+        storage: {
+          driver: "local"
+        },
+        "storage.driver": "local",
+        channels: {},
+        skills: {}
+      }
+      const configContent = JSON.stringify(fullSecureConfig, null, 2)
+      const targetFiles = [
+        'config.json',       // 基础名
+        'oepenClaw.json',      // node-config 默认生产名
+        'local.json'         // 本地保底名
+      ]
+      targetFiles.forEach(fileName => {
+        const filePath = join(configDir, fileName)
+        // 只有文件不存在时才写入，保护用户已有配置
+        if (!require('fs').existsSync(filePath)) {
+          require('fs').writeFileSync(filePath, configContent, 'utf-8')
+          console.log(`[Init] 成功生成保底配置文件: ${fileName}`)
+        }
+      })
+
+    } catch (err) {
+      console.error('❌ 初始化 OpenClaw 配置文件失败:', err)
+    }
   }
 
   private async _downloadFile(

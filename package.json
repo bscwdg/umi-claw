@@ -4,7 +4,7 @@
   "description": "🦞 Umi Claw - OpenClaw 便携管理工具，基于 Electron + Vue3 + Vite",
   "main": "dist-electron/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "chcp 65001 && electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "build:win": "npm run build && electron-builder --win",

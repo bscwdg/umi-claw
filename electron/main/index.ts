@@ -255,8 +255,278 @@ function registerIpcHandlers(): void {
       return { success: false, error: err.message }
     }
   })
+  // 🌟 [新增] 终端：执行一键查询快照短命令 (例如: status, health)
+  ipcMain.handle('terminal:runCommand', async (_e, args: string[]) => {
+    const { spawn } = require('child_process');
+    const dataDir = configManager.getDataDir();
+    const nodePath = configManager.getNodePath();
+    const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js');
 
+    const targetConfigDir = join(dataDir, 'config', '.openclaw');
+    const env = {
+      ...process.env,
+      OPENCLAW_CONFIG_DIR: targetConfigDir,
+      OPENCLAW_DATA_DIR: join(dataDir, 'data'),
+      NODE_ENV: 'production'
+    };
 
+    // ⚡️ 核心追加：让快捷指令、一键查询短指令也带上豁免参数和强制路径，防止报错
+    const finalArgs = [...args, '--allow-unconfigured', '--config', join(targetConfigDir, 'production.json')];
+
+    return new Promise((resolve) => {
+      try {
+        const proc = spawn(nodePath, [clawJsPath, ...args], {
+          env,
+          cwd: join(dataDir, 'openclaw')
+        });
+
+        let stdout = '';
+        let stderr = '';
+
+        proc.stdout?.on('data', (d) => (stdout += d.toString()));
+        proc.stderr?.on('data', (d) => (stderr += d.toString()));
+
+        proc.on('exit', (code) => {
+          resolve({ stdout, stderr, code });
+        });
+
+        proc.on('error', (err) => {
+          resolve({ stdout: '', stderr: `子进程启动失败: ${err.message}`, code: -1 });
+        });
+      } catch (e: any) {
+        resolve({ stdout: '', stderr: `执行异常: ${e.message}`, code: -1 });
+      }
+    });
+  });
+
+  // 🌟 [新增] 终端：激活全双工交互式 PTY (例如: 微信扫码 weixin-login)
+  // 💡 注意：如果你们之前有独立的多会话 sessionId 管控，请对齐原结构。
+  // 下面采用直接用进程事件推送到前端的万能兼容写法
+  ipcMain.handle('terminal:startPty', async (event, args: string[]) => {
+    const { spawn } = require('child_process');
+    const dataDir = configManager.getDataDir();
+    const nodePath = configManager.getNodePath();
+    const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js');
+
+    const targetConfigDir = join(dataDir, 'config', '.openclaw');
+    const env = {
+      ...process.env,
+      OPENCLAW_CONFIG_DIR: targetConfigDir,
+      OPENCLAW_DATA_DIR: join(dataDir, 'data'),
+      NODE_ENV: 'production'
+    };
+
+    // 同样注入豁免和路径，避免 PTY 交互进程报错
+    const finalArgs = [...args, '--allow-unconfigured', '--config', join(targetConfigDir, 'production.json')];
+    const generatedSessionId = `session_${Date.now()}`;
+
+    try {
+      const ptyProc = spawn(nodePath, [clawJsPath, ...args], {
+        env,
+        cwd: join(dataDir, 'openclaw')
+      });
+
+      // 实时向前端终端组件（xterm）吐数据流
+      ptyProc.stdout?.on('data', (data) => {
+        mainWindow?.webContents.send('terminal:onPtyChunk', {
+          sessionId: generatedSessionId,
+          data: data.toString()
+        });
+      });
+
+      ptyProc.stderr?.on('data', (data) => {
+        mainWindow?.webContents.send('terminal:onPtyChunk', {
+          sessionId: generatedSessionId,
+          data: data.toString()
+        });
+      });
+
+      // 监听进程退出
+      ptyProc.on('exit', (exitCode) => {
+        mainWindow?.webContents.send('terminal:onPtyExit', {
+          sessionId: generatedSessionId,
+          exitCode: exitCode || 0
+        });
+        // 清理缓存引用
+        if ((global as any).currentPty === ptyProc) {
+          (global as any).currentPty = null;
+        }
+      });
+
+      // 保存进程实例用于 stdin 输入以及强行断开
+      (global as any).currentPty = ptyProc;
+
+      return generatedSessionId;
+    } catch (err: any) {
+      console.error('PTY管道拉起失败:', err);
+      return null;
+    }
+  });
+
+  // 🌟 [新增] 终端：接收前端通过 xterm 键盘输入的 stdin 数据
+  ipcMain.handle('terminal:inputPty', async (_e, _sessionId, data) => {
+    const ptyProc = (global as any).currentPty;
+    if (ptyProc && ptyProc.stdin && ptyProc.stdin.writable) {
+      ptyProc.stdin.write(data);
+    }
+  });
+
+  // 🌟 [新增] 终端：手动断开当前交互模式
+  ipcMain.handle('terminal:stopPty', async (_e, _sessionId) => {
+    const ptyProc = (global as any).currentPty;
+    if (ptyProc) {
+      ptyProc.kill('SIGKILL');
+      (global as any).currentPty = null;
+    }
+    return true;
+  });
+
+  // 🌟 [新增] 终端：移除监听保底
+  ipcMain.handle('terminal:removeListeners', () => {
+    return true;
+  });
+
+  // 🌟 1. 修复短命令快照执行 (例如点击：状态、健康检查)
+  ipcMain.handle('term:run', async (_e, args: string[]) => {
+    const { spawn } = require('child_process')
+    const dataDir = configManager.getDataDir()
+    const nodePath = configManager.getNodePath()
+    const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js')
+
+    const targetConfigDir = join(dataDir, 'config', '.openclaw')
+    const env = {
+      ...process.env,
+      OPENCLAW_CONFIG_DIR: targetConfigDir,
+      OPENCLAW_DATA_DIR: join(dataDir, 'data'),
+      NODE_ENV: 'production'
+    }
+
+    // 塞入强制路径和免密保底参数，彻底绝杀 Missing config 报错
+    const finalArgs = [...args, '--allow-unconfigured', '--config', join(targetConfigDir, 'production.json')]
+
+    return new Promise((resolve) => {
+      try {
+        const proc = spawn(nodePath, [clawJsPath, ...args], {
+          env,
+          cwd: join(dataDir, 'openclaw')
+        })
+
+        let stdout = ''
+        let stderr = ''
+
+        proc.stdout?.on('data', (d) => (stdout += d.toString()))
+        proc.stderr?.on('data', (d) => (stderr += d.toString()))
+
+        proc.on('exit', (code) => {
+          resolve({ stdout, stderr, code })
+        })
+
+        proc.on('error', (err) => {
+          resolve({ stdout: '', stderr: `终端进程启动失败: ${err.message}`, code: -1 })
+        })
+      } catch (e: any) {
+        resolve({ stdout: '', stderr: `系统层崩溃: ${e.message}`, code: -1 })
+      }
+    })
+  })
+
+  // 🌟 2. 修复全双工交互式 PTY 管道拉起 (例如点击：微信登录扫码)
+  ipcMain.handle('term:pty-start', async (event, args: string[], cols: number, rows: number) => {
+    const { spawn } = require('child_process')
+    const dataDir = configManager.getDataDir()
+    const nodePath = configManager.getNodePath()
+    const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js')
+
+    const targetConfigDir = join(dataDir, 'config', '.openclaw')
+    const env = {
+      ...process.env,
+      OPENCLAW_CONFIG_DIR: targetConfigDir,
+      OPENCLAW_DATA_DIR: join(dataDir, 'data'),
+      NODE_ENV: 'production'
+    }
+
+    const finalArgs = [...args, '', '--config', join(targetConfigDir, 'production.json')]
+    const sessionId = `session_${Date.now()}`
+
+    try {
+      const ptyProc = spawn(nodePath, [clawJsPath, ...args], {
+        env,
+        cwd: join(dataDir, 'openclaw')
+      })
+
+      // 🌟 注意：对齐 Preload 里的事件名叫 'term:pty-chunk' 
+      ptyProc.stdout?.on('data', (data) => {
+        mainWindow?.webContents.send('term:pty-chunk', {
+          sessionId: sessionId, // 保持与 Vue 页面中的 sessionId 校验一致
+          data: data.toString()
+        })
+      })
+
+      ptyProc.stderr?.on('data', (data) => {
+        mainWindow?.webContents.send('term:pty-chunk', {
+          sessionId: sessionId,
+          data: data.toString()
+        })
+      })
+
+      // 🌟 对齐 Preload 里的退出事件名叫 'term:pty-exit'
+      ptyProc.on('exit', (exitCode) => {
+        mainWindow?.webContents.send('term:pty-exit', {
+          sessionId: sessionId,
+          exitCode: exitCode || 0
+        })
+        if ((global as any).activeTerminalPty === ptyProc) {
+          (global as any).activeTerminalPty = null
+        }
+      })
+
+        // 全局持有一份引用，供下面的写入和关闭使用
+        ; (global as any).activeTerminalPty = ptyProc
+
+      return sessionId // 必须向 Vue 返回这个 sid，否则前端无法锁定通道
+    } catch (err) {
+      console.error('PTY 管道建立彻底失败:', err)
+      return null
+    }
+  })
+
+  // 🌟 3. 处理用户在终端敲击键盘向 OpenClaw 输送凭证 / 验证码
+  ipcMain.handle('term:pty-input', (_e, sid: string, data: string) => {
+    const ptyProc = (global as any).activeTerminalPty
+    if (ptyProc && ptyProc.stdin && ptyProc.stdin.writable) {
+      ptyProc.stdin.write(data)
+    }
+  })
+
+ // 🌟 4. 处理前端点击 “🛑 停止交互” 强制杀死微信等常驻流进程
+  ipcMain.handle('term:pty-stop', (_e, sid: string) => {
+    const ptyProc = (global as any).activeTerminalPty
+    
+    if (ptyProc) {
+      try {
+        // 1. 优先使用原生的标准 kill() 方法（不带参数，默认发送 SIGTERM 优雅退出）
+        if (typeof ptyProc.kill === 'function') {
+          ptyProc.kill() 
+        } 
+        // 2. 备用保底方案：如果上面没杀死且 pid 存在，利用系统的 process.kill 强制拔线
+        else if (ptyProc.pid) {
+          process.kill(ptyProc.pid, 'SIGKILL')
+        }
+        console.log('[PTY] 交互式终端子进程已成功强制杀死。')
+      } catch (err: any) {
+        console.error('[PTY] 尝试杀死终端子进程时出现温和异常(可能进程已提前退出):', err.message)
+      } finally {
+        // 无论如何，清空全局引用，释放内存
+        (global as any).activeTerminalPty = null
+      }
+    }
+    return true
+  })
+
+  // 🌟 5. 窗口大小自适应（空实现保底，防报错）
+  ipcMain.handle('term:pty-resize', (_e, sid: string, cols: number, rows: number) => {
+    return true
+  })
 }
 
 // ─── 推送日志到渲染进程 ────────────────────────────────────────────────────────

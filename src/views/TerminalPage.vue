@@ -191,10 +191,8 @@ function stopInteractive() {
 function handleEnter() {
   const cmd = input.value.trim();
   if (!cmd || isRunning.value || isInteractive.value) return;
-
   cmdHistory.value.unshift(cmd);
   input.value = "";
-
   const parts = cmd
     .replace(/^openclaw\s+/, "")
     .split(/\s+/)
@@ -203,7 +201,6 @@ function handleEnter() {
   const isInteractiveCmd = ["onboard", "setup", "login", "init"].some(
     (c) => parts[0] === c
   );
-
   if (isInteractiveCmd) {
     startInteractive(parts);
   } else {

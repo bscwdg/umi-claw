@@ -61,7 +61,6 @@ export class ClawManager extends EventEmitter {
 
     const dataDir = this.configManager.getDataDir()
     const nodePath = this.configManager.getNodePath()
-
     // 1. 🔍 变更点：不再指向 .bin 下的壳，直接指向 openclaw 依赖包本身的真实 JS 文件
     // 💡 提示：openclaw 官方标准的入口一般是它的 dist/index.js 或 index.js
     const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js')
@@ -75,46 +74,57 @@ export class ClawManager extends EventEmitter {
     }
 
     const config = this.configManager.getConfig()
+    // 🎯 提取出配置目录路径
+    const targetConfigDir = join(dataDir, 'config', '.openclaw').replace(/\\/g, '/')
+    this._checkAndFixConfigBeforeStart(targetConfigDir)
+    // const env = {
+    //   ...process.env,
+    //   OPENCLAW_CONFIG_DIR: join(dataDir, 'config', '.openclaw'),
+    //   OPENCLAW_DATA_DIR: join(dataDir, 'data'),
+    //   PORT: String(this.port),
+    //   NODE_ENV: 'production'
+    // }
+    // OPENCLAW_CONFIG_PAT
+    console.log('启动参数：', {
+      OPENCLAW_CONFIG_DIR: targetConfigDir,
+      OPENCLAW_CONFIG_PAT: targetConfigDir,
+      OPENCLAW_DATA_DIR: join(dataDir, 'data').replace(/\\/g, '/'),
+      PORT: String(this.port),
+      NODE_ENV: 'production'
+    })
     const env = {
       ...process.env,
-      OPENCLAW_CONFIG_DIR: join(dataDir, 'config', '.openclaw'),
-      OPENCLAW_DATA_DIR: join(dataDir, 'data'),
+      OPENCLAW_CONFIG_DIR: targetConfigDir,
+      OPENCLAW_CONFIG_PAT: targetConfigDir,
+      OPENCLAW_DATA_DIR: join(dataDir, 'data').replace(/\\/g, '/'),
+      // 🌟 核心注入：利用环境变量直接击穿 gateway.mode 的配置
+      OPENCLAW_GATEWAY_MODE: 'local',
+      GATEWAY_MODE: 'local',
+      gateway__mode: 'local', // 某些库支持双下划线代表对象层级
+      // 🌟 路由重定向：逼迫底层库去你的隔离目录找配置
+      HOME: targetConfigDir,
+      USERPROFILE: targetConfigDir,
+      NODE_CONFIG_DIR: targetConfigDir, // 绝大多数 Node.js 配置库的硬核环境变量
       PORT: String(this.port),
       NODE_ENV: 'production'
     }
 
     this._addLog(`正在启动 OpenClaw (端口 ${this.port})...`, 'system')
 
-    // try {
-    //   // 2. 🚀 变更点：这里传入的是纯粹的 JS 文件路径，node 能够完美解析，不再卡死和抛语法错误
-    //   this.process = spawn(nodePath, [clawJsPath], {
-    //     env,
-    //     cwd: join(dataDir, 'openclaw'),
-    //     shell: false,
-    //     detached: false
-    //   })
-
-    //   this.startedAt = Date.now()
-    //   this._setupProcessEvents()
-    //   this.emit('statusChange', true, this.port)
-    //   return { success: true }
-    // } catch (err: any) {
-    //   return { success: false, error: err.message }
-    // }
     try {
       //  核心点：在参数数组中追加 'gateway' 命令以及对应端口号 '--port'
       this.process = spawn(nodePath, [
         clawJsPath,
         'gateway',
         '--port',
-        String(this.port)
+        String(this.port),
+        // '--allow-unconfigured'
       ], {
         env,
         cwd: join(dataDir, 'openclaw'),
         shell: false,
         detached: false
       })
-
       this.startedAt = Date.now()
       this._setupProcessEvents()
       this.emit('statusChange', true, this.port)
@@ -187,13 +197,13 @@ export class ClawManager extends EventEmitter {
     try {
       // 1. 确保父级链路目录完整性
       mkdirSync(skillDir, { recursive: true })
-      
+
       // 2. 生成定义并写入
       const skillDef = this._generateSkillDefinition(skill)
       writeFileSync(join(skillDir, 'index.json'), JSON.stringify(skillDef, null, 2))
-      
+
       this._addLog(`技能 "${skill.name}" 安装成功`, 'system')
-      
+
       // 💡 建议在下面增加：向 openclaw 触发热重载的逻辑（如有）
       // await this.gatewayProvider.reloadSkills() 
 
@@ -201,9 +211,9 @@ export class ClawManager extends EventEmitter {
     } catch (err: any) {
       return { success: false, error: `写入技能失败: ${err.message}` }
     }
-}
+  }
 
-async uninstallSkill(skillId: string): Promise<{ success: boolean; error?: string }> {
+  async uninstallSkill(skillId: string): Promise<{ success: boolean; error?: string }> {
     const dataDir = this.configManager.getDataDir()
     const skillDir = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'skills', skillId)
 
@@ -217,7 +227,7 @@ async uninstallSkill(skillId: string): Promise<{ success: boolean; error?: strin
     } catch (err: any) {
       return { success: false, error: `卸载技能失败: ${err.message}` }
     }
-}
+  }
 
   private _setupProcessEvents(): void {
     if (!this.process) return
@@ -285,6 +295,55 @@ async uninstallSkill(skillId: string): Promise<{ success: boolean; error?: strin
       version: '1.0.0',
       systemPrompt: prompts[skill.id] || skill.description,
       builtin: true
+    }
+  }
+
+  /**
+ * 🌟 新增方法：启动前配置检查
+ * 检查 OpenClaw 运行所需的配置文件是否存在，如果不存在则自动就地创建，彻底拦截 Missing config 错误
+ */
+  private _checkAndFixConfigBeforeStart(configDir: string): void {
+    try {
+      // 1. 盾牌保障：确保配置文件夹存在
+      if (!existsSync(configDir)) {
+        mkdirSync(configDir, { recursive: true })
+        console.log(`[StartCheck] 发现配置目录不存在，已自动创建: ${configDir}`)
+      }
+      // 2. 定义高赞命中的核心保底配置数据
+      const fullSecureConfig = {
+        gateway: {
+          mode: "local",
+          allowUnconfigured: true
+        },
+        "gateway.mode": "local",
+        "gateway.allowUnconfigured": true,
+        storage: {
+          driver: "local"
+        },
+        "storage.driver": "local",
+        channels: {},
+        skills: {}
+      }
+
+      const configContent = JSON.stringify(fullSecureConfig, null, 2)
+      // 3. 检查必须要有的核心配置文件是否存在
+      // 重点防范 NODE_ENV='production' 情况下必读的 production.json 和 config.json
+      const essentialFiles = ['config.json', 'production.json', 'default.json', 'local.json', 'oepnclaw.json']
+      let missingAny = false
+      essentialFiles.forEach(fileName => {
+        const filePath = join(configDir, fileName)
+        if (!existsSync(filePath)) {
+          missingAny = true
+          writeFileSync(filePath, configContent, 'utf-8')
+          console.log(`[StartCheck] 启动检查发现缺少 ${fileName}，已自动为您就地补齐。`)
+        }
+      })
+
+      if (!missingAny) {
+        console.log('[StartCheck] 启动预检通过：配置文件完整。')
+      }
+    } catch (err: any) {
+      console.error('❌ [StartCheck] 启动前自动修复配置失败:', err.message)
     }
   }
 }
