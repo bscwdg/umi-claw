@@ -39,9 +39,7 @@ export const useConfigStore = defineStore('config', () => {
     console.log('````````````````````````````saved````````````````````````````')
     saving.value = true
     try {
-      console.log('saved')
       config.value = await window.api.config.save(partial)
-      console.log('saved', config.value)
     } finally {
       saving.value = false
     }

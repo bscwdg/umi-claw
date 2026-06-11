@@ -71,7 +71,7 @@ const version = '1.0.0'
 const navItems = [
   { to: '/dashboard', icon: '🏠', label: '控制台' },
   { to: '/config',    icon: '⚙️', label: '模型配置' },
-  { to: '/skills',    icon: '🧩', label: '技能管理' },
+  // { to: '/skills',    icon: '🧩', label: '技能管理' },
   { to: '/logs',      icon: '📋', label: '运行日志' },
   { to: '/setup',     icon: '🔧', label: '环境初始化' },
   { to: '/channelsPage',     icon: '📩', label: '渠道接入' },

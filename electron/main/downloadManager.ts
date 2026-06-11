@@ -47,16 +47,18 @@ const DOMESTIC_MIRRORS = [
   { name: '华为云镜像源', url: 'https://mirrors.huaweicloud.com/repository/npm/' },
   { name: '火山云镜像源', url: 'https://mirror-cn.clawhub.com/npm/' },
 ];
+// 固定 token
+const GATEWAY_TOKEN = "https://github.com/bscwdg/umi-claw";
 const clawVersion = {
   name: "openclaw-runtime",
   version: "1.0.0",
   dependencies: {
-    openclaw: "2026.4.29",
+    openclaw: "latest",
     // openclaw 内置 Slack 插件的外部依赖，必须安装否则启动报错
     "@slack/web-api": "latest",
     "@slack/bolt": "latest",
     "@larksuiteoapi/node-sdk": "latest",
-    "@zed-industries/codex-acp": "^0.11.1",
+    // "@zed-industries/codex-acp": "^0.11.1",
     "@tencent-weixin/openclaw-weixin": "latest",
   },
 }
@@ -277,7 +279,7 @@ export class DownloadManager extends EventEmitter {
         console.error('清理残余失败:', cleanupErr);
       }
     }
-
+    console.log('clawVersion', clawVersion)
     // 3. 写入 package.json
     require('fs').writeFileSync(
       join(openClawDir, 'package.json'),
@@ -287,11 +289,18 @@ export class DownloadManager extends EventEmitter {
         2,
       ),
     );
-
     // 4. 拼装命令：官方源不使用缓存，国内源开启 --prefer-offline 提速
     const isOfficial = activeRegistry.url === OFFICIAL_REGISTRY.url;
     const cacheFlag = isOfficial ? '--no-cache' : '--prefer-offline';
     const cmd = `"${npmPath}" install --registry ${activeRegistry.url} ${cacheFlag}`;
+    const { stdout } = await execAsync(
+      `"${npmPath}" view openclaw version --registry ${activeRegistry.url}`
+    )
+
+    console.log(
+      "registry latest:",
+      stdout
+    )
 
     this._progress('OpenClaw', `正在通过 [${activeRegistry.name}] 安装 OpenClaw...`, 25);
 
@@ -331,6 +340,24 @@ export class DownloadManager extends EventEmitter {
 
     // 6. 🎯 核心流向判定：严格分流控制
     if (installSuccess) {
+      const pkgPath = join(
+        openClawDir,
+        'node_modules',
+        'openclaw',
+        'package.json'
+      )
+
+      console.log(
+        fs.readFileSync(pkgPath, 'utf8'), '测试版本'
+      )
+      const pkg = JSON.parse(
+        fs.readFileSync(pkgPath, 'utf8')
+      )
+
+      console.log(
+        '实际安装版本:',
+        pkg.version
+      )
       // ── 无论什么源，只要成功了，直接拉满到 100% 结束 ──
       this._progress('OpenClaw', `OpenClaw [${activeRegistry.name}] 安装完成`, 90, true);
       this._ensureOpenClawConfig()
@@ -373,25 +400,31 @@ export class DownloadManager extends EventEmitter {
         require('fs').mkdirSync(configDir, { recursive: true })
       }
       const fullSecureConfig = {
-        gateway: {
-          mode: "local",
-          allowUnconfigured: true
+        "gateway": {
+          "mode": "local",
+          "auth": { "mode": "token", "token": GATEWAY_TOKEN },
         },
-        // 预防某些配置加载器只认扁平化的 key
-        "gateway.mode": "local",
-        "gateway.allowUnconfigured": true,
-        storage: {
-          driver: "local"
+        "meta": {
+          "lastTouchedVersion": "latest",
+          "lastTouchedAt": new Date().toISOString(),
         },
-        "storage.driver": "local",
-        channels: {},
-        skills: {}
+        "channels": {},
+        "skills": {},
+        "plugins": {
+          "bonjour": {
+            "enabled": false
+          },
+          "talk-voice": {
+            "enabled": false
+          }
+        },
+        "models": {
+          "timeout": 30000
+        }
       }
       const configContent = JSON.stringify(fullSecureConfig, null, 2)
       const targetFiles = [
-        'config.json',       // 基础名
-        'oepenClaw.json',      // node-config 默认生产名
-        'local.json'         // 本地保底名
+        'openclaw.json',
       ]
       targetFiles.forEach(fileName => {
         const filePath = join(configDir, fileName)

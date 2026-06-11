@@ -1,8 +1,10 @@
 import { EventEmitter } from 'events'
-import { ChildProcess, spawn } from 'child_process'
-import { join } from 'path'
-import { existsSync, readdirSync, writeFileSync, unlinkSync, mkdirSync, rmSync } from 'fs'
+import { ChildProcess, spawn, exec } from 'child_process'
+import { join, resolve } from 'path'
+import { existsSync, mkdirSync, rmSync } from 'fs'
+import { promises as fs } from "fs";
 import { ConfigManager } from './configManager'
+import { promisify } from "util";
 
 export interface ClawStatus {
   running: boolean
@@ -40,6 +42,12 @@ const BUILTIN_SKILLS: Omit<SkillInfo, 'installed'>[] = [
   { id: 'translate-pro', name: '🌐 专业翻译', description: '中英文专业级双向翻译', builtin: true }
 ]
 
+// 固定 token - 注意：这只是一个标识符，不是敏感密钥，可以保留
+const GATEWAY_TOKEN = "https://github.com/bscwdg/umi-claw";
+
+const execAsync = promisify(exec);
+
+
 export class ClawManager extends EventEmitter {
   private process: ChildProcess | null = null
   private logs: LogEntry[] = []
@@ -47,24 +55,60 @@ export class ClawManager extends EventEmitter {
   private startedAt?: number
   private port = 3213
   private configManager: ConfigManager
+  // 用于防止 stop 被并发调用
+  private isStopping = false
 
   constructor(configManager: ConfigManager) {
     super()
     this.configManager = configManager
   }
 
+  async _killGhostProcesses() {
+    if (process.platform === "win32") {
+      try {
+        // 注意：这会杀死当前用户下所有的 bun/openclaw 进程，包括其他项目的。
+        // 在生产环境中，建议通过 PID 文件管理进程，而非盲目杀进程名。
+        // 这里保持原有逻辑，但优化错误处理以忽略“未找到进程”的正常情况。
+        await execAsync("taskkill /f /im bun.exe");
+      } catch (e: any) {
+        // 忽略 "ERROR: The process ... not found." 错误
+        if (!e.message.includes("not found")) {
+          console.warn('清理 bun 进程时发生非预期错误:', e.message)
+        }
+      }
+      
+      try {
+        await execAsync("taskkill /f /im openclaw.exe");
+      } catch (e: any) {
+        if (!e.message.includes("not found")) {
+          console.warn('清理 openclaw 进程时发生非预期错误:', e.message)
+        }
+      }
+      console.log("🧹 僵尸进程清理尝试完毕。");
+    }
+  }
+
+  /**
+   * 🚀 启动 OpenClaw 服务
+   */
   async start(): Promise<{ success: boolean; error?: string }> {
-    console.log('启动 OpenClaw...')
+    console.log('启动 OpenClaw...', new Date().toISOString())
+    
     if (this.process) {
       return { success: false, error: 'OpenClaw 已在运行中' }
     }
 
+    await this._killGhostProcesses()
+
+    // 1. 获取当前前端保存并激活的最新的服务商配置
+    const currentConfig = this.configManager.getConfig()
+    const activeProvider = currentConfig.providers.find(
+      (p) => p.id === currentConfig.activeProvider
+    )
+    
     const dataDir = this.configManager.getDataDir()
     const nodePath = this.configManager.getNodePath()
-    // 1. 🔍 变更点：不再指向 .bin 下的壳，直接指向 openclaw 依赖包本身的真实 JS 文件
-    // 💡 提示：openclaw 官方标准的入口一般是它的 dist/index.js 或 index.js
     const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js')
-    // 如果上一步启动报错，可以检查一下 node_modules/openclaw/package.json 里的 "main" 字段指向什么，对齐即可
 
     if (!existsSync(nodePath)) {
       return { success: false, error: '未找到 Node.js 运行时，请先初始化环境' }
@@ -73,79 +117,121 @@ export class ClawManager extends EventEmitter {
       return { success: false, error: '未找到 OpenClaw 核心库，请先初始化环境' }
     }
 
-    const config = this.configManager.getConfig()
-    // 🎯 提取出配置目录路径
-    const targetConfigDir = join(dataDir, 'config', '.openclaw').replace(/\\/g, '/')
-    this._checkAndFixConfigBeforeStart(targetConfigDir)
-    // const env = {
-    //   ...process.env,
-    //   OPENCLAW_CONFIG_DIR: join(dataDir, 'config', '.openclaw'),
-    //   OPENCLAW_DATA_DIR: join(dataDir, 'data'),
-    //   PORT: String(this.port),
-    //   NODE_ENV: 'production'
-    // }
-    // OPENCLAW_CONFIG_PAT
-    console.log('启动参数：', {
+    // 🌟 划定 U 盘下的隔离目录作为“伪家目录”
+    const portableHomeDir = join(dataDir, 'config').replace(/\\/g, '/')
+    const targetConfigDir = join(portableHomeDir, '.openclaw').replace(/\\/g, '/')
+    
+    // 预检并修复配置
+    try {
+      await this._checkAndFixConfigBeforeStart(targetConfigDir, activeProvider)
+    } catch (err: any) {
+      return { success: false, error: `配置初始化失败: ${err.message}` }
+    }
+
+    // 🌟 伪造并重定向环境变量
+    const commonEnv = {
+      HOME: portableHomeDir,
+      USERPROFILE: portableHomeDir,
       OPENCLAW_CONFIG_DIR: targetConfigDir,
-      OPENCLAW_CONFIG_PAT: targetConfigDir,
       OPENCLAW_DATA_DIR: join(dataDir, 'data').replace(/\\/g, '/'),
       PORT: String(this.port),
-      NODE_ENV: 'production'
-    })
-    const env = {
-      ...process.env,
-      OPENCLAW_CONFIG_DIR: targetConfigDir,
-      OPENCLAW_CONFIG_PAT: targetConfigDir,
-      OPENCLAW_DATA_DIR: join(dataDir, 'data').replace(/\\/g, '/'),
-      // 🌟 核心注入：利用环境变量直接击穿 gateway.mode 的配置
+      NODE_ENV: 'production',
+      OPENCLAW_DISABLE_BONJOUR: '1',
+      BONJOUR_DISABLE: '1',
       OPENCLAW_GATEWAY_MODE: 'local',
       GATEWAY_MODE: 'local',
-      gateway__mode: 'local', // 某些库支持双下划线代表对象层级
-      // 🌟 路由重定向：逼迫底层库去你的隔离目录找配置
-      HOME: targetConfigDir,
-      USERPROFILE: targetConfigDir,
-      NODE_CONFIG_DIR: targetConfigDir, // 绝大多数 Node.js 配置库的硬核环境变量
-      PORT: String(this.port),
-      NODE_ENV: 'production'
+      // 某些库可能读取小写或双下划线变量
+      gateway__mode: 'local',
+      NODE_CONFIG_DIR: targetConfigDir,
+    }
+
+    // 动态注入 Provider 相关环境变量
+    const providerEnv: Record<string, string> = {}
+    
+    if (activeProvider) {
+      if (activeProvider.id === 'openai') {
+        if (!activeProvider.apiKey) {
+           return { success: false, error: 'OpenAI API Key 未配置' }
+        }
+        providerEnv.OPENAI_API_KEY = activeProvider.apiKey
+        providerEnv.OPENAI_BASE_URL = activeProvider.baseUrl ?? ''
+      } else if (activeProvider.id === 'deepseek') {
+        if (!activeProvider.apiKey) {
+          // 🔴 修复：严禁硬编码密钥。如果没有 Key，应报错。
+          return { success: false, error: 'DeepSeek API Key 未配置' }
+        }
+        providerEnv.DEEPSEEK_API_KEY = activeProvider.apiKey
+        providerEnv.DEEPSEEK_BASE_URL = activeProvider.baseUrl ?? ''
+      }
+      // 如果有其他 provider，可在此扩展
+    }
+
+    const env = {
+      ...process.env,
+      ...commonEnv,
+      ...providerEnv
     }
 
     this._addLog(`正在启动 OpenClaw (端口 ${this.port})...`, 'system')
-
+    
     try {
-      //  核心点：在参数数组中追加 'gateway' 命令以及对应端口号 '--port'
       this.process = spawn(nodePath, [
         clawJsPath,
         'gateway',
         '--port',
         String(this.port),
-        // '--allow-unconfigured'
       ], {
         env,
         cwd: join(dataDir, 'openclaw'),
         shell: false,
-        detached: false
+        detached: false,
+        // 建议增加 stdio 配置以便更好地捕获输出，虽然下面单独绑定了事件
+        stdio: ['pipe', 'pipe', 'pipe'] 
       })
+
       this.startedAt = Date.now()
       this._setupProcessEvents()
       this.emit('statusChange', true, this.port)
       return { success: true }
     } catch (err: any) {
+      this.process = null
       return { success: false, error: err.message }
     }
   }
+
   async stop(): Promise<{ success: boolean }> {
     if (!this.process) return { success: true }
+    if (this.isStopping) return { success: true } // 防止重复停止
+
+    this.isStopping = true
+    this._addLog('正在停止 OpenClaw...', 'system')
+    
+    const proc = this.process
+    this.process = null // 立即置空，防止外部再次调用 stop 或 start 时的状态冲突
 
     return new Promise((resolve) => {
-      this._addLog('正在停止 OpenClaw...', 'system')
-      const proc = this.process!
-      this.process = null
+      let resolved = false
+      const finish = () => {
+        if (!resolved) {
+          resolved = true
+          this.isStopping = false
+          resolve({ success: true })
+        }
+      }
 
       // 优雅关闭
-      proc.kill('SIGTERM')
+      try {
+        proc.kill('SIGTERM')
+      } catch (e) {
+        // 进程可能已经退出
+      }
+
       const timeout = setTimeout(() => {
-        proc.kill('SIGKILL')
-        resolve({ success: true })
+        this._addLog('强制终止 OpenClaw 进程', 'system')
+        try {
+          proc.kill('SIGKILL')
+        } catch (e) {}
+        finish()
       }, 5000)
 
       proc.on('exit', () => {
@@ -153,7 +239,16 @@ export class ClawManager extends EventEmitter {
         this.startedAt = undefined
         this.emit('statusChange', false)
         this._addLog('OpenClaw 已停止', 'system')
-        resolve({ success: true })
+        finish()
+      })
+      
+      // 处理进程可能在 kill 后立即消失的情况
+      proc.on('error', (err) => {
+         clearTimeout(timeout)
+         this.startedAt = undefined
+         this.emit('statusChange', false)
+         this._addLog(`停止过程中出错: ${err.message}`, 'system')
+         finish()
       })
     })
   }
@@ -189,24 +284,21 @@ export class ClawManager extends EventEmitter {
   async installSkill(skillId: string): Promise<{ success: boolean; error?: string }> {
     const skill = BUILTIN_SKILLS.find((s) => s.id === skillId)
     if (!skill) return { success: false, error: '技能不存在' }
-
     const dataDir = this.configManager.getDataDir()
     const skillsDir = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'skills')
     const skillDir = join(skillsDir, skillId)
-
+    // 🛡️ 安全检查：确保解析后的路径在预期的 skillsDir 内
+    const resolvedSkillDir = resolve(skillDir)
+    const resolvedSkillsDir = resolve(skillsDir)
+    if (!resolvedSkillDir.startsWith(resolvedSkillsDir)) {
+        return { success: false, error: '非法的技能路径' }
+    }
     try {
-      // 1. 确保父级链路目录完整性
       mkdirSync(skillDir, { recursive: true })
-
-      // 2. 生成定义并写入
       const skillDef = this._generateSkillDefinition(skill)
-      writeFileSync(join(skillDir, 'index.json'), JSON.stringify(skillDef, null, 2))
-
+      // 使用 await 确保写入完成
+      await fs.writeFile(join(skillDir, 'index.json'), JSON.stringify(skillDef, null, 2))
       this._addLog(`技能 "${skill.name}" 安装成功`, 'system')
-
-      // 💡 建议在下面增加：向 openclaw 触发热重载的逻辑（如有）
-      // await this.gatewayProvider.reloadSkills() 
-
       return { success: true }
     } catch (err: any) {
       return { success: false, error: `写入技能失败: ${err.message}` }
@@ -215,11 +307,18 @@ export class ClawManager extends EventEmitter {
 
   async uninstallSkill(skillId: string): Promise<{ success: boolean; error?: string }> {
     const dataDir = this.configManager.getDataDir()
-    const skillDir = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'skills', skillId)
+    const skillsDir = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'skills')
+    const skillDir = join(skillsDir, skillId)
+
+    // 🛡️ 安全检查
+    const resolvedSkillDir = resolve(skillDir)
+    const resolvedSkillsDir = resolve(skillsDir)
+    if (!resolvedSkillDir.startsWith(resolvedSkillsDir)) {
+        return { success: false, error: '非法的技能路径' }
+    }
 
     try {
       if (existsSync(skillDir)) {
-        // ⚡️ 安全干掉动态 import，直接用顶层的 rmSync，兼顾了高版本 Node 的强力递归删除
         rmSync(skillDir, { recursive: true, force: true })
         this._addLog(`技能 ID "${skillId}" 卸载成功`, 'system')
       }
@@ -253,6 +352,7 @@ export class ClawManager extends EventEmitter {
         `OpenClaw 进程退出 (code=${code}, signal=${signal})`,
         'system'
       )
+      // 只有当 process 仍然指向当前实例时才清理，防止旧事件回调干扰新实例
       if (this.process) {
         this.process = null
         this.startedAt = undefined
@@ -263,7 +363,17 @@ export class ClawManager extends EventEmitter {
     this.process.on('error', (err) => {
       this._addLog(`进程错误: ${err.message}`, 'stderr')
       this.emit('log', `进程错误: ${err.message}`, 'stderr')
+      // 发生错误时，通常进程也会退出，但为了保险起见，重置状态
+      if (this.process) {
+          this.process = null
+          this.startedAt = undefined
+          this.emit('statusChange', false)
+      }
     })
+    
+    // ⚠️ 移除无效的 unhandledRejection 和 uncaughtException 监听
+    // ChildProcess 不会发射这些事件，它们是主进程 process 对象的事件。
+    // 在这里监听它们没有任何作用，反而会造成误解。
   }
 
   private _addLog(line: string, type: LogEntry['type']): void {
@@ -298,52 +408,89 @@ export class ClawManager extends EventEmitter {
     }
   }
 
-  /**
- * 🌟 新增方法：启动前配置检查
- * 检查 OpenClaw 运行所需的配置文件是否存在，如果不存在则自动就地创建，彻底拦截 Missing config 错误
- */
-  private _checkAndFixConfigBeforeStart(configDir: string): void {
+  private async _checkAndFixConfigBeforeStart(
+    targetConfigDir: string,
+    provider?: {
+      id: string
+      model: string
+      apiKey?: string
+      baseUrl?: string
+    }
+  ): Promise<void> {
     try {
-      // 1. 盾牌保障：确保配置文件夹存在
-      if (!existsSync(configDir)) {
-        mkdirSync(configDir, { recursive: true })
-        console.log(`[StartCheck] 发现配置目录不存在，已自动创建: ${configDir}`)
-      }
-      // 2. 定义高赞命中的核心保底配置数据
-      const fullSecureConfig = {
-        gateway: {
-          mode: "local",
-          allowUnconfigured: true
-        },
-        "gateway.mode": "local",
-        "gateway.allowUnconfigured": true,
-        storage: {
-          driver: "local"
-        },
-        "storage.driver": "local",
-        channels: {},
-        skills: {}
-      }
+      mkdirSync(targetConfigDir, { recursive: true })
 
-      const configContent = JSON.stringify(fullSecureConfig, null, 2)
-      // 3. 检查必须要有的核心配置文件是否存在
-      // 重点防范 NODE_ENV='production' 情况下必读的 production.json 和 config.json
-      const essentialFiles = ['config.json', 'production.json', 'default.json', 'local.json', 'oepnclaw.json']
-      let missingAny = false
-      essentialFiles.forEach(fileName => {
-        const filePath = join(configDir, fileName)
-        if (!existsSync(filePath)) {
-          missingAny = true
-          writeFileSync(filePath, configContent, 'utf-8')
-          console.log(`[StartCheck] 启动检查发现缺少 ${fileName}，已自动为您就地补齐。`)
+      const portableConfigPath = join(targetConfigDir, 'openclaw.json')
+      let config: any = {}
+
+      if (existsSync(portableConfigPath)) {
+        try {
+          const raw = await fs.readFile(portableConfigPath, 'utf-8')
+          config = JSON.parse(raw)
+        } catch (e) {
+          console.warn('[OpenClaw] 配置文件解析失败，将重置配置', e)
+          config = {}
         }
-      })
-
-      if (!missingAny) {
-        console.log('[StartCheck] 启动预检通过：配置文件完整。')
       }
+
+      // 更新 Agent 默认模型
+      config.agents ??= {}
+      config.agents.defaults ??= {}
+
+      if (provider) {
+        config.agents.defaults.model = {
+          primary: `${provider.id}/${provider.model}`
+        }
+        
+        config.agents.defaults.models ??= {}
+        const modelKey = `${provider.id}/${provider.model}`
+        config.agents.defaults.models[modelKey] ??= {}
+      }
+
+      // 保持其他配置不变
+      config.channels ??= {}
+      config.skills ??= {}
+      
+      // 更新元数据
+      config.meta = {
+        lastTouchedVersion: 'latest',
+        lastTouchedAt: new Date().toISOString()
+      }
+
+      await fs.writeFile(
+        portableConfigPath,
+        JSON.stringify(config, null, 2),
+        'utf-8'
+      )
+
+      // 处理 auth-profiles
+      const agentAuthDir = join(targetConfigDir, 'agents', 'main', 'agent')
+      mkdirSync(agentAuthDir, { recursive: true })
+
+      const authProfilesPath = join(agentAuthDir, 'auth-profiles.json')
+
+      // 只有在文件不存在且有 Provider 信息时才创建/覆盖
+      // 注意：如果文件已存在，我们通常不应该覆盖它，以免丢失用户手动修改的其他配置
+      // 原逻辑是 !existsSync 才写，这里保持一致
+      if (provider?.apiKey && !existsSync(authProfilesPath)) {
+        const authProfiles = {
+          [provider.id]: {
+            apiKey: provider.apiKey,
+            ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {})
+          }
+        }
+
+        await fs.writeFile(
+          authProfilesPath,
+          JSON.stringify(authProfiles, null, 2),
+          'utf-8'
+        )
+        console.log('[OpenClaw] auth-profiles 已生成')
+      }
+
     } catch (err: any) {
-      console.error('❌ [StartCheck] 启动前自动修复配置失败:', err.message)
+      console.error('OpenClaw 配置初始化失败:', err)
+      throw err // 向上抛出错误，让 start() 方法知道配置失败了
     }
   }
 }

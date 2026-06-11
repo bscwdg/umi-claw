@@ -7,20 +7,109 @@ import {
   Tray,
   Menu,
   nativeImage,
-  session
+  session,
+  WebContents
 } from 'electron'
 import { join, parse } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { ClawManager } from './clawManager'
 import { ConfigManager } from './configManager'
 import { DownloadManager } from './downloadManager'
+import { ChannelManager } from './channelManager'
 import { readFileSync, existsSync } from 'fs'
+import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
+
+// 类型定义
+interface TerminalSession {
+  process: ChildProcessWithoutNullStreams
+  id: string
+}
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let clawManager: ClawManager
 let configManager: ConfigManager
 let downloadManager: DownloadManager
+let channelManager: ChannelManager
+
+// 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
+const activeTerminalSessions = new Map<string, TerminalSession>()
+
+/**
+ * 获取 OpenClaw 运行所需的环境变量和路径配置
+ * 统一提取重复逻辑，确保环境一致性
+ */
+function getOpenClawRuntimeConfig() {
+  const dataDir = configManager.getDataDir()
+  const nodePath = configManager.getNodePath()
+  const targetConfigDir = join(dataDir, 'config', '.openclaw')
+  const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js')
+
+  // 统一路径分隔符为正斜杠，兼容 Node.js 内部处理
+  const safeConfigDir = targetConfigDir.replace(/\\/g, '/')
+  const safeDataDir = join(dataDir, 'data').replace(/\\/g, '/')
+
+  const env = {
+    ...process.env,
+    HOME: safeConfigDir,
+    USERPROFILE: safeConfigDir,
+    OPENCLAW_CONFIG_DIR: safeConfigDir,
+    OPENCLAW_DATA_DIR: safeDataDir,
+    NODE_ENV: 'production'
+  }
+
+  return {
+    nodePath,
+    clawJsPath,
+    cwd: join(dataDir, 'openclaw'),
+    env,
+    targetConfigDir
+  }
+}
+
+/**
+ * 安全地终止并清理指定的终端会话
+ */
+function killTerminalSession(sessionId: string): boolean {
+  const session = activeTerminalSessions.get(sessionId)
+  if (!session) {
+    // 兼容旧逻辑：如果没有 sessionId，尝试清理全局遗留（如果有）
+    // 这里主要依赖 Map 管理，如果传入特定 ID 找不到，视为已清理
+    return false
+  }
+
+  try {
+    const proc = session.process
+    if (!proc.killed) {
+      // 优先发送 SIGTERM 允许优雅退出
+      proc.kill('SIGTERM')
+
+      // 设置超时，如果未退出则强制杀死
+      setTimeout(() => {
+        if (!proc.killed && proc.pid) {
+          try {
+            proc.kill('SIGKILL')
+          } catch (e) {
+            // 忽略进程已退出的错误
+          }
+        }
+      }, 2000)
+    }
+  } catch (err) {
+    console.error(`[PTY] 终止会话 ${sessionId} 时出错:`, err)
+  } finally {
+    activeTerminalSessions.delete(sessionId)
+    return true
+  }
+}
+
+/**
+ * 清理所有活跃的终端会话（用于应用退出时）
+ */
+function killAllTerminalSessions() {
+  const sessionIds = Array.from(activeTerminalSessions.keys())
+  sessionIds.forEach(id => killTerminalSession(id))
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -46,10 +135,16 @@ function createWindow(): void {
   })
 
   mainWindow.on('close', (e) => {
-    if (!app.isQuiting) {
+    if (!(app as any).isQuiting) {
       e.preventDefault()
       mainWindow!.hide()
     }
+  })
+
+  // 窗口完全关闭时，清理资源
+  mainWindow.on('closed', () => {
+    killAllTerminalSessions()
+    mainWindow = null
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -66,8 +161,25 @@ function createWindow(): void {
 }
 
 function createTray(): void {
-  const icon = nativeImage.createFromPath(join(__dirname, '../../resources/tray.png'))
-  tray = new Tray(icon.resize({ width: 16, height: 16 }))
+  // 增加图标加载的错误处理，防止因图标缺失导致崩溃
+  let icon: Electron.NativeImage
+  try {
+    const iconPath = join(__dirname, '../../resources/tray.png')
+    if (!existsSync(iconPath)) {
+      //  fallback 或者使用默认图标，这里假设必须存在，若不存在则使用空图像防止崩溃
+      console.warn('Tray icon not found at:', iconPath)
+      icon = nativeImage.createEmpty()
+    } else {
+      icon = nativeImage.createFromPath(iconPath)
+    }
+  } catch (e) {
+    console.error('Failed to load tray icon', e)
+    icon = nativeImage.createEmpty()
+  }
+
+  // 确保图标尺寸合适
+  const resizedIcon = icon.isEmpty() ? icon : icon.resize({ width: 16, height: 16 })
+  tray = new Tray(resizedIcon)
 
   const updateMenu = (running: boolean) => {
     const menu = Menu.buildFromTemplate([
@@ -97,7 +209,7 @@ function createTray(): void {
       {
         label: '退出',
         click: () => {
-          app.isQuiting = true
+          ; (app as any).isQuiting = true
           clawManager.stop().finally(() => app.quit())
         }
       }
@@ -168,64 +280,52 @@ function registerIpcHandlers(): void {
   ipcMain.handle('skills:install', (_e, skillId) => clawManager.installSkill(skillId))
   ipcMain.handle('skills:uninstall', (_e, skillId) => clawManager.uninstallSkill(skillId))
 
-  // 外部链接
-  ipcMain.handle('shell:openExternal', (_e, url) => shell.openExternal(url))
+  // 外部链接 - 增加简单的协议校验，防止 file:// 等危险协议
+  ipcMain.handle('shell:openExternal', (_e, url: string) => {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return shell.openExternal(url)
+    }
+    return Promise.reject(new Error('Invalid URL protocol'))
+  })
 
-  // 对话框
-  ipcMain.handle('dialog:showMessage', (_e, options) => dialog.showMessageBox(mainWindow!, options))
+  // 对话框 - 增加主窗口存在性检查
+  ipcMain.handle('dialog:showMessage', (_e, options) => {
+    const win = mainWindow || BrowserWindow.getFocusedWindow()
+    if (!win) {
+      // 如果没有窗口，使用 null 让 dialog 自动创建临时窗口或报错，视 Electron 版本而定
+      // 通常建议至少有一个父窗口
+      return dialog.showMessageBox(options as any)
+    }
+    return dialog.showMessageBox(win, options)
+  })
 
-  // 一键获取token
+  // 一键获取token - 优化安全性与逻辑
   ipcMain.handle('claw:get-token', async () => {
-    const userHome = app.getPath('home')                     // C:\Users\遥远而清澈
-    const dataDir = configManager.getDataDir()               // AppData 中的数据目录
+    const userHome = app.getPath('home')
+    const dataDir = configManager.getDataDir()
 
-    // ⚡️ 新增：动态获取当前项目/程序运行所在的盘符根目录（如果项目在U盘 D 盘，这里就是 D:\）
-    const currentDriveRoot = parse(process.cwd()).root       // 例如 "D:\\" 或 "E:\\"
-
-    // 1. 🔍 重新编排嫌疑路径表（加入绝对根目录和盘符根目录逻辑）
-    // 嫌疑 0：你前面在 start() 里亲手给 OpenClaw 指定的配置环境变量路径（最高优先级）
+    // 移除硬编码的 C:\tmp 和当前盘符根目录的随意扫描，聚焦于标准配置路径
     const envConfigDir = join(dataDir, 'config', '.openclaw');
 
     const possiblePaths = [
-      // 💡 优先检查你指定的 env 核心目录
-      join(envConfigDir, 'config.json'),
+      // 1. 环境变量指定的核心目录 (最高优先级)
       join(envConfigDir, 'openclaw.json'),
-      join(envConfigDir, '..', 'config.json'), // 防止它写在父级
 
-      // 嫌疑 1：用户家目录
-      join(userHome, '.openclaw', 'config.json'),
+      // 2. 用户家目录 (常见默认位置)
       join(userHome, '.openclaw', 'openclaw.json'),
-      join(userHome, 'openclaw', 'config.json'), // 容错：不带点的普通文件夹
 
-      // 嫌疑 2：AppData 里的应用隔离数据目录
-      join(dataDir, 'config', '.openclaw', 'config.json'),
-      join(dataDir, 'config', '.openclaw', 'openclaw.json'),
-      join(dataDir, 'openclaw', 'config.json'),
+      // 3. AppData 隔离数据目录的其他变体
+      join(dataDir, 'config', '.openclaw', 'openclaw.json'), // 重复但保留以防逻辑差异
       join(dataDir, 'openclaw', 'openclaw.json'),
-
-      // 嫌疑 3：当前运行盘符（如 U 盘/D盘/E盘）下的根目录（完美防御 \tmp\ 现象）
-      join(currentDriveRoot, 'tmp', 'openclaw', 'config.json'),
-      join(currentDriveRoot, 'tmp', 'openclaw', 'openclaw.json'),
-      join(currentDriveRoot, '.openclaw', 'config.json'),
-      join(currentDriveRoot, 'openclaw', 'config.json'), // 容错：盘符根目录下不带点的文件夹
-      join(currentDriveRoot, 'tmp', 'openclaw', '.openclaw', 'config.json'),
-      join(currentDriveRoot, 'tmp', 'openclaw', 'openclaw', 'config.json'),
-
-      // 嫌疑 4：C 盘绝对根目录下的临时文件夹（兜底）
-      'C:\\tmp\\openclaw\\config.json',
-      'C:\\tmp\\openclaw\\openclaw.json',
-      'C:\\.openclaw\\config.json',
-      'C:\\openclaw\\config.json'
     ]
 
-    console.log('--- 🛡️ 开始全盘多盘符扫描 OpenClaw 配置文件 ---')
-    console.log(`当前检测到的程序运行盘符根目录为: ${currentDriveRoot}`)
+    console.log('--- 🛡️ 开始扫描 OpenClaw 配置文件 ---')
 
     let finalPath = ''
     for (const p of possiblePaths) {
-      console.log(`正在检查: ${p} -> ${existsSync(p) ? '【存在 ✅】' : '【不存在 ❌】'}`)
       if (existsSync(p)) {
         finalPath = p
+        console.log(`✅ 命中配置文件: ${p}`)
         break
       }
     }
@@ -233,313 +333,232 @@ function registerIpcHandlers(): void {
     try {
       if (!finalPath) {
         throw new Error(
-          `全盘扫描失败。已检查以下路径（含当前盘符 ${currentDriveRoot}）均未发现 config.json：\n` +
+          `未找到 OpenClaw 配置文件。已检查以下路径：\n` +
           possiblePaths.map(p => `- ${p}`).join('\n')
         )
       }
 
-      // 2. 命中后读取
-      console.log(`🎯 成功在盘符关联路径中命中配置文件: ${finalPath}`)
       const configContent = readFileSync(finalPath, 'utf-8')
       const configJson = JSON.parse(configContent)
-      console.log(configJson, 'configJson')
-      const token = configJson?.gateway?.token ? configJson?.gateway?.token : configJson?.gateway?.auth?.token
+
+      // ⚠️ 安全警告：不要在生产环境日志中打印包含 Token 的完整 JSON
+      // console.log(configJson, 'configJson') // 已移除
+
+      const token = configJson?.gateway?.token || configJson?.gateway?.auth?.token
 
       if (!token) {
-        throw new Error(`找到了配置文件(${finalPath})，但里面缺失 gateway.token 字段`)
+        throw new Error(`配置文件存在 (${finalPath})，但缺少 gateway.token 字段`)
       }
 
       return { success: true, token }
     } catch (err: any) {
-      console.error('获取 Token 内部报错:', err)
+      console.error('获取 Token 失败:', err.message)
       return { success: false, error: err.message }
     }
   })
-  // 🌟 [新增] 终端：执行一键查询快照短命令 (例如: status, health)
-  ipcMain.handle('terminal:runCommand', async (_e, args: string[]) => {
-    const { spawn } = require('child_process');
-    const dataDir = configManager.getDataDir();
-    const nodePath = configManager.getNodePath();
-    const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js');
 
-    const targetConfigDir = join(dataDir, 'config', '.openclaw');
-    const env = {
-      ...process.env,
-      OPENCLAW_CONFIG_DIR: targetConfigDir,
-      OPENCLAW_DATA_DIR: join(dataDir, 'data'),
-      NODE_ENV: 'production'
-    };
+  // ─── 终端相关 IPC (统一合并逻辑，废弃旧的 terminal:* 命名空间，但保留兼容) ───
 
-    // ⚡️ 核心追加：让快捷指令、一键查询短指令也带上豁免参数和强制路径，防止报错
-    const finalArgs = [...args, '--allow-unconfigured', '--config', join(targetConfigDir, 'production.json')];
+  /**
+   * 执行一次性命令 (Snapshot)
+   */
+  const handleRunCommand = async (_e: any, args: string[]) => {
+    const { nodePath, clawJsPath, cwd, env } = getOpenClawRuntimeConfig()
+
+    // 基本的安全检查：限制参数长度，防止缓冲区溢出或极端情况
+    if (args.length > 100) {
+      return { stdout: '', stderr: '参数过多，拒绝执行', code: -1 }
+    }
 
     return new Promise((resolve) => {
       try {
         const proc = spawn(nodePath, [clawJsPath, ...args], {
           env,
-          cwd: join(dataDir, 'openclaw')
-        });
-
-        let stdout = '';
-        let stderr = '';
-
-        proc.stdout?.on('data', (d) => (stdout += d.toString()));
-        proc.stderr?.on('data', (d) => (stderr += d.toString()));
-
-        proc.on('exit', (code) => {
-          resolve({ stdout, stderr, code });
-        });
-
-        proc.on('error', (err) => {
-          resolve({ stdout: '', stderr: `子进程启动失败: ${err.message}`, code: -1 });
-        });
-      } catch (e: any) {
-        resolve({ stdout: '', stderr: `执行异常: ${e.message}`, code: -1 });
-      }
-    });
-  });
-
-  // 🌟 [新增] 终端：激活全双工交互式 PTY (例如: 微信扫码 weixin-login)
-  // 💡 注意：如果你们之前有独立的多会话 sessionId 管控，请对齐原结构。
-  // 下面采用直接用进程事件推送到前端的万能兼容写法
-  ipcMain.handle('terminal:startPty', async (event, args: string[]) => {
-    const { spawn } = require('child_process');
-    const dataDir = configManager.getDataDir();
-    const nodePath = configManager.getNodePath();
-    const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js');
-
-    const targetConfigDir = join(dataDir, 'config', '.openclaw');
-    const env = {
-      ...process.env,
-      OPENCLAW_CONFIG_DIR: targetConfigDir,
-      OPENCLAW_DATA_DIR: join(dataDir, 'data'),
-      NODE_ENV: 'production'
-    };
-
-    // 同样注入豁免和路径，避免 PTY 交互进程报错
-    const finalArgs = [...args, '--allow-unconfigured', '--config', join(targetConfigDir, 'production.json')];
-    const generatedSessionId = `session_${Date.now()}`;
-
-    try {
-      const ptyProc = spawn(nodePath, [clawJsPath, ...args], {
-        env,
-        cwd: join(dataDir, 'openclaw')
-      });
-
-      // 实时向前端终端组件（xterm）吐数据流
-      ptyProc.stdout?.on('data', (data) => {
-        mainWindow?.webContents.send('terminal:onPtyChunk', {
-          sessionId: generatedSessionId,
-          data: data.toString()
-        });
-      });
-
-      ptyProc.stderr?.on('data', (data) => {
-        mainWindow?.webContents.send('terminal:onPtyChunk', {
-          sessionId: generatedSessionId,
-          data: data.toString()
-        });
-      });
-
-      // 监听进程退出
-      ptyProc.on('exit', (exitCode) => {
-        mainWindow?.webContents.send('terminal:onPtyExit', {
-          sessionId: generatedSessionId,
-          exitCode: exitCode || 0
-        });
-        // 清理缓存引用
-        if ((global as any).currentPty === ptyProc) {
-          (global as any).currentPty = null;
-        }
-      });
-
-      // 保存进程实例用于 stdin 输入以及强行断开
-      (global as any).currentPty = ptyProc;
-
-      return generatedSessionId;
-    } catch (err: any) {
-      console.error('PTY管道拉起失败:', err);
-      return null;
-    }
-  });
-
-  // 🌟 [新增] 终端：接收前端通过 xterm 键盘输入的 stdin 数据
-  ipcMain.handle('terminal:inputPty', async (_e, _sessionId, data) => {
-    const ptyProc = (global as any).currentPty;
-    if (ptyProc && ptyProc.stdin && ptyProc.stdin.writable) {
-      ptyProc.stdin.write(data);
-    }
-  });
-
-  // 🌟 [新增] 终端：手动断开当前交互模式
-  ipcMain.handle('terminal:stopPty', async (_e, _sessionId) => {
-    const ptyProc = (global as any).currentPty;
-    if (ptyProc) {
-      ptyProc.kill('SIGKILL');
-      (global as any).currentPty = null;
-    }
-    return true;
-  });
-
-  // 🌟 [新增] 终端：移除监听保底
-  ipcMain.handle('terminal:removeListeners', () => {
-    return true;
-  });
-
-  // 🌟 1. 修复短命令快照执行 (例如点击：状态、健康检查)
-  ipcMain.handle('term:run', async (_e, args: string[]) => {
-    const { spawn } = require('child_process')
-    const dataDir = configManager.getDataDir()
-    const nodePath = configManager.getNodePath()
-    const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js')
-
-    const targetConfigDir = join(dataDir, 'config', '.openclaw')
-    const env = {
-      ...process.env,
-      OPENCLAW_CONFIG_DIR: targetConfigDir,
-      OPENCLAW_DATA_DIR: join(dataDir, 'data'),
-      NODE_ENV: 'production'
-    }
-
-    // 塞入强制路径和免密保底参数，彻底绝杀 Missing config 报错
-    const finalArgs = [...args, '--allow-unconfigured', '--config', join(targetConfigDir, 'production.json')]
-
-    return new Promise((resolve) => {
-      try {
-        const proc = spawn(nodePath, [clawJsPath, ...args], {
-          env,
-          cwd: join(dataDir, 'openclaw')
+          cwd,
+          stdio: ['ignore', 'pipe', 'pipe'] // 明确指定 stdio
         })
 
         let stdout = ''
         let stderr = ''
 
-        proc.stdout?.on('data', (d) => (stdout += d.toString()))
-        proc.stderr?.on('data', (d) => (stderr += d.toString()))
+        proc.stdout.on('data', (d) => (stdout += d.toString()))
+        proc.stderr.on('data', (d) => (stderr += d.toString()))
 
         proc.on('exit', (code) => {
           resolve({ stdout, stderr, code })
         })
 
         proc.on('error', (err) => {
-          resolve({ stdout: '', stderr: `终端进程启动失败: ${err.message}`, code: -1 })
+          resolve({ stdout: '', stderr: `子进程启动失败: ${err.message}`, code: -1 })
         })
       } catch (e: any) {
-        resolve({ stdout: '', stderr: `系统层崩溃: ${e.message}`, code: -1 })
+        resolve({ stdout: '', stderr: `执行异常: ${e.message}`, code: -1 })
       }
     })
-  })
+  }
 
-  // 🌟 2. 修复全双工交互式 PTY 管道拉起 (例如点击：微信登录扫码)
-  ipcMain.handle('term:pty-start', async (event, args: string[], cols: number, rows: number) => {
-    const { spawn } = require('child_process')
-    const dataDir = configManager.getDataDir()
-    const nodePath = configManager.getNodePath()
-    const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js')
+  // 注册兼容的 IPC 句柄
+  ipcMain.handle('terminal:runCommand', handleRunCommand)
+  ipcMain.handle('term:run', handleRunCommand)
 
-    const targetConfigDir = join(dataDir, 'config', '.openclaw')
-    const env = {
-      ...process.env,
-      OPENCLAW_CONFIG_DIR: targetConfigDir,
-      OPENCLAW_DATA_DIR: join(dataDir, 'data'),
-      NODE_ENV: 'production'
+  /**
+   * 启动交互式 PTY 会话
+   */
+  const handleStartPty = async (event: any, args: string[], cols?: number, rows?: number) => {
+    // 如果已有活跃会话，先关闭它（单例模式策略，防止资源泄露）
+    // 如果需要多会话，应移除此步并使用 sessionId 区分
+    if (activeTerminalSessions.size > 0) {
+      console.warn('检测到活跃终端会话，正在强制关闭以启动新会话')
+      killAllTerminalSessions()
     }
 
-    const finalArgs = [...args, '', '--config', join(targetConfigDir, 'production.json')]
+    const { nodePath, clawJsPath, cwd, env } = getOpenClawRuntimeConfig()
     const sessionId = `session_${Date.now()}`
 
     try {
       const ptyProc = spawn(nodePath, [clawJsPath, ...args], {
         env,
-        cwd: join(dataDir, 'openclaw')
+        cwd,
+        stdio: ['pipe', 'pipe', 'pipe'] // 需要 stdin 所以第一个是 pipe
       })
 
-      // 🌟 注意：对齐 Preload 里的事件名叫 'term:pty-chunk' 
-      ptyProc.stdout?.on('data', (data) => {
-        mainWindow?.webContents.send('term:pty-chunk', {
-          sessionId: sessionId, // 保持与 Vue 页面中的 sessionId 校验一致
-          data: data.toString()
-        })
+      // 保存会话
+      activeTerminalSessions.set(sessionId, { process: ptyProc, id: sessionId })
+
+      // 实时向前端推送数据
+      ptyProc.stdout.on('data', (data) => {
+        // 兼容两种事件名
+        mainWindow?.webContents.send('terminal:onPtyChunk', { sessionId, data: data.toString() })
+        mainWindow?.webContents.send('term:pty-chunk', { sessionId, data: data.toString() })
       })
 
-      ptyProc.stderr?.on('data', (data) => {
-        mainWindow?.webContents.send('term:pty-chunk', {
-          sessionId: sessionId,
-          data: data.toString()
-        })
+      ptyProc.stderr.on('data', (data) => {
+        mainWindow?.webContents.send('terminal:onPtyChunk', { sessionId, data: data.toString() })
+        mainWindow?.webContents.send('term:pty-chunk', { sessionId, data: data.toString() })
       })
 
-      // 🌟 对齐 Preload 里的退出事件名叫 'term:pty-exit'
+      // 监听进程退出
       ptyProc.on('exit', (exitCode) => {
-        mainWindow?.webContents.send('term:pty-exit', {
-          sessionId: sessionId,
-          exitCode: exitCode || 0
-        })
-        if ((global as any).activeTerminalPty === ptyProc) {
-          (global as any).activeTerminalPty = null
-        }
+        mainWindow?.webContents.send('terminal:onPtyExit', { sessionId, exitCode: exitCode || 0 })
+        mainWindow?.webContents.send('term:pty-exit', { sessionId, exitCode: exitCode || 0 })
+        // 自动清理
+        activeTerminalSessions.delete(sessionId)
       })
 
-        // 全局持有一份引用，供下面的写入和关闭使用
-        ; (global as any).activeTerminalPty = ptyProc
+      ptyProc.on('error', (err) => {
+        console.error('PTY 进程错误:', err)
+        activeTerminalSessions.delete(sessionId)
+      })
 
-      return sessionId // 必须向 Vue 返回这个 sid，否则前端无法锁定通道
-    } catch (err) {
-      console.error('PTY 管道建立彻底失败:', err)
+      return sessionId
+    } catch (err: any) {
+      console.error('PTY 启动失败:', err)
       return null
     }
-  })
+  }
 
-  // 🌟 3. 处理用户在终端敲击键盘向 OpenClaw 输送凭证 / 验证码
-  ipcMain.handle('term:pty-input', (_e, sid: string, data: string) => {
-    const ptyProc = (global as any).activeTerminalPty
-    if (ptyProc && ptyProc.stdin && ptyProc.stdin.writable) {
-      ptyProc.stdin.write(data)
+  ipcMain.handle('terminal:startPty', handleStartPty)
+  ipcMain.handle('term:pty-start', handleStartPty)
+
+  /**
+   * 向 PTY 写入输入
+   */
+  const handlePtyInput = (_e: any, sessionId: string, data: string) => {
+    // 优先使用 sessionId 查找，如果没有提供 sessionId 或找不到，则兼容旧逻辑（查找最后一个）
+    let proc: ChildProcessWithoutNullStreams | undefined
+
+    if (sessionId && activeTerminalSessions.has(sessionId)) {
+      proc = activeTerminalSessions.get(sessionId)?.process
     }
-  })
 
- // 🌟 4. 处理前端点击 “🛑 停止交互” 强制杀死微信等常驻流进程
-  ipcMain.handle('term:pty-stop', (_e, sid: string) => {
-    const ptyProc = (global as any).activeTerminalPty
-    
-    if (ptyProc) {
-      try {
-        // 1. 优先使用原生的标准 kill() 方法（不带参数，默认发送 SIGTERM 优雅退出）
-        if (typeof ptyProc.kill === 'function') {
-          ptyProc.kill() 
-        } 
-        // 2. 备用保底方案：如果上面没杀死且 pid 存在，利用系统的 process.kill 强制拔线
-        else if (ptyProc.pid) {
-          process.kill(ptyProc.pid, 'SIGKILL')
+    // 兼容旧代码：如果没有 sessionId 或者前端没传对，尝试找任意一个活跃进程（不推荐，但为了兼容）
+    if (!proc && activeTerminalSessions.size > 0) {
+      const firstKey = activeTerminalSessions.keys().next().value
+      if (firstKey) proc = activeTerminalSessions.get(firstKey)?.process
+    }
+
+    if (proc && proc.stdin && !proc.stdin.destroyed) {
+      proc.stdin.write(data)
+    }
+  }
+
+  ipcMain.handle('terminal:inputPty', handlePtyInput)
+  ipcMain.handle('term:pty-input', handlePtyInput)
+
+  /**
+   * 停止 PTY 会话
+   */
+  const handleStopPty = (_e: any, sessionId: string) => {
+    // 如果前端传了 sessionId，杀特定的；否则杀所有的（兼容旧逻辑）
+    if (sessionId && activeTerminalSessions.has(sessionId)) {
+      return killTerminalSession(sessionId)
+    }
+
+    // 兼容旧的全局变量逻辑或无 ID 情况
+    killAllTerminalSessions()
+    return true
+  }
+
+  ipcMain.handle('terminal:stopPty', handleStopPty)
+  ipcMain.handle('term:pty-stop', handleStopPty)
+
+  // 空实现保底
+  ipcMain.handle('terminal:removeListeners', () => true)
+  ipcMain.handle('term:pty-resize', (_e, sid: string, cols: number, rows: number) => {
+    // 如果需要支持 resize，这里应该查找进程并发送 SIGWINCH 或使用 pty.js 的 resize 方法
+    // 目前 spawn 的标准子进程不支持动态 resize，除非使用 node-pty
+    return true
+  })
+  ipcMain.handle('test-connection', async (_, config) => {
+    try {
+      const response = await fetch(
+        `${config.baseUrl}/models`,
+        {
+          headers: {
+            Authorization: `Bearer ${config.apiKey}`
+          }
         }
-        console.log('[PTY] 交互式终端子进程已成功强制杀死。')
-      } catch (err: any) {
-        console.error('[PTY] 尝试杀死终端子进程时出现温和异常(可能进程已提前退出):', err.message)
-      } finally {
-        // 无论如何，清空全局引用，释放内存
-        (global as any).activeTerminalPty = null
+      )
+      const data = await response.json()
+      return {
+        success: true,
+        models: data.data.map((m) => m.id)
+      }
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message
       }
     }
-    return true
   })
 
-  // 🌟 5. 窗口大小自适应（空实现保底，防报错）
-  ipcMain.handle('term:pty-resize', (_e, sid: string, cols: number, rows: number) => {
-    return true
-  })
 }
 
 // ─── 推送日志到渲染进程 ────────────────────────────────────────────────────────
 
 function setupLogForwarding(): void {
-  clawManager.on('log', (line: string, type: 'stdout' | 'stderr') => {
-    mainWindow?.webContents.send('claw:log', { line, type, time: Date.now() })
-  })
-  clawManager.on('statusChange', (running: boolean, port?: number) => {
-    mainWindow?.webContents.send('claw:statusChange', { running, port })
-  })
-  downloadManager.on('progress', (progress: DownloadProgress) => {
-    mainWindow?.webContents.send('env:progress', progress)
+  // 确保移除旧监听器以防止重复绑定（如果此函数可能被多次调用）
+  // 由于是在 app.whenReady 中调用一次，通常没问题，但加上保护更好
+
+  const logHandler = (line: string, type: 'stdout' | 'stderr') => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('claw:log', { line, type, time: Date.now() })
+    }
+  }
+
+  const statusHandler = (running: boolean, port?: number) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('claw:statusChange', { running, port })
+    }
+  }
+
+  clawManager.on('log', logHandler)
+  clawManager.on('statusChange', statusHandler)
+
+  downloadManager.on('progress', (progress: any) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('env:progress', progress)
+    }
   })
 }
 
@@ -555,6 +574,11 @@ app.whenReady().then(() => {
   configManager = new ConfigManager()
   clawManager = new ClawManager(configManager)
   downloadManager = new DownloadManager(configManager)
+  channelManager =
+    new ChannelManager(
+      configManager
+    )
+
 
   registerIpcHandlers()
   createWindow()
@@ -572,7 +596,9 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', async () => {
-  app.isQuiting = true
+  ; (app as any).isQuiting = true
+  // 确保在退出前杀死所有子进程，防止孤儿进程
+  killAllTerminalSessions()
   await clawManager.stop()
 })
 

@@ -1,6 +1,7 @@
 import { app } from 'electron'
-import { join, resolve } from 'path'
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { join, resolve, dirname } from 'path'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'fs'
+import { tmpdir } from 'os'
 
 export interface ModelProvider {
   id: string
@@ -28,7 +29,7 @@ const DEFAULT_PROVIDERS: ModelProvider[] = [
     name: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com/v1',
     apiKey: '',
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-flash',
     enabled: true
   },
   {
@@ -105,70 +106,91 @@ const DEFAULT_PROVIDERS: ModelProvider[] = [
   }
 ]
 
-const DEFAULT_CONFIG: AppConfig = {
+// 使用深拷贝函数确保默认配置不会被意外修改
+const getDeepCopyDefaultConfig = (): AppConfig => ({
   activeProvider: 'deepseek',
-  providers: DEFAULT_PROVIDERS,
+  providers: DEFAULT_PROVIDERS.map(p => ({ ...p })),
   port: 3213,
   autoStart: false,
   minimizeToTray: true,
   useChineseMirror: true,
   logLevel: 'info',
   language: 'zh-CN'
-}
+})
+
+const DEFAULT_CONFIG = getDeepCopyDefaultConfig()
+// 固定 token
+const GATEWAY_TOKEN = "https://github.com/bscwdg/umi-claw";
 
 export class ConfigManager {
   private dataDir: string
   private configPath: string
   private config: AppConfig
+  private openClawConfigPath: string
 
   constructor() {
-    // 数据目录：便携模式用 exe 同级目录，否则项目同级目录方便管理
-    // const portable = join(process.execPath, '..', 'data')
-    // console.log('路径是否存在：', existsSync(portable))
-    // this.dataDir = existsSync(portable) ? portable : join(app.getPath('userData'), 'data')
+    // 确定数据目录
     if (app.isPackaged) {
-      // 1. 如果是生产环境（打包后的 exe），数据目录在 exe 所在的同级目录下
-      // app.getPath('exe') 拿到的是 D:\xxx\your-app.exe，它的 dirname 就是安装包/解压包目录
-      this.dataDir = join(resolve(app.getPath('exe'), '..'), 'data')
+      // 生产环境：exe 同级目录下的 data 文件夹
+      const exePath = app.getPath('exe')
+      this.dataDir = join(dirname(exePath), 'data')
     } else {
-      // 2. 如果是开发模式（npm run dev），数据目录就在当前项目的根目录下的 data 文件夹
-      // process.cwd() 在开发时代表你敲击运行命令的那个项目根目录
+      // 开发环境：项目根目录下的 data 文件夹
       this.dataDir = join(process.cwd(), 'data')
     }
-    // ── 🛡️ 安全防御：确保该 data 目录一定存在，不存在就自动创建 ─────────────────
-    if (!existsSync(this.dataDir)) {
-      try {
-        mkdirSync(this.dataDir, { recursive: true })
-        console.log(`[Init] 成功创建本地数据目录: ${this.dataDir}`)
-      } catch (err) {
-        console.error(`[Init] 创建数据目录失败:`, err)
-      }
-    }
-    mkdirSync(this.dataDir, { recursive: true })
+
+    // 初始化目录结构
+    this._ensureDirectories()
+
+    // 设置配置文件路径
     this.configPath = join(this.dataDir, 'config', 'app.json')
-    mkdirSync(join(this.dataDir, 'config'), { recursive: true })
-    mkdirSync(join(this.dataDir, 'config', '.openclaw'), { recursive: true })
-    mkdirSync(join(this.dataDir, 'logs'), { recursive: true })
+    this.openClawConfigPath = join(this.dataDir, 'config', '.openclaw', 'openclaw.json')
 
+    // 加载配置
     this.config = this._load()
-  }
 
-  getConfig(): AppConfig {
-    return { ...this.config }
-  }
-
-  saveConfig(partial: Partial<AppConfig>): AppConfig {
-    this.config = { ...this.config, ...partial }
-    this._persist()
-    // 同步写入 openclaw.json
+    // 初始同步 OpenClaw 配置
     this._syncOpenClawConfig()
-    return this.config
   }
 
+  /**
+   * 获取当前配置的深拷贝，防止外部修改内部状态
+   */
+  getConfig(): AppConfig {
+    return JSON.parse(JSON.stringify(this.config))
+  }
+
+  /**
+   * 保存部分配置更新
+   * @param partial 部分配置对象
+   * @returns 更新后的完整配置
+   */
+  saveConfig(partial: Partial<AppConfig>): AppConfig {
+    // 合并配置
+    this.config = {
+      ...this.config,
+      ...partial,
+      // 特殊处理 providers，确保结构完整
+      providers: partial.providers
+        ? partial.providers
+        : this.config.providers
+    }
+    // 持久化到磁盘
+    // this._persist()
+    // 同步衍生配置
+    this._syncOpenClawConfig()
+
+    return this.getConfig()
+  }
+
+  /**
+   * 重置配置为默认值
+   */
   resetConfig(): AppConfig {
-    this.config = { ...DEFAULT_CONFIG }
-    this._persist()
-    return this.config
+    this.config = getDeepCopyDefaultConfig()
+    // this._persist()
+    this._syncOpenClawConfig()
+    return this.getConfig()
   }
 
   getDataDir(): string {
@@ -179,56 +201,198 @@ export class ConfigManager {
     const platform = process.platform
     const arch = process.arch
     const nodeDir = join(this.dataDir, 'runtime', `node-${platform}-${arch}`)
-    if (platform === 'win32') return join(nodeDir, 'node.exe')
+    if (platform === 'win32') {
+      return join(nodeDir, 'node.exe')
+    }
     return join(nodeDir, 'bin', 'node')
   }
 
+  /**
+   * 确保所有必要的目录存在
+   */
+  private _ensureDirectories(): void {
+    const dirs = [
+      this.dataDir,
+      join(this.dataDir, 'config'),
+      join(this.dataDir, 'config', '.openclaw'),
+      join(this.dataDir, 'logs')
+    ]
+
+    for (const dir of dirs) {
+      if (!existsSync(dir)) {
+        try {
+          mkdirSync(dir, { recursive: true })
+        } catch (err) {
+          console.error(`[ConfigManager] 创建目录失败: ${dir}`, err)
+          // 如果关键目录创建失败，可能需要抛出错误或采取降级策略
+          throw new Error(`Failed to create directory: ${dir}`)
+        }
+      }
+    }
+  }
+
+  /**
+   * 加载配置
+   */
   private _load(): AppConfig {
     try {
       if (existsSync(this.configPath)) {
         const raw = readFileSync(this.configPath, 'utf-8')
-        const saved = JSON.parse(raw)
-        // 合并默认值，确保新字段存在
+        const saved = JSON.parse(raw) as Partial<AppConfig>
+
+        // 验证基本结构，防止损坏的 JSON 导致崩溃
+        if (!saved || typeof saved !== 'object') {
+          throw new Error('Invalid config format')
+        }
+
+        // 合并默认值
+        // 优化：增加对 saved.providers 元素的类型检查，防止脏数据导致崩溃
+        const savedProviders = Array.isArray(saved.providers) ? saved.providers : []
+
+        const mergedProviders = DEFAULT_PROVIDERS.map((def) => {
+          const saved_p = savedProviders.find((p: any) => p && typeof p === 'object' && p.id === def.id)
+          // 如果找到保存的配置且是对象，则合并，否则使用默认值
+          return saved_p ? { ...def, ...saved_p } : def
+        })
+
         return {
           ...DEFAULT_CONFIG,
           ...saved,
-          providers: DEFAULT_PROVIDERS.map((def) => {
-            const saved_p = saved.providers?.find((p: ModelProvider) => p.id === def.id)
-            return saved_p ? { ...def, ...saved_p } : def
-          })
+          providers: mergedProviders
         }
       }
-    } catch { }
-    return { ...DEFAULT_CONFIG }
-  }
-
-  private _persist(): void {
-    writeFileSync(this.configPath, JSON.stringify(this.config, null, 2), 'utf-8')
-  }
-
-  private _syncOpenClawConfig(): void {
-    const provider = this.config.providers.find(
-      (p) => p.id === this.config.activeProvider
-    )
-    if (!provider) return
-
-    const openClawConfig = {
-      llm: {
-        provider: 'openai-compatible',
-        baseURL: provider.baseUrl,
-        apiKey: provider.apiKey,
-        model: provider.model
-      },
-      server: {
-        port: this.config.port
+    } catch (err) {
+      console.warn('[ConfigManager] 加载配置失败，使用默认配置', err)
+      // 备份损坏的文件以便调试
+      try {
+        const backupPath = `${this.configPath}.bak.${Date.now()}`
+        if (existsSync(this.configPath)) {
+          // 修复：使用导入的 copyFileSync 而不是动态 require
+          copyFileSync(this.configPath, backupPath)
+          console.log(`[ConfigManager] 已备份损坏的配置文件至: ${backupPath}`)
+        }
+      } catch (e) {
+        // 忽略备份失败
+        console.error('[ConfigManager] 备份配置文件失败', e)
       }
     }
 
-    const configDir = join(this.dataDir, 'config', '.openclaw')
-    writeFileSync(
-      join(configDir, 'openclaw.json'),
-      JSON.stringify(openClawConfig, null, 2),
-      'utf-8'
+    // 返回全新的默认配置副本
+    return getDeepCopyDefaultConfig()
+  }
+
+  /**
+   * 持久化配置到磁盘 (同步以确保原子性和错误捕获)
+   */
+  // private _syncOpenClawConfig(): void {
+  //   try {
+  //     const activeProvider = this.config.providers.find(
+  //       (p) => p.id === this.config.activeProvider
+  //     )
+
+  //     const openClawConfig = activeProvider
+  //       ? {
+  //         agents: {
+  //           defaults: {
+  //             model: {
+  //               primary: activeProvider.model
+  //             },
+  //             models: {
+  //               [activeProvider.model]: {}
+  //             }
+  //           }
+  //         },
+  //         channels: {},
+  //         skills: {},
+  //         meta: {
+  //           generatedBy: 'claw-desktop',
+  //           generatedAt: new Date().toISOString()
+  //         }
+  //       }
+  //       : {
+  //         channels: {},
+  //         skills: {}
+  //       }
+
+  //     const content = JSON.stringify(openClawConfig, null, 2)
+
+  //     let shouldWrite = true
+
+  //     if (existsSync(this.openClawConfigPath)) {
+  //       try {
+  //         const existingContent = readFileSync(
+  //           this.openClawConfigPath,
+  //           'utf-8'
+  //         )
+
+  //         if (existingContent === content) {
+  //           shouldWrite = false
+  //         }
+  //       } catch { }
+  //     }
+
+  //     if (shouldWrite) {
+  //       writeFileSync(
+  //         this.openClawConfigPath,
+  //         content,
+  //         'utf-8'
+  //       )
+  //     }
+  //   } catch (err: any) {
+  //     console.error(
+  //       '[ConfigManager] 同步 OpenClaw 配置失败:',
+  //       err.message
+  //     )
+  //   }
+  // }
+  private _syncOpenClawConfig(): void {
+    try {
+      const workspacePath = join(
+        this.dataDir,
+        'config',
+        '.openclaw',
+        'workspace'
+      )
+
+      const openClawConfig = {
+        agents: {
+          defaults: {
+            workspace: workspacePath
+          }
+        },
+        gateway: {
+          "mode": "local",
+          "auth": { "mode": "token", "token": GATEWAY_TOKEN },
+        },
+        meta: {
+          lastTouchedVersion: 'latest',
+          lastTouchedAt: new Date().toISOString()
+        }
+      }
+
+      const content = JSON.stringify(
+        openClawConfig,
+        null,
+        2
+      )
+
+      writeFileSync(
+        this.openClawConfigPath,
+        content,
+        'utf-8'
+      )
+    } catch (err: any) {
+      console.error(
+        '[ConfigManager] 同步 OpenClaw 配置失败:',
+        err.message
+      )
+    }
+  }
+
+  getRuntimeDir() {
+    return join(
+      this.getDataDir(),
+      'runtime'
     )
   }
 }

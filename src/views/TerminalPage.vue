@@ -66,9 +66,12 @@ const QUICK_CMDS = [
   { label: "状态 📊", args: ["status"] },
   { label: "版本 ℹ️", args: ["--version"] },
   { label: "健康检查 🩺", args: ["health"] },
+  { label: "修复 🩺", args: ["doctor","--yes"] },
   { label: "查看日志 📝", args: ["logs", "--lines", "30"] },
   { label: "已启技能 🧩", args: ["skills", "list"] },
   { label: "当前渠道 🔌", args: ["channels", "list"] },
+  { label: "Gateway网关状态 🔋", args: ["gateway", "status"] },
+  { label: "停止Gateway网关服务❄", args: ["gateway", "stop"]},
   { label: "帮助 ❓", args: ["--help"] },
 ];
 
@@ -198,7 +201,7 @@ function handleEnter() {
     .split(/\s+/)
     .filter(Boolean);
   // 如果输入的是 onboard / setup / login 或者是微信专有命令，走交互式 PTY
-  const isInteractiveCmd = ["onboard", "setup", "login", "init"].some(
+  const isInteractiveCmd = ["onboard", "setup", "login", "init", "doctor"].some(
     (c) => parts[0] === c
   );
   if (isInteractiveCmd) {
@@ -242,6 +245,16 @@ onUnmounted(() => {
 
 
 <style scoped>
+:deep(.xterm-screen div) {
+    user-select: auto !important;
+    -webkit-user-select: auto !important;  
+    -ms-user-select: auto !important;
+}
+:deep(.xterm) {
+    user-select: auto !important;
+    -webkit-user-select: auto !important;  
+    -ms-user-select: auto !important;
+}
 .terminal-container-page {
   display: flex;
   flex-direction: column;

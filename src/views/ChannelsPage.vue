@@ -1,3 +1,121 @@
+<template>
+  <div class="page channels-page">
+    <div class="page-header">
+      <h2>渠道接入</h2>
+      <p class="page-sub">配置聊天平台，让 AI 助手接入你的消息渠道</p>
+    </div>
+
+    <div class="channels-list">
+      <div
+        v-for="ch in CHANNELS"
+        :key="ch.key"
+        :class="[
+          'channel-card',
+          expanded[ch.key] && 'expanded',
+          isConfigured(ch.key) && 'configured',
+        ]"
+      >
+        <div class="channel-header" @click="toggle(ch.key)">
+          <span class="ch-icon">{{ ch.icon }}</span>
+          <div class="ch-info">
+            <span class="ch-label">{{ ch.label }}</span>
+            <span class="ch-desc">{{ ch.desc }}</span>
+          </div>
+          <span v-if="isConfigured(ch.key)" class="ch-badge">已配置</span>
+          <span class="ch-arrow">{{ expanded[ch.key] ? "▲" : "▼" }}</span>
+        </div>
+
+        <div v-if="expanded[ch.key]" class="channel-form">
+          <div v-for="f in ch.fields" :key="f.id" class="form-group">
+            <label>{{ f.label }}</label>
+            <input
+              v-model="formValues[ch.key][f.id]"
+              type="text"
+              :placeholder="f.placeholder"
+              class="form-input"
+            />
+            <p v-if="f.hint" class="form-hint">
+              {{ f.hint }}
+              <button
+                v-if="f.hintUrl"
+                class="hint-link"
+                @click="onOpenUrl(f.hintUrl)"
+              >
+                {{ f.hintLabel || "查看帮助" }}
+              </button>
+            </p>
+          </div>
+          <div class="docs-row">
+            <button class="docs-btn" @click="onOpenUrl(ch.docsUrl)">
+              📖 查看接入文档
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="save-row">
+      <button class="btn btn-primary" :disabled="saving" @click="save">
+        <span v-if="saving" class="spinner"></span>
+        {{ saving ? "正在保存配置..." : "💾 保存渠道配置" }}
+      </button>
+      <span v-if="savedMsg" class="save-msg">{{ savedMsg }}</span>
+    </div>
+
+    <div class="tip-card">
+      <p>
+        💻 其他渠道（QQ Bot、Telegram、Slack
+        等）可在<strong>终端</strong>页面通过
+        <code>openclaw channels setup</code> 命令添加。
+      </p>
+    </div>
+
+    <div class="weixin-card">
+      <div class="weixin-header">
+        <span class="ch-icon">💚</span>
+        <div class="ch-info">
+          <span class="ch-label">微信（官方插件）</span>
+          <span class="ch-desc"
+            >插件已默认安装，扫码登录即可接入微信，无需 AppID/Secret</span
+          >
+        </div>
+        <button
+          class="docs-btn"
+          @click="
+            onOpenUrl(
+              'https://www.npmjs.com/package/@tencent-weixin/openclaw-weixin'
+            )
+          "
+        >
+          📖 文档
+        </button>
+      </div>
+      <div class="weixin-steps">
+        <div class="weixin-step">
+          <span class="step-num">1</span>
+          <div class="step-body">
+            <div class="step-title">扫码登录</div>
+            <div class="step-desc">
+              切换到「终端」页面，执行登录命令，用手机扫码授权
+            </div>
+            <button class="btn btn-outline-sm" @click="goToWeixinLogin">
+              📱 微信扫码登录
+            </button>
+          </div>
+        </div>
+        <div class="weixin-step">
+          <span class="step-num">2</span>
+          <div class="step-body">
+            <div class="step-title">重启 OpenClaw</div>
+            <div class="step-desc">登录成功后重启服务，微信渠道即可上线</div>
+          </div>
+        </div>
+      </div>
+      <div v-if="weixinMsg" class="weixin-msg">{{ weixinMsg }}</div>
+    </div>
+  </div>
+</template>
+
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 
@@ -235,124 +353,6 @@ async function save() {
   }
 }
 </script>
-
-<template>
-  <div class="page channels-page">
-    <div class="page-header">
-      <h2>渠道接入</h2>
-      <p class="page-sub">配置聊天平台，让 AI 助手接入你的消息渠道</p>
-    </div>
-
-    <div class="channels-list">
-      <div
-        v-for="ch in CHANNELS"
-        :key="ch.key"
-        :class="[
-          'channel-card',
-          expanded[ch.key] && 'expanded',
-          isConfigured(ch.key) && 'configured',
-        ]"
-      >
-        <div class="channel-header" @click="toggle(ch.key)">
-          <span class="ch-icon">{{ ch.icon }}</span>
-          <div class="ch-info">
-            <span class="ch-label">{{ ch.label }}</span>
-            <span class="ch-desc">{{ ch.desc }}</span>
-          </div>
-          <span v-if="isConfigured(ch.key)" class="ch-badge">已配置</span>
-          <span class="ch-arrow">{{ expanded[ch.key] ? "▲" : "▼" }}</span>
-        </div>
-
-        <div v-if="expanded[ch.key]" class="channel-form">
-          <div v-for="f in ch.fields" :key="f.id" class="form-group">
-            <label>{{ f.label }}</label>
-            <input
-              v-model="formValues[ch.key][f.id]"
-              type="text"
-              :placeholder="f.placeholder"
-              class="form-input"
-            />
-            <p v-if="f.hint" class="form-hint">
-              {{ f.hint }}
-              <button
-                v-if="f.hintUrl"
-                class="hint-link"
-                @click="onOpenUrl(f.hintUrl)"
-              >
-                {{ f.hintLabel || "查看帮助" }}
-              </button>
-            </p>
-          </div>
-          <div class="docs-row">
-            <button class="docs-btn" @click="onOpenUrl(ch.docsUrl)">
-              📖 查看接入文档
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="save-row">
-      <button class="btn btn-primary" :disabled="saving" @click="save">
-        <span v-if="saving" class="spinner"></span>
-        {{ saving ? "正在保存配置..." : "💾 保存渠道配置" }}
-      </button>
-      <span v-if="savedMsg" class="save-msg">{{ savedMsg }}</span>
-    </div>
-
-    <div class="tip-card">
-      <p>
-        💻 其他渠道（QQ Bot、Telegram、Slack
-        等）可在<strong>终端</strong>页面通过
-        <code>openclaw channels setup</code> 命令添加。
-      </p>
-    </div>
-
-    <div class="weixin-card">
-      <div class="weixin-header">
-        <span class="ch-icon">💚</span>
-        <div class="ch-info">
-          <span class="ch-label">微信（官方插件）</span>
-          <span class="ch-desc"
-            >插件已默认安装，扫码登录即可接入微信，无需 AppID/Secret</span
-          >
-        </div>
-        <button
-          class="docs-btn"
-          @click="
-            onOpenUrl(
-              'https://www.npmjs.com/package/@tencent-weixin/openclaw-weixin'
-            )
-          "
-        >
-          📖 文档
-        </button>
-      </div>
-      <div class="weixin-steps">
-        <div class="weixin-step">
-          <span class="step-num">1</span>
-          <div class="step-body">
-            <div class="step-title">扫码登录</div>
-            <div class="step-desc">
-              切换到「终端」页面，执行登录命令，用手机扫码授权
-            </div>
-            <button class="btn btn-outline-sm" @click="goToWeixinLogin">
-              📱 微信扫码登录
-            </button>
-          </div>
-        </div>
-        <div class="weixin-step">
-          <span class="step-num">2</span>
-          <div class="step-body">
-            <div class="step-title">重启 OpenClaw</div>
-            <div class="step-desc">登录成功后重启服务，微信渠道即可上线</div>
-          </div>
-        </div>
-      </div>
-      <div v-if="weixinMsg" class="weixin-msg">{{ weixinMsg }}</div>
-    </div>
-  </div>
-</template>
 
 <style scoped>
 .channels-page {

@@ -17,7 +17,6 @@ const api = {
     restart: () => ipcRenderer.invoke('claw:restart'),
     status: () => ipcRenderer.invoke('claw:status'),
     openWeb: () => ipcRenderer.invoke('claw:openWeb'),
-
     // 事件监听
     onLog: (cb: (data: { line: string; type: string; time: number }) => void) => {
       const handler = (_: unknown, data: any) => cb(data)
@@ -30,7 +29,7 @@ const api = {
       return () => ipcRenderer.off('claw:statusChange', handler)
     },
     // 获取token
-    getToken: () => ipcRenderer.invoke('claw:get-token')
+    getToken: () => ipcRenderer.invoke('claw:get-token'),
   },
 
   // 配置
@@ -39,7 +38,8 @@ const api = {
     save: (config: any) => ipcRenderer.invoke('config:save', config),
     reset: () => ipcRenderer.invoke('config:reset'),
     getDataDir: () => ipcRenderer.invoke('config:getDataDir'),
-    openDataDir: () => ipcRenderer.invoke('config:openDataDir')
+    openDataDir: () => ipcRenderer.invoke('config:openDataDir'),
+    testConnection: (config) => ipcRenderer.invoke('test-connection', config)
   },
 
   // 环境
@@ -74,6 +74,11 @@ const api = {
 
   dialog: {
     showMessage: (options: any) => ipcRenderer.invoke('dialog:showMessage', options)
+  },
+  // 渠道
+  channels: {
+
+   
   },
   // 终端
   terminal: {

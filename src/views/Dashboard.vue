@@ -169,6 +169,15 @@ function showToast(msg: string, type: 'success' | 'error') {
   setTimeout(() => (toast.value = null), 2500)
 }
 async function handleStart() {
+  // 先去读取激活的模型api看是否存在不存在则失败
+  const activeApi = configStore.config?.providers.find(
+    (p) => p.id === configStore.config?.activeProvider
+  )?.apiKey
+  console.log(activeApi,'activeApi')
+  if(!activeApi){
+    errorMsg.value = '启动失败,请先初始化环境并到模型配置配置激活模型的apiKey'
+    return
+  }
   actionLoading.value = true
   errorMsg.value = ''
   const result = await clawStore.start()
@@ -206,14 +215,13 @@ async function handleFetchToken() {
       configStore.config.gatewayToken = res.token
       
       // 3. 触发我们上一轮修复好的 save 方法（强行脱水深拷贝保存，防止克隆报错）
-      await configStore.save()
+      // await configStore.save()
 
       // ⚡️ 4. 核心新增：自动将 Token 写入系统剪贴板
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(res.token)
         showToast('Token 自动同步成功，并已直接复制到剪贴板！📋','success')
       } else {
-        // 兼容低版本环境下的兜底复制方案
         const textarea = document.createElement('textarea')
         textarea.value = res.token
         document.body.appendChild(textarea)
@@ -222,7 +230,6 @@ async function handleFetchToken() {
         document.body.removeChild(textarea)
         showToast('Token 自动同步成功，并已复制到剪贴板！📋','success')
       }
-      
       // showToast('Token 自动同步并保存成功！', 'success')
     } else {
       errorMsg.value = `获取失败: ${res.error || '未知错误'}`
