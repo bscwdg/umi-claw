@@ -39,14 +39,14 @@
               <button
                 v-if="f.hintUrl"
                 class="hint-link"
-                @click="onOpenUrl(f.hintUrl)"
+                @click="openExternalUrl(f.hintUrl)"
               >
                 {{ f.hintLabel || "查看帮助" }}
               </button>
             </p>
           </div>
           <div class="docs-row">
-            <button class="docs-btn" @click="onOpenUrl(ch.docsUrl)">
+            <button class="docs-btn" @click="openExternalUrl(ch.docsUrl)">
               📖 查看接入文档
             </button>
           </div>
@@ -82,7 +82,7 @@
         <button
           class="docs-btn"
           @click="
-            onOpenUrl(
+            openExternalUrl(
               'https://www.npmjs.com/package/@tencent-weixin/openclaw-weixin'
             )
           "
@@ -118,34 +118,30 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
+import { useRouter } from "vue-router"; // 👈 引入 Vue 路由，摆脱 props
 
-// ── 1. 定义 Props 接口 ──────────────────────────────────────────────────
-const props = defineProps<{
-  onSaveChannels: (channels: Record<string, unknown>) => Promise<void>;
-  onGetChannels: () => Promise<Record<string, unknown>>;
-  onOpenUrl: (url: string) => void;
-  onRunCommand: (
-    args: string[]
-  ) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
-  onGoToWeixinLogin?: () => void;
-}>();
-
-// ── 2. 微信专属插件状态 ──────────────────────────────────────────────────
+const router = useRouter();
 const weixinMsg = ref("");
 
-function goToWeixinLogin() {
-  if (props.onGoToWeixinLogin) {
-    props.onGoToWeixinLogin();
+// ── 1. 外部链接调用解耦 ──────────────────────────────────────────────────
+function openExternalUrl(url: string) {
+  if (window.api?.shell?.openExternal) {
+    window.api.shell.openExternal(url);
   } else {
-    weixinMsg.value =
-      "⚠️ 请切换到「终端」页面，点击「💚 微信登录」按钮扫码授权";
-    setTimeout(() => {
-      weixinMsg.value = "";
-    }, 8000);
+    window.open(url, "_blank");
   }
 }
 
-// ── 3. 核心多渠道 Schema 配置 ───────────────────────────────────────────
+// ── 2. 路由无缝跳切微信登录 ───────────────────────────────────────────────
+function goToWeixinLogin() {
+  // 直接通过内置路由对象，带着暗号跳转到终端控制台页面
+  router.push({
+    path: "/terminal", // 👈 如果你的终端控制台路由叫 /console，请改成 /console
+    query: { autoRun: "channels login weixin" },
+  });
+}
+
+// ── 3. 核心多渠道 Schema 配置（保持不变） ───────────────────────────────────
 type ChannelKey = "feishu" | "wechat_mp" | "wecom" | "dingtalk";
 
 interface ChannelConfig {
@@ -269,17 +265,14 @@ const CHANNELS: ChannelConfig[] = [
   },
 ];
 
-// 每个渠道的表单动态响应式网格
 const formValues = ref<Record<string, Record<string, string>>>({});
-// 卡片折叠/展开状态
 const expanded = ref<Record<string, boolean>>({});
-// 页面全局交互状态
 const saving = ref(false);
 const savedMsg = ref("");
 
 // ── 4. 生命周期与配置初始化 ──────────────────────────────────────────────────
 onMounted(async () => {
-  // 1. 根据 Schema 结构静态初始化内存变量空间
+  // 1. 初始化表单内存空间
   for (const ch of CHANNELS) {
     formValues.value[ch.key] = {};
     for (const f of ch.fields) {
@@ -288,16 +281,20 @@ onMounted(async () => {
     expanded.value[ch.key] = false;
   }
 
-  // 2. 异步加载后端原先已有的配置，并实现自动回填
+  // 2. 直接从 window.api 异步加载后端配置，解决原有 props.onGetChannels 报错
   try {
-    const existing = await props.onGetChannels();
-    for (const ch of CHANNELS) {
-      const cfg = existing[ch.key] as Record<string, unknown> | undefined;
-      if (cfg) {
-        expanded.value[ch.key] = true; // 有配置过的渠道默认展开
-        for (const f of ch.fields) {
-          if (cfg[f.id] !== undefined) {
-            formValues.value[ch.key][f.id] = String(cfg[f.id]);
+    if (window.api?.config?.get) {
+      const config = await window.api.config.get();
+      const existing = config?.channels || {};
+
+      for (const ch of CHANNELS) {
+        const cfg = existing[ch.key] as Record<string, unknown> | undefined;
+        if (cfg) {
+          expanded.value[ch.key] = true; // 有旧配置的默认展开
+          for (const f of ch.fields) {
+            if (cfg[f.id] !== undefined) {
+              formValues.value[ch.key][f.id] = String(cfg[f.id]);
+            }
           }
         }
       }
@@ -322,10 +319,10 @@ async function save() {
   saving.value = true;
   savedMsg.value = "";
   try {
-    const channels: Record<string, unknown> = {};
+    const channelConfigs: Record<string, unknown> = {};
 
     for (const ch of CHANNELS) {
-      // 如果用户没有展开或者显式准备填写的渠道，跳过不往后端提交
+      // 只有被展开或者正在填写的渠道才同步到配置文件中
       if (!expanded.value[ch.key]) continue;
 
       const vals = formValues.value[ch.key];
@@ -336,13 +333,20 @@ async function save() {
         for (const f of ch.fields) {
           entry[f.id] = vals[f.id].trim();
         }
-        channels[ch.key] = entry;
+        channelConfigs[ch.key] = entry;
       }
     }
 
-    // 调用外部传入的解耦保存钩子
-    await props.onSaveChannels(channels);
-    savedMsg.value = "✅ 已保存，重启 OpenClaw 后生效";
+    // 闭环处理保存：先获取完整配置，避免抹除 models/gateway 等其他配置项
+    if (window.api?.config?.get && window.api?.config?.save) {
+      const fullConfig = (await window.api.config.get()) || {};
+      fullConfig.channels = channelConfigs;
+
+      await window.api.config.save(fullConfig);
+      savedMsg.value = "✅ 已保存，重启 OpenClaw 后生效";
+    } else {
+      throw new Error("主进程安全沙箱配置保存 API 不可用");
+    }
   } catch (e) {
     savedMsg.value = `❌ 保存失败: ${e}`;
   } finally {
@@ -354,13 +358,12 @@ async function save() {
 }
 </script>
 
-<style scoped>
+<style lang="less" scoped>
 .channels-page {
   display: flex;
   flex-direction: column;
   gap: 0;
 }
-
 .page-header {
   margin-bottom: 20px;
 }
@@ -374,14 +377,12 @@ async function save() {
   font-size: 0.8rem;
   color: var(--text2);
 }
-
 .channels-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
   margin-bottom: 20px;
 }
-
 .channel-card {
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -395,7 +396,6 @@ async function save() {
 .channel-card.expanded {
   border-color: var(--accent);
 }
-
 .channel-header {
   display: flex;
   align-items: center;
@@ -407,7 +407,6 @@ async function save() {
 .channel-header:hover {
   background: var(--bg3);
 }
-
 .ch-icon {
   font-size: 1.3rem;
   flex-shrink: 0;
@@ -441,7 +440,6 @@ async function save() {
   color: var(--text3);
   flex-shrink: 0;
 }
-
 .channel-form {
   padding: 0 16px 16px;
   border-top: 1px solid var(--border);
@@ -450,7 +448,6 @@ async function save() {
   gap: 12px;
   padding-top: 14px;
 }
-
 .form-group {
   display: flex;
   flex-direction: column;
@@ -490,7 +487,6 @@ async function save() {
 .hint-link:hover {
   color: var(--accent-hover);
 }
-
 .docs-row {
   display: flex;
   justify-content: flex-end;
@@ -510,7 +506,6 @@ async function save() {
   color: var(--text);
   border-color: var(--accent);
 }
-
 .save-row {
   display: flex;
   align-items: center;
@@ -523,7 +518,6 @@ async function save() {
   color: var(--text);
   font-weight: 500;
 }
-
 .btn {
   padding: 9px 20px;
   border-radius: 8px;
@@ -562,7 +556,6 @@ async function save() {
     transform: rotate(360deg);
   }
 }
-
 .tip-card {
   background: color-mix(in srgb, var(--info) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--info) 25%, transparent);
@@ -584,8 +577,6 @@ async function save() {
   color: var(--accent);
   font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
 }
-
-/* 微信特别版卡片样式 */
 .weixin-card {
   border: 1px solid color-mix(in srgb, #10b981 40%, transparent);
   border-radius: 10px;

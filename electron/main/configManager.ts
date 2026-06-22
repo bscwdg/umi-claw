@@ -166,18 +166,24 @@ export class ConfigManager {
    * @returns 更新后的完整配置
    */
   saveConfig(partial: Partial<AppConfig>): AppConfig {
-    // 合并配置
+    // 1. 深度合并基础字段
     this.config = {
       ...this.config,
       ...partial,
-      // 特殊处理 providers，确保结构完整
+      // 2. 安全深拷贝处理 providers
       providers: partial.providers
-        ? partial.providers
+        ? partial.providers.map(p => ({ ...p }))
         : this.config.providers
     }
-    // 持久化到磁盘
-    // this._persist()
-    // 同步衍生配置
+
+    // 3. 必须恢复 app.json 本身的持久化写入
+    try {
+      writeFileSync(this.configPath, JSON.stringify(this.config, null, 2), 'utf-8')
+    } catch (err) {
+      console.error('[ConfigManager] 保存 app.json 失败:', err)
+    }
+
+    // 4. 同步衍生配置
     this._syncOpenClawConfig()
 
     return this.getConfig()
@@ -345,6 +351,9 @@ export class ConfigManager {
   //     )
   //   }
   // }
+  /**
+   * 同步更新 OpenClaw 配置 (采用增量安全合并，不再抹除其他配置项)
+   */
   private _syncOpenClawConfig(): void {
     try {
       const workspacePath = join(
@@ -354,33 +363,59 @@ export class ConfigManager {
         'workspace'
       )
 
-      const openClawConfig = {
-        agents: {
-          defaults: {
-            workspace: workspacePath
+      // 1. 初始化一个兜底的基础骨架
+      let existingConfig: any = {
+        agents: { defaults: {} },
+        gateway: { mode: "local", auth: {} },
+        channels: {}, // 确保核心通道节点不丢失
+        plugins: {}
+      }
+
+      // 2. 如果文件存在，先读取现有的配置（保留微信渠道等生态字段）
+      if (existsSync(this.openClawConfigPath)) {
+        try {
+          const raw = readFileSync(this.openClawConfigPath, 'utf-8')
+          const parsed = JSON.parse(raw)
+          if (parsed && typeof parsed === 'object') {
+            existingConfig = parsed
           }
-        },
-        gateway: {
-          "mode": "local",
-          "auth": { "mode": "token", "token": GATEWAY_TOKEN },
-        },
-        meta: {
-          lastTouchedVersion: 'latest',
-          lastTouchedAt: new Date().toISOString()
+        } catch (e) {
+          console.warn('[ConfigManager] 读取现有 openclaw.json 失败，将使用安全合并策略', e)
         }
       }
 
-      const content = JSON.stringify(
-        openClawConfig,
-        null,
-        2
-      )
+      // 3. 极其精准、局部安全地合并更新我们的配置（不破坏已存在的同级对象）
+      existingConfig.agents = existingConfig.agents || {}
+      existingConfig.agents.defaults = {
+        ...(existingConfig.agents.defaults || {}),
+        workspace: workspacePath
+      }
+
+      existingConfig.gateway = {
+        ...(existingConfig.gateway || {}),
+        mode: "local",
+        auth: {
+          ...(existingConfig.gateway?.auth || {}),
+          mode: "token",
+          token: GATEWAY_TOKEN
+        }
+      }
+
+      existingConfig.meta = {
+        ...(existingConfig.meta || {}),
+        lastTouchedVersion: 'latest',
+        lastTouchedAt: new Date().toISOString()
+      }
+
+      // 4. 将内容序列化并写回
+      const content = JSON.stringify(existingConfig, null, 2)
 
       writeFileSync(
         this.openClawConfigPath,
         content,
         'utf-8'
       )
+      console.log('[ConfigManager] openclaw.json 配置已实现增量平滑同步。')
     } catch (err: any) {
       console.error(
         '[ConfigManager] 同步 OpenClaw 配置失败:',

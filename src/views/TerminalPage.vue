@@ -20,7 +20,7 @@
       <button
         class="q-btn q-btn-weixin"
         :disabled="isRunning || isInteractive"
-        @click="startInteractive(['weixin-login'])"
+        @click="wechatLogin"
       >
         💚 微信登录 (扫码)
       </button>
@@ -66,12 +66,12 @@ const QUICK_CMDS = [
   { label: "状态 📊", args: ["status"] },
   { label: "版本 ℹ️", args: ["--version"] },
   { label: "健康检查 🩺", args: ["health"] },
-  { label: "修复 🩺", args: ["doctor","--yes"] },
+  { label: "修复 🩺", args: ["doctor", "--yes"] },
   { label: "查看日志 📝", args: ["logs", "--lines", "30"] },
   { label: "已启技能 🧩", args: ["skills", "list"] },
   { label: "当前渠道 🔌", args: ["channels", "list"] },
   { label: "Gateway网关状态 🔋", args: ["gateway", "status"] },
-  { label: "停止Gateway网关服务❄", args: ["gateway", "stop"]},
+  { label: "停止Gateway网关服务❄", args: ["gateway", "stop"] },
   { label: "帮助 ❓", args: ["--help"] },
 ];
 
@@ -111,12 +111,46 @@ function initTerm() {
     cursorBlink: true,
     convertEol: true, // 核心修复：自动处理换行不回车的问题
     scrollback: 5000,
+    enableClipboard: true, // 启用复制粘贴
   });
 
   fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
   term.loadAddon(new WebLinksAddon());
   term.open(termEl.value);
+  // 自定义键盘快捷键：复制与粘贴
+  term.attachCustomKeyEventHandler((event) => {
+    const ctrl = event.ctrlKey || event.metaKey; // 支持 Windows 和 Mac
+
+    // ---------- 复制：Ctrl+Shift+C / Cmd+Shift+C ----------
+    if (ctrl && event.shiftKey && (event.key === "c" || event.key === "C")) {
+      const selection = term.getSelection();
+      if (selection) {
+        navigator.clipboard?.writeText(selection).catch((err) => {
+          console.warn("复制失败:", err);
+        });
+      }
+      return false; // 阻止 xterm 默认行为
+    }
+
+    // ---------- 粘贴：Ctrl+Shift+V / Cmd+Shift+V ----------
+    if (ctrl && event.shiftKey && (event.key === "v" || event.key === "V")) {
+      navigator.clipboard
+        ?.readText()
+        .then((text) => {
+          if (text) {
+            term.paste(text);
+          }
+        })
+        .catch((err) => {
+          console.warn("粘贴失败:", err);
+        });
+      return false;
+    }
+
+    // 其他按键继续由 xterm 正常处理（包括 Ctrl+C 中断信号）
+    return true;
+  });
 
   nextTick(() => fitAddon?.fit());
 
@@ -153,6 +187,11 @@ async function runCmd(args: string[]) {
   }
 }
 
+async function wechatLogin() {
+  if (isRunning.value || isInteractive.value) return;
+  await runCmd(['config', 'set', 'plugins.entries.openclaw-weixin.enabled', 'true']);
+  await startInteractive(['channels', 'login', '--channel', 'openclaw-weixin']);
+}
 // ── 激活全双工交互（如微信扫码） ──
 async function startInteractive(args: string[]) {
   if (isRunning.value || isInteractive.value) return;
@@ -246,14 +285,14 @@ onUnmounted(() => {
 
 <style scoped>
 :deep(.xterm-screen div) {
-    user-select: auto !important;
-    -webkit-user-select: auto !important;  
-    -ms-user-select: auto !important;
+  user-select: auto !important;
+  -webkit-user-select: auto !important;
+  -ms-user-select: auto !important;
 }
 :deep(.xterm) {
-    user-select: auto !important;
-    -webkit-user-select: auto !important;  
-    -ms-user-select: auto !important;
+  user-select: auto !important;
+  -webkit-user-select: auto !important;
+  -ms-user-select: auto !important;
 }
 .terminal-container-page {
   display: flex;
@@ -324,6 +363,7 @@ onUnmounted(() => {
   border-radius: 8px 8px 0 0;
   background: #0a0d14;
   padding: 10px;
+  user-select: auto !important;
 }
 :deep(.xterm) {
   height: 100%;

@@ -77,7 +77,6 @@ const api = {
   },
   // 渠道
   channels: {
-
    
   },
   // 终端

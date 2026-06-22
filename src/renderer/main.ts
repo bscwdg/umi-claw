@@ -16,14 +16,14 @@ const router = createRouter({
     { path: '/setup', component: () => import('../views/Setup.vue') },
     { path: '/channelsPage', component: () => import('../views/ChannelsPage.vue') },
     {
-      path: '/channels',
-      name: 'channels',
+      path: '/channelView',
+      name: 'channelView',
       component: () =>
         import(
           '../views/ChannelView.vue'
         )
     },
-    { path: '/terminalPage', component: () => import('../views/TerminalPage.vue') },
+    { path: '/terminal', component: () => import('../views/TerminalPage.vue') },
     { path: '/about', component: () => import('../views/About.vue') }
   ]
 })

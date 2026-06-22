@@ -10,7 +10,7 @@ import {
   session,
   WebContents
 } from 'electron'
-import { join, parse } from 'path'
+import { join, parse, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { ClawManager } from './clawManager'
 import { ConfigManager } from './configManager'
@@ -41,19 +41,28 @@ const activeTerminalSessions = new Map<string, TerminalSession>()
  */
 function getOpenClawRuntimeConfig() {
   const dataDir = configManager.getDataDir()
-  const nodePath = configManager.getNodePath()
-  const targetConfigDir = join(dataDir, 'config', '.openclaw')
+  const nodePath = configManager.getNodePath() // D:\...\data\runtime\node-win32-x64\node.exe
+  const targetConfigDir = join(dataDir, 'config')
   const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js')
 
   // 统一路径分隔符为正斜杠，兼容 Node.js 内部处理
   const safeConfigDir = targetConfigDir.replace(/\\/g, '/')
   const safeDataDir = join(dataDir, 'data').replace(/\\/g, '/')
 
+  // 🌟 核心修复：精准拿到绿色 Node 所在的 bin 目录
+  const nodeBinDir = dirname(nodePath)
+
+  // 🌟 核心修复：拼装跨平台的环境变量隔离，把绿色 Node 目录强行顶到最前面
+  const pathDelimiter = process.platform === 'win32' ? ';' : ':'
+  const systemPath = process.env.PATH || ''
+  const isolatedPath = `${nodeBinDir}${pathDelimiter}${systemPath}`
+
   const env = {
     ...process.env,
-    HOME: safeConfigDir,
-    USERPROFILE: safeConfigDir,
-    OPENCLAW_CONFIG_DIR: safeConfigDir,
+    PATH: isolatedPath,
+    HOME: safeConfigDir,        // 🚀 此时 safeConfigDir 已经变成了 .../config
+    USERPROFILE: safeConfigDir, // 🚀 此时 OpenClaw 的 doctor 会在里面完美建出 .openclaw 且绝不套娃
+    OPENCLAW_CONFIG_DIR: join(targetConfigDir, '.openclaw').replace(/\\/g, '/'), // 🎯 精准指向最终配置夹
     OPENCLAW_DATA_DIR: safeDataDir,
     NODE_ENV: 'production'
   }
@@ -61,7 +70,7 @@ function getOpenClawRuntimeConfig() {
   return {
     nodePath,
     clawJsPath,
-    cwd: join(dataDir, 'openclaw'),
+    cwd: join(dataDir, 'openclaw'), // 已经锁定了工作目录，很棒！
     env,
     targetConfigDir
   }

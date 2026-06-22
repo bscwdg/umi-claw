@@ -332,7 +332,16 @@ export class ClawManager extends EventEmitter {
     if (!this.process) return
 
     this.process.stdout?.on('data', (data: Buffer) => {
-      const lines = data.toString().split('\n').filter(Boolean)
+      const rawChunk = data.toString() // 🌟 保留原始的大块 Buffer 字符串，因为二维码是由多行字符组成的拼图
+
+      // 1. 如果原始流中包含特定的登录、二维码提示或微信初始化关键字
+      if (rawChunk.includes('🔑') || rawChunk.includes('QR') || rawChunk.includes('扫码') || rawChunk.includes('weixin')) {
+        // 🌟 向前端发射一个特定的微信事件，把包含二维码的完整数据块丢给 Vue 界面的 xterm 终端渲染
+        this.emit('weixin:qrcode-stream', rawChunk)
+      }
+
+      // 2. 原有的按行切分日志系统（用于普通的日志面板展示），保持不变
+      const lines = rawChunk.split('\n').filter(Boolean)
       lines.forEach((line) => {
         this._addLog(line, 'stdout')
         this.emit('log', line, 'stdout')
@@ -348,11 +357,7 @@ export class ClawManager extends EventEmitter {
     })
 
     this.process.on('exit', (code, signal) => {
-      this._addLog(
-        `OpenClaw 进程退出 (code=${code}, signal=${signal})`,
-        'system'
-      )
-      // 只有当 process 仍然指向当前实例时才清理，防止旧事件回调干扰新实例
+      this._addLog(`OpenClaw 进程退出 (code=${code}, signal=${signal})`, 'system')
       if (this.process) {
         this.process = null
         this.startedAt = undefined
@@ -363,17 +368,12 @@ export class ClawManager extends EventEmitter {
     this.process.on('error', (err) => {
       this._addLog(`进程错误: ${err.message}`, 'stderr')
       this.emit('log', `进程错误: ${err.message}`, 'stderr')
-      // 发生错误时，通常进程也会退出，但为了保险起见，重置状态
       if (this.process) {
           this.process = null
           this.startedAt = undefined
           this.emit('statusChange', false)
       }
     })
-    
-    // ⚠️ 移除无效的 unhandledRejection 和 uncaughtException 监听
-    // ChildProcess 不会发射这些事件，它们是主进程 process 对象的事件。
-    // 在这里监听它们没有任何作用，反而会造成误解。
   }
 
   private _addLog(line: string, type: LogEntry['type']): void {
@@ -449,6 +449,16 @@ export class ClawManager extends EventEmitter {
 
       // 保持其他配置不变
       config.channels ??= {}
+      if (!config.channels['openclaw-weixin']) {
+        config.channels['openclaw-weixin'] = {
+          "enabled": true, // 👈 默认开启，这样主服务运行 start 时，微信插件会直接在后台苏醒
+          "provider": "@tencent-weixin/openclaw-weixin",
+          "config": {
+            "appId": "",      // 留空，个人微信号或无需参数的 hook 会直接走扫码登录
+            "appSecret": ""
+          }
+        }
+      }
       config.skills ??= {}
       
       // 更新元数据
