@@ -236,6 +236,7 @@ async function testConnection() {
     console.log("res", res);
     testResult.value = res.success ?  `连接成功，发现 ${res.models.length} 个模型` : `❌ HTTP ${res.error}`;
   } catch (e: any) {
+    console.log("res", e);
     testResult.value = "❌ 连接失败";
   } finally {
     testing.value = false;
