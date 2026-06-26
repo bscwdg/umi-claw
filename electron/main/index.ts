@@ -288,6 +288,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle('skills:list', () => clawManager.listSkills())
   ipcMain.handle('skills:install', (_e, skillId) => clawManager.installSkill(skillId))
   ipcMain.handle('skills:uninstall', (_e, skillId) => clawManager.uninstallSkill(skillId))
+  ipcMain.handle('skills:getInstalledSkills', () => configManager.getInstalledSkills());
+  ipcMain.handle('skills:toggleSkillStatus', (event, id, enabled) => configManager.toggleSkillStatus(id, enabled));
+  ipcMain.handle('skills:importSkillZip', async () => {
+    return await configManager.importSkillZip()
+  })
 
   // 外部链接 - 增加简单的协议校验，防止 file:// 等危险协议
   ipcMain.handle('shell:openExternal', (_e, url: string) => {

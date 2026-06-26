@@ -1,6 +1,6 @@
 # 🦞 Umi Claw
 
-> OpenClaw 便携管理工具 — 基于 Electron + Vue3 + Vite 开发
+> OpenClaw 便携管理工具（愿景：简单点，无需复杂安装操作让每个人都能享受ai带来的便利） — 基于 Electron + Vue3 + Vite 开发
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -9,8 +9,8 @@
 - 🚀 **零配置启动** — 首次运行自动下载所需运行时
 - 🖥️ **原生桌面体验** — 自定义标题栏、系统托盘、原生弹窗
 - ⚙️ **完整管理界面** — 图形化配置 OpenClaw、模型、技能
-- 🧩 **10 个内置中文技能** — 开箱即用的中文 AI 能力
-- 🤖 **11 个模型服务商** — DeepSeek、Kimi、通义千问、OpenAI 等
+- 🧩 **内置中文技能** — 开箱即用的中文 AI 能力
+- 🤖 **多个个模型服务商** — DeepSeek、Kimi、通义千问、OpenAI 等
 - 📋 **实时日志监控** — 带过滤、导出功能的日志查看器
 - 💾 **便携模式** — 可放置在 U 盘，数据随身带走
 - 🌐 **国内镜像加速** — npmmirror + GitHub 代理，无需翻墙

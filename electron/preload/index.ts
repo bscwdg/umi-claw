@@ -64,7 +64,10 @@ const api = {
   skills: {
     list: () => ipcRenderer.invoke('skills:list'),
     install: (id: string) => ipcRenderer.invoke('skills:install', id),
-    uninstall: (id: string) => ipcRenderer.invoke('skills:uninstall', id)
+    uninstall: (id: string) => ipcRenderer.invoke('skills:uninstall', id),
+    getInstalledSkills: () => ipcRenderer.invoke('skills:getInstalledSkills'),
+    toggleSkillStatus: (id: string, enabled: boolean) => ipcRenderer.invoke('skills:toggleSkillStatus', id, enabled),
+    importSkillZip: () => ipcRenderer.invoke('skills:importSkillZip'),
   },
 
   // 工具

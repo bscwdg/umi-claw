@@ -1,7 +1,8 @@
-import { app } from 'electron'
-import { join, resolve, dirname } from 'path'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'fs'
+import { app,dialog } from 'electron'
+import { join, resolve, dirname ,basename} from 'path'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'fs'
 import { tmpdir } from 'os'
+import AdmZip from 'adm-zip'
 import { OFFICIAL_MODEL_PRESETS } from './modelConfig'
 
 export interface ModelProvider {
@@ -41,7 +42,7 @@ const DEFAULT_PROVIDERS: ModelProvider[] = [
     name: '豆包 (字节跳动)',
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     apiKey: '',
-    model: 'ep-xxxxxxxxx',
+    model: 'doubao-seed-evolving',
     enabled: false,
     configName: 'DOUBAO_ARK_PROVIDERS'         // 和火山代码计划区分开
   },
@@ -158,6 +159,7 @@ export class ConfigManager {
   private configPath: string
   private config: AppConfig
   private openClawConfigPath: string
+  private portableSkillsDir: string
 
   constructor() {
     // 确定数据目录
@@ -170,12 +172,13 @@ export class ConfigManager {
       this.dataDir = join(process.cwd(), 'data')
     }
 
-    // 初始化目录结构
-    this._ensureDirectories()
-
     // 设置配置文件路径
     this.configPath = join(this.dataDir, 'config', 'app.json')
     this.openClawConfigPath = join(this.dataDir, 'config', '.openclaw', 'openclaw.json')
+    this.portableSkillsDir = join(this.dataDir, 'config', '.openclaw', 'skills')
+    // 初始化目录结构
+    this._ensureDirectories()
+
 
     // 加载配置
     this.config = this._load()
@@ -252,6 +255,7 @@ export class ConfigManager {
       this.dataDir,
       join(this.dataDir, 'config'),
       join(this.dataDir, 'config', '.openclaw'),
+      this.portableSkillsDir,
       join(this.dataDir, 'logs')
     ]
 
@@ -461,19 +465,15 @@ export class ConfigManager {
    */
   private _syncOpenClawConfig(): void {
     try {
-      const workspacePath = join(
-        this.dataDir,
-        'config',
-        '.openclaw',
-        'workspace'
-      )
+      const workspacePath = join(this.dataDir, 'config', '.openclaw', 'workspace')
+      const allowedDataRoot = this.dataDir.replace(/\\/g, '/')
 
-      // 1. 初始化基础骨架（若文件存在则直接读取完整内容，确保不破坏任何已有字段）
       let existingConfig: any = {
         agents: { defaults: {} },
-        gateway: { mode: "local", auth: {} },
+        gateway: { mode: "local", auth: { mode: "token", token: GATEWAY_TOKEN } },
         channels: {},
         plugins: { entries: { "openclaw-weixin": { "enabled": true } } },
+        skills: { entries: {} },
         wizard: {
           "lastRunAt": new Date().toISOString(),
           "lastRunVersion": "2026.6.8",
@@ -489,99 +489,95 @@ export class ConfigManager {
           if (parsed && typeof parsed === 'object') {
             existingConfig = parsed
           }
-        } catch (e) {
-          console.warn('[ConfigManager] 读取现有 openclaw.json 失败', e)
-        }
+        } catch (e) { }
       }
 
-      // 确保核心深层节点安全存在
       existingConfig.agents = existingConfig.agents || {}
       existingConfig.agents.defaults = existingConfig.agents.defaults || {}
       existingConfig.agents.defaults.workspace = workspacePath
       existingConfig.agents.defaults.models = existingConfig.agents.defaults.models || {}
 
+      existingConfig.gateway = existingConfig.gateway || {}
+      existingConfig.gateway.mode = "local"
+      existingConfig.gateway.auth = existingConfig.gateway.auth || {}
+      // existingConfig.gateway.allowedPaths = [ allowedDataRoot ]
+
+      // 🟢 核心修复：强制注入并锁定 token 认证模式与固定令牌
+      existingConfig.gateway.auth = {
+        ...existingConfig.gateway.auth, // 保留可能存在的其他 auth 参数
+        mode: "token",
+        token: GATEWAY_TOKEN            // 强行锁死你的常量密钥
+      }
+
       existingConfig.models = existingConfig.models || {}
       existingConfig.models.mode = "merge"
       existingConfig.models.providers = existingConfig.models.providers || {}
 
-      // 🟢 核心改动 1：遍历前端所有的提供商列表，只要填了 Key 统统写入
+      // 🟢 核心守护：读取旧配置里已经勾选了的 skills 开关，予以保留，绝不抹除
+      existingConfig.skills = existingConfig.skills || {}
+      existingConfig.skills.entries = existingConfig.skills.entries || {}
+
+      // 遍历前端大模型列表写入...
       const allProviders = this.config.providers || []
       for (const p of allProviders) {
         if (!p.apiKey || p.apiKey.trim() === '') {
-          continue // 没填 API Key 的商户直接跳过
+          continue
         }
 
         const presetTemplate = OFFICIAL_MODEL_PRESETS[p.id]
         if (presetTemplate) {
           const officialKey = Object.keys(presetTemplate)[0]
-          const officialBody = JSON.parse(JSON.stringify(presetTemplate[officialKey])) // 深拷贝模板
+          const officialBody = JSON.parse(JSON.stringify(presetTemplate[officialKey]))
 
-          // 注入用户在 UI 界面填写的真实 baseUrl 和 apiKey
           officialBody.baseUrl = p.baseUrl || officialBody.baseUrl
           officialBody.apiKey = p.apiKey
-          
-          // 💡 显式保证关键驱动协议 api 的同步写入，不会丢失
           officialBody.api = officialBody.api || "openai-completions"
 
-          // 增量融合到全局配置
+          // 🟢 进阶融合：如果大模型提供商预设中自带厂商级特定技能（如方舟生图），进行平滑融合，不影响已存在的独立技能
+          if (officialBody.skills) {
+            // 如果预设是老格式，我们在这里帮它平滑兼容一下
+            const incomingSkills = officialBody.skills.entries || officialBody.skills
+            existingConfig.skills.entries = {
+              ...existingConfig.skills.entries,
+              ...incomingSkills
+            }
+          }
+
           existingConfig.models.providers[officialKey] = {
             ...existingConfig.models.providers[officialKey],
             ...officialBody
           }
-          console.log(`[ConfigManager 保存] 成功同步已配置的厂商: ${officialKey}`)
         }
       }
 
-      // 2. 寻找到当前激活的提供商，单独修正 Primary 选中指向
-      const activeProvider = this.config.providers.find(
-        (p) => p.id === this.config.activeProvider
-      )
-
+      // 处理激活模型 Primary 指向...
+      const activeProvider = this.config.providers.find((p) => p.id === this.config.activeProvider)
       if (activeProvider) {
         const pId = activeProvider.id || 'openai'
         const mName = activeProvider.model
         const presetTemplate = OFFICIAL_MODEL_PRESETS[pId]
-
         const officialKey = presetTemplate ? Object.keys(presetTemplate)[0] : pId.toLowerCase()
         const fullModelKey = `${officialKey}/${mName}`
 
-        existingConfig.agents.defaults.model = {
-          primary: fullModelKey
-        }
+        existingConfig.agents.defaults.model = { primary: fullModelKey }
         existingConfig.agents.defaults.models[fullModelKey] = {}
       }
 
-      // 🟢 核心改动 2：清洗容易引发 Zod 报错的非网关标准违规残留字段
-      if (existingConfig.models) {
-        delete existingConfig.models.timeout
-      }
+      if (existingConfig.models) delete existingConfig.models.timeout
       if (existingConfig.plugins) {
         delete existingConfig.plugins.bonjour
         delete (existingConfig.plugins as any)['talk-voice']
       }
 
-      // 3. 同步网关基本信息
-      existingConfig.gateway = {
-        ...(existingConfig.gateway || {}),
-        mode: "local",
-        auth: {
-          ...(existingConfig.gateway?.auth || {}),
-          mode: "token",
-          token: GATEWAY_TOKEN
-        }
-      }
-
-      // 4. 更新元数据时间戳
       existingConfig.meta = {
         ...(existingConfig.meta || {}),
         lastTouchedVersion: 'latest',
         lastTouchedAt: new Date().toISOString()
       }
 
-      // 5. 序列化并安全回写磁盘
       const content = JSON.stringify(existingConfig, null, 2)
       writeFileSync(this.openClawConfigPath, content, 'utf-8')
-      console.log('[ConfigManager] openclaw.json 已经成功于保存时刷新所有带 Key 模型的完整结构。')
+      console.log('[ConfigManager] openclaw.json 大模型与技能状态已安全融合写入。')
     } catch (err: any) {
       console.error('[ConfigManager] 同步 OpenClaw 配置失败:', err.message)
     }
@@ -591,5 +587,202 @@ export class ConfigManager {
       this.getDataDir(),
       'runtime'
     )
+  }
+  /**
+   * 🟢 [方向 A] 供前端 Skills 页面调用：全量扫描本地便携式子目录，解析并返回技能列表
+   */
+  public getInstalledSkills(): Array<{ id: string; name: string; description: string; enabled: boolean }> {
+    const list: any[] = []
+    try {
+      // 1. 安全检查：如果便携目录不存在，直接返回空列表
+      if (!existsSync(this.portableSkillsDir)) {
+        return list
+      }
+
+      // 2. 读取 openclaw.json 里的全局技能开关状态，用来做前端对齐
+      let enabledSkillsMap: Record<string, any> = {}
+      if (existsSync(this.openClawConfigPath)) {
+        try {
+          const raw = readFileSync(this.openClawConfigPath, 'utf-8')
+          const parsed = JSON.parse(raw)
+          // 🟢 核心变动：从 skills.entries 节点获取已启用的映射表
+          enabledSkillsMap = parsed?.skills?.entries || parsed?.skills || {}
+        } catch (e) {
+          console.warn('[ConfigManager] 匹配技能开关时读取 openclaw.json 失败', e)
+        }
+      }
+
+      // 3. 扫描父目录下的所有子文件夹（即每个独立的 Skill 包）
+      const entries = readdirSync(this.portableSkillsDir, { withFileTypes: true })
+
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const skillFolderId = entry.name // 文件夹名作为唯一 ID（例如 "pdf-helper"）
+          const skillMdPath = join(this.portableSkillsDir, skillFolderId, 'SKILL.md')
+
+          // 默认兜底信息，防止某些 Skill 没有写标准声明导致崩溃
+          let skillName = skillFolderId
+          let skillDescription = "暂无描述信息。"
+
+          // 4. 如果根部存在 SKILL.md，开始硬核解析它的 Front Matter
+          if (existsSync(skillMdPath)) {
+            try {
+              const fileContent = readFileSync(skillMdPath, 'utf-8')
+
+              // 使用正则匹配 YAML/Front Matter 中的 name 和 description
+              // 支持三种常见格式：name: xxx、name: "xxx"、name: 'xxx'
+              const nameMatch = fileContent.match(/name:\s*["']?(.*?)["']?(\r?\n|$)/)
+              const descMatch = fileContent.match(/description:\s*["']?(.*?)["']?(\r?\n|$)/)
+
+              if (nameMatch && nameMatch[1]) {
+                skillName = nameMatch[1].trim()
+              }
+              if (descMatch && descMatch[1]) {
+                skillDescription = descMatch[1].trim()
+              }
+            } catch (mdErr) {
+              console.error(`[ConfigManager] 解析 ${skillFolderId}/SKILL.md 失败:`, mdErr)
+            }
+          }
+
+          // 5. 组装成前端开箱即用的标准 JSON 结构
+          list.push({
+            id: skillFolderId,                     // 用于命令行的目录标识
+            name: skillName,                       // 页面显示的技能名称
+            description: skillDescription,         // 页面显示的描述
+            enabled: enabledSkillsMap[skillFolderId]?.enabled ?? false // 默认没在配置里的算关闭
+          })
+        }
+      }
+    } catch (err) {
+      console.error('[ConfigManager] 全量扫描本地 Skill 失败:', err)
+    }
+
+    console.log(`[ConfigManager] 本地 Skills 扫描完成，共找到 ${list.length} 个技能。`)
+    return list
+  }
+  /**
+   * 🟢 供前端 Skills 页面调用：控制某个本地 Skill 的启用/禁用开关
+   * @param skillId 技能的唯一标识（即文件夹名，例如 "pdf-helper"）
+   * @param enabled 目标状态：true 开启，false 关闭
+   */
+  public toggleSkillStatus(skillId: string, enabled: boolean): void {
+    try {
+      // 1. 初始化或读取现有的 openclaw.json 配置
+      let openClawConfig: any = {
+        agents: { defaults: {} },
+        gateway: { mode: "local", auth: {} },
+        channels: {},
+        plugins: { entries: { "openclaw-weixin": { "enabled": true } } },
+        skills: { entries: {} }
+      }
+
+      if (existsSync(this.openClawConfigPath)) {
+        try {
+          const raw = readFileSync(this.openClawConfigPath, 'utf-8')
+          const parsed = JSON.parse(raw)
+          if (parsed && typeof parsed === 'object') {
+            openClawConfig = parsed
+          }
+        } catch (e) {
+          console.warn('[ConfigManager] 读取 openclaw.json 失败，将采用全新骨架覆盖', e)
+        }
+      }
+
+      // 2. 强保障 skills 节点存在
+      openClawConfig.skills = openClawConfig.skills || {}
+      openClawConfig.skills.entries = openClawConfig.skills.entries || {}
+
+      // 🟢 写入到 entries 内部
+      openClawConfig.skills.entries[skillId] = {
+        enabled: enabled
+      }
+      // 4. 安全回写到磁盘
+      writeFileSync(this.openClawConfigPath, JSON.stringify(openClawConfig, null, 2), 'utf-8')
+      console.log(`[ConfigManager] 本地技能 [${skillId}] 状态已成功切换为: ${enabled}`)
+
+    } catch (err) {
+      console.error(`[ConfigManager] 切换技能 [${skillId}] 开关失败:`, err)
+    }
+  }
+
+  /**
+   * 🟢 供前端 Skills 页面调用：弹出文件选择框，选择 zip 包并自动解压到便携 skills 目录
+   */
+  public async importSkillZip(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const { canceled, filePaths } = await dialog.showOpenDialog({
+        title: '选择 OpenClaw 技能压缩包 (.zip)',
+        filters: [{ name: 'Zip Archives', extensions: ['zip'] }],
+        properties: ['openFile']
+      })
+
+      if (canceled || filePaths.length === 0) {
+        return { success: false, error: '用户取消了选择' }
+      }
+
+      const zipPath = filePaths[0]
+      // 获取压缩包本来的文件名（去掉 .zip），作为无根目录时的备用文件夹名
+      const zipFileName = basename(zipPath, '.zip') 
+
+      const zip = new AdmZip(zipPath)
+      const zipEntries = zip.getEntries()
+
+      // 1. 深度扫描：定位 SKILL.md 并摸清它的底层结构
+      let skillMdEntry: any = null
+      let hasParentFolder = false
+      let detectedFolderName = ''
+
+      for (const entry of zipEntries) {
+        if (entry.entryName.endsWith('SKILL.md')) {
+          skillMdEntry = entry
+          const parts = entry.entryName.split('/')
+          // 如果切开大于 1，说明形如 "pdf-helper/SKILL.md"，天然自带了父文件夹
+          if (parts.length > 1 && parts[0] !== '') {
+            hasParentFolder = true
+            detectedFolderName = parts[0]
+          }
+          break
+        }
+      }
+
+      if (!skillMdEntry) {
+        return { success: false, error: '不合法的 Skill 包：未检测到 SKILL.md 文件！' }
+      }
+
+      // 2. 智能化分流解压机制
+      if (hasParentFolder) {
+        // 🔹 情况 A：压缩包本身很规范，里面已经套了文件夹 (如 pdf-helper/SKILL.md)
+        // 直接解压释放到父目录，adm-zip 会完整保留 pdf-helper 文件夹
+        zip.extractAllTo(this.portableSkillsDir, true)
+        console.log(`[ConfigManager] 规范包解压完成，保留了原有目录: ${detectedFolderName}`)
+      } else {
+        // 🔹 情况 B：压缩包不规范，文件全平铺在根部 (如 📂zip根部/SKILL.md)
+        // 我们需要硬核解析出 SKILL.md 里的 name，作为它的专属文件夹名
+        let targetSkillName = zipFileName // 默认用压缩包文件名兜底
+        try {
+          const fileContent = skillMdEntry.getData().toString('utf8')
+          const nameMatch = fileContent.match(/name:\s*["']?(.*?)["']?(\r?\n|$)/)
+          if (nameMatch && nameMatch[1]) {
+            targetSkillName = nameMatch[1].trim() // 精准提取 yaml 里的 name: pdf-helper
+          }
+        } catch (e) {
+          console.warn('[ConfigManager] 从平铺的 SKILL.md 中解析 name 失败，改用压缩包名')
+        }
+
+        // 拼接出它应该去的合规子目录绝对路径：data/config/.openclaw/skills/pdf-helper
+        const finalSkillDir = join(this.portableSkillsDir, targetSkillName)
+        
+        // 强行把整个压缩包的所有内容，解压释放到这个新建的独立子目录下
+        zip.extractAllTo(finalSkillDir, true)
+        console.log(`[ConfigManager] 平铺包解压完成，已自动为其创建合规子目录: ${targetSkillName}`)
+      }
+
+      return { success: true }
+
+    } catch (err: any) {
+      console.error('[ConfigManager] 导入 Skill 压缩包失败:', err)
+      return { success: false, error: err.message || '解压安装过程中发生未知错误' }
+    }
   }
 }
