@@ -8,7 +8,8 @@ import {
   Menu,
   nativeImage,
   session,
-  WebContents
+  WebContents,
+  protocol
 } from 'electron'
 import { join, parse, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -64,7 +65,10 @@ function getOpenClawRuntimeConfig() {
     USERPROFILE: safeConfigDir, // 🚀 此时 OpenClaw 的 doctor 会在里面完美建出 .openclaw 且绝不套娃
     OPENCLAW_CONFIG_DIR: join(targetConfigDir, '.openclaw').replace(/\\/g, '/'), // 🎯 精准指向最终配置夹
     OPENCLAW_DATA_DIR: safeDataDir,
-    NODE_ENV: 'production'
+    NODE_ENV: 'production',
+    LANG: 'zh_CN.UTF-8',
+    LC_ALL: 'zh_CN.UTF-8',
+    PYTHONIOENCODING: 'utf-8'
   }
 
   return {
@@ -165,7 +169,7 @@ function createWindow(): void {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
     mainWindow.webContents.openDevTools()
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    mainWindow.loadURL('app://renderer/index.html')
   }
 }
 
@@ -576,10 +580,72 @@ function setupLogForwarding(): void {
   })
 }
 
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'app',
+    privileges: {
+      standard: true,
+      secure: true,
+      bypassCSP: true,
+      allowServiceWorkers: true,
+      supportFetchAPI: true,
+      corsEnabled: true
+    }
+  }
+])
+if (app.isPackaged) {
+  // 生产环境下，直接写在软件运行根目录的 context-data 文件夹里
+  const customUserDataPath = join(process.resourcesPath, '../context-data')
+  app.setPath('userData', customUserDataPath)
+  app.setPath('sessionData', customUserDataPath)
+} else {
+  // 开发环境下保持默认，或者指向项目内的临时夹
+  app.setPath('userData', join(__dirname, '../../.dev-user-data'))
+}
+
 // ─── App 生命周期 ──────────────────────────────────────────────────────────────
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.clawdesktop.app')
+
+  protocol.handle('app', async (request) => {
+    let urlPath = request.url.replace('app://', '')
+
+    // 如果是根路径，默认指向 index.html
+    if (urlPath === '' || urlPath === '/') {
+      urlPath = 'renderer/index.html'
+    }
+
+    // 去掉 URL 可能带有的参数或哈希（如 index.html?v=123）
+    urlPath = urlPath.split('?')[0].split('#')[0]
+
+    // 精准拼出磁盘绝对路径（此时大家都统一在 dist-electron 目录下）
+    const outDir = join(__dirname, '..')
+    const filePath = join(outDir, urlPath)
+
+    try {
+      // 1. 同步读取文件二进制数据
+      const data = readFileSync(filePath)
+
+      // 2. 动态识别文件扩展名，给予精确的 Content-Type（这对于 Vite 启动的 JS 模块至关重要）
+      const ext = parse(filePath).ext
+      let contentType = 'text/html'
+      if (ext === '.js' || ext === '.mjs') contentType = 'text/javascript'
+      else if (ext === '.css') contentType = 'text/css'
+      else if (ext === '.svg') contentType = 'image/svg+xml'
+      else if (ext === '.json') contentType = 'application/json'
+      else if (ext === '.png') contentType = 'image/png'
+      else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg'
+
+      // 3. 完美组装标准 Web Response 返回
+      return new Response(data, {
+        headers: { 'Content-Type': contentType }
+      })
+    } catch (error) {
+      console.error(`[Protocol] 无法读取文件: ${filePath}`, error)
+      return new Response('Not Found', { status: 404 })
+    }
+  })
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

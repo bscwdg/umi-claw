@@ -10,3 +10,5 @@ openclaw
 runtime
 config
 /.vscode
+/electron-builder-cache
+/.dev-user-data
