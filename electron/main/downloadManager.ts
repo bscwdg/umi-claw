@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events'
 import { join, dirname } from 'path'
-import { existsSync, mkdirSync, createWriteStream, rmSync, writeFileSync, readFileSync, readdirSync, statSync, copyFileSync, renameSync } from 'fs'
+import { existsSync, mkdirSync, createWriteStream, rmSync, writeFileSync, readFileSync, readdirSync, statSync, copyFileSync, renameSync, appendFileSync } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { ConfigManager } from './configManager'
@@ -47,7 +47,6 @@ const DOMESTIC_MIRRORS = [
 
 const GATEWAY_TOKEN = "https://github.com/bscwdg/umi-claw";
 
-// 🌟 建议未来逐步把 "latest" 替换为确定版本号
 const clawVersion = {
   name: "openclaw-runtime",
   version: "1.0.0",
@@ -113,12 +112,31 @@ export class DownloadManager extends EventEmitter {
     this.configManager = configManager
   }
 
+  // 🟢 专门增加的方法：强行把调试日志写入磁盘，解决 console.log 看不到的问题
+  private _writeDebugLog(message: string): void {
+    try {
+      const dataDir = this.configManager.getDataDir();
+      const logDir = join(dataDir, 'logs');
+      if (!existsSync(logDir)) {
+        mkdirSync(logDir, { recursive: true });
+      }
+      const logFile = join(logDir, 'runtime-debug.log');
+      const timeStr = new Date().toISOString();
+      appendFileSync(logFile, `[${timeStr}] ${message}\n`, 'utf-8');
+    } catch (e) {
+      // 保底防止写日志本身挂掉
+    }
+  }
+
   async checkEnvironment(): Promise<EnvInfo> {
     const dataDir = this.configManager.getDataDir()
     const nodePath = this.configManager.getNodePath()
     const clawPath = join(dataDir, 'openclaw', 'node_modules', '.bin', 'openclaw')
     const weixinPluginPath = join(dataDir, 'openclaw', 'node_modules', '@tencent-weixin', 'openclaw-weixin')
-    console.log('weixinPluginPath:', weixinPluginPath)
+
+    this._writeDebugLog(`[CheckEnv] nodePath: ${nodePath}, exist: ${existsSync(nodePath)}`);
+    this._writeDebugLog(`[CheckEnv] clawPath: ${clawPath}, exist: ${existsSync(clawPath)}`);
+
     const info: EnvInfo = {
       nodeInstalled: existsSync(nodePath),
       openClawInstalled: existsSync(clawPath),
@@ -130,7 +148,9 @@ export class DownloadManager extends EventEmitter {
       try {
         const { stdout } = await execAsync(`"${nodePath}" --version`)
         info.nodeVersion = stdout.trim()
-      } catch { }
+      } catch (e: any) {
+        this._writeDebugLog(`[CheckEnv Error] 获取 Node 版本失败: ${e.message}`);
+      }
     }
 
     if (info.openClawInstalled) {
@@ -154,6 +174,8 @@ export class DownloadManager extends EventEmitter {
     const { useMirror = true } = options
     this.abortController = new AbortController()
 
+    this._writeDebugLog('--- 开始初始化环境 ---');
+
     try {
       const info = await this.checkEnvironment()
 
@@ -173,6 +195,7 @@ export class DownloadManager extends EventEmitter {
       this._progress('完成', '恭喜，全套环境初始化部署成功！', 100, true)
       return { success: true }
     } catch (err: any) {
+      this._writeDebugLog(`[InitEnvironment Error] 异常中断: ${err.message}`);
       if (err.name === 'AbortError') {
         return { success: false, error: '用户取消了安装' }
       }
@@ -193,6 +216,8 @@ export class DownloadManager extends EventEmitter {
     const fileName = url.split('/').pop()!
     const destFile = join(dataDir, 'runtime', fileName)
 
+    this._writeDebugLog(`[DownloadNode] 开始下载 Node, URL: ${url}, Dest: ${destFile}`);
+
     this._progress('Node.js', `正在下载内置 Node.js ${NODE_VERSION}...`, 5)
 
     await this._downloadFile(url, destFile, (pct, speed) => {
@@ -204,6 +229,7 @@ export class DownloadManager extends EventEmitter {
 
     try { rmSync(destFile) } catch { }
 
+    this._writeDebugLog(`[DownloadNode Success] Node.js 解压配置成功，存在状态: ${existsSync(this.configManager.getNodePath())}`);
     this._progress('Node.js', 'Node.js 运行时环境配置成功', 20)
   }
 
@@ -211,7 +237,6 @@ export class DownloadManager extends EventEmitter {
     const dataDir = this.configManager.getDataDir();
     const nodePath = this.configManager.getNodePath();
 
-    // 🌟 核心改进 1：优化跨平台的 npm 路径寻找策略
     const nodeBinDir = dirname(nodePath);
     const npmPath = process.platform === 'win32'
       ? join(nodeBinDir, 'npm.cmd')
@@ -227,10 +252,14 @@ export class DownloadManager extends EventEmitter {
       const idx = mirrorIndex !== undefined ? mirrorIndex : 0;
       if (idx >= DOMESTIC_MIRRORS.length) {
         this._progress('部署核心', '❌ 所有指定镜像源安装均尝试失败！', 100);
+        this._writeDebugLog('[InstallOpenClaw Error] 所有镜像源均已尝试，全数失败。');
         throw new Error('渠道及核心依赖安装失败：国内镜像源响应超时，请检查外网连接。');
       }
       activeRegistry = DOMESTIC_MIRRORS[idx];
     }
+
+    this._writeDebugLog(`[InstallOpenClaw] 当前使用的源: ${activeRegistry.name}, 路径: ${activeRegistry.url}`);
+    this._writeDebugLog(`[InstallOpenClaw] 准备调用的 npmPath: ${npmPath}, 存在状态: ${existsSync(npmPath)}`);
 
     if (useMirror && mirrorIndex !== undefined && mirrorIndex > 0) {
       const nodeModulesPath = join(openClawDir, 'node_modules');
@@ -238,8 +267,8 @@ export class DownloadManager extends EventEmitter {
       try {
         if (existsSync(nodeModulesPath)) rmSync(nodeModulesPath, { recursive: true, force: true });
         if (existsSync(lockFilePath)) rmSync(lockFilePath, { force: true });
-      } catch (cleanupErr) {
-        console.error('清理残余失败:', cleanupErr);
+      } catch (cleanupErr: any) {
+        this._writeDebugLog(`[Clean Error] 清理残余失败: ${cleanupErr.message}`);
       }
     }
 
@@ -252,38 +281,61 @@ export class DownloadManager extends EventEmitter {
     const cacheFlag = isOfficial ? '--no-cache' : '--prefer-offline';
     const cmd = `"${npmPath}" install --registry ${activeRegistry.url} ${cacheFlag} --no-audit --no-fund`;
 
+    this._writeDebugLog(`[InstallOpenClaw] 最终执行生成的命令行: ${cmd}`);
+
     this._progress('部署核心', `正在通过 [${activeRegistry.name}] 统一部署核心服务及渠道插件...`, 30);
 
-    // 🌟 核心改进 2：单向递增算法，避免进度条上下乱跳
     let currentPercent = 30;
 
-    const installSuccess = await new Promise<boolean>((resolve, reject) => {
-      const proc = exec(cmd, { cwd: openClawDir });
+   const installSuccess = await new Promise<boolean>((resolve, reject) => {
+      // 1. 注入环境变量，解决找不到 node 命令的根本问题
+      const proc = exec(cmd, { 
+        cwd: openClawDir,
+        env: {
+          ...process.env,
+          PATH: `${nodeBinDir};${process.env.PATH || ''}`
+        }
+      });
+      
       let lastLine = '';
 
-      proc.stdout?.on('data', (d: string) => {
-        lastLine = d.toString().trim();
+      // 🟢 2. 定义安全的智能解码器
+      const decodeChunk = (chunk: any) => {
+        try {
+          const encoding = process.platform === 'win32' ? 'gbk' : 'utf-8';
+          return new TextDecoder(encoding).decode(chunk).trim();
+        } catch {
+          return chunk.toString().trim();
+        }
+      };
+
+      // 🟢 3. 正常输出流解码
+      proc.stdout?.on('data', (d: any) => {
+        lastLine = decodeChunk(d);
         if (currentPercent < 80) {
-          currentPercent += 1; // 每次输出只缓缓向前递增，拒绝随机减小
+          currentPercent += 1; 
         }
         this._progress('部署核心', `[${activeRegistry.name}] ${lastLine.slice(0, 60)}`, currentPercent);
       });
 
-      proc.stderr?.on('data', (d: string) => {
-        lastLine = d.toString().trim();
+      // 🟢 4. 错误输出流解码（精准修复点：把原本的 d: string 改为 d: any，并调用解码器）
+      proc.stderr?.on('data', (d: any) => {
+        lastLine = decodeChunk(d);
+        this._writeDebugLog(`[NPM STDERR] ${lastLine}`);
       });
 
       proc.on('exit', (code) => {
+        this._writeDebugLog(`[NPM EXIT] 进程退出，退出码 (code): ${code}`);
         if (code === 0) resolve(true);
         else {
-          console.warn(`[安装失败] [${activeRegistry.name}] 退出码: ${code}, 错误提示: ${lastLine}`);
+          this._writeDebugLog(`[安装失败详细归档] [${activeRegistry.name}] 退出码: ${code}, 截获最后一行提示: ${lastLine}`);
           if (useMirror) {
             const currentIndex = mirrorIndex !== undefined ? mirrorIndex : 0;
             const nextIndex = currentIndex + 1;
             if (nextIndex >= DOMESTIC_MIRRORS.length) {
               reject(new Error(`❌ 统一部署失败，底层抛出 (code ${code}): ${lastLine}`))
             } else {
-              resolve(false); // 🌟 触发外层的镜像热切换
+              resolve(false); 
             }
           } else {
             reject(new Error(`npm install 运行终止 (code ${code}): ${lastLine}`))
@@ -292,7 +344,6 @@ export class DownloadManager extends EventEmitter {
       });
     });
 
-    // 🌟 核心改进 3：在这里阻断并正确调用递归，实现热切换
     if (!installSuccess) {
       const currentIdx = mirrorIndex !== undefined ? mirrorIndex : 0;
       const nextIdx = currentIdx + 1;
@@ -350,11 +401,11 @@ export class DownloadManager extends EventEmitter {
         const filePath = join(configDir, fileName)
         if (!existsSync(filePath)) {
           writeFileSync(filePath, configContent, 'utf-8')
-          console.log(`[Init] 成功生成保底配置文件: ${fileName}`)
+          this._writeDebugLog(`[Init Config] 成功生成保底配置文件: ${fileName}`);
         }
       })
-    } catch (err) {
-      console.error('❌ 初始化 OpenClaw 配置文件失败:', err)
+    } catch (err: any) {
+      this._writeDebugLog(`[Init Config Error] 初始化配置文件失败: ${err.message}`);
     }
   }
 
@@ -395,7 +446,8 @@ export class DownloadManager extends EventEmitter {
     const platform = process.platform
 
     if (platform === 'win32' && fileName.endsWith('.zip')) {
-      const { default: AdmZip } = await import('adm-zip').catch(() => {
+      const { default: AdmZip } = await import('adm-zip').catch((e) => {
+        this._writeDebugLog(`[Zip Error] 缺少 adm-zip 依赖: ${e.message}`);
         throw new Error('需要 adm-zip 依赖来解压 zip 文件')
       })
       const zip = new AdmZip(file)
