@@ -298,7 +298,6 @@ export class DownloadManager extends EventEmitter {
       });
       
       let lastLine = '';
-
       // 🟢 2. 定义安全的智能解码器
       const decodeChunk = (chunk: any) => {
         try {

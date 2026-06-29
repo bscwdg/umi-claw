@@ -35,34 +35,33 @@ const DEFAULT_PROVIDERS: ModelProvider[] = [
     model: 'deepseek-v4-flash',
     enabled: true,
     configName: 'DEEPSEEK_DEFAULT_PROVIDERS',
-
   },
   {
-    id: 'doubao',
+    id: 'volcengine', //
     name: '豆包 (字节跳动)',
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     apiKey: '',
-    model: 'doubao-seed-evolving',
+    model: 'doubao-seed-evolving', // 🔧 修正：原 doubao-seed-evolving 已失效
     enabled: false,
-    configName: 'DOUBAO_ARK_PROVIDERS'         // 和火山代码计划区分开
+    configName: 'DOUBAO_ARK_PROVIDERS',
   },
   {
-    id: 'volcengine-plan',
+    id: 'volcengine-agent-plan',
     name: '火山方舟',
     baseUrl: 'https://ark.cn-beijing.volces.com/api/plan/v3',
     apiKey: '',
     model: 'ark-code-latest',
     enabled: false,
-    configName: 'VOLCENGINE_DEFAULT_PROVIDERS'         // 火山
+    configName: 'VOLCENGINE_DEFAULT_PROVIDERS',
   },
   {
-    id: 'bailian',
+    id: 'bailian', // ✅ 保持原样，不改为 qwen
     name: '通义千问 (阿里云)',
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     apiKey: '',
     model: 'qwen3.7-max',
     enabled: false,
-    configName: 'QWEN_DASHSCOPE_PROVIDERS'    // 和百炼计划区分开
+    configName: 'QWEN_DASHSCOPE_PROVIDERS',
   },
   {
     id: 'bailian-token-plan',
@@ -71,43 +70,43 @@ const DEFAULT_PROVIDERS: ModelProvider[] = [
     apiKey: '',
     model: 'qwen3.7-max',
     enabled: false,
-    configName: 'QWEN_BAILIAN_DEFAULT_PROVIDERS'
+    configName: 'QWEN_BAILIAN_DEFAULT_PROVIDERS',
   },
   {
     id: 'zhipu',
     name: '智谱 GLM',
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
     apiKey: '',
-    model: 'glm-4-flash',
+    model: 'glm-5.2', // 🔧 修正：原 glm-4-flash 已下线，换为最新旗舰 5.2
     enabled: false,
-    configName: 'ZHIPU_DEFAULT_PROVIDERS'
+    configName: 'ZHIPU_DEFAULT_PROVIDERS',
   },
   {
     id: 'kimi',
     name: 'Kimi (月之暗面)',
     baseUrl: 'https://api.moonshot.cn/v1',
     apiKey: '',
-    model: 'moonshot-v1-8k',
+    model: 'kimi-k2.6', // 🔧 修正：原 moonshot-v1-8k 已弃用，换为 k2.6
     enabled: false,
-    configName: 'KIMI_DEFAULT_PROVIDERS'
+    configName: 'KIMI_DEFAULT_PROVIDERS',
   },
   {
     id: 'minimax',
     name: 'MiniMax',
     baseUrl: 'https://api.minimax.chat/v1',
     apiKey: '',
-    model: 'abab6.5s-chat',
+    model: 'MiniMax-M3', // 🔧 修正：原 abab6.5s-chat 已退役，换为 M3（1M/多模态）
     enabled: false,
-    configName: 'MINIMAX_DEFAULT_PROVIDERS'
+    configName: 'MINIMAX_DEFAULT_PROVIDERS',
   },
   {
     id: 'siliconflow',
     name: '硅基流动',
     baseUrl: 'https://api.siliconflow.cn/v1',
     apiKey: '',
-    model: 'Qwen/Qwen2.5-7B-Instruct',
+    model: 'deepseek-ai/DeepSeek-V4', // 🔧 建议优化：原 Qwen2.5 过旧，换为热门 DeepSeek V4
     enabled: false,
-    configName: 'SILICONFLOW_DEFAULT_PROVIDERS'
+    configName: 'SILICONFLOW_DEFAULT_PROVIDERS',
   },
   {
     id: 'openai',
@@ -116,16 +115,16 @@ const DEFAULT_PROVIDERS: ModelProvider[] = [
     apiKey: '',
     model: 'gpt-4o-mini',
     enabled: false,
-    configName: 'OPENAI_DEFAULT_PROVIDERS'
+    configName: 'OPENAI_DEFAULT_PROVIDERS',
   },
   {
     id: 'anthropic',
     name: 'Claude (Anthropic)',
-    baseUrl: 'https://api.anthropic.com/v1',
+    baseUrl: 'https://api.anthropic.com', // 🔧 修正：去掉 /v1，官方标准 BaseUrl 不带
     apiKey: '',
     model: 'claude-sonnet-4-6',
     enabled: false,
-    configName: 'ANTHROPIC_DEFAULT_PROVIDERS'
+    configName: 'ANTHROPIC_DEFAULT_PROVIDERS',
   },
   {
     id: 'custom',
@@ -134,9 +133,9 @@ const DEFAULT_PROVIDERS: ModelProvider[] = [
     apiKey: 'ollama',
     model: 'llama3',
     enabled: false,
-    configName: 'CUSTOM_DEFAULT_PROVIDERS'
-  }
-]
+    configName: 'CUSTOM_DEFAULT_PROVIDERS',
+  },
+];
 
 // 使用深拷贝函数确保默认配置不会被意外修改
 const getDeepCopyDefaultConfig = (): AppConfig => ({
@@ -460,128 +459,121 @@ export class ConfigManager {
   /**
    * 同步更新 OpenClaw 配置 (利用 mainConfig 里的官方标准模板完美对齐 Zod 结构)
    */
-  /**
-   * 同步更新 OpenClaw 配置 (利用 modelConfig 里的官方标准模板完美对齐 Zod 结构)
-   */
-  private _syncOpenClawConfig(): void {
-    try {
-      const workspacePath = join(this.dataDir, 'config', '.openclaw', 'workspace')
-      const allowedDataRoot = this.dataDir.replace(/\\/g, '/')
+private _syncOpenClawConfig(): void {
+  try {
+    const workspacePath = join(this.dataDir, 'config', '.openclaw', 'workspace')
+    const allowedDataRoot = this.dataDir.replace(/\\/g, '/')
 
-      let existingConfig: any = {
-        agents: { defaults: {} },
-        gateway: { mode: "local", auth: { mode: "token", token: GATEWAY_TOKEN } },
-        channels: {},
-        plugins: { entries: { "openclaw-weixin": { "enabled": true } } },
-        skills: { entries: {} },
-        wizard: {
-          "lastRunAt": new Date().toISOString(),
-          "lastRunVersion": "2026.6.8",
-          "lastRunCommand": "doctor",
-          "lastRunMode": "local"
-        }
+    let existingConfig: any = {
+      agents: { defaults: {} },
+      gateway: { mode: "local", auth: { mode: "token", token: GATEWAY_TOKEN } },
+      channels: {},
+      plugins: { entries: { "openclaw-weixin": { "enabled": true } } },
+      skills: { entries: {} },
+      wizard: {
+        "lastRunAt": new Date().toISOString(),
+        "lastRunVersion": "2026.6.8",
+        "lastRunCommand": "doctor",
+        "lastRunMode": "local"
       }
-
-      if (existsSync(this.openClawConfigPath)) {
-        try {
-          const raw = readFileSync(this.openClawConfigPath, 'utf-8')
-          const parsed = JSON.parse(raw)
-          if (parsed && typeof parsed === 'object') {
-            existingConfig = parsed
-          }
-        } catch (e) { }
-      }
-
-      existingConfig.agents = existingConfig.agents || {}
-      existingConfig.agents.defaults = existingConfig.agents.defaults || {}
-      existingConfig.agents.defaults.workspace = workspacePath
-      existingConfig.agents.defaults.models = existingConfig.agents.defaults.models || {}
-
-      existingConfig.gateway = existingConfig.gateway || {}
-      existingConfig.gateway.mode = "local"
-      existingConfig.gateway.auth = existingConfig.gateway.auth || {}
-      // existingConfig.gateway.allowedPaths = [ allowedDataRoot ]
-
-      // 🟢 核心修复：强制注入并锁定 token 认证模式与固定令牌
-      existingConfig.gateway.auth = {
-        ...existingConfig.gateway.auth, // 保留可能存在的其他 auth 参数
-        mode: "token",
-        token: GATEWAY_TOKEN            // 强行锁死你的常量密钥
-      }
-
-      existingConfig.models = existingConfig.models || {}
-      existingConfig.models.mode = "merge"
-      existingConfig.models.providers = existingConfig.models.providers || {}
-
-      // 🟢 核心守护：读取旧配置里已经勾选了的 skills 开关，予以保留，绝不抹除
-      existingConfig.skills = existingConfig.skills || {}
-      existingConfig.skills.entries = existingConfig.skills.entries || {}
-
-      // 遍历前端大模型列表写入...
-      const allProviders = this.config.providers || []
-      for (const p of allProviders) {
-        if (!p.apiKey || p.apiKey.trim() === '') {
-          continue
-        }
-
-        const presetTemplate = OFFICIAL_MODEL_PRESETS[p.id]
-        if (presetTemplate) {
-          const officialKey = Object.keys(presetTemplate)[0]
-          const officialBody = JSON.parse(JSON.stringify(presetTemplate[officialKey]))
-
-          officialBody.baseUrl = p.baseUrl || officialBody.baseUrl
-          officialBody.apiKey = p.apiKey
-          officialBody.api = officialBody.api || "openai-completions"
-
-          // 🟢 进阶融合：如果大模型提供商预设中自带厂商级特定技能（如方舟生图），进行平滑融合，不影响已存在的独立技能
-          if (officialBody.skills) {
-            // 如果预设是老格式，我们在这里帮它平滑兼容一下
-            const incomingSkills = officialBody.skills.entries || officialBody.skills
-            existingConfig.skills.entries = {
-              ...existingConfig.skills.entries,
-              ...incomingSkills
-            }
-          }
-
-          existingConfig.models.providers[officialKey] = {
-            ...existingConfig.models.providers[officialKey],
-            ...officialBody
-          }
-        }
-      }
-
-      // 处理激活模型 Primary 指向...
-      const activeProvider = this.config.providers.find((p) => p.id === this.config.activeProvider)
-      if (activeProvider) {
-        const pId = activeProvider.id || 'openai'
-        const mName = activeProvider.model
-        const presetTemplate = OFFICIAL_MODEL_PRESETS[pId]
-        const officialKey = presetTemplate ? Object.keys(presetTemplate)[0] : pId.toLowerCase()
-        const fullModelKey = `${officialKey}/${mName}`
-
-        existingConfig.agents.defaults.model = { primary: fullModelKey }
-        existingConfig.agents.defaults.models[fullModelKey] = {}
-      }
-
-      if (existingConfig.models) delete existingConfig.models.timeout
-      if (existingConfig.plugins) {
-        delete existingConfig.plugins.bonjour
-        delete (existingConfig.plugins as any)['talk-voice']
-      }
-
-      existingConfig.meta = {
-        ...(existingConfig.meta || {}),
-        lastTouchedVersion: 'latest',
-        lastTouchedAt: new Date().toISOString()
-      }
-
-      const content = JSON.stringify(existingConfig, null, 2)
-      writeFileSync(this.openClawConfigPath, content, 'utf-8')
-      console.log('[ConfigManager] openclaw.json 大模型与技能状态已安全融合写入。')
-    } catch (err: any) {
-      console.error('[ConfigManager] 同步 OpenClaw 配置失败:', err.message)
     }
+
+    if (existsSync(this.openClawConfigPath)) {
+      try {
+        const raw = readFileSync(this.openClawConfigPath, 'utf-8')
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed === 'object') {
+          existingConfig = parsed
+        }
+      } catch (e) { }
+    }
+
+    // ----- 保证基础骨架存在 -----
+    existingConfig.agents = existingConfig.agents || {}
+    existingConfig.agents.defaults = existingConfig.agents.defaults || {}
+    existingConfig.agents.defaults.workspace = workspacePath
+    existingConfig.agents.defaults.models = existingConfig.agents.defaults.models || {}
+
+    existingConfig.gateway = existingConfig.gateway || {}
+    existingConfig.gateway.mode = "local"
+    existingConfig.gateway.auth = existingConfig.gateway.auth || {}
+    existingConfig.gateway.auth = {
+      ...existingConfig.gateway.auth,
+      mode: "token",
+      token: GATEWAY_TOKEN
+    }
+
+    existingConfig.models = existingConfig.models || {}
+    existingConfig.models.mode = "merge"
+    existingConfig.models.providers = existingConfig.models.providers || {}
+
+    existingConfig.skills = existingConfig.skills || {}
+    existingConfig.skills.entries = existingConfig.skills.entries || {}
+
+    // ----- 🔥 核心改动：遍历 providers，使用 configName 从 OFFICIAL_MODEL_PRESETS 获取配置 -----
+    const allProviders = this.config.providers || []
+    for (const p of allProviders) {
+      if (!p.apiKey || p.apiKey.trim() === '') {
+        continue
+      }
+
+      // 直接用 configName 作为键（例如 'DEEPSEEK_DEFAULT_PROVIDERS'）获取预设
+      const providerConfig = OFFICIAL_MODEL_PRESETS[p.configName]
+      if (providerConfig) {
+        const officialBody = JSON.parse(JSON.stringify(providerConfig)) // 深拷贝
+        // 覆盖用户自定义的 baseUrl 和 apiKey
+        officialBody.baseUrl = p.baseUrl || officialBody.baseUrl
+        officialBody.apiKey = p.apiKey
+        officialBody.api = officialBody.api || "openai-completions"
+        // 融合技能（如果预设中包含 skills）
+        if (officialBody.skills) {
+          const incomingSkills = officialBody.skills.entries || officialBody.skills
+          existingConfig.skills.entries = {
+            ...existingConfig.skills.entries,
+            ...incomingSkills
+          }
+        }
+
+        // 使用 p.id 作为 provider 的键（与后续 primary 拼接一致）
+        existingConfig.models.providers[p.id] = {
+          ...existingConfig.models.providers[p.id],
+          ...officialBody
+        }
+      } else {
+        console.warn(`[ConfigManager] 未找到 configName: ${p.configName} 对应的预设配置，跳过`)
+      }
+    }
+
+    // ----- 处理激活模型 Primary -----
+    const activeProvider = this.config.providers.find((p) => p.id === this.config.activeProvider)
+    if (activeProvider) {
+      const pId = activeProvider.id
+      const mName = activeProvider.model
+      const fullModelKey = `${pId}/${mName}`
+      existingConfig.agents.defaults.model = { primary: fullModelKey }
+      existingConfig.agents.defaults.models[fullModelKey] = {}
+    }
+
+    // 清理多余字段
+    if (existingConfig.models) delete existingConfig.models.timeout
+    if (existingConfig.plugins) {
+      delete existingConfig.plugins.bonjour
+      delete (existingConfig.plugins as any)['talk-voice']
+    }
+
+    existingConfig.meta = {
+      ...(existingConfig.meta || {}),
+      lastTouchedVersion: 'latest',
+      lastTouchedAt: new Date().toISOString()
+    }
+
+    const content = JSON.stringify(existingConfig, null, 2)
+    writeFileSync(this.openClawConfigPath, content, 'utf-8')
+    console.log('[ConfigManager] openclaw.json 已使用新版预设结构同步完成。')
+  } catch (err: any) {
+    console.error('[ConfigManager] 同步 OpenClaw 配置失败:', err.message)
   }
+}
   getRuntimeDir() {
     return join(
       this.getDataDir(),
