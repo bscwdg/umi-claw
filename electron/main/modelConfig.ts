@@ -603,6 +603,30 @@ const ANTHROPIC_DEFAULT_PROVIDERS = {
   },
 };
 
+
+
+const LONGCAT_DEFAULT_PROVIDERS = {
+  "longCat": {
+    "baseUrl": "https://api.longcat.chat/openai",
+    "apiKey": "YOUR_API_KEY",
+    "api": "openai-completions",
+    "authHeader": true,
+    "models": [
+      {
+        "id": "LongCat-2.0",
+        "name": "LongCat-2.0",
+        "reasoning": false,
+        "input": ["text"],
+        "contextWindow": 1048576,
+        "maxTokens": 131072,
+        "compat": {
+          "maxTokensField": "max_tokens"
+        }
+      }
+    ]
+  }
+}
+
 // ===================== 12. 自定义（本地） =====================
 const CUSTOM_DEFAULT_PROVIDERS = {
   custom: {
@@ -637,5 +661,6 @@ export const OFFICIAL_MODEL_PRESETS: Record<string, any> = {
   SILICONFLOW_DEFAULT_PROVIDERS: SILICONFLOW_DEFAULT_PROVIDERS.siliconflow,
   OPENAI_DEFAULT_PROVIDERS: OPENAI_DEFAULT_PROVIDERS.openai,
   ANTHROPIC_DEFAULT_PROVIDERS: ANTHROPIC_DEFAULT_PROVIDERS.anthropic,
+  LONGCAT_DEFAULT_PROVIDERS: LONGCAT_DEFAULT_PROVIDERS.longCat,
   CUSTOM_DEFAULT_PROVIDERS: CUSTOM_DEFAULT_PROVIDERS.custom,
 };

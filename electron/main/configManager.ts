@@ -109,6 +109,15 @@ const DEFAULT_PROVIDERS: ModelProvider[] = [
     configName: 'SILICONFLOW_DEFAULT_PROVIDERS',
   },
   {
+    id: 'longCat',
+    name: '美团',
+    baseUrl: 'https://api.longcat.chat/openai', 
+    apiKey: '',
+    model: 'LongCat-2.0',
+    enabled: false,
+    configName: 'LONGCAT_DEFAULT_PROVIDERS',
+  },
+  {
     id: 'openai',
     name: 'OpenAI',
     baseUrl: 'https://api.openai.com/v1',
