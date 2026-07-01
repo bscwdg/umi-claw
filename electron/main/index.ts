@@ -177,7 +177,9 @@ function createTray(): void {
   // 增加图标加载的错误处理，防止因图标缺失导致崩溃
   let icon: Electron.NativeImage
   try {
-    const iconPath = join(__dirname, '../../resources/tray.png')
+    const iconPath = app.isPackaged
+      ? join(process.resourcesPath, 'resources', 'tray.png')
+      : join(__dirname, '../../resources/tray.png')
     if (!existsSync(iconPath)) {
       //  fallback 或者使用默认图标，这里假设必须存在，若不存在则使用空图像防止崩溃
       console.warn('Tray icon not found at:', iconPath)
