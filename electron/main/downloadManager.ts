@@ -1,10 +1,11 @@
 import { EventEmitter } from 'events'
-import { join, dirname } from 'path'
+import { join, dirname, delimiter as pathDelimiter } from 'path'
 import { existsSync, mkdirSync, createWriteStream, rmSync, writeFileSync, readFileSync, readdirSync, statSync, copyFileSync, renameSync, appendFileSync } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
+import { Readable, Transform } from 'stream'
+import { pipeline } from 'stream/promises'
 import { ConfigManager } from './configManager'
-import path from 'path'
 
 const execAsync = promisify(exec)
 
@@ -79,8 +80,8 @@ function copyDir(src: string, dest: string) {
     mkdirSync(dest, { recursive: true })
   }
   for (const file of readdirSync(src)) {
-    const s = path.join(src, file)
-    const d = path.join(dest, file)
+    const s = join(src, file)
+    const d = join(dest, file)
     if (statSync(s).isDirectory()) {
       copyDir(s, d)
     } else {
@@ -249,19 +250,19 @@ export class DownloadManager extends EventEmitter {
     if (!useMirror) {
       activeRegistry = OFFICIAL_REGISTRY;
     } else {
-      const idx = mirrorIndex !== undefined ? mirrorIndex : 0;
-      if (idx >= DOMESTIC_MIRRORS.length) {
+      const currentIdx = mirrorIndex ?? 0;
+      if (currentIdx >= DOMESTIC_MIRRORS.length) {
         this._progress('部署核心', '❌ 所有指定镜像源安装均尝试失败！', 100);
         this._writeDebugLog('[InstallOpenClaw Error] 所有镜像源均已尝试，全数失败。');
         throw new Error('渠道及核心依赖安装失败：国内镜像源响应超时，请检查外网连接。');
       }
-      activeRegistry = DOMESTIC_MIRRORS[idx];
+      activeRegistry = DOMESTIC_MIRRORS[currentIdx];
     }
 
     this._writeDebugLog(`[InstallOpenClaw] 当前使用的源: ${activeRegistry.name}, 路径: ${activeRegistry.url}`);
     this._writeDebugLog(`[InstallOpenClaw] 准备调用的 npmPath: ${npmPath}, 存在状态: ${existsSync(npmPath)}`);
 
-    if (useMirror && mirrorIndex !== undefined && mirrorIndex > 0) {
+    if (useMirror && (mirrorIndex ?? 0) > 0) {
       const nodeModulesPath = join(openClawDir, 'node_modules');
       const lockFilePath = join(openClawDir, 'package-lock.json');
       try {
@@ -289,14 +290,14 @@ export class DownloadManager extends EventEmitter {
 
    const installSuccess = await new Promise<boolean>((resolve, reject) => {
       // 1. 注入环境变量，解决找不到 node 命令的根本问题
-      const proc = exec(cmd, { 
+      const proc = exec(cmd, {
         cwd: openClawDir,
         env: {
           ...process.env,
-          PATH: `${nodeBinDir};${process.env.PATH || ''}`
+          PATH: `${nodeBinDir}${pathDelimiter}${process.env.PATH || ''}`
         }
       });
-      
+
       let lastLine = '';
       // 🟢 2. 定义安全的智能解码器
       const decodeChunk = (chunk: any) => {
@@ -312,7 +313,7 @@ export class DownloadManager extends EventEmitter {
       proc.stdout?.on('data', (d: any) => {
         lastLine = decodeChunk(d);
         if (currentPercent < 80) {
-          currentPercent += 1; 
+          currentPercent += 1;
         }
         this._progress('部署核心', `[${activeRegistry.name}] ${lastLine.slice(0, 60)}`, currentPercent);
       });
@@ -323,18 +324,23 @@ export class DownloadManager extends EventEmitter {
         this._writeDebugLog(`[NPM STDERR] ${lastLine}`);
       });
 
+      // 5. spawn 失败兜底：进程根本没起来时 exit 不会触发，必须监听 error，否则 Promise 永不 settle
+      proc.on('error', (err) => {
+        this._writeDebugLog(`[NPM Spawn Error] 进程启动失败: ${err.message}`);
+        reject(new Error(`npm 进程启动失败: ${err.message}`));
+      });
+
       proc.on('exit', (code) => {
         this._writeDebugLog(`[NPM EXIT] 进程退出，退出码 (code): ${code}`);
         if (code === 0) resolve(true);
         else {
           this._writeDebugLog(`[安装失败详细归档] [${activeRegistry.name}] 退出码: ${code}, 截获最后一行提示: ${lastLine}`);
           if (useMirror) {
-            const currentIndex = mirrorIndex !== undefined ? mirrorIndex : 0;
-            const nextIndex = currentIndex + 1;
+            const nextIndex = (mirrorIndex ?? 0) + 1;
             if (nextIndex >= DOMESTIC_MIRRORS.length) {
               reject(new Error(`❌ 统一部署失败，底层抛出 (code ${code}): ${lastLine}`))
             } else {
-              resolve(false); 
+              resolve(false);
             }
           } else {
             reject(new Error(`npm install 运行终止 (code ${code}): ${lastLine}`))
@@ -344,8 +350,7 @@ export class DownloadManager extends EventEmitter {
     });
 
     if (!installSuccess) {
-      const currentIdx = mirrorIndex !== undefined ? mirrorIndex : 0;
-      const nextIdx = currentIdx + 1;
+      const nextIdx = (mirrorIndex ?? 0) + 1;
       this._progress('部署核心', `⚠️ 当前镜像源异常，正在为您自动热切换到下一个备用国内源...`, 30);
       return await this._installOpenClaw(true, nextIdx);
     }
@@ -394,15 +399,11 @@ export class DownloadManager extends EventEmitter {
         "models": { "timeout": 30000 }
       }
       const configContent = JSON.stringify(fullSecureConfig, null, 2)
-      const targetFiles = ['openclaw.json']
-
-      targetFiles.forEach(fileName => {
-        const filePath = join(configDir, fileName)
-        if (!existsSync(filePath)) {
-          writeFileSync(filePath, configContent, 'utf-8')
-          this._writeDebugLog(`[Init Config] 成功生成保底配置文件: ${fileName}`);
-        }
-      })
+      const filePath = join(configDir, 'openclaw.json')
+      if (!existsSync(filePath)) {
+        writeFileSync(filePath, configContent, 'utf-8')
+        this._writeDebugLog('[Init Config] 成功生成保底配置文件: openclaw.json');
+      }
     } catch (err: any) {
       this._writeDebugLog(`[Init Config Error] 初始化配置文件失败: ${err.message}`);
     }
@@ -415,30 +416,30 @@ export class DownloadManager extends EventEmitter {
   ): Promise<void> {
     const response = await fetch(url, { signal: this.abortController?.signal })
     if (!response.ok) throw new Error(`下载失败: HTTP ${response.status}`)
+    if (!response.body) throw new Error('下载失败: 响应无内容流')
+
     const total = Number(response.headers.get('content-length') || 0)
     let downloaded = 0
     let lastTime = Date.now()
     let lastBytes = 0
-    const writer = createWriteStream(dest)
-    const reader = response.body!.getReader()
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      writer.write(value)
-      downloaded += value.length
-
-      const now = Date.now()
-      if (now - lastTime > 500) {
-        const speed = ((downloaded - lastBytes) / ((now - lastTime) / 1000) / 1024 / 1024).toFixed(1)
-        const pct = total ? downloaded / total : 0
-        onProgress?.(pct, `${speed} MB/s`)
-        lastTime = now
-        lastBytes = downloaded
+    // 通过 Transform 流统计已下载字节并节流上报进度，pipeline 自动处理背压与异常销毁
+    const counter = new Transform({
+      transform(chunk, _encoding, callback) {
+        downloaded += chunk.length
+        const now = Date.now()
+        if (now - lastTime > 500) {
+          const speed = ((downloaded - lastBytes) / ((now - lastTime) / 1000) / 1024 / 1024).toFixed(1)
+          const pct = total ? downloaded / total : 0
+          onProgress?.(pct, `${speed} MB/s`)
+          lastTime = now
+          lastBytes = downloaded
+        }
+        callback(null, chunk)
       }
-    }
+    })
 
-    await new Promise<void>((res, rej) => writer.end((err?: Error) => err ? rej(err) : res()))
+    await pipeline(Readable.fromWeb(response.body as any), counter, createWriteStream(dest))
   }
 
   private async _extractArchive(file: string, outDir: string, finalDir: string, fileName: string): Promise<void> {
