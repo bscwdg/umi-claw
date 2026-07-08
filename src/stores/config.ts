@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia'
+﻿import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 export interface ModelProvider {
@@ -8,6 +8,18 @@ export interface ModelProvider {
   apiKey: string
   model: string
   enabled: boolean
+  configName?: string
+  customModels?: PresetModel[]
+}
+
+export interface PresetModel {
+  id: string
+  name?: string
+  reasoning?: boolean
+  input?: string[]
+  contextWindow?: number
+  maxTokens?: number
+  [key: string]: any
 }
 
 export interface AppConfig {

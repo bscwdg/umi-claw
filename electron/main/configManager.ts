@@ -1,9 +1,21 @@
-import { app,dialog } from 'electron'
+﻿import { app,dialog } from 'electron'
 import { join, resolve, dirname ,basename} from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'fs'
 import { tmpdir } from 'os'
 import AdmZip from 'adm-zip'
 import { OFFICIAL_MODEL_PRESETS } from './modelConfig'
+
+export interface PresetModel {
+  id: string
+  name?: string
+  reasoning?: boolean
+  input?: string[]
+  contextWindow?: number
+  maxTokens?: number
+  cost?: { input: number; output: number; cacheRead: number; cacheWrite: number }
+  compat?: Record<string, any>
+  [key: string]: any
+}
 
 export interface ModelProvider {
   id: string
@@ -13,6 +25,7 @@ export interface ModelProvider {
   model: string
   enabled: boolean,
   configName: string,
+  customModels?: PresetModel[]
 }
 
 export interface AppConfig {
@@ -243,6 +256,19 @@ export class ConfigManager {
 
   getDataDir(): string {
     return this.dataDir
+  }
+
+  /**
+   * 读取 modelConfig.ts 中某个服务商的官方预设模型列表
+   * @param configName 例如 'DEEPSEEK_DEFAULT_PROVIDERS'
+   * @returns 模型数组 [{ id, name, contextWindow, maxTokens, input, reasoning }]
+   */
+  getPresetModels(configName: string): Array<Record<string, any>> {
+    const preset = OFFICIAL_MODEL_PRESETS[configName]
+    if (!preset || !Array.isArray(preset.models)) {
+      return []
+    }
+    return JSON.parse(JSON.stringify(preset.models))
   }
 
   getNodePath(): string {
@@ -534,6 +560,21 @@ private _syncOpenClawConfig(): void {
         officialBody.baseUrl = p.baseUrl || officialBody.baseUrl
         officialBody.apiKey = p.apiKey
         officialBody.api = officialBody.api || "openai-completions"
+        // 合并用户自定义模型（去重，自定义覆盖同 id 预设）
+        if (Array.isArray(p.customModels) && p.customModels.length) {
+          const baseModels = Array.isArray(officialBody.models) ? officialBody.models : []
+          const merged = [...baseModels]
+          for (const cm of p.customModels) {
+            if (!cm || !cm.id) continue
+            const idx = merged.findIndex((m: any) => m && m.id === cm.id)
+            if (idx >= 0) {
+              merged[idx] = { ...merged[idx], ...cm }
+            } else {
+              merged.push(cm)
+            }
+          }
+          officialBody.models = merged
+        }
         // 融合技能（如果预设中包含 skills）
         if (officialBody.skills) {
           const incomingSkills = officialBody.skills.entries || officialBody.skills

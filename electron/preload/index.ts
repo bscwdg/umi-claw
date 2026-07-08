@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+﻿import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 console.log('✅ preload loaded')
 // 完整类型化的 API
@@ -39,7 +39,9 @@ const api = {
     reset: () => ipcRenderer.invoke('config:reset'),
     getDataDir: () => ipcRenderer.invoke('config:getDataDir'),
     openDataDir: () => ipcRenderer.invoke('config:openDataDir'),
-    testConnection: (config) => ipcRenderer.invoke('test-connection', config)
+    testConnection: (config) => ipcRenderer.invoke('test-connection', config),
+    getPresetModels: (configName: string) =>
+      ipcRenderer.invoke('config:getPresetModels', configName)
   },
 
   // 环境

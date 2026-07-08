@@ -1,4 +1,4 @@
-import {
+﻿import {
   app,
   BrowserWindow,
   ipcMain,
@@ -277,6 +277,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle('config:save', (_e, config) => configManager.saveConfig(config))
   ipcMain.handle('config:reset', () => configManager.resetConfig())
   ipcMain.handle('config:getDataDir', () => configManager.getDataDir())
+  ipcMain.handle('config:getPresetModels', (_e, configName: string) =>
+    configManager.getPresetModels(configName)
+  )
   ipcMain.handle('config:openDataDir', () => shell.openPath(configManager.getDataDir()))
 
   // 环境初始化

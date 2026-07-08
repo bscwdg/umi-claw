@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="config-page">
     <div class="page-header">
       <div>
@@ -70,11 +70,21 @@
           </div>
           <div class="form-group">
             <label class="form-label">模型名称</label>
-            <input
-              class="form-input mono"
-              v-model="currentProvider.model"
-              placeholder="model-name"
-            />
+            <div class="input-with-action">
+              <input
+                class="form-input mono"
+                v-model="currentProvider.model"
+                placeholder="model-name"
+              />
+              <button
+                class="btn btn-sm"
+                @click="openModelPicker(currentProvider)"
+                :disabled="!currentProvider.baseUrl"
+                title="查看所有模型 / 增加模型"
+              >
+                📋 模型
+              </button>
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">测试连接</label>
@@ -111,6 +121,14 @@
               v-model="p.model"
               style="width: 200px"
             />
+            <button
+              class="btn btn-sm"
+              @click="openModelPicker(p)"
+              :disabled="!p.baseUrl"
+              title="查看所有模型 / 增加模型"
+            >
+              📋
+            </button>
           </div>
         </div>
       </div>
@@ -167,6 +185,14 @@
       </div>
     </template>
 
+    <!-- 模型选择/管理弹窗 -->
+    <ModelPickerModal
+      v-model:visible="modelPickerVisible"
+      :provider="pickerProvider"
+      @select="onModelSelected"
+      @update-custom="onCustomModelsUpdated"
+    />
+
     <!-- Toast -->
     <transition name="slide">
       <div v-if="toast" class="toast" :class="toast.type">{{ toast.msg }}</div>
@@ -177,6 +203,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from "vue";
 import { useConfigStore } from "@/stores/config";
+import ModelPickerModal from "@/views/components/ModelPickerModal.vue";
+import type { ModelProvider, PresetModel } from "@/stores/config";
 
 const configStore = useConfigStore();
 const saving = ref(false);
@@ -184,6 +212,25 @@ const showApiKey = ref(false);
 const testing = ref(false);
 const testResult = ref("");
 const toast = ref<{ msg: string; type: "success" | "error" } | null>(null);
+const modelPickerVisible = ref(false);
+const pickerProvider = ref<ModelProvider | null>(null);
+
+function openModelPicker(provider: ModelProvider) {
+  pickerProvider.value = provider;
+  modelPickerVisible.value = true;
+}
+
+function onModelSelected(model: string) {
+  if (pickerProvider.value) {
+    pickerProvider.value.model = model;
+  }
+}
+
+function onCustomModelsUpdated(models: PresetModel[]) {
+  if (pickerProvider.value) {
+    pickerProvider.value.customModels = models;
+  }
+}
 
 const config = computed(() => configStore.config);
 
