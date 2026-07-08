@@ -273,9 +273,6 @@ async function testConnection() {
   testing.value = true;
   testResult.value = "";
   try {
-    // const res = await fetch(`${currentProvider.value.baseUrl}/models`, {
-    //   headers: { Authorization: `Bearer ${currentProvider.value.apiKey}` }
-    // })
     const res = await window.api.config.testConnection({
       apiKey: currentProvider.value.apiKey,
       baseUrl: currentProvider.value.baseUrl,

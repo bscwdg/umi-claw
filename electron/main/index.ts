@@ -365,8 +365,6 @@ function registerIpcHandlers(): void {
       const configJson = JSON.parse(configContent)
 
       // ⚠️ 安全警告：不要在生产环境日志中打印包含 Token 的完整 JSON
-      // console.log(configJson, 'configJson') // 已移除
-
       const token = configJson?.gateway?.token || configJson?.gateway?.auth?.token
 
       if (!token) {
