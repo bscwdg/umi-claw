@@ -12,3 +12,7 @@ config
 /.vscode
 /electron-builder-cache
 /.dev-user-data
+
+# build artifacts
+*.tsbuildinfo
+electron.vite.config.*.mjs
