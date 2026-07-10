@@ -133,6 +133,7 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useClawStore } from '@/stores/claw'
 import { useConfigStore } from '@/stores/config'
+import { useToast } from '@/composables/useToast'
 
 const router = useRouter()
 const clawStore = useClawStore()
@@ -145,7 +146,7 @@ const actionLoading = ref(false)
 const errorMsg = ref('')
 const skillCount = ref(0)
 const logPreviewRef = ref<HTMLDivElement>()
-const toast = ref<{ msg: string; type: 'success' | 'error' } | null>(null)
+const { toast, showToast } = useToast()
 
 const activeProviderName = computed(() => {
   const p = configStore.config?.providers.find(
@@ -164,16 +165,11 @@ watch(recentLogs, () => {
   })
 })
 
-function showToast(msg: string, type: 'success' | 'error') {
-  toast.value = { msg, type }
-  setTimeout(() => (toast.value = null), 2500)
-}
 async function handleStart() {
   // 先去读取激活的模型api看是否存在不存在则失败
   const activeApi = configStore.config?.providers.find(
     (p) => p.id === configStore.config?.activeProvider
   )?.apiKey
-  console.log(activeApi,'activeApi')
   if(!activeApi){
     errorMsg.value = '启动失败,请先初始化环境并到模型配置配置激活模型的apiKey'
     return

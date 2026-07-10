@@ -282,6 +282,36 @@ export class ConfigManager {
   }
 
   /**
+   * 安全读取并解析 openclaw.json；文件不存在或解析失败时返回传入的兜底对象
+   * @param fallback 读取失败时返回的兜底配置
+   * @param onError 解析失败时的可选日志回调
+   */
+  private _readOpenClawConfig(fallback: any, onError?: (e: unknown) => void): any {
+    if (!existsSync(this.openClawConfigPath)) {
+      return fallback
+    }
+    try {
+      const parsed = JSON.parse(readFileSync(this.openClawConfigPath, 'utf-8'))
+      if (parsed && typeof parsed === 'object') {
+        return parsed
+      }
+    } catch (e) {
+      onError?.(e)
+    }
+    return fallback
+  }
+
+  /**
+   * 从 SKILL.md 的 YAML Front Matter 中解析指定字段
+   * 支持 name: xxx、name: "xxx"、name: 'xxx' 三种写法
+   * @returns 解析到的值（已 trim），未匹配到返回 undefined
+   */
+  private _parseFrontMatterField(content: string, field: string): string | undefined {
+    const match = content.match(new RegExp(`${field}:\\s*["']?(.*?)["']?(\\r?\\n|$)`))
+    return match && match[1] ? match[1].trim() : undefined
+  }
+
+  /**
    * 确保所有必要的目录存在
    */
   private _ensureDirectories(): void {
@@ -377,15 +407,7 @@ private _syncOpenClawConfig(): void {
       }
     }
 
-    if (existsSync(this.openClawConfigPath)) {
-      try {
-        const raw = readFileSync(this.openClawConfigPath, 'utf-8')
-        const parsed = JSON.parse(raw)
-        if (parsed && typeof parsed === 'object') {
-          existingConfig = parsed
-        }
-      } catch (e) { }
-    }
+    existingConfig = this._readOpenClawConfig(existingConfig)
 
     // ----- 保证基础骨架存在 -----
     existingConfig.agents = existingConfig.agents || {}
@@ -507,15 +529,12 @@ private _syncOpenClawConfig(): void {
 
       // 2. 读取 openclaw.json 里的全局技能开关状态，用来做前端对齐
       let enabledSkillsMap: Record<string, any> = {}
-      if (existsSync(this.openClawConfigPath)) {
-        try {
-          const raw = readFileSync(this.openClawConfigPath, 'utf-8')
-          const parsed = JSON.parse(raw)
-          // 🟢 核心变动：从 skills.entries 节点获取已启用的映射表
-          enabledSkillsMap = parsed?.skills?.entries || parsed?.skills || {}
-        } catch (e) {
-          console.warn('[ConfigManager] 匹配技能开关时读取 openclaw.json 失败', e)
-        }
+      const parsedForSkills = this._readOpenClawConfig(null, (e) =>
+        console.warn('[ConfigManager] 匹配技能开关时读取 openclaw.json 失败', e)
+      )
+      if (parsedForSkills) {
+        // 从 skills.entries 节点获取已启用的映射表
+        enabledSkillsMap = parsedForSkills?.skills?.entries || parsedForSkills?.skills || {}
       }
 
       // 3. 扫描父目录下的所有子文件夹（即每个独立的 Skill 包）
@@ -534,18 +553,9 @@ private _syncOpenClawConfig(): void {
           if (existsSync(skillMdPath)) {
             try {
               const fileContent = readFileSync(skillMdPath, 'utf-8')
-
-              // 使用正则匹配 YAML/Front Matter 中的 name 和 description
-              // 支持三种常见格式：name: xxx、name: "xxx"、name: 'xxx'
-              const nameMatch = fileContent.match(/name:\s*["']?(.*?)["']?(\r?\n|$)/)
-              const descMatch = fileContent.match(/description:\s*["']?(.*?)["']?(\r?\n|$)/)
-
-              if (nameMatch && nameMatch[1]) {
-                skillName = nameMatch[1].trim()
-              }
-              if (descMatch && descMatch[1]) {
-                skillDescription = descMatch[1].trim()
-              }
+              skillName = this._parseFrontMatterField(fileContent, 'name') ?? skillName
+              skillDescription =
+                this._parseFrontMatterField(fileContent, 'description') ?? skillDescription
             } catch (mdErr) {
               console.error(`[ConfigManager] 解析 ${skillFolderId}/SKILL.md 失败:`, mdErr)
             }
@@ -583,17 +593,9 @@ private _syncOpenClawConfig(): void {
         skills: { entries: {} }
       }
 
-      if (existsSync(this.openClawConfigPath)) {
-        try {
-          const raw = readFileSync(this.openClawConfigPath, 'utf-8')
-          const parsed = JSON.parse(raw)
-          if (parsed && typeof parsed === 'object') {
-            openClawConfig = parsed
-          }
-        } catch (e) {
-          console.warn('[ConfigManager] 读取 openclaw.json 失败，将采用全新骨架覆盖', e)
-        }
-      }
+      openClawConfig = this._readOpenClawConfig(openClawConfig, (e) =>
+        console.warn('[ConfigManager] 读取 openclaw.json 失败，将采用全新骨架覆盖', e)
+      )
 
       // 2. 强保障 skills 节点存在
       openClawConfig.skills = openClawConfig.skills || {}
@@ -668,10 +670,8 @@ private _syncOpenClawConfig(): void {
         let targetSkillName = zipFileName // 默认用压缩包文件名兜底
         try {
           const fileContent = skillMdEntry.getData().toString('utf8')
-          const nameMatch = fileContent.match(/name:\s*["']?(.*?)["']?(\r?\n|$)/)
-          if (nameMatch && nameMatch[1]) {
-            targetSkillName = nameMatch[1].trim() // 精准提取 yaml 里的 name: pdf-helper
-          }
+          // 精准提取 yaml 里的 name: pdf-helper
+          targetSkillName = this._parseFrontMatterField(fileContent, 'name') ?? targetSkillName
         } catch (e) {
           console.warn('[ConfigManager] 从平铺的 SKILL.md 中解析 name 失败，改用压缩包名')
         }

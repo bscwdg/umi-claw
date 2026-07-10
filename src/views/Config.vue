@@ -205,13 +205,14 @@ import { ref, computed, watch, onMounted } from "vue";
 import { useConfigStore } from "@/stores/config";
 import ModelPickerModal from "@/views/components/ModelPickerModal.vue";
 import type { ModelProvider, PresetModel } from "@/stores/config";
+import { useToast } from "@/composables/useToast";
 
 const configStore = useConfigStore();
 const saving = ref(false);
 const showApiKey = ref(false);
 const testing = ref(false);
 const testResult = ref("");
-const toast = ref<{ msg: string; type: "success" | "error" } | null>(null);
+const { toast, showToast } = useToast();
 const modelPickerVisible = ref(false);
 const pickerProvider = ref<ModelProvider | null>(null);
 
@@ -250,7 +251,6 @@ async function saveConfig() {
   saving.value = true;
   try {
     const formatValue = JSON.parse(JSON.stringify(config.value));
-    console.log("config.value", formatValue);
     await configStore.save(formatValue);
     // 去读取修改配置
     showToast("配置已保存", "success");
@@ -285,10 +285,6 @@ async function testConnection() {
   } finally {
     testing.value = false;
   }
-}
-function showToast(msg: string, type: "success" | "error") {
-  toast.value = { msg, type };
-  setTimeout(() => (toast.value = null), 2500);
 }
 </script>
 

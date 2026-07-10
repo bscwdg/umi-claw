@@ -79,6 +79,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
+import { useToast } from "@/composables/useToast";
 
 interface SkillInfo {
   id: string; // 对应本地文件夹名 (slug)
@@ -90,7 +91,7 @@ interface SkillInfo {
 const skills = ref<SkillInfo[]>([]);
 const loadingMap = ref<Record<string, boolean>>({});
 const actionLoading = ref(false);
-const toast = ref<{ msg: string; type: "success" | "error" } | null>(null);
+const { toast, showToast } = useToast();
 
 // 动态计算当前已开启的技能数量
 const enabledCount = computed(
@@ -128,11 +129,6 @@ async function enableAll() {
   await load();
   showToast(`已一键启用 ${disabledSkills.length} 个本地技能`, "success");
   actionLoading.value = false;
-}
-
-function showToast(msg: string, type: "success" | "error") {
-  toast.value = { msg, type };
-  setTimeout(() => (toast.value = null), 2500);
 }
 
 // 🟢 新增：处理压缩包导入并自动刷新列表

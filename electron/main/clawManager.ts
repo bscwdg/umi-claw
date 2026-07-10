@@ -60,23 +60,25 @@ export class ClawManager extends EventEmitter {
   }
 
   async _killGhostProcesses() {
-    if (process.platform === "win32") {
-      try {
-        await execAsync("taskkill /f /im bun.exe");
-      } catch (e: any) {
-        if (!e.message.includes("not found")) {
-          console.warn('清理 bun 进程时发生非预期错误:', e.message)
-        }
-      }
+    if (process.platform !== "win32") return
 
-      try {
-        await execAsync("taskkill /f /im openclaw.exe");
-      } catch (e: any) {
-        if (!e.message.includes("not found")) {
-          console.warn('清理 openclaw 进程时发生非预期错误:', e.message)
-        }
-      }
-      console.log("🧹 僵尸进程清理尝试完毕。");
+    for (const imageName of ["bun.exe", "openclaw.exe"]) {
+      await this._killByImageName(imageName)
+    }
+    console.log("🧹 僵尸进程清理尝试完毕。")
+  }
+
+  /**
+   * 按镜像名结束进程；进程不存在（taskkill 退出码 128）视为正常，不告警。
+   * 仅在真正的非预期错误时打印警告。
+   */
+  private async _killByImageName(imageName: string): Promise<void> {
+    try {
+      await execAsync(`taskkill /f /im ${imageName}`)
+    } catch (e: any) {
+      // 退出码 128 = 未找到进程，属于正常情况直接忽略
+      if (e?.code === 128) return
+      console.warn(`清理 ${imageName} 进程时发生非预期错误:`, e?.message)
     }
   }
 
