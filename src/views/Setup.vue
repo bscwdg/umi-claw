@@ -321,8 +321,27 @@ async function startInit() {
   });
 
   // 调用主进程
-  await window.api.env.init({ useMirror: useMirror.value });
+  const res = await window.api.env.init({ useMirror: useMirror.value });
   offProgress?.();
+  // 主进程回执与 env:progress 通知走不同通道，最终“完成”通知可能在 invoke
+  // 回执之后才到达，却被 offProgress 提前摘除而丢失，导致 UI 停在 98%。
+  // 此处以 invoke 回执为准兜底刷新完成态，保证进度条走到 100% 并退出“正在拼命装配”。
+  if (res?.success) {
+    progress.value = {
+      stage: "完成",
+      step: "恭喜，全套环境初始化部署成功！",
+      percent: 100,
+      done: true,
+    };
+  } else if (res?.error && !progress.value?.error) {
+    progress.value = {
+      stage: "错误",
+      step: res.error,
+      percent: 0,
+      done: true,
+      error: res.error,
+    };
+  }
   await checkEnv();
 }
 
@@ -343,8 +362,29 @@ async function startUpdate() {
     if (last !== msg) stepLog.value.push(msg);
   });
 
-  await window.api.env.update({ useMirror: useMirror.value });
+  const res = await window.api.env.update({ useMirror: useMirror.value });
   offProgress?.();
+  // 同 startInit：以 invoke 回执为准兜底刷新完成态，避免最终通知丢失卡在 98%。
+  if (res?.success) {
+    const upToDate =
+      res.previousVersion && res.currentVersion === res.previousVersion;
+    progress.value = {
+      stage: "完成",
+      step: upToDate
+        ? `已是最新版本 v${res.currentVersion}`
+        : `更新成功：v${res.previousVersion ?? "未知"} → v${res.currentVersion ?? "未知"}`,
+      percent: 100,
+      done: true,
+    };
+  } else if (res?.error && !progress.value?.error) {
+    progress.value = {
+      stage: "错误",
+      step: res.error,
+      percent: 0,
+      done: true,
+      error: res.error,
+    };
+  }
   await checkEnv();
   updateInfo.value = null;
 }
