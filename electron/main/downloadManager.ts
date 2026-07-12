@@ -1,8 +1,9 @@
 import { EventEmitter } from 'events'
 import { join, dirname, delimiter as pathDelimiter } from 'path'
-import { existsSync, mkdirSync, createWriteStream, rmSync, writeFileSync, readFileSync, readdirSync, statSync, copyFileSync, renameSync, appendFileSync } from 'fs'
+import { existsSync, mkdirSync, createWriteStream, rmSync, writeFileSync, readFileSync, readdirSync, statSync, copyFileSync, renameSync, appendFileSync, cpSync } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
+import { createHash } from 'crypto'
 import { Readable, Transform } from 'stream'
 import { pipeline } from 'stream/promises'
 import { ConfigManager } from './configManager'
@@ -61,6 +62,29 @@ const clawVersion = {
 }
 
 const NODE_VERSION = 'v22.22.3'
+
+// OpenClaw 微信渠道插件的 npm 包名，也是 openclaw plugins install 的目标 spec。
+const WEIXIN_PLUGIN_PACKAGE = '@tencent-weixin/openclaw-weixin'
+
+/**
+ * 复刻 OpenClaw 内部 `safePathSegmentHashed`，用于计算受管 npm 插件目录名。
+ * 逻辑必须与 OpenClaw 保持一致，否则算出的目录名对不上会导致检测失效。
+ */
+function safePathSegmentHashed(input: string): string {
+  const trimmed = input.trim()
+  const base = trimmed
+    .replace(/[\\/]/g, '-')
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+/, '')
+    .replace(/-+$/, '')
+  const normalized = base.length > 0 ? base : 'skill'
+  const safe = normalized === '.' || normalized === '..' ? 'skill' : normalized
+  const hash = createHash('sha256').update(trimmed).digest('hex').slice(0, 10)
+  if (safe !== trimmed) return `${safe.length > 50 ? safe.slice(0, 50) : safe}-${hash}`
+  if (safe.length > 60) return `${safe.slice(0, 50)}-${hash}`
+  return safe
+}
 
 /**
  * 语义化版本号比较：a > b 返回 1，a < b 返回 -1，相等返回 0。
@@ -152,10 +176,13 @@ export class DownloadManager extends EventEmitter {
     const dataDir = this.configManager.getDataDir()
     const nodePath = this.configManager.getNodePath()
     const clawPath = join(dataDir, 'openclaw', 'node_modules', '.bin', 'openclaw')
-    const weixinPluginPath = join(dataDir, 'openclaw', 'node_modules', '@tencent-weixin', 'openclaw-weixin')
+    // OpenClaw 只识别它自己受管的插件目录（.openclaw/npm/projects/<hash>/node_modules/...）；
+    // 仅装进 openclaw/node_modules 的副本不会被 channels 命令识别，因此以受管目录为准。
+    const weixinPluginPath = this._getWeixinManagedPluginDir()
 
     this._writeDebugLog(`[CheckEnv] nodePath: ${nodePath}, exist: ${existsSync(nodePath)}`);
     this._writeDebugLog(`[CheckEnv] clawPath: ${clawPath}, exist: ${existsSync(clawPath)}`);
+    this._writeDebugLog(`[CheckEnv] weixinPluginPath: ${weixinPluginPath}, exist: ${existsSync(weixinPluginPath)}`);
 
     const info: EnvInfo = {
       nodeInstalled: existsSync(nodePath),
@@ -190,6 +217,210 @@ export class DownloadManager extends EventEmitter {
     return this.checkEnvironment()
   }
 
+  /**
+   * 计算 OpenClaw 受管微信插件所在的目录。
+   * OpenClaw 通过 `openclaw plugins install` 把插件装进
+   * `<configDir>/npm/projects/<safePathSegmentHashed(pkg)>/node_modules/<pkg>`，
+   * 目录哈希仅由包名决定，因此跨机器一致，可直接用于检测。
+   */
+  private _getWeixinManagedPluginDir(): string {
+    const dataDir = this.configManager.getDataDir()
+    const configDir = join(dataDir, 'config', '.openclaw')
+    const projectDirName = safePathSegmentHashed(WEIXIN_PLUGIN_PACKAGE)
+    return join(
+      configDir,
+      'npm',
+      'projects',
+      projectDirName,
+      'node_modules',
+      ...WEIXIN_PLUGIN_PACKAGE.split('/')
+    )
+  }
+
+  /**
+   * 通过 OpenClaw 自身的 `plugins install` 把微信渠道插件装进受管目录，
+   * 这样 `channels login` 才会识别为“已安装”。
+   * 仅把插件安装进 openclaw/node_modules 是不够的。
+   */
+  private async _installWeixinChannelPlugin(useMirror: boolean, force = false): Promise<boolean> {
+    const dataDir = this.configManager.getDataDir()
+    const nodePath = this.configManager.getNodePath()
+    const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js')
+
+    if (!existsSync(nodePath) || !existsSync(clawJsPath)) {
+      this._writeDebugLog('[InstallWeixinPlugin] Node 或 OpenClaw 尚未就绪，跳过受管插件安装')
+      return false
+    }
+
+    const managedDir = this._getWeixinManagedPluginDir()
+    if (force) {
+      // 更新场景：清掉旧的受管插件项目目录，强制 plugins install 重新拉取最新版本。
+      const projectDir = join(managedDir, '..', '..', '..')
+      try {
+        if (existsSync(projectDir)) rmSync(projectDir, { recursive: true, force: true })
+      } catch (e: any) {
+        this._writeDebugLog(`[InstallWeixinPlugin] 清理旧受管插件目录失败: ${e.message}`)
+      }
+    } else if (existsSync(managedDir)) {
+      this._writeDebugLog('[InstallWeixinPlugin] 受管微信插件已存在，跳过安装')
+      return true
+    }
+
+    const nodeBinDir = dirname(nodePath)
+    const configDir = join(dataDir, 'config')
+    // 依次尝试国内镜像源，最后回落官方源；任一源装出受管目录即视为成功。
+    const registries = useMirror
+      ? [...DOMESTIC_MIRRORS.map((m) => m.url), OFFICIAL_REGISTRY.url]
+      : [OFFICIAL_REGISTRY.url]
+
+    this._progress('装配渠道', '正在将微信渠道插件安装到 OpenClaw 受管目录...', 88)
+
+    for (const registry of registries) {
+      const env = {
+        ...process.env,
+        PATH: `${nodeBinDir}${pathDelimiter}${process.env.PATH || ''}`,
+        HOME: configDir,
+        USERPROFILE: configDir,
+        OPENCLAW_CONFIG_DIR: join(configDir, '.openclaw'),
+        OPENCLAW_DATA_DIR: join(dataDir, 'data'),
+        npm_config_registry: registry,
+        NODE_ENV: 'production'
+      }
+
+      const cmd = `"${nodePath}" "${clawJsPath}" plugins install "${WEIXIN_PLUGIN_PACKAGE}@latest"`
+      this._writeDebugLog(`[InstallWeixinPlugin] 执行受管插件安装 (registry=${registry}): ${cmd}`)
+
+      try {
+        await execAsync(cmd, { cwd: join(dataDir, 'openclaw'), env, maxBuffer: 1024 * 1024 * 64 })
+      } catch (err: any) {
+        // OpenClaw 安装成功时也可能因为无关的配置告警返回非零码，故以受管目录是否生成为准。
+        this._writeDebugLog(`[InstallWeixinPlugin] plugins install 返回异常 (registry=${registry}): ${err.message}`)
+      }
+
+      if (existsSync(this._getWeixinManagedPluginDir())) {
+        this._writeDebugLog(`[InstallWeixinPlugin] 受管微信插件安装成功 (registry=${registry})`)
+        return true
+      }
+      this._writeDebugLog(`[InstallWeixinPlugin] 该镜像源未生成受管目录，尝试下一个源`)
+    }
+
+    // 所有源的 plugins install 都失败：最常见原因是可执行目录所在卷（如 U 盘 exFAT/FAT32）
+    // 无法创建 openclaw 的 node_modules junction 链接，导致 OpenClaw 回滚安装。
+    // 兜底：用真实目录拷贝手动组装受管插件目录，绕开对文件系统链接能力的依赖。
+    this._writeDebugLog('[InstallWeixinPlugin] plugins install 全部失败，改用手动拷贝组装受管目录')
+    this._progress('装配渠道', '正在以兼容模式组装微信渠道插件（可能较慢）...', 89)
+    try {
+      const assembled = this._assembleWeixinPluginManually()
+      if (assembled) {
+        this._writeDebugLog('[InstallWeixinPlugin] 手动组装受管微信插件成功')
+        this._progress('装配渠道', '微信渠道插件已装配完成', 90)
+        return true
+      }
+    } catch (e: any) {
+      this._writeDebugLog(`[InstallWeixinPlugin] 手动组装失败: ${e.message}`)
+    }
+
+    // 仍失败：不中断初始化。点击“扫码登录”时 channels login 交互流会再次引导下载插件作为兜底。
+    this._writeDebugLog('[InstallWeixinPlugin] 手动组装亦未成功，已跳过（登录时可再引导安装）')
+    this._progress('装配渠道', '微信渠道插件将在首次扫码登录时自动补装', 90)
+    return false
+  }
+
+  /**
+   * 手动组装 OpenClaw 受管微信插件目录（拷贝兜底方案）。
+   * 当 `plugins install` 因文件系统不支持 junction 而回滚时使用。
+   *
+   * 目标结构：
+   *   <configDir>/npm/projects/<hash>/
+   *     package.json                       （受管项目清单）
+   *     node_modules/
+   *       .package-lock.json               （锁文件，可选）
+   *       @tencent-weixin/openclaw-weixin/  （插件包，含其 node_modules/openclaw 真实拷贝）
+   *       zod, qrcode-terminal, ...         （插件运行时依赖）
+   *
+   * 所有内容均从核心 npm 已装好的 data/openclaw/node_modules 拷贝而来。
+   */
+  private _assembleWeixinPluginManually(): boolean {
+    const dataDir = this.configManager.getDataDir()
+    const coreNodeModules = join(dataDir, 'openclaw', 'node_modules')
+    const openClawSrc = join(coreNodeModules, 'openclaw')
+    const pluginSrc = join(coreNodeModules, ...WEIXIN_PLUGIN_PACKAGE.split('/'))
+
+    if (!existsSync(join(pluginSrc, 'package.json')) || !existsSync(join(openClawSrc, 'package.json'))) {
+      this._writeDebugLog('[AssembleWeixin] 核心 node_modules 缺少插件包或 openclaw 宿主包，无法手动组装')
+      return false
+    }
+
+    // 受管项目目录：<configDir>/npm/projects/<hash>
+    const managedPluginDir = this._getWeixinManagedPluginDir()
+    const projectDir = join(managedPluginDir, '..', '..', '..')
+    const projectNodeModules = join(projectDir, 'node_modules')
+
+    // 从零重建，避免残留的坏链接干扰。
+    try {
+      if (existsSync(projectDir)) rmSync(projectDir, { recursive: true, force: true })
+    } catch (e: any) {
+      this._writeDebugLog(`[AssembleWeixin] 清理旧项目目录失败: ${e.message}`)
+    }
+    mkdirSync(projectNodeModules, { recursive: true })
+
+    // 1. 受管项目清单 package.json（声明插件依赖）。
+    const projectManifest = {
+      private: true,
+      dependencies: {
+        [WEIXIN_PLUGIN_PACKAGE]: this._readPackageVersion(pluginSrc) || 'latest'
+      }
+    }
+    writeFileSync(join(projectDir, 'package.json'), JSON.stringify(projectManifest, null, 2))
+
+    // 2. 拷贝插件包本身。
+    const pluginDest = join(projectNodeModules, ...WEIXIN_PLUGIN_PACKAGE.split('/'))
+    mkdirSync(dirname(pluginDest), { recursive: true })
+    cpSync(pluginSrc, pluginDest, { recursive: true })
+
+    // 3. 拷贝插件运行时依赖（从核心 node_modules 顶层解析插件 package.json 里的 dependencies）。
+    const pluginDeps = this._readPackageDependencies(pluginSrc)
+    for (const depName of pluginDeps) {
+      const depSrc = join(coreNodeModules, ...depName.split('/'))
+      if (!existsSync(depSrc)) {
+        this._writeDebugLog(`[AssembleWeixin] 依赖 ${depName} 不在核心 node_modules，跳过`)
+        continue
+      }
+      const depDest = join(projectNodeModules, ...depName.split('/'))
+      mkdirSync(dirname(depDest), { recursive: true })
+      cpSync(depSrc, depDest, { recursive: true })
+    }
+
+    // 4. 关键：把宿主 openclaw 真实拷贝进插件的 node_modules/openclaw（替代 junction）。
+    const openClawDest = join(pluginDest, 'node_modules', 'openclaw')
+    mkdirSync(dirname(openClawDest), { recursive: true })
+    cpSync(openClawSrc, openClawDest, { recursive: true })
+
+    return existsSync(join(managedPluginDir, 'package.json'))
+  }
+
+  /** 读取指定包目录 package.json 的 version。 */
+  private _readPackageVersion(pkgDir: string): string | null {
+    try {
+      const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf-8'))
+      return typeof pkg.version === 'string' ? pkg.version : null
+    } catch {
+      return null
+    }
+  }
+
+  /** 读取指定包目录 package.json 的 dependencies 名称列表（不含 peerDependencies）。 */
+  private _readPackageDependencies(pkgDir: string): string[] {
+    try {
+      const pkg = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf-8'))
+      return pkg.dependencies && typeof pkg.dependencies === 'object'
+        ? Object.keys(pkg.dependencies)
+        : []
+    } catch {
+      return []
+    }
+  }
+
   async initEnvironment(options: { useMirror?: boolean } = {}): Promise<{ success: boolean; error?: string }> {
     const { useMirror = true } = options
     this.abortController = new AbortController()
@@ -210,6 +441,10 @@ export class DownloadManager extends EventEmitter {
       } else {
         this._progress('运行环境', 'OpenClaw 核心及渠道插件均已安装', 90)
       }
+
+      // 无论核心是否重装，只要受管微信插件缺失就补装（核心已装、仅缺插件时也能命中）。
+      // 该方法内部会判断插件是否已存在，存在则直接跳过。
+      await this._installWeixinChannelPlugin(useMirror)
 
       await this._installBuiltinSkills()
       this._progress('完成', '恭喜，全套环境初始化部署成功！', 100, true)
@@ -262,6 +497,8 @@ export class DownloadManager extends EventEmitter {
       }
 
       await this._installOpenClaw(useMirror, 0, true)
+      // 更新核心后同步刷新受管微信插件，保证渠道登录持续可用。
+      await this._installWeixinChannelPlugin(useMirror, true)
       await this._installBuiltinSkills()
 
       const after = await this.checkEnvironment()
@@ -498,7 +735,9 @@ export class DownloadManager extends EventEmitter {
   private async _installBuiltinSkills(): Promise<void> {
     this._progress('装配技能', '正在解压并激活内置基础交互技能包...', 92)
     await new Promise((r) => setTimeout(r, 400))
-    this._progress('装配技能', '内置基础技能包部署完毕', 100)
+    // 这里不要发 100%：100% 留给最终“完成”事件（携带 done=true），
+    // 否则进度条到 100% 但 done 仍为 false，UI 会一直显示“正在拼命装配”。
+    this._progress('装配技能', '内置基础技能包部署完毕', 98)
   }
 
   private _ensureOpenClawConfig(): void {
