@@ -48,6 +48,8 @@ const api = {
   env: {
     check: () => ipcRenderer.invoke('env:check'),
     init: (options?: any) => ipcRenderer.invoke('env:init', options),
+    update: (options?: any) => ipcRenderer.invoke('env:update', options),
+    checkLatest: (options?: any) => ipcRenderer.invoke('env:checkLatest', options),
     getInfo: () => ipcRenderer.invoke('env:getInfo'),
     onProgress: (cb: (progress: any) => void) => {
       const handler = (_: unknown, data: any) => cb(data)

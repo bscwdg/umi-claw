@@ -113,12 +113,23 @@
         <button class="btn btn-sm" @click="close">关闭</button>
       </div>
     </div>
+
+    <ConfirmDialog
+      v-model:visible="showDeleteConfirm"
+      icon="🗑"
+      title="删除自定义模型"
+      :message="`确定删除自定义模型「${pendingDelete?.id}」？此操作不可撤销。`"
+      confirm-text="删除"
+      danger
+      @confirm="confirmRemoveModel"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch } from "vue";
 import type { ModelProvider, PresetModel } from "@/stores/config";
+import ConfirmDialog from "@/views/components/ConfirmDialog.vue";
 
 interface ModelRow {
   id: string;
@@ -147,6 +158,8 @@ const loading = ref(false);
 const error = ref("");
 const current = ref("");
 const showAddForm = ref(false);
+const showDeleteConfirm = ref(false);
+const pendingDelete = ref<ModelRow | null>(null);
 
 const createForm = () => ({
   id: "",
@@ -273,13 +286,20 @@ function addModel() {
 }
 
 function removeModel(row: ModelRow) {
-  if (!window.confirm(`确定删除自定义模型「${row.id}」？此操作不可撤销。`)) return;
+  pendingDelete.value = row;
+  showDeleteConfirm.value = true;
+}
+
+function confirmRemoveModel() {
+  const row = pendingDelete.value;
+  if (!row) return;
   const list = (props.provider?.customModels || []).filter((m) => m.id !== row.id);
   emit("update-custom", list);
   if (current.value === row.id) {
     const fallback = list[0]?.id || presetModels.value[0]?.id || "";
     if (fallback) select(fallback);
   }
+  pendingDelete.value = null;
 }
 
 function resetForm() {

@@ -193,6 +193,17 @@
       @update-custom="onCustomModelsUpdated"
     />
 
+    <!-- 恢复默认配置确认 -->
+    <ConfirmDialog
+      v-model:visible="showResetConfirm"
+      icon="♻️"
+      title="恢复默认配置"
+      message="确定要恢复默认配置吗？当前所有服务商配置将被重置。"
+      confirm-text="恢复默认"
+      danger
+      @confirm="doResetConfig"
+    />
+
     <!-- Toast -->
     <transition name="slide">
       <div v-if="toast" class="toast" :class="toast.type">{{ toast.msg }}</div>
@@ -204,6 +215,7 @@
 import { ref, computed, watch, onMounted } from "vue";
 import { useConfigStore } from "@/stores/config";
 import ModelPickerModal from "@/views/components/ModelPickerModal.vue";
+import ConfirmDialog from "@/views/components/ConfirmDialog.vue";
 import type { ModelProvider, PresetModel } from "@/stores/config";
 import { useToast } from "@/composables/useToast";
 
@@ -215,6 +227,7 @@ const testResult = ref("");
 const { toast, showToast } = useToast();
 const modelPickerVisible = ref(false);
 const pickerProvider = ref<ModelProvider | null>(null);
+const showResetConfirm = ref(false);
 
 function openModelPicker(provider: ModelProvider) {
   pickerProvider.value = provider;
@@ -261,11 +274,13 @@ async function saveConfig() {
   }
 }
 
-async function resetConfig() {
-  if (confirm("确定要恢复默认配置吗？")) {
-    await configStore.reset();
-    showToast("已恢复默认配置", "success");
-  }
+function resetConfig() {
+  showResetConfirm.value = true;
+}
+
+async function doResetConfig() {
+  await configStore.reset();
+  showToast("已恢复默认配置", "success");
 }
 
 async function testConnection() {

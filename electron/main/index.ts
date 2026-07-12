@@ -287,6 +287,12 @@ function registerIpcHandlers(): void {
   ipcMain.handle('env:init', async (_e, options) => {
     return downloadManager.initEnvironment(options)
   })
+  ipcMain.handle('env:update', async (_e, options) => {
+    return downloadManager.updateOpenClaw(options)
+  })
+  ipcMain.handle('env:checkLatest', async (_e, options) => {
+    return downloadManager.checkLatestVersion(options)
+  })
   ipcMain.handle('env:getInfo', () => downloadManager.getEnvInfo())
 
   // 日志

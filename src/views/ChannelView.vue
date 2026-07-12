@@ -70,6 +70,16 @@
       @close="termDialogVisible = false"
       @refresh="loadChannels"
     />
+
+    <ConfirmDialog
+      v-model:visible="showUninstallConfirm"
+      icon="🗑"
+      title="卸载渠道"
+      :message="`确定要彻底卸载 ${pendingUninstall?.name} 渠道吗？`"
+      confirm-text="卸载"
+      danger
+      @confirm="confirmUninstallChannel"
+    />
   </div>
 </template>
 
@@ -77,6 +87,7 @@
 import { ref, onMounted } from 'vue'
 import ChannelConfigDialog from './components/ChannelConfigDialog.vue'
 import TerminalDialog from './components/TerminalDialog.vue' // 👈 1. 引入终端弹窗组件
+import ConfirmDialog from './components/ConfirmDialog.vue'
 
 interface Channel {
   id: string
@@ -97,6 +108,8 @@ const selectedChannel = ref<Channel | null>(null)
 const termDialogVisible = ref(false)
 const termDialogTitle = ref('')
 const termDialogArgs = ref<string[]>([])
+const showUninstallConfirm = ref(false)
+const pendingUninstall = ref<Channel | null>(null)
 
 /**
  * 加载渠道列表
@@ -134,10 +147,17 @@ function loginChannel(channel: Channel) {
  * 微信渠道：卸载 (通过终端运行)
  */
 function uninstallChannel(channel: Channel) {
-  if (!confirm(`确定要彻底卸载 ${channel.name} 渠道吗？`)) return
+  pendingUninstall.value = channel
+  showUninstallConfirm.value = true
+}
+
+function confirmUninstallChannel() {
+  const channel = pendingUninstall.value
+  if (!channel) return
   termDialogTitle.value = `正在卸载渠道: ${channel.name}`
   termDialogArgs.value = ['channels', 'uninstall', channel.id]
   termDialogVisible.value = true
+  pendingUninstall.value = null
 }
 
 // ─── 以下是你原本的其他普通渠道代码，保持原封不动 ───

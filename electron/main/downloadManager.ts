@@ -62,6 +62,25 @@ const clawVersion = {
 
 const NODE_VERSION = 'v22.22.3'
 
+/**
+ * 语义化版本号比较：a > b 返回 1，a < b 返回 -1，相等返回 0。
+ * 忽略预发布标签，仅比较主版本段的数字部分。
+ */
+function compareVersions(a: string, b: string): number {
+  const parse = (v: string) =>
+    v.replace(/^v/, '').split('-')[0].split('.').map((n) => parseInt(n, 10) || 0)
+  const pa = parse(a)
+  const pb = parse(b)
+  const len = Math.max(pa.length, pb.length)
+  for (let i = 0; i < len; i++) {
+    const na = pa[i] ?? 0
+    const nb = pb[i] ?? 0
+    if (na > nb) return 1
+    if (na < nb) return -1
+  }
+  return 0
+}
+
 function safeMove(src: string, dest: string) {
   try {
     if (existsSync(dest)) {
@@ -205,6 +224,115 @@ export class DownloadManager extends EventEmitter {
     }
   }
 
+  /**
+   * 一键更新 OpenClaw 核心及渠道插件到最新版本。
+   * 通过删除 package-lock.json 强制 npm 重新解析 latest 版本再安装。
+   */
+  async updateOpenClaw(options: { useMirror?: boolean } = {}): Promise<{
+    success: boolean
+    error?: string
+    previousVersion?: string
+    currentVersion?: string
+  }> {
+    const { useMirror = true } = options
+    this.abortController = new AbortController()
+    this._writeDebugLog('--- 开始更新 OpenClaw ---')
+
+    try {
+      const before = await this.checkEnvironment()
+      if (!before.nodeInstalled) {
+        throw new Error('Node.js 运行时尚未安装，请先完成环境初始化')
+      }
+
+      this._progress('检查更新', '正在准备更新 OpenClaw 核心及渠道插件...', 10)
+
+      // 删除锁文件与已装模块，强制 npm 联网重新解析并拉取 latest（否则会沿用旧版本）
+      const openClawDir = join(this.configManager.getDataDir(), 'openclaw')
+      const cleanupTargets = [
+        join(openClawDir, 'package-lock.json'),
+        join(openClawDir, 'node_modules', 'openclaw'),
+        join(openClawDir, 'node_modules', '@tencent-weixin'),
+      ]
+      for (const target of cleanupTargets) {
+        try {
+          if (existsSync(target)) rmSync(target, { recursive: true, force: true })
+        } catch (e: any) {
+          this._writeDebugLog(`[UpdateOpenClaw] 清理 ${target} 失败: ${e.message}`)
+        }
+      }
+
+      await this._installOpenClaw(useMirror, 0, true)
+      await this._installBuiltinSkills()
+
+      const after = await this.checkEnvironment()
+      const previousVersion = before.openClawVersion
+      const currentVersion = after.openClawVersion
+      const upToDate = previousVersion && currentVersion === previousVersion
+
+      this._progress(
+        '完成',
+        upToDate
+          ? `已是最新版本 v${currentVersion}`
+          : `更新成功：v${previousVersion ?? '未知'} → v${currentVersion ?? '未知'}`,
+        100,
+        true
+      )
+      return { success: true, previousVersion, currentVersion }
+    } catch (err: any) {
+      this._writeDebugLog(`[UpdateOpenClaw Error] 异常中断: ${err.message}`)
+      this._progressError(err.message)
+      return { success: false, error: err.message }
+    }
+  }
+
+  /**
+   * 查询 npm 上 openclaw 的最新版本，并与本地已安装版本对比。
+   * @returns currentVersion 本地版本；latestVersion 远端最新版本；hasUpdate 是否有可用更新
+   */
+  async checkLatestVersion(options: { useMirror?: boolean } = {}): Promise<{
+    success: boolean
+    error?: string
+    currentVersion?: string
+    latestVersion?: string
+    hasUpdate?: boolean
+  }> {
+    const { useMirror = true } = options
+    try {
+      const nodePath = this.configManager.getNodePath()
+      if (!existsSync(nodePath)) {
+        throw new Error('Node.js 运行时尚未安装，请先完成环境初始化')
+      }
+
+      const info = await this.checkEnvironment()
+      const currentVersion = info.openClawVersion
+
+      const nodeBinDir = dirname(nodePath)
+      const npmPath = process.platform === 'win32'
+        ? join(nodeBinDir, 'npm.cmd')
+        : join(nodeBinDir, 'npm')
+      const registry = useMirror ? DOMESTIC_MIRRORS[0].url : OFFICIAL_REGISTRY.url
+      const cmd = `"${npmPath}" view openclaw version --registry ${registry}`
+
+      const { stdout } = await execAsync(cmd, {
+        env: {
+          ...process.env,
+          PATH: `${nodeBinDir}${pathDelimiter}${process.env.PATH || ''}`
+        }
+      })
+      const latestVersion = stdout.trim()
+      if (!latestVersion) {
+        throw new Error('未能解析 npm 返回的版本号')
+      }
+
+      const hasUpdate = !currentVersion || compareVersions(latestVersion, currentVersion) > 0
+      this._writeDebugLog(`[CheckLatest] 本地: ${currentVersion ?? '未装'}, 最新: ${latestVersion}, 有更新: ${hasUpdate}`)
+      return { success: true, currentVersion, latestVersion, hasUpdate }
+    } catch (err: any) {
+      this._writeDebugLog(`[CheckLatest Error] ${err.message}`)
+      return { success: false, error: err.message }
+    }
+  }
+
   private async _downloadNode(useMirror: boolean): Promise<void> {
     const dataDir = this.configManager.getDataDir()
     const platform = process.platform
@@ -234,7 +362,7 @@ export class DownloadManager extends EventEmitter {
     this._progress('Node.js', 'Node.js 运行时环境配置成功', 20)
   }
 
-  private async _installOpenClaw(useMirror: boolean, mirrorIndex?: number): Promise<void> {
+  private async _installOpenClaw(useMirror: boolean, mirrorIndex?: number, forceOnline = false): Promise<void> {
     const dataDir = this.configManager.getDataDir();
     const nodePath = this.configManager.getNodePath();
 
@@ -279,8 +407,16 @@ export class DownloadManager extends EventEmitter {
     );
 
     const isOfficial = activeRegistry.url === OFFICIAL_REGISTRY.url;
-    const cacheFlag = isOfficial ? '--no-cache' : '--prefer-offline';
-    const cmd = `"${npmPath}" install --registry ${activeRegistry.url} ${cacheFlag} --no-audit --no-fund`;
+    // 更新场景强制联网并显式安装 latest，绕过缓存与已装版本判断
+    const cacheFlag = forceOnline
+      ? '--prefer-online'
+      : isOfficial
+      ? '--no-cache'
+      : '--prefer-offline';
+    const explicitLatest = forceOnline
+      ? ' openclaw@latest "@tencent-weixin/openclaw-weixin@latest"'
+      : '';
+    const cmd = `"${npmPath}" install${explicitLatest} --registry ${activeRegistry.url} ${cacheFlag} --no-audit --no-fund`;
 
     this._writeDebugLog(`[InstallOpenClaw] 最终执行生成的命令行: ${cmd}`);
 
@@ -352,7 +488,7 @@ export class DownloadManager extends EventEmitter {
     if (!installSuccess) {
       const nextIdx = (mirrorIndex ?? 0) + 1;
       this._progress('部署核心', `⚠️ 当前镜像源异常，正在为您自动热切换到下一个备用国内源...`, 30);
-      return await this._installOpenClaw(true, nextIdx);
+      return await this._installOpenClaw(true, nextIdx, forceOnline);
     }
 
     this._progress('部署核心', `核心服务及渠道组件 [${activeRegistry.name}] 同步部署成功`, 85);

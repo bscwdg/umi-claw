@@ -38,7 +38,7 @@
           </div>
           <div class="env-detail">
             <div class="env-name">OpenClaw 核心服务</div>
-            <div class="text-sm text-muted">
+            <div class="text-sm" style="color: var(--text-primary); font-weight: 500">
               {{
                 envInfo?.openClawVersion
                   ? `v${envInfo.openClawVersion}`
@@ -47,6 +47,37 @@
                   : "检测中..."
               }}
             </div>
+            <div
+              v-if="updateInfo && !updateInfo.error"
+              class="text-sm"
+              :style="{ marginTop: '2px', color: updateInfo.hasUpdate ? 'var(--yellow)' : 'var(--green)' }"
+            >
+              {{
+                updateInfo.hasUpdate
+                  ? `🆙 有新版本 v${updateInfo.latestVersion} 可用`
+                  : `✓ 已是最新版本 v${updateInfo.latestVersion}`
+              }}
+            </div>
+            <div
+              v-else-if="updateInfo?.error"
+              class="text-sm"
+              style="margin-top: 2px; color: var(--red)"
+            >
+              检查更新失败：{{ updateInfo.error }}
+            </div>
+          </div>
+          <div
+            v-if="envInfo?.openClawInstalled && !initializing"
+            class="flex gap-2"
+            style="margin-left: auto"
+          >
+            <button
+              class="btn btn-sm"
+              :disabled="checkingUpdate"
+              @click="checkUpdate"
+            >
+              {{ checkingUpdate ? "检查中..." : "🔍 检查更新" }}
+            </button>
           </div>
         </div>
 
@@ -222,12 +253,29 @@
         </button>
       </div>
     </div>
+
+    <!-- 发现新版本时的确认弹窗 -->
+    <ConfirmDialog
+      v-model:visible="showUpdateDialog"
+      icon="🆙"
+      title="发现新版本"
+      confirm-text="立即更新"
+      @confirm="confirmUpdate"
+    >
+      <p style="margin: 0 0 14px">检测到 OpenClaw 有新版本可用，是否立即更新？</p>
+      <div class="version-compare">
+        <span class="ver-old">当前 v{{ updateInfo?.currentVersion || "未知" }}</span>
+        <span class="ver-arrow">→</span>
+        <span class="ver-new">最新 v{{ updateInfo?.latestVersion }}</span>
+      </div>
+    </ConfirmDialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
+import ConfirmDialog from "@/views/components/ConfirmDialog.vue";
 
 const router = useRouter();
 const envInfo = ref<any>(null);
@@ -237,6 +285,14 @@ const useMirror = ref(true);
 const progress = ref<any>(null);
 const stepLog = ref<string[]>([]);
 let offProgress: (() => void) | null = null;
+const checkingUpdate = ref(false);
+const showUpdateDialog = ref(false);
+const updateInfo = ref<{
+  currentVersion?: string;
+  latestVersion?: string;
+  hasUpdate?: boolean;
+  error?: string;
+} | null>(null);
 
 async function checkEnv() {
   envLoading.value = true;
@@ -268,6 +324,56 @@ async function startInit() {
   await window.api.env.init({ useMirror: useMirror.value });
   offProgress?.();
   await checkEnv();
+}
+
+async function startUpdate() {
+  initializing.value = true;
+  stepLog.value = [];
+  progress.value = {
+    stage: "检查更新",
+    step: "正在准备更新 OpenClaw...",
+    percent: 0,
+    done: false,
+  };
+
+  offProgress = window.api.env.onProgress((p) => {
+    progress.value = p;
+    const msg = `[${p.stage}] ${p.step}`;
+    const last = stepLog.value[stepLog.value.length - 1];
+    if (last !== msg) stepLog.value.push(msg);
+  });
+
+  await window.api.env.update({ useMirror: useMirror.value });
+  offProgress?.();
+  await checkEnv();
+  updateInfo.value = null;
+}
+
+async function checkUpdate() {
+  checkingUpdate.value = true;
+  updateInfo.value = null;
+  try {
+    const res = await window.api.env.checkLatest({ useMirror: useMirror.value });
+    updateInfo.value = res.success
+      ? {
+          currentVersion: res.currentVersion,
+          latestVersion: res.latestVersion,
+          hasUpdate: res.hasUpdate,
+        }
+      : { error: res.error };
+    if (res.success && res.hasUpdate) {
+      showUpdateDialog.value = true;
+    }
+  } catch (e: any) {
+    updateInfo.value = { error: e?.message || "检查更新失败" };
+  } finally {
+    checkingUpdate.value = false;
+  }
+}
+
+function confirmUpdate() {
+  showUpdateDialog.value = false;
+  startUpdate();
 }
 
 function openDataDir() {
@@ -393,5 +499,23 @@ onUnmounted(() => offProgress?.());
   font-size: 13px;
   display: flex;
   flex-direction: column;
+}
+.version-compare {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+}
+.ver-old {
+  color: var(--text-muted);
+}
+.ver-arrow {
+  color: var(--text-muted);
+}
+.ver-new {
+  color: var(--green);
+  font-weight: 600;
 }
 </style>
