@@ -11,9 +11,11 @@
 - ⚙️ **完整管理界面** — 图形化配置 OpenClaw、模型、技能
 - 🧩 **内置中文技能** — 开箱即用的中文 AI 能力
 - 🤖 **多个个模型服务商** — DeepSeek、Kimi、通义千问、OpenAI 等
-- 📋 **实时日志监控** — 带过滤、导出功能的日志查看器
+- 📋 **实时日志监控** —— 带过滤、导出功能的日志查看器，日志文件：`data/logs/runtime-debug.log`
 - 💾 **便携模式** — 可放置在 U 盘，数据随身带走
-- 🌐 **国内镜像加速** — npmmirror + GitHub 代理，无需翻墙
+- 🌐 **国内镜像加速** —— npmmirror + GitHub 代理，无需翻墙
+- 🔄 **开机自启** —— 可选系统开机自动启动，应用启动自动拉起服务
+- ❓ **智能关闭** —— 点击关闭可选择最小化到托盘/退出程序，支持记住选择
 
 ## 技术栈
 
@@ -105,6 +107,20 @@ window.api.claw.onStatusChange(cb)// 监听状态变化
 
 window.api.config.get()           // 读取配置
 window.api.config.save(cfg)       // 保存配置
+window.api.config.reset()         // 恢复默认配置
+window.api.config.getDataDir()    // 获取数据目录路径
+window.api.config.openDataDir()   // 打开数据目录
+
+// 主要配置字段示例（config.save 时可传入）：
+// {
+//   autoStart: boolean,        // 应用启动时自动拉起 OpenClaw
+//   launchOnBoot: boolean,     // 系统开机自动启动应用
+//   closeAction: string,       // 关闭行为: 'ask' | 'tray' | 'exit'
+//   minimizeToTray: boolean,   // 是否已启用托盘模式
+//   useChineseMirror: boolean, // 使用国内镜像加速
+//   providers: [...],          // 模型服务商配置
+//   port: 3213,               // 服务端口
+// }
 
 window.api.env.check()            // 检测环境
 window.api.env.init(opts)         // 初始化环境
@@ -113,6 +129,11 @@ window.api.env.onProgress(cb)     // 监听下载进度
 window.api.skills.list()          // 技能列表
 window.api.skills.install(id)     // 安装技能
 window.api.skills.uninstall(id)   // 卸载技能
+
+window.api.log.getLogs()          // 获取日志列表
+window.api.log.clearLogs()        // 清空日志文件
+// 日志文件永久存储在 data/logs/runtime-debug.log
+// 包含主进程日志 + OpenClaw 子进程 stdout/stderr
 ```
 
 ## 便携模式
