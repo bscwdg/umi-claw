@@ -124,6 +124,87 @@ function killAllTerminalSessions() {
   sessionIds.forEach(id => killTerminalSession(id))
 }
 
+// 标记：关闭确认对话框是否正在等待用户选择，避免重复弹出
+let closeConfirmPending = false
+
+/**
+ * 统一的应用退出流程：标记退出、清理终端会话并停止 OpenClaw
+ */
+function quitApp(): void {
+  ;(app as any).isQuiting = true
+  killAllTerminalSessions()
+  clawManager.stop().finally(() => app.quit())
+}
+
+/**
+ * 根据配置同步系统开机自启项。
+ * openAtLogin=true 时随系统启动；openAsHidden 让应用启动后直接驻留托盘（后台运行）。
+ * 打包环境下才真正生效，开发环境跳过以免把 electron.exe 注册进启动项。
+ */
+function applyLoginItemSettings(launchOnBoot: boolean): void {
+  if (process.platform === 'darwin' || process.platform === 'win32') {
+    try {
+      app.setLoginItemSettings({
+        openAtLogin: launchOnBoot,
+        openAsHidden: launchOnBoot
+      })
+    } catch (err) {
+      console.error('[Main] 设置开机自启失败:', err)
+    }
+  }
+}
+
+/**
+ * 处理主窗口关闭事件，根据配置项 closeAction 决定行为：
+ *  - 'exit' : 退出应用并停止 OpenClaw
+ *  - 'tray' : 最小化到系统托盘后台运行
+ *  - 'ask'  : 弹出确认对话框询问用户（可记住选择）
+ * 当 minimizeToTray 为 false 时，'ask'/'tray' 一律直接退出。
+ */
+function handleWindowClose(e: Electron.Event): void {
+  // 已进入退出流程（托盘退出、before-quit 等），放行让窗口真正关闭
+  if ((app as any).isQuiting) {
+    return
+  }
+
+  const config = configManager.getConfig()
+  const closeAction = config.closeAction ?? 'ask'
+  const minimizeToTray = config.minimizeToTray !== false
+
+  // 未开启托盘驻留时，关闭即退出
+  if (!minimizeToTray) {
+    e.preventDefault()
+    quitApp()
+    return
+  }
+
+  if (closeAction === 'exit') {
+    e.preventDefault()
+    quitApp()
+    return
+  }
+
+  if (closeAction === 'tray') {
+    e.preventDefault()
+    mainWindow?.hide()
+    return
+  }
+
+  // closeAction === 'ask'：交给渲染层弹出确认对话框
+  e.preventDefault()
+  if (closeConfirmPending) {
+    return
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    closeConfirmPending = true
+    mainWindow.show()
+    mainWindow.focus()
+    mainWindow.webContents.send('window:close-request')
+  } else {
+    quitApp()
+  }
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     icon: join(__dirname, "../../resources/icon.ico"),
@@ -145,14 +226,15 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow!.show()
+    // 开机自启（openAsHidden）场景下不弹出窗口，直接后台驻留托盘
+    const launchedAtLogin = app.getLoginItemSettings().wasOpenedAsHidden
+    if (!launchedAtLogin) {
+      mainWindow!.show()
+    }
   })
 
   mainWindow.on('close', (e) => {
-    if (!(app as any).isQuiting) {
-      e.preventDefault()
-      mainWindow!.hide()
-    }
+    handleWindowClose(e)
   })
 
   // 窗口完全关闭时，清理资源
@@ -253,7 +335,25 @@ function registerIpcHandlers(): void {
     if (mainWindow?.isMaximized()) mainWindow.unmaximize()
     else mainWindow?.maximize()
   })
-  ipcMain.handle('window:close', () => mainWindow?.hide())
+  ipcMain.handle('window:close', () => mainWindow?.close())
+  // 关闭确认对话框的用户选择回传：tray=最小化到托盘，exit=退出并停止 OpenClaw
+  ipcMain.handle('window:close-resolve', (_e, payload: { action: 'tray' | 'exit'; remember?: boolean }) => {
+    closeConfirmPending = false
+    const action = payload?.action ?? 'tray'
+    const remember = payload?.remember === true
+    if (remember && (action === 'tray' || action === 'exit')) {
+      configManager.saveConfig({ closeAction: action })
+    }
+    if (action === 'exit') {
+      quitApp()
+    } else {
+      mainWindow?.hide()
+    }
+  })
+  // 用户取消关闭
+  ipcMain.handle('window:close-cancel', () => {
+    closeConfirmPending = false
+  })
 
   // OpenClaw 进程管理
   ipcMain.handle('claw:start', async () => {
@@ -270,13 +370,23 @@ function registerIpcHandlers(): void {
     return clawManager.getStatus()
   })
   ipcMain.handle('claw:openWeb', () => {
-    shell.openExternal('http://localhost:3213')
+    const port = configManager.getConfig().port || 3213
+    shell.openExternal(`http://localhost:${port}`)
   })
 
   // 配置管理
   ipcMain.handle('config:get', () => configManager.getConfig())
-  ipcMain.handle('config:save', (_e, config) => configManager.saveConfig(config))
-  ipcMain.handle('config:reset', () => configManager.resetConfig())
+  ipcMain.handle('config:save', (_e, config) => {
+    const saved = configManager.saveConfig(config)
+    // 配置保存后同步开机自启项
+    applyLoginItemSettings(saved.launchOnBoot)
+    return saved
+  })
+  ipcMain.handle('config:reset', () => {
+    const reset = configManager.resetConfig()
+    applyLoginItemSettings(reset.launchOnBoot)
+    return reset
+  })
   ipcMain.handle('config:getDataDir', () => configManager.getDataDir())
   ipcMain.handle('config:getPresetModels', (_e, configName: string) =>
     configManager.getPresetModels(configName)
@@ -674,6 +784,17 @@ app.whenReady().then(() => {
   createWindow()
   createTray()
   setupLogForwarding()
+
+  // 启动时同步开机自启项，保证与配置一致
+  const startupConfig = configManager.getConfig()
+  applyLoginItemSettings(startupConfig.launchOnBoot)
+
+  // 自动启动服务：应用启动时自动运行 OpenClaw
+  if (startupConfig.autoStart) {
+    clawManager.start().catch((err) => {
+      console.error('[Main] 自动启动 OpenClaw 失败:', err)
+    })
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

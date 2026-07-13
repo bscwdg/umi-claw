@@ -1,4 +1,4 @@
-﻿import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 console.log('✅ preload loaded')
 // 完整类型化的 API
@@ -7,7 +7,18 @@ const api = {
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),
-    close: () => ipcRenderer.invoke('window:close')
+    close: () => ipcRenderer.invoke('window:close'),
+    // 关闭确认：接收主进程发来的关闭请求
+    onCloseRequest: (cb: () => void) => {
+      const handler = () => cb()
+      ipcRenderer.on('window:close-request', handler)
+      return () => ipcRenderer.off('window:close-request', handler)
+    },
+    // 关闭确认：回传用户选择（tray=最小化到托盘，exit=退出）
+    resolveClose: (action: 'tray' | 'exit', remember?: boolean) =>
+      ipcRenderer.invoke('window:close-resolve', { action, remember }),
+    // 关闭确认：用户取消
+    cancelClose: () => ipcRenderer.invoke('window:close-cancel')
   },
 
   // OpenClaw 进程管理

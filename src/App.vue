@@ -55,13 +55,32 @@
         </router-view>
       </main>
     </div>
+
+    <!-- 关闭窗口确认 -->
+    <ConfirmDialog
+      v-model:visible="showCloseConfirm"
+      icon="⚠️"
+      title="关闭 Umi Claw"
+      confirm-text="退出应用"
+      cancel-text="最小化到托盘"
+      danger
+      @confirm="onCloseConfirmExit"
+      @cancel="onCloseConfirmTray"
+    >
+      <p class="modal-message">关闭窗口后希望如何处理？</p>
+      <label class="close-remember">
+        <input type="checkbox" v-model="rememberCloseChoice" />
+        <span>记住我的选择，不再询问</span>
+      </label>
+    </ConfirmDialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useClawStore } from '@/stores/claw'
 import { useConfigStore } from '@/stores/config'
+import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 
 const api = window.api
 const clawStore = useClawStore()
@@ -81,13 +100,34 @@ const navItems = [
 ]
 
 let cleanup: (() => void) | null = null
+let closeCleanup: (() => void) | null = null
+
+// 关闭确认对话框状态
+const showCloseConfirm = ref(false)
+const rememberCloseChoice = ref(false)
+
+function onCloseConfirmExit() {
+  api.window.resolveClose('exit', rememberCloseChoice.value)
+}
+
+function onCloseConfirmTray() {
+  api.window.resolveClose('tray', rememberCloseChoice.value)
+}
 
 onMounted(async () => {
   await Promise.all([configStore.load(), clawStore.fetchStatus()])
   cleanup = clawStore.setupListeners()
+  // 主进程请求关闭时弹出确认框
+  closeCleanup = api.window.onCloseRequest(() => {
+    rememberCloseChoice.value = false
+    showCloseConfirm.value = true
+  })
 })
 
-onUnmounted(() => cleanup?.())
+onUnmounted(() => {
+  cleanup?.()
+  closeCleanup?.()
+})
 </script>
 
 <style scoped>
@@ -213,5 +253,20 @@ onUnmounted(() => cleanup?.())
   flex: 1;
   overflow-y: auto;
   padding: 24px;
+}
+
+/* 关闭确认对话框：记住选择 */
+.close-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.close-remember input {
+  cursor: pointer;
 }
 </style>
