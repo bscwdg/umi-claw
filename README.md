@@ -33,27 +33,45 @@
 umi-claw/
 ├── electron/
 │   ├── main/
-│   │   ├── index.ts          # 主进程入口
-│   │   ├── clawManager.ts    # OpenClaw 进程管理
-│   │   ├── configManager.ts  # 配置读写管理
-│   │   └── downloadManager.ts# 环境下载安装
+│   │   ├── index.ts           # 主进程入口 / IPC 注册 / 窗口 / 托盘
+│   │   ├── clawManager.ts     # OpenClaw 进程管理
+│   │   ├── configManager.ts   # 配置读写管理
+│   │   ├── downloadManager.ts # 环境下载安装
+│   │   ├── channelManager.ts  # 渠道（微信等）安装与管理
+│   │   ├── channelCatalog.ts  # 渠道目录 / 元信息
+│   │   └── modelConfig.ts     # 模型预设配置
 │   └── preload/
-│       └── index.ts          # Preload / IPC 桥接
+│       ├── index.ts           # Preload / IPC 桥接
+│       └── index.d.ts         # window.api 类型声明
 ├── src/
 │   ├── views/
-│   │   ├── Dashboard.vue     # 控制台
-│   │   ├── Config.vue        # 模型配置
-│   │   ├── Skills.vue        # 技能管理
-│   │   ├── Logs.vue          # 运行日志
-│   │   ├── Setup.vue         # 环境初始化
-│   │   └── About.vue         # 关于
+│   │   ├── Dashboard.vue      # 控制台
+│   │   ├── Config.vue         # 模型配置
+│   │   ├── Skills.vue         # 技能管理
+│   │   ├── Logs.vue           # 运行日志
+│   │   ├── Setup.vue          # 环境初始化
+│   │   ├── ChannelsPage.vue   # 渠道接入
+│   │   ├── ChannelView.vue    # 渠道视图（旧版，暂未启用）
+│   │   ├── TerminalPage.vue   # OpenClaw 终端
+│   │   ├── About.vue          # 关于
+│   │   └── components/        # 通用组件
+│   │       ├── ConfirmDialog.vue       # 确认对话框（关闭确认等）
+│   │       ├── ModelPickerModal.vue    # 模型选择弹窗
+│   │       ├── ChannelConfigDialog.vue # 渠道配置弹窗
+│   │       └── TerminalDialog.vue      # 终端交互弹窗
 │   ├── stores/
-│   │   ├── claw.ts           # OpenClaw 状态
-│   │   └── config.ts         # 配置状态
-│   ├── assets/style.css      # 全局样式
-│   ├── App.vue               # 根组件（标题栏+侧边栏）
-│   └── main.ts               # Vue 入口
-├── resources/                # 应用图标等静态资源
+│   │   ├── claw.ts            # OpenClaw 状态
+│   │   └── config.ts          # 配置状态
+│   ├── composables/
+│   │   └── useToast.ts        # 全局提示
+│   ├── shared/
+│   │   └── channelSchemas.ts  # 渠道配置表单 schema
+│   ├── assets/style.css       # 全局样式
+│   ├── App.vue                # 根组件（标题栏+侧边栏+关闭确认）
+│   └── renderer/
+│       ├── main.ts            # Vue 入口 / 路由
+│       └── index.html         # 渲染进程 HTML
+├── resources/                 # 应用图标等静态资源
 ├── electron.vite.config.ts
 ├── electron-builder.json5
 └── package.json
@@ -97,41 +115,82 @@ npm run build:all
 主进程通过 `window.api` 暴露给渲染进程：
 
 ```typescript
-window.api.claw.start()           // 启动 OpenClaw
-window.api.claw.stop()            // 停止
-window.api.claw.status()          // 获取状态
-window.api.claw.onLog(cb)         // 监听实时日志
-window.api.claw.onStatusChange(cb)// 监听状态变化
+// ── 窗口控制 ──
+window.api.window.minimize()          // 最小化
+window.api.window.maximize()          // 最大化 / 还原
+window.api.window.close()             // 关闭（触发关闭确认流程）
+window.api.window.onCloseRequest(cb)  // 主进程请求关闭时回调（弹出确认框）
+window.api.window.resolveClose(action, remember) // 回传选择: 'tray' | 'exit'，remember 记住选择
+window.api.window.cancelClose()       // 取消关闭
 
-window.api.config.get()           // 读取配置
-window.api.config.save(cfg)       // 保存配置
-window.api.config.reset()         // 恢复默认配置
-window.api.config.getDataDir()    // 获取数据目录路径
-window.api.config.openDataDir()   // 打开数据目录
+// ── OpenClaw 进程管理 ──
+window.api.claw.start()               // 启动 OpenClaw
+window.api.claw.stop()                // 停止
+window.api.claw.restart()             // 重启
+window.api.claw.status()              // 获取状态
+window.api.claw.openWeb()             // 打开 Web 界面（跟随 config.port）
+window.api.claw.getToken()            // 获取访问 token
+window.api.claw.onLog(cb)             // 监听实时日志
+window.api.claw.onStatusChange(cb)    // 监听状态变化
+
+// ── 配置管理 ──
+window.api.config.get()               // 读取配置
+window.api.config.save(cfg)           // 保存配置
+window.api.config.reset()             // 恢复默认配置
+window.api.config.getDataDir()        // 获取数据目录路径
+window.api.config.openDataDir()       // 打开数据目录
+window.api.config.getPresetModels(name) // 获取某服务商的预设模型
+window.api.config.testConnection(cfg) // 测试模型连通性
 
 // 主要配置字段示例（config.save 时可传入）：
 // {
-//   autoStart: boolean,        // 应用启动时自动拉起 OpenClaw
-//   launchOnBoot: boolean,     // 系统开机自动启动应用
-//   closeAction: string,       // 关闭行为: 'ask' | 'tray' | 'exit'
-//   minimizeToTray: boolean,   // 是否已启用托盘模式
-//   useChineseMirror: boolean, // 使用国内镜像加速
+//   activeProvider: string,    // 当前激活的服务商 id
 //   providers: [...],          // 模型服务商配置
-//   port: 3213,               // 服务端口
-// }       // 保存配置
+//   port: 3213,                // 服务端口（claw.openWeb 会跟随此端口）
+//   autoStart: boolean,        // 应用启动时自动拉起 OpenClaw
+//   launchOnBoot: boolean,     // 系统开机自动启动应用（后台驻留托盘）
+//   minimizeToTray: boolean,   // 是否启用关闭时最小化到托盘
+//   closeAction: string,       // 关闭行为: 'ask' | 'tray' | 'exit'
+//   useChineseMirror: boolean, // 使用国内镜像（UI 预留字段）
+//   logLevel: string,          // 日志级别（预留）
+//   language: string,          // 语言（预留）
+// }
 
-window.api.env.check()            // 检测环境
-window.api.env.init(opts)         // 初始化环境
-window.api.env.onProgress(cb)     // 监听下载进度
+// ── 环境管理 ──
+window.api.env.check()                // 检测环境
+window.api.env.init(opts)             // 初始化环境
+window.api.env.update(opts)           // 更新 OpenClaw
+window.api.env.checkLatest(opts)      // 检查最新版本
+window.api.env.getInfo()              // 获取环境信息
+window.api.env.onProgress(cb)         // 监听下载 / 安装进度
 
-window.api.skills.list()          // 技能列表
-window.api.skills.install(id)     // 安装技能
-window.api.skills.uninstall(id)   // 卸载技能
+// ── 技能管理 ──
+window.api.skills.list()              // 可用技能列表
+window.api.skills.install(id)         // 安装技能
+window.api.skills.uninstall(id)       // 卸载技能
+window.api.skills.getInstalledSkills()          // 已安装技能
+window.api.skills.toggleSkillStatus(id, enabled)// 启用 / 停用技能
+window.api.skills.importSkillZip()    // 从 zip 导入技能
 
-window.api.log.getLogs()          // 获取日志列表
-window.api.log.clearLogs()        // 清空日志文件
+// ── 日志 ──
+window.api.log.getLogs()              // 获取日志列表
+window.api.log.clearLogs()            // 清空日志文件
 // 日志文件永久存储在 data/logs/runtime-debug.log
-// 包含主进程日志 + OpenClaw 子进程 stdout/stderr   // 卸载技能
+// 包含主进程日志 + OpenClaw 子进程 stdout/stderr
+
+// ── 终端（PTY）──
+window.api.terminal.runCommand(args)              // 执行一次性命令
+window.api.terminal.startPty(args, cols, rows)    // 启动 PTY 会话
+window.api.terminal.inputPty(sid, data)           // 向 PTY 写入输入
+window.api.terminal.resizePty(sid, cols, rows)    // 调整 PTY 尺寸
+window.api.terminal.stopPty(sid)                  // 停止 PTY 会话
+window.api.terminal.onPtyChunk(cb)                // 监听 PTY 输出流
+window.api.terminal.onPtyExit(cb)                 // 监听 PTY 退出
+window.api.terminal.removeListeners()             // 移除 PTY 监听
+
+// ── 其他工具 ──
+window.api.shell.openExternal(url)    // 用系统默认浏览器打开链接
+window.api.dialog.showMessage(opts)   // 弹出系统原生消息框
 ```
 
 ## 便携模式
