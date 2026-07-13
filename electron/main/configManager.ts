@@ -1,7 +1,6 @@
-﻿import { app,dialog } from 'electron'
-import { join, resolve, dirname ,basename} from 'path'
+import { app,dialog } from 'electron'
+import { join, dirname ,basename} from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'fs'
-import { tmpdir } from 'os'
 import AdmZip from 'adm-zip'
 import { OFFICIAL_MODEL_PRESETS } from './modelConfig'
 
@@ -33,7 +32,9 @@ export interface AppConfig {
   providers: ModelProvider[]
   port: number
   autoStart: boolean
+  launchOnBoot: boolean
   minimizeToTray: boolean
+  closeAction: 'ask' | 'tray' | 'exit'
   useChineseMirror: boolean
   logLevel: 'debug' | 'info' | 'warn' | 'error'
   language: 'zh-CN' | 'en-US'
@@ -165,7 +166,9 @@ const getDeepCopyDefaultConfig = (): AppConfig => ({
   providers: DEFAULT_PROVIDERS.map(p => ({ ...p })),
   port: 3213,
   autoStart: false,
+  launchOnBoot: false,
   minimizeToTray: true,
+  closeAction: 'ask',
   useChineseMirror: true,
   logLevel: 'info',
   language: 'zh-CN'
@@ -391,7 +394,6 @@ export class ConfigManager {
 private _syncOpenClawConfig(): void {
   try {
     const workspacePath = join(this.dataDir, 'config', '.openclaw', 'workspace')
-    const allowedDataRoot = this.dataDir.replace(/\\/g, '/')
 
     let existingConfig: any = {
       agents: { defaults: {} },

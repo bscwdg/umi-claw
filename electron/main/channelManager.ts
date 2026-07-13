@@ -108,17 +108,6 @@ export class ChannelManager {
     return true
   }
 
-  private getWechatCli(): string {
-    return path.join(
-      this.configManager.getRuntimeDir(),
-      'node_modules',
-      '@tencent-weixin',
-      'openclaw-weixin-cli',
-      'dist',
-      'index.js'
-    )
-  }
-
   private execWechat(args: string[]): Promise<boolean> {
     return new Promise((resolve, reject) => {
       const installDir = path.join(this.channelDir, 'weixin')

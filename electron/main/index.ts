@@ -1,4 +1,4 @@
-﻿import {
+import {
   app,
   BrowserWindow,
   ipcMain,
@@ -126,6 +126,7 @@ function killAllTerminalSessions() {
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
+    icon: join(__dirname, "../../resources/icon.ico"),
     width: 1100,
     height: 720,
     minWidth: 900,

@@ -1,4 +1,4 @@
-﻿import { defineStore } from 'pinia'
+import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 export interface ModelProvider {
@@ -27,7 +27,9 @@ export interface AppConfig {
   providers: ModelProvider[]
   port: number
   autoStart: boolean
+  launchOnBoot: boolean
   minimizeToTray: boolean
+  closeAction: 'ask' | 'tray' | 'exit'
   useChineseMirror: boolean
   logLevel: string
   language: string

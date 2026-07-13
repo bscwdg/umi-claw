@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="config-page">
     <div class="page-header">
       <div>
@@ -151,8 +151,18 @@
           </div>
           <div class="setting-row">
             <div>
-              <div class="setting-name">开机自启</div>
-              <div class="text-sm text-muted">应用启动时自动启动 OpenClaw</div>
+              <div class="setting-name">系统开机自启</div>
+              <div class="text-sm text-muted">开机时自动启动本应用（后台驻留托盘）</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="config.launchOnBoot" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div>
+              <div class="setting-name">自动启动服务</div>
+              <div class="text-sm text-muted">应用启动时自动运行 OpenClaw 服务</div>
             </div>
             <label class="toggle">
               <input type="checkbox" v-model="config.autoStart" />
@@ -161,13 +171,14 @@
           </div>
           <div class="setting-row">
             <div>
-              <div class="setting-name">最小化到托盘</div>
-              <div class="text-sm text-muted">关闭窗口时隐藏到系统托盘</div>
+              <div class="setting-name">关闭窗口时</div>
+              <div class="text-sm text-muted">点击右上角 X 时的行为</div>
             </div>
-            <label class="toggle">
-              <input type="checkbox" v-model="config.minimizeToTray" />
-              <span class="toggle-slider"></span>
-            </label>
+            <select class="form-input" v-model="config.closeAction" style="width: 200px">
+              <option value="ask">每次询问</option>
+              <option value="tray">最小化到托盘（后台运行）</option>
+              <option value="exit">退出并停止 OpenClaw</option>
+            </select>
           </div>
           <div class="setting-row">
             <div>
@@ -245,6 +256,11 @@ function onCustomModelsUpdated(models: PresetModel[]) {
     pickerProvider.value.customModels = models;
   }
 }
+
+// 进入设置页时重新拉取配置，确保主进程（如关闭对话框“记住选择”）写入的变更能回显
+onMounted(() => {
+  configStore.load();
+});
 
 const config = computed(() => configStore.config);
 

@@ -1,0 +1,20 @@
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <!-- 圆角方底 -->
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="#3B82C4"/>
+  <!-- 底部内阴影感的深色带，增加层次 -->
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="none" stroke="#2C6AA6" stroke-width="4"/>
+
+  <!-- 橙色爪形记号：三个小钩，呼应“小龙虾/爪子” -->
+  <g fill="none" stroke="#F5821F" stroke-width="13" stroke-linecap="round">
+    <path d="M92 66 q14 -20 30 0"/>
+    <path d="M128 60 q14 -20 30 0"/>
+    <path d="M164 66 q14 -20 30 0"/>
+  </g>
+
+  <!-- 主字 umi：粗圆无衬线，超大字重，保证极小尺寸清晰 -->
+  <text x="128" y="192"
+        font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+        font-size="104" font-weight="800"
+        text-anchor="middle" fill="#FFFFFF"
+        letter-spacing="-2">Umi</text>
+</svg>
