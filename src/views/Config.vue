@@ -194,6 +194,63 @@
           </div>
         </div>
       </div>
+
+      <!-- 主题外观 -->
+      <div class="card section">
+        <h3 style="margin-bottom: 4px">主题外观</h3>
+        <p class="text-sm text-muted" style="margin-bottom: 16px">
+          选择内置主题或自定义颜色，字体颜色会根据背景明暗自动适配
+        </p>
+
+        <div class="theme-grid">
+          <button
+            v-for="preset in themePresets"
+            :key="preset.id"
+            type="button"
+            class="theme-card"
+            :class="{ active: config.theme === preset.id }"
+            :style="themePreview(preset.base, preset.accent)"
+            @click="selectTheme(preset.id)"
+          >
+            <span class="theme-swatch">
+              <span class="theme-dot" :style="{ background: preset.accent }"></span>
+              Aa
+            </span>
+            <span class="theme-card-name">{{ preset.name }}</span>
+          </button>
+
+          <button
+            type="button"
+            class="theme-card"
+            :class="{ active: config.theme === 'custom' }"
+            :style="themePreview(customBase, customAccent)"
+            @click="selectTheme('custom')"
+          >
+            <span class="theme-swatch">
+              <span class="theme-dot" :style="{ background: customAccent }"></span>
+              Aa
+            </span>
+            <span class="theme-card-name">自定义</span>
+          </button>
+        </div>
+
+        <div v-if="config.theme === 'custom'" class="custom-theme">
+          <div class="form-group">
+            <label class="form-label">背景主色</label>
+            <div class="color-field">
+              <input type="color" v-model="customBase" @input="onCustomColorInput" />
+              <input class="form-input mono" v-model="customBase" @input="onCustomColorInput" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">强调色</label>
+            <div class="color-field">
+              <input type="color" v-model="customAccent" @input="onCustomColorInput" />
+              <input class="form-input mono" v-model="customAccent" @input="onCustomColorInput" />
+            </div>
+          </div>
+        </div>
+      </div>
     </template>
 
     <!-- 模型选择/管理弹窗 -->
@@ -229,6 +286,7 @@ import ModelPickerModal from "@/views/components/ModelPickerModal.vue";
 import ConfirmDialog from "@/views/components/ConfirmDialog.vue";
 import type { ModelProvider, PresetModel } from "@/stores/config";
 import { useToast } from "@/composables/useToast";
+import { THEME_PRESETS } from "@/theme/themes";
 
 const configStore = useConfigStore();
 const saving = ref(false);
@@ -274,6 +332,48 @@ watch(
     testResult.value = "";
   }
 );
+
+/* ── 主题 ─────────────────────────────────────── */
+const themePresets = THEME_PRESETS;
+const customBase = ref("#0f1117");
+const customAccent = ref("#f0883e");
+
+watch(
+  config,
+  (cfg) => {
+    if (!cfg) return;
+    if (cfg.theme === "custom") {
+      customBase.value = cfg.themeBase || customBase.value;
+      customAccent.value = cfg.themeAccent || customAccent.value;
+    }
+  },
+  { immediate: true }
+);
+
+function themePreview(base: string, accent: string) {
+  return {
+    background: base,
+    borderColor: accent,
+  };
+}
+
+function selectTheme(id: string) {
+  if (!config.value) return;
+  config.value.theme = id;
+  if (id === "custom") {
+    config.value.themeBase = customBase.value;
+    config.value.themeAccent = customAccent.value;
+  }
+  configStore.applyCurrentTheme();
+}
+
+function onCustomColorInput() {
+  if (!config.value) return;
+  config.value.theme = "custom";
+  config.value.themeBase = customBase.value;
+  config.value.themeAccent = customAccent.value;
+  configStore.applyCurrentTheme();
+}
 
 async function saveConfig() {
   if (!config.value) return;
@@ -435,5 +535,78 @@ async function testConnection() {
 .toast.error {
   background: rgba(248, 81, 73, 0.9);
   color: #fff;
+}
+
+/* Theme picker */
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.theme-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: left;
+  outline: none;
+}
+.theme-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+.theme-card.active {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.theme-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  mix-blend-mode: difference;
+}
+.theme-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.theme-card-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: #fff;
+  mix-blend-mode: difference;
+}
+.custom-theme {
+  display: flex;
+  gap: 16px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+.custom-theme .form-group {
+  flex: 1;
+  min-width: 200px;
+}
+.color-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.color-field input[type="color"] {
+  width: 40px;
+  height: 36px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  cursor: pointer;
+  flex-shrink: 0;
 }
 </style>

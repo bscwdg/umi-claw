@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { applyTheme } from '@/composables/useTheme'
 
 export interface ModelProvider {
   id: string
@@ -33,6 +34,9 @@ export interface AppConfig {
   useChineseMirror: boolean
   logLevel: string
   language: string
+  theme: string
+  themeBase?: string
+  themeAccent?: string
 }
 
 export const useConfigStore = defineStore('config', () => {
@@ -44,6 +48,7 @@ export const useConfigStore = defineStore('config', () => {
     loading.value = true
     try {
       config.value = await window.api.config.get()
+      applyCurrentTheme()
     } finally {
       loading.value = false
     }
@@ -53,6 +58,7 @@ export const useConfigStore = defineStore('config', () => {
     saving.value = true
     try {
       config.value = await window.api.config.save(partial)
+      applyCurrentTheme()
     } finally {
       saving.value = false
     }
@@ -60,10 +66,20 @@ export const useConfigStore = defineStore('config', () => {
 
   async function reset() {
     config.value = await window.api.config.reset()
+    applyCurrentTheme()
+  }
+
+  function applyCurrentTheme() {
+    if (!config.value) return
+    applyTheme({
+      theme: config.value.theme,
+      themeBase: config.value.themeBase,
+      themeAccent: config.value.themeAccent
+    })
   }
 
   const activeProvider = () =>
     config.value?.providers.find((p) => p.id === config.value?.activeProvider)
 
-  return { config, loading, saving, load, save, reset, activeProvider }
+  return { config, loading, saving, load, save, reset, activeProvider, applyCurrentTheme }
 })

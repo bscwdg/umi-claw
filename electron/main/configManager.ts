@@ -39,6 +39,9 @@ export interface AppConfig {
   useChineseMirror: boolean
   logLevel: 'debug' | 'info' | 'warn' | 'error'
   language: 'zh-CN' | 'en-US'
+  theme: string
+  themeBase?: string
+  themeAccent?: string
   channels?: Record<string, Record<string, unknown>>
 }
 
@@ -173,7 +176,8 @@ const getDeepCopyDefaultConfig = (): AppConfig => ({
   closeAction: 'ask',
   useChineseMirror: true,
   logLevel: 'info',
-  language: 'zh-CN'
+  language: 'zh-CN',
+  theme: 'dark'
 })
 
 const DEFAULT_CONFIG = getDeepCopyDefaultConfig()
