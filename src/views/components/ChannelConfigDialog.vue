@@ -29,7 +29,7 @@
 <script setup lang="ts">
 import { computed, reactive } from "vue";
 
-import { CHANNEL_SCHEMAS } from "../../shared/channelSchemas.ts";
+import { CHANNEL_SCHEMAS } from "../../shared/channelSchemas";
 
 const props = defineProps({
   visible: Boolean,

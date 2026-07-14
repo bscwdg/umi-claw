@@ -98,7 +98,7 @@ async function startInteractiveTask() {
   try {
     // 调用我们在主进程优化过、支持指定 cwd 的 PTY 启动器
     // 传入 { cwd: '.' } 确保它在当前根目录执行
-    const sid = await window.api.terminal.startPty(props.args, { cwd: '.' })
+    const sid = await window.api.terminal.startPty(props.args, term.cols, term.rows)
     if (sid) {
       sessionId.value = sid
       term.focus()

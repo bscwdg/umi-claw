@@ -93,7 +93,6 @@ const navItems = [
   { to: '/skills',    icon: '🧩', label: '技能管理' },
   { to: '/logs',      icon: '📋', label: '运行日志' },
   { to: '/setup',     icon: '🔧', label: '环境初始化' },
-  // { to: '/channelView',     icon: '📩', label: '渠道接入' },
   { to: '/channelsPage',     icon: '📩', label: '渠道接入' },
   { to: '/terminal',     icon: '💻', label: 'OpenClaw终端' },
   { to: '/about',     icon: 'ℹ️', label: '关于' }

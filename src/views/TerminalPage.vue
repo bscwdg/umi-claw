@@ -85,7 +85,6 @@ const isRunning = ref(false);
 const isInteractive = ref(false);
 const sessionId = ref<string | null>(null);
 const cmdHistory = ref<string[]>([]);
-const historyIdx = ref(-1);
 const inputEl = ref<HTMLInputElement | null>(null);
 
 function initTerm() {
@@ -111,7 +110,6 @@ function initTerm() {
     cursorBlink: true,
     convertEol: true, // 核心修复：自动处理换行不回车的问题
     scrollback: 5000,
-    enableClipboard: true, // 启用复制粘贴
   });
 
   fitAddon = new FitAddon();
@@ -120,6 +118,7 @@ function initTerm() {
   term.open(termEl.value);
   // 自定义键盘快捷键：复制与粘贴
   term.attachCustomKeyEventHandler((event) => {
+    if (!term) return true;
     const ctrl = event.ctrlKey || event.metaKey; // 支持 Windows 和 Mac
 
     // ---------- 复制：Ctrl+Shift+C / Cmd+Shift+C ----------
@@ -205,7 +204,11 @@ async function startInteractive(args: string[]) {
   term?.focus();
 
   try {
-    const sid = await window.api.terminal.startPty(args);
+    const sid = await window.api.terminal.startPty(
+      args,
+      term?.cols ?? 80,
+      term?.rows ?? 24
+    );
     if (sid) {
       sessionId.value = sid;
     } else {

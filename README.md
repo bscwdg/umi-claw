@@ -52,7 +52,6 @@ umi-claw/
 │   │   ├── Logs.vue           # 运行日志
 │   │   ├── Setup.vue          # 环境初始化
 │   │   ├── ChannelsPage.vue   # 渠道接入
-│   │   ├── ChannelView.vue    # 渠道视图（旧版，暂未启用）
 │   │   ├── TerminalPage.vue   # OpenClaw 终端
 │   │   ├── About.vue          # 关于
 │   │   └── components/        # 通用组件

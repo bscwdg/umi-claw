@@ -207,8 +207,6 @@ async function handleFetchToken() {
     
     if (res.success && res.token) {
       
-      // 2. 同步更新到 Pinia store 中
-      configStore.config.gatewayToken = res.token
       
       // ⚡️ 4. 核心新增：自动将 Token 写入系统剪贴板
       if (navigator.clipboard && navigator.clipboard.writeText) {
