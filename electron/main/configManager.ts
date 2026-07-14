@@ -3,6 +3,7 @@ import { join, dirname ,basename} from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'fs'
 import AdmZip from 'adm-zip'
 import { OFFICIAL_MODEL_PRESETS } from './modelConfig'
+import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
 
 export interface PresetModel {
   id: string
@@ -176,8 +177,6 @@ const getDeepCopyDefaultConfig = (): AppConfig => ({
 })
 
 const DEFAULT_CONFIG = getDeepCopyDefaultConfig()
-// 固定 token
-const GATEWAY_TOKEN = "https://github.com/bscwdg/umi-claw";
 
 export class ConfigManager {
   private dataDir: string
@@ -199,8 +198,8 @@ export class ConfigManager {
 
     // 设置配置文件路径
     this.configPath = join(this.dataDir, 'config', 'app.json')
-    this.openClawConfigPath = join(this.dataDir, 'config', '.openclaw', 'openclaw.json')
-    this.portableSkillsDir = join(this.dataDir, 'config', '.openclaw', 'skills')
+    this.openClawConfigPath = openClawPaths.openClawConfig(this.dataDir)
+    this.portableSkillsDir = openClawPaths.portableSkillsDir(this.dataDir)
     // 初始化目录结构
     this._ensureDirectories()
 
@@ -322,7 +321,7 @@ export class ConfigManager {
     const dirs = [
       this.dataDir,
       join(this.dataDir, 'config'),
-      join(this.dataDir, 'config', '.openclaw'),
+      openClawPaths.configDir(this.dataDir),
       this.portableSkillsDir,
       join(this.dataDir, 'logs')
     ]
@@ -394,7 +393,7 @@ export class ConfigManager {
    */
 private _syncOpenClawConfig(): void {
   try {
-    const workspacePath = join(this.dataDir, 'config', '.openclaw', 'workspace')
+    const workspacePath = join(openClawPaths.configDir(this.dataDir), 'workspace')
 
     let existingConfig: any = {
       agents: { defaults: {} },

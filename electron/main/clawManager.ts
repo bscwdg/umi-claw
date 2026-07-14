@@ -6,6 +6,7 @@ import { promises as fs } from "fs";
 import { ConfigManager } from './configManager'
 import { promisify } from "util";
 import { OFFICIAL_MODEL_PRESETS } from './modelConfig' // 🟢 1. 确保对齐你真实创建的文件名
+import { GATEWAY_TOKEN, openClawPaths, toPosix } from './openClawPaths'
 
 export interface ClawStatus {
   running: boolean
@@ -42,7 +43,6 @@ const BUILTIN_SKILLS: Omit<SkillInfo, 'installed'>[] = [
   { id: 'translate-pro', name: '🌐 专业翻译', description: '中英文专业级双向翻译', builtin: true }
 ]
 
-const GATEWAY_TOKEN = "https://github.com/bscwdg/umi-claw";
 const execAsync = promisify(exec);
 
 export class ClawManager extends EventEmitter {
@@ -100,7 +100,7 @@ export class ClawManager extends EventEmitter {
 
     const dataDir = this.configManager.getDataDir()
     const nodePath = this.configManager.getNodePath()
-    const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js')
+    const clawJsPath = openClawPaths.clawJs(dataDir)
 
     if (!existsSync(nodePath)) {
       return { success: false, error: '未找到 Node.js 运行时，请先初始化环境' }
@@ -109,8 +109,8 @@ export class ClawManager extends EventEmitter {
       return { success: false, error: '未找到 OpenClaw 核心库，请先初始化环境' }
     }
 
-    const portableHomeDir = join(dataDir, 'config').replace(/\\/g, '/')
-    const targetConfigDir = join(portableHomeDir, '.openclaw').replace(/\\/g, '/')
+    const portableHomeDir = toPosix(openClawPaths.portableHome(dataDir))
+    const targetConfigDir = toPosix(openClawPaths.configDir(dataDir))
 
     try {
       await this._checkAndFixConfigBeforeStart(targetConfigDir, activeProvider)
@@ -122,7 +122,7 @@ export class ClawManager extends EventEmitter {
       HOME: portableHomeDir,
       USERPROFILE: portableHomeDir,
       OPENCLAW_CONFIG_DIR: targetConfigDir,
-      OPENCLAW_DATA_DIR: join(dataDir, 'data').replace(/\\/g, '/'),
+      OPENCLAW_DATA_DIR: toPosix(openClawPaths.openClawData(dataDir)),
       PORT: String(this.port),
       NODE_ENV: 'production',
       OPENCLAW_DISABLE_BONJOUR: '1',
@@ -166,7 +166,7 @@ export class ClawManager extends EventEmitter {
         String(this.port),
       ], {
         env,
-        cwd: join(dataDir, 'openclaw'),
+        cwd: openClawPaths.installDir(dataDir),
         shell: false,
         detached: false,
         stdio: ['pipe', 'pipe', 'pipe']
@@ -252,7 +252,7 @@ export class ClawManager extends EventEmitter {
 
   listSkills(): SkillInfo[] {
     const dataDir = this.configManager.getDataDir()
-    const skillsDir = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'skills')
+    const skillsDir = openClawPaths.builtinSkillsDir(dataDir)
 
     return BUILTIN_SKILLS.map((s) => ({
       ...s,
@@ -264,7 +264,7 @@ export class ClawManager extends EventEmitter {
     const skill = BUILTIN_SKILLS.find((s) => s.id === skillId)
     if (!skill) return { success: false, error: '技能不存在' }
     const dataDir = this.configManager.getDataDir()
-    const skillsDir = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'skills')
+    const skillsDir = openClawPaths.builtinSkillsDir(dataDir)
     const skillDir = join(skillsDir, skillId)
 
     const resolvedSkillDir = resolve(skillDir)
@@ -285,7 +285,7 @@ export class ClawManager extends EventEmitter {
 
   async uninstallSkill(skillId: string): Promise<{ success: boolean; error?: string }> {
     const dataDir = this.configManager.getDataDir()
-    const skillsDir = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'skills')
+    const skillsDir = openClawPaths.builtinSkillsDir(dataDir)
     const skillDir = join(skillsDir, skillId)
 
     const resolvedSkillDir = resolve(skillDir)

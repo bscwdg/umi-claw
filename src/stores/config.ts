@@ -50,7 +50,6 @@ export const useConfigStore = defineStore('config', () => {
   }
 
   async function save(partial: Partial<AppConfig>) {
-    console.log('````````````````````````````saved````````````````````````````')
     saving.value = true
     try {
       config.value = await window.api.config.save(partial)

@@ -7,6 +7,7 @@ import { createHash } from 'crypto'
 import { Readable, Transform } from 'stream'
 import { pipeline } from 'stream/promises'
 import { ConfigManager } from './configManager'
+import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
 
 const execAsync = promisify(exec)
 
@@ -47,7 +48,6 @@ const DOMESTIC_MIRRORS = [
   { name: '华为云镜像源', url: 'https://mirrors.huaweicloud.com/repository/npm/' },
 ];
 
-const GATEWAY_TOKEN = "https://github.com/bscwdg/umi-claw";
 
 const clawVersion = {
   name: "openclaw-runtime",
@@ -225,7 +225,7 @@ export class DownloadManager extends EventEmitter {
    */
   private _getWeixinManagedPluginDir(): string {
     const dataDir = this.configManager.getDataDir()
-    const configDir = join(dataDir, 'config', '.openclaw')
+    const configDir = openClawPaths.configDir(dataDir)
     const projectDirName = safePathSegmentHashed(WEIXIN_PLUGIN_PACKAGE)
     return join(
       configDir,
@@ -245,7 +245,7 @@ export class DownloadManager extends EventEmitter {
   private async _installWeixinChannelPlugin(useMirror: boolean, force = false): Promise<boolean> {
     const dataDir = this.configManager.getDataDir()
     const nodePath = this.configManager.getNodePath()
-    const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js')
+    const clawJsPath = openClawPaths.clawJs(dataDir)
 
     if (!existsSync(nodePath) || !existsSync(clawJsPath)) {
       this._writeDebugLog('[InstallWeixinPlugin] Node 或 OpenClaw 尚未就绪，跳过受管插件安装')
@@ -743,7 +743,7 @@ export class DownloadManager extends EventEmitter {
   private _ensureOpenClawConfig(): void {
     try {
       const dataDir = this.configManager.getDataDir()
-      const configDir = join(dataDir, 'config', '.openclaw')
+      const configDir = openClawPaths.configDir(dataDir)
       if (!existsSync(configDir)) {
         mkdirSync(configDir, { recursive: true })
       }

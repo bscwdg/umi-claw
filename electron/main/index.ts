@@ -7,16 +7,15 @@ import {
   Tray,
   Menu,
   nativeImage,
-  session,
-  WebContents,
   protocol
 } from 'electron'
 import { join, parse, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { ClawManager } from './clawManager'
 import { ConfigManager } from './configManager'
-import { DownloadManager } from './downloadManager'
+import { DownloadManager, type DownloadProgress } from './downloadManager'
 import { ChannelManager } from './channelManager'
+import { openClawPaths, toPosix } from './openClawPaths'
 import { readFileSync, existsSync } from 'fs'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 
@@ -43,12 +42,12 @@ const activeTerminalSessions = new Map<string, TerminalSession>()
 function getOpenClawRuntimeConfig() {
   const dataDir = configManager.getDataDir()
   const nodePath = configManager.getNodePath() // D:\...\data\runtime\node-win32-x64\node.exe
-  const targetConfigDir = join(dataDir, 'config')
-  const clawJsPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js')
+  const targetConfigDir = openClawPaths.portableHome(dataDir)
+  const clawJsPath = openClawPaths.clawJs(dataDir)
 
   // 统一路径分隔符为正斜杠，兼容 Node.js 内部处理
-  const safeConfigDir = targetConfigDir.replace(/\\/g, '/')
-  const safeDataDir = join(dataDir, 'data').replace(/\\/g, '/')
+  const safeConfigDir = toPosix(targetConfigDir)
+  const safeDataDir = toPosix(openClawPaths.openClawData(dataDir))
 
   // 🌟 核心修复：精准拿到绿色 Node 所在的 bin 目录
   const nodeBinDir = dirname(nodePath)
@@ -63,7 +62,7 @@ function getOpenClawRuntimeConfig() {
     PATH: isolatedPath,
     HOME: safeConfigDir,        // 🚀 此时 safeConfigDir 已经变成了 .../config
     USERPROFILE: safeConfigDir, // 🚀 此时 OpenClaw 的 doctor 会在里面完美建出 .openclaw 且绝不套娃
-    OPENCLAW_CONFIG_DIR: join(targetConfigDir, '.openclaw').replace(/\\/g, '/'), // 🎯 精准指向最终配置夹
+    OPENCLAW_CONFIG_DIR: toPosix(openClawPaths.configDir(dataDir)),
     OPENCLAW_DATA_DIR: safeDataDir,
     NODE_ENV: 'production',
     LANG: 'zh_CN.UTF-8',
@@ -74,7 +73,7 @@ function getOpenClawRuntimeConfig() {
   return {
     nodePath,
     clawJsPath,
-    cwd: join(dataDir, 'openclaw'), // 已经锁定了工作目录，很棒！
+    cwd: openClawPaths.installDir(dataDir),
     env,
     targetConfigDir
   }
@@ -415,7 +414,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('skills:install', (_e, skillId) => clawManager.installSkill(skillId))
   ipcMain.handle('skills:uninstall', (_e, skillId) => clawManager.uninstallSkill(skillId))
   ipcMain.handle('skills:getInstalledSkills', () => configManager.getInstalledSkills());
-  ipcMain.handle('skills:toggleSkillStatus', (event, id, enabled) => configManager.toggleSkillStatus(id, enabled));
+  ipcMain.handle('skills:toggleSkillStatus', (_event, id, enabled) => configManager.toggleSkillStatus(id, enabled));
   ipcMain.handle('skills:importSkillZip', async () => {
     return await configManager.importSkillZip()
   })
@@ -458,7 +457,7 @@ function registerIpcHandlers(): void {
     const dataDir = configManager.getDataDir()
 
     // 移除硬编码的 C:\tmp 和当前盘符根目录的随意扫描，聚焦于标准配置路径
-    const envConfigDir = join(dataDir, 'config', '.openclaw');
+    const envConfigDir = openClawPaths.configDir(dataDir);
 
     const possiblePaths = [
       // 1. 环境变量指定的核心目录 (最高优先级)
@@ -468,7 +467,6 @@ function registerIpcHandlers(): void {
       join(userHome, '.openclaw', 'openclaw.json'),
 
       // 3. AppData 隔离数据目录的其他变体
-      join(dataDir, 'config', '.openclaw', 'openclaw.json'), // 重复但保留以防逻辑差异
       join(dataDir, 'openclaw', 'openclaw.json'),
     ]
 
@@ -508,7 +506,7 @@ function registerIpcHandlers(): void {
     }
   })
 
-  // ─── 终端相关 IPC (统一合并逻辑，废弃旧的 terminal:* 命名空间，但保留兼容) ───
+  // ─── 终端相关 IPC (统一使用 term:* 命名空间) ───
 
   /**
    * 执行一次性命令 (Snapshot)
@@ -548,14 +546,12 @@ function registerIpcHandlers(): void {
     })
   }
 
-  // 注册兼容的 IPC 句柄
-  ipcMain.handle('terminal:runCommand', handleRunCommand)
   ipcMain.handle('term:run', handleRunCommand)
 
   /**
    * 启动交互式 PTY 会话
    */
-  const handleStartPty = async (event: any, args: string[], cols?: number, rows?: number) => {
+  const handleStartPty = async (_event: any, args: string[], _cols?: number, _rows?: number) => {
     // 如果已有活跃会话，先关闭它（单例模式策略，防止资源泄露）
     // 如果需要多会话，应移除此步并使用 sessionId 区分
     if (activeTerminalSessions.size > 0) {
@@ -578,19 +574,15 @@ function registerIpcHandlers(): void {
 
       // 实时向前端推送数据
       ptyProc.stdout.on('data', (data) => {
-        // 兼容两种事件名
-        mainWindow?.webContents.send('terminal:onPtyChunk', { sessionId, data: data.toString() })
         mainWindow?.webContents.send('term:pty-chunk', { sessionId, data: data.toString() })
       })
 
       ptyProc.stderr.on('data', (data) => {
-        mainWindow?.webContents.send('terminal:onPtyChunk', { sessionId, data: data.toString() })
         mainWindow?.webContents.send('term:pty-chunk', { sessionId, data: data.toString() })
       })
 
       // 监听进程退出
       ptyProc.on('exit', (exitCode) => {
-        mainWindow?.webContents.send('terminal:onPtyExit', { sessionId, exitCode: exitCode || 0 })
         mainWindow?.webContents.send('term:pty-exit', { sessionId, exitCode: exitCode || 0 })
         // 自动清理
         activeTerminalSessions.delete(sessionId)
@@ -608,7 +600,6 @@ function registerIpcHandlers(): void {
     }
   }
 
-  ipcMain.handle('terminal:startPty', handleStartPty)
   ipcMain.handle('term:pty-start', handleStartPty)
 
   /**
@@ -633,7 +624,6 @@ function registerIpcHandlers(): void {
     }
   }
 
-  ipcMain.handle('terminal:inputPty', handlePtyInput)
   ipcMain.handle('term:pty-input', handlePtyInput)
 
   /**
@@ -650,12 +640,9 @@ function registerIpcHandlers(): void {
     return true
   }
 
-  ipcMain.handle('terminal:stopPty', handleStopPty)
   ipcMain.handle('term:pty-stop', handleStopPty)
 
-  // 空实现保底
-  ipcMain.handle('terminal:removeListeners', () => true)
-  ipcMain.handle('term:pty-resize', (_e, sid: string, cols: number, rows: number) => {
+  ipcMain.handle('term:pty-resize', (_e, _sid: string, _cols: number, _rows: number) => {
     // 如果需要支持 resize，这里应该查找进程并发送 SIGWINCH 或使用 pty.js 的 resize 方法
     // 目前 spawn 的标准子进程不支持动态 resize，除非使用 node-pty
     return true
@@ -678,7 +665,7 @@ function registerIpcHandlers(): void {
     } catch (error) {
       return {
         success: false,
-        error: error.message
+        error: error instanceof Error ? error.message : String(error)
       }
     }
   })
