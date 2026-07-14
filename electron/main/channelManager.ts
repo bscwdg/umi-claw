@@ -1,4 +1,5 @@
 import { spawn } from 'child_process'
+import { EventEmitter } from 'events'
 import path from 'path'
 import fs from 'fs'
 import { ConfigManager } from './configManager'
@@ -12,8 +13,10 @@ export interface ChannelInfo {
   enabled?: boolean
 }
 
-export class ChannelManager {
-  constructor(private configManager: ConfigManager) {}
+export class ChannelManager extends EventEmitter {
+  constructor(private configManager: ConfigManager) {
+    super()
+  }
 
   private get dataDir() {
     return this.configManager.getDataDir()
@@ -63,6 +66,14 @@ export class ChannelManager {
         desc: '腾讯官方微信渠道',
         installed: fs.existsSync(path.join(this.channelDir, 'weixin')),
         enabled: cfg.weixin?.enabled ?? false
+      },
+      {
+        id: 'feishu',
+        name: '飞书',
+        icon: '💙',
+        desc: '飞书自建应用（长连接）',
+        installed: true,
+        enabled: cfg.feishu?.enabled ?? false
       }
     ]
   }
@@ -106,6 +117,80 @@ export class ChannelManager {
     cfg[id] = { ...cfg[id], ...data }
     this.saveConfig(cfg)
     return true
+  }
+
+  private get openClawEnv() {
+    const portableHomeDir = path.join(this.dataDir, 'config')
+    const targetConfigDir = path.join(portableHomeDir, '.openclaw')
+    return {
+      ...process.env,
+      HOME: portableHomeDir,
+      USERPROFILE: portableHomeDir,
+      OPENCLAW_CONFIG_DIR: targetConfigDir,
+      OPENCLAW_DATA_DIR: path.join(this.dataDir, 'data'),
+      OPENCLAW_DISABLE_BONJOUR: '1',
+      OPENCLAW_GATEWAY_MODE: 'local'
+    }
+  }
+
+  isPluginInstalled(pluginId: string): boolean {
+    const projectsDir = path.join(
+      this.dataDir,
+      'config',
+      '.openclaw',
+      'npm',
+      'projects'
+    )
+    if (!fs.existsSync(projectsDir)) return false
+    const prefix = `openclaw-${pluginId}`
+    return fs.readdirSync(projectsDir).some(name => name.startsWith(prefix))
+  }
+
+  installPlugin(pluginPkg: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      const nodePath = this.configManager.getNodePath()
+      const clawJsPath = path.join(
+        this.dataDir,
+        'openclaw',
+        'node_modules',
+        'openclaw',
+        'dist',
+        'index.js'
+      )
+      if (!fs.existsSync(nodePath) || !fs.existsSync(clawJsPath)) {
+        reject(new Error('OpenClaw runtime not found, please init environment first'))
+        return
+      }
+
+      this.emit('log', `[feishu] installing plugin ${pluginPkg} ...`, 'system')
+      const proc = spawn(nodePath, [clawJsPath, 'plugins', 'install', pluginPkg], {
+        cwd: path.join(this.dataDir, 'openclaw'),
+        env: this.openClawEnv,
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+
+      const forward = (buf: Buffer, type: 'stdout' | 'stderr') => {
+        buf
+          .toString()
+          .split(/\r?\n/)
+          .map(line => line.trimEnd())
+          .filter(line => line.length > 0)
+          .forEach(line => this.emit('log', line, type))
+      }
+      proc.stdout?.on('data', (buf: Buffer) => forward(buf, 'stdout'))
+      proc.stderr?.on('data', (buf: Buffer) => forward(buf, 'stderr'))
+
+      proc.on('error', reject)
+      proc.on('close', code => {
+        if (code === 0) {
+          this.emit('log', `[feishu] plugin ${pluginPkg} installed`, 'system')
+          resolve(true)
+        } else {
+          reject(new Error(`install plugin ${pluginPkg} failed (code ${code})`))
+        }
+      })
+    })
   }
 
   private execWechat(args: string[]): Promise<boolean> {

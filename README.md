@@ -12,6 +12,7 @@
 - 🧩 **内置中文技能** — 开箱即用的中文 AI 能力
 - 🤖 **多个个模型服务商** — DeepSeek、Kimi、通义千问、OpenAI 等
 - 📋 **实时日志监控** —— 带过滤、导出功能的日志查看器，日志文件：`data/logs/runtime-debug.log`
+- 📩 **多渠道接入** — 内置微信，支持飞书自建应用（长连接，界面一键装插件）
 - 💾 **便携模式** — 可放置在 U 盘，数据随身带走
 - 🌐 **国内镜像加速** — npmmirror + GitHub 代理，无需翻墙
 
@@ -188,10 +189,48 @@ window.api.terminal.onPtyChunk(cb)                // 监听 PTY 输出流
 window.api.terminal.onPtyExit(cb)                 // 监听 PTY 退出
 window.api.terminal.removeListeners()             // 移除 PTY 监听
 
+// ── 渠道接入 ──
+window.api.channels.isPluginInstalled(id)     // 查询渠道插件是否已安装（如 'feishu'）
+window.api.channels.installPlugin(pkg)         // 安装渠道插件（如 '@openclaw/feishu'），安装日志走 claw.onLog
+
 // ── 其他工具 ──
 window.api.shell.openExternal(url)    // 用系统默认浏览器打开链接
 window.api.dialog.showMessage(opts)   // 弹出系统原生消息框
 ```
+
+## 渠道接入（飞书）
+
+应用已内置微信渠道，并支持接入飞书。飞书为**插件驱动**渠道（与微信一致），
+除填写凭证外还需安装官方插件 `@openclaw/feishu`，界面已将这一步自动化。
+
+### 前置准备（飞书开放平台）
+
+1. 在[飞书开放平台](https://open.feishu.cn/)创建**企业自建应用**。
+2. 在「凭证与基础信息」复制 **App ID**（`cli_xxx`）与 **App Secret**。
+3. 添加应用能力 → **机器人**，并至少开通 `im:message` 相关权限。
+4. 事件订阅的连接方式选 **长连接（WebSocket）**，订阅 `im.message.receive_v1`。
+   - 长连接无需公网回调，`Encrypt Key` / `Verification Token` 可留空。
+5. **发布应用**并等待管理员审核通过。
+
+### 在应用内接入
+
+1. 进入「渠道接入」页，展开**飞书自建应用**，填写 App ID / App Secret，
+   并按需设置私聊策略、群聊策略、是否需要 @机器人。
+2. 点击保存。若飞书插件尚未安装，应用会自动执行安装
+   （首次约 1-2 分钟，安装日志实时显示在「日志」页，前缀 `[feishu]`）。
+3. 安装完成后**重启 OpenClaw**，飞书长连接会自动建立。
+
+### 首次私聊配对
+
+私聊默认策略为 `pairing`：陌生人首次私聊会生成配对码，需要审批。
+可点击飞书卡片的「前往终端配对审批」，或在终端页执行：
+
+```bash
+openclaw pairing list feishu              # 查看待审批的配对码
+openclaw pairing approve feishu <配对码>  # 审批通过
+```
+
+> 群聊中默认需要 @机器人 才会响应，可在渠道卡片中关闭。
 
 ## 便携模式
 

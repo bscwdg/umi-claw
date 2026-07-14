@@ -37,6 +37,33 @@ export const CHANNEL_SCHEMAS = {
     }
   ],
 
+  feishu: [
+    {
+      key: 'appId',
+      label: 'App ID',
+      type: 'text',
+      placeholder: 'cli_xxxxxxxxxxxxxxxx'
+    },
+
+    {
+      key: 'appSecret',
+      label: 'App Secret',
+      type: 'password'
+    },
+
+    {
+      key: 'encryptKey',
+      label: 'Encrypt Key',
+      type: 'password'
+    },
+
+    {
+      key: 'verificationToken',
+      label: 'Verification Token',
+      type: 'password'
+    }
+  ],
+
   wechat: [
     {
       key: 'appId',

@@ -95,7 +95,10 @@ const api = {
   },
   // 渠道
   channels: {
-   
+    isPluginInstalled: (pluginId: string) =>
+      ipcRenderer.invoke('channels:isPluginInstalled', pluginId),
+    installPlugin: (pluginPkg: string) =>
+      ipcRenderer.invoke('channels:installPlugin', pluginPkg)
   },
   // 终端
   terminal: {

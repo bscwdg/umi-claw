@@ -38,6 +38,7 @@ export interface AppConfig {
   useChineseMirror: boolean
   logLevel: 'debug' | 'info' | 'warn' | 'error'
   language: 'zh-CN' | 'en-US'
+  channels?: Record<string, Record<string, unknown>>
 }
 
 const DEFAULT_PROVIDERS: ModelProvider[] = [
@@ -497,6 +498,50 @@ private _syncOpenClawConfig(): void {
     if (existingConfig.plugins) {
       delete existingConfig.plugins.bonjour
       delete (existingConfig.plugins as any)['talk-voice']
+
+      // remove stale plugin entries that are actually model providers
+      // (they live under models.providers, not as installed plugins)
+      if (existingConfig.plugins.entries) {
+        const providerIds = new Set((this.config.providers || []).map(p => p.id))
+        for (const key of Object.keys(existingConfig.plugins.entries)) {
+          if (providerIds.has(key)) {
+            delete existingConfig.plugins.entries[key]
+          }
+        }
+      }
+    }
+
+    // channel config injection (native channels such as feishu)
+    existingConfig.channels = existingConfig.channels || {}
+    const uiChannels = this.config.channels || {}
+    const feishuCfg = uiChannels.feishu as Record<string, unknown> | undefined
+    if (feishuCfg && feishuCfg.enabled) {
+      const appId = String(feishuCfg.appId ?? '').trim()
+      const appSecret = String(feishuCfg.appSecret ?? '').trim()
+      if (appId && appSecret) {
+        const feishu: Record<string, unknown> = {
+          ...(existingConfig.channels.feishu || {}),
+          appId,
+          appSecret,
+          dmPolicy: feishuCfg.dmPolicy || 'pairing',
+          groupPolicy: feishuCfg.groupPolicy || 'allowlist',
+          requireMention: feishuCfg.requireMention ?? true
+        }
+        const encryptKey = String(feishuCfg.encryptKey ?? '').trim()
+        const verificationToken = String(feishuCfg.verificationToken ?? '').trim()
+        if (encryptKey) feishu.encryptKey = encryptKey
+        if (verificationToken) feishu.verificationToken = verificationToken
+        existingConfig.channels.feishu = feishu
+
+        existingConfig.plugins = existingConfig.plugins || {}
+        existingConfig.plugins.entries = existingConfig.plugins.entries || {}
+        existingConfig.plugins.entries.feishu = {
+          ...(existingConfig.plugins.entries.feishu || {}),
+          enabled: true
+        }
+      }
+    } else if (existingConfig.channels.feishu) {
+      delete existingConfig.channels.feishu
     }
 
     existingConfig.meta = {

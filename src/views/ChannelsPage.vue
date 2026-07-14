@@ -27,8 +27,22 @@
 
         <div v-if="expanded[ch.key]" class="channel-form">
           <div v-for="f in ch.fields" :key="f.id" class="form-group">
-            <label>{{ f.label }}</label>
+            <label v-if="f.type !== 'checkbox'">{{ f.label }}</label>
+            <select
+              v-if="f.type === 'select'"
+              v-model="formValues[ch.key][f.id]"
+              class="form-input"
+            >
+              <option v-for="opt in f.options" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+            <label v-else-if="f.type === 'checkbox'" class="form-check">
+              <input v-model="formValues[ch.key][f.id]" type="checkbox" />
+              <span>{{ f.label }}</span>
+            </label>
             <input
+              v-else
               v-model="formValues[ch.key][f.id]"
               type="text"
               :placeholder="f.placeholder"
@@ -49,7 +63,19 @@
             <button class="docs-btn" @click="openExternalUrl(ch.docsUrl)">
               📖 查看接入文档
             </button>
+            <button
+              v-if="ch.key === 'feishu'"
+              class="docs-btn"
+              @click="goToFeishuPairing"
+            >
+              🔗 前往终端配对审批
+            </button>
           </div>
+          <p v-if="ch.key === 'feishu'" class="form-hint">
+            飞书采用长连接（WebSocket），无需公网回调。保存并重启后，陌生人首次私聊会生成配对码，
+            在终端执行 <code>openclaw pairing list feishu</code> /
+            <code>openclaw pairing approve feishu &lt;配对码&gt;</code> 审批即可。
+          </p>
         </div>
       </div>
     </div>
@@ -141,6 +167,14 @@ function goToWeixinLogin() {
   });
 }
 
+// 飞书配对审批：跳转终端并预填 pairing 列表命令
+function goToFeishuPairing() {
+  router.push({
+    path: "/terminal",
+    query: { autoRun: "pairing list feishu" },
+  });
+}
+
 // ── 3. 核心多渠道 Schema 配置（保持不变） ───────────────────────────────────
 type ChannelKey = "feishu" | "wechat_mp" | "wecom" | "dingtalk";
 
@@ -153,7 +187,11 @@ interface ChannelConfig {
   fields: {
     id: string;
     label: string;
-    placeholder: string;
+    type?: "text" | "select" | "checkbox";
+    placeholder?: string;
+    options?: { label: string; value: string }[];
+    default?: string | boolean;
+    optional?: boolean;
     hint?: string;
     hintUrl?: string;
     hintLabel?: string;
@@ -183,14 +221,44 @@ const CHANNELS: ChannelConfig[] = [
       {
         id: "encryptKey",
         label: "Encrypt Key (选填)",
+        optional: true,
         placeholder: "飞书事件订阅的加密密钥",
-        hint: "在「事件订阅」页面获取",
+        hint: "长连接模式无需填写；仅 Webhook 模式需要",
       },
       {
         id: "verificationToken",
-        label: "Verification Token",
+        label: "Verification Token (选填)",
+        optional: true,
         placeholder: "飞书事件订阅的验证 Token",
-        hint: "在「事件订阅」页面获取",
+        hint: "长连接模式无需填写；仅 Webhook 模式需要",
+      },
+      {
+        id: "dmPolicy",
+        label: "私聊策略",
+        type: "select",
+        default: "pairing",
+        options: [
+          { label: "配对审批（陌生人先配对）", value: "pairing" },
+          { label: "允许所有人", value: "open" },
+          { label: "仅白名单", value: "allowlist" },
+        ],
+        hint: "陌生人首次私聊的处理方式，默认需要配对审批",
+      },
+      {
+        id: "groupPolicy",
+        label: "群聊策略",
+        type: "select",
+        default: "allowlist",
+        options: [
+          { label: "仅白名单群", value: "allowlist" },
+          { label: "允许所有群", value: "open" },
+        ],
+      },
+      {
+        id: "requireMention",
+        label: "群聊中需要 @机器人 才响应",
+        type: "checkbox",
+        default: true,
       },
     ],
   },
@@ -265,7 +333,7 @@ const CHANNELS: ChannelConfig[] = [
   },
 ];
 
-const formValues = ref<Record<string, Record<string, string>>>({});
+const formValues = ref<Record<string, Record<string, string | boolean>>>({});
 const expanded = ref<Record<string, boolean>>({});
 const saving = ref(false);
 const savedMsg = ref("");
@@ -276,7 +344,8 @@ onMounted(async () => {
   for (const ch of CHANNELS) {
     formValues.value[ch.key] = {};
     for (const f of ch.fields) {
-      formValues.value[ch.key][f.id] = "";
+      formValues.value[ch.key][f.id] =
+        f.default !== undefined ? f.default : f.type === "checkbox" ? false : "";
     }
     expanded.value[ch.key] = false;
   }
@@ -293,7 +362,10 @@ onMounted(async () => {
           expanded.value[ch.key] = true; // 有旧配置的默认展开
           for (const f of ch.fields) {
             if (cfg[f.id] !== undefined) {
-              formValues.value[ch.key][f.id] = String(cfg[f.id]);
+              formValues.value[ch.key][f.id] =
+                f.type === "checkbox"
+                  ? Boolean(cfg[f.id])
+                  : (cfg[f.id] as string);
             }
           }
         }
@@ -309,10 +381,16 @@ function toggle(key: ChannelKey) {
   expanded.value[key] = !expanded.value[key];
 }
 
+function isRequiredText(f: ChannelConfig["fields"][number]): boolean {
+  return (!f.type || f.type === "text") && !f.optional;
+}
+
 function isConfigured(key: ChannelKey): boolean {
   const ch = CHANNELS.find((c) => c.key === key);
   if (!ch) return false;
-  return ch.fields.every((f) => !!formValues.value[key]?.[f.id]?.trim());
+  return ch.fields
+    .filter(isRequiredText)
+    .every((f) => !!String(formValues.value[key]?.[f.id] ?? "").trim());
 }
 
 async function save() {
@@ -326,12 +404,21 @@ async function save() {
       if (!expanded.value[ch.key]) continue;
 
       const vals = formValues.value[ch.key];
-      const allFilled = ch.fields.every((f) => !!vals[f.id]?.trim());
+      const allFilled = ch.fields
+        .filter(isRequiredText)
+        .every((f) => !!String(vals[f.id] ?? "").trim());
 
       if (allFilled) {
         const entry: Record<string, unknown> = { enabled: true };
         for (const f of ch.fields) {
-          entry[f.id] = vals[f.id].trim();
+          const v = vals[f.id];
+          if (f.type === "checkbox") {
+            entry[f.id] = Boolean(v);
+          } else {
+            const s = String(v ?? "").trim();
+            if (s === "" && f.optional) continue;
+            entry[f.id] = s;
+          }
         }
         channelConfigs[ch.key] = entry;
       }
@@ -344,6 +431,28 @@ async function save() {
 
       await window.api.config.save(fullConfig);
       savedMsg.value = "✅ 已保存，重启 OpenClaw 后生效";
+
+      // 飞书为插件驱动渠道：已配置且插件未安装时，自动安装官方插件
+      const feishuConfigured = !!channelConfigs["feishu"];
+      if (feishuConfigured && window.api?.channels?.installPlugin) {
+        try {
+          const installed =
+            (await window.api.channels.isPluginInstalled?.("feishu")) ?? false;
+          if (!installed) {
+            savedMsg.value = "⏳ 正在安装飞书插件（首次约 1-2 分钟）...";
+            const res = await window.api.channels.installPlugin(
+              "@openclaw/feishu"
+            );
+            if (res?.success) {
+              savedMsg.value = "✅ 飞书插件已安装，请重启 OpenClaw 生效";
+            } else {
+              savedMsg.value = `⚠️ 配置已保存，但插件安装失败：$${res?.error || "未知错误"}`;
+            }
+          }
+        } catch (e) {
+          savedMsg.value = `⚠️ 配置已保存，但插件安装失败：$${e}`;
+        }
+      }
     } else {
       throw new Error("主进程安全沙箱配置保存 API 不可用");
     }
@@ -470,6 +579,19 @@ async function save() {
 }
 .form-input:focus {
   border-color: var(--accent);
+}
+.form-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.form-check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
 }
 .form-hint {
   font-size: 0.75rem;

@@ -421,6 +421,19 @@ function registerIpcHandlers(): void {
   })
 
   // 外部链接 - 增加简单的协议校验，防止 file:// 等危险协议
+  // channels: plugin install for native long-connection channels (e.g. feishu)
+  ipcMain.handle('channels:isPluginInstalled', (_e, pluginId: string) =>
+    channelManager.isPluginInstalled(pluginId)
+  )
+  ipcMain.handle('channels:installPlugin', async (_e, pluginPkg: string) => {
+    try {
+      await channelManager.installPlugin(pluginPkg)
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err?.message || String(err) }
+    }
+  })
+
   ipcMain.handle('shell:openExternal', (_e, url: string) => {
     if (url.startsWith('http://') || url.startsWith('https://')) {
       return shell.openExternal(url)
@@ -691,6 +704,11 @@ function setupLogForwarding(): void {
   }
 
   clawManager.on('log', logHandler)
+  channelManager.on('log', (line: string, type: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('claw:log', { line, type, time: Date.now() })
+    }
+  })
   clawManager.on('statusChange', statusHandler)
 
   downloadManager.on('progress', (progress: any) => {
