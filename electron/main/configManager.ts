@@ -2,7 +2,7 @@ import { app,dialog } from 'electron'
 import { join, dirname ,basename} from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'fs'
 import AdmZip from 'adm-zip'
-import { OFFICIAL_MODEL_PRESETS } from './modelConfig'
+import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawProviderRefs } from './modelConfig'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
 
 export interface PresetModel {
@@ -476,9 +476,11 @@ private _syncOpenClawConfig(): void {
           }
         }
 
-        // 使用 p.id 作为 provider 的键（与后续 primary 拼接一致）
-        existingConfig.models.providers[p.id] = {
-          ...existingConfig.models.providers[p.id],
+        // 使用避让后的安全 key 作为 provider 的键（与后续 primary 拼接一致），
+        // 避免与 OpenClaw 外部 provider 目录重名而触发插件强制安装。
+        const providerKey = toOpenClawProviderKey(p.id)
+        existingConfig.models.providers[providerKey] = {
+          ...existingConfig.models.providers[providerKey],
           ...officialBody
         }
       } else {
@@ -489,7 +491,7 @@ private _syncOpenClawConfig(): void {
     // ----- 处理激活模型 Primary -----
     const activeProvider = this.config.providers.find((p) => p.id === this.config.activeProvider)
     if (activeProvider) {
-      const pId = activeProvider.id
+      const pId = toOpenClawProviderKey(activeProvider.id)
       const mName = activeProvider.model
       const fullModelKey = `${pId}/${mName}`
       existingConfig.agents.defaults.model = { primary: fullModelKey }
@@ -513,6 +515,10 @@ private _syncOpenClawConfig(): void {
         }
       }
     }
+
+    // 自愈：清理旧版本/旧配置里会触发 OpenClaw 外部 provider 插件安装的冲突残留
+    // （models.providers 下的保留 id 键、agents.defaults.models 下命中前缀的模型键）。
+    pruneReservedOpenClawProviderRefs(existingConfig)
 
     // channel config injection (native channels such as feishu)
     existingConfig.channels = existingConfig.channels || {}

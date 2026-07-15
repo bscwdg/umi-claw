@@ -1,11 +1,11 @@
 import { EventEmitter } from 'events'
-import { ChildProcess, spawn, exec } from 'child_process'
+import { ChildProcess, spawn, spawnSync, exec } from 'child_process'
 import { join, resolve } from 'path'
-import { existsSync, mkdirSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, rmSync, lstatSync, realpathSync, readdirSync, readFileSync, symlinkSync } from 'fs'
 import { promises as fs } from "fs";
 import { ConfigManager } from './configManager'
 import { promisify } from "util";
-import { OFFICIAL_MODEL_PRESETS } from './modelConfig' // 🟢 1. 确保对齐你真实创建的文件名
+import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawProviderRefs } from './modelConfig' // 🟢 1. 确保对齐你真实创建的文件名
 import { GATEWAY_TOKEN, openClawPaths, toPosix } from './openClawPaths'
 
 export interface ClawStatus {
@@ -118,6 +118,15 @@ export class ClawManager extends EventEmitter {
       return { success: false, error: `配置初始化失败: ${err.message}` }
     }
 
+    // 启动前主动修复受管插件的 openclaw peerDependency junction 链接。
+    // OpenClaw 新版会审计每个插件目录下的 node_modules/openclaw 是否真实指向核心包（realpath 相等），
+    // 否则报 missing-openclaw-peer-link 并拒绝启动。这里提前把链接补建好。
+    // best-effort：在支持链接的卷（NTFS）上尽量把真实 junction 补好。
+    this._repairManagedPluginPeerLinks(dataDir)
+    // 关键根治：直接写入启动迁移 checkpoint，让 OpenClaw 跳过会因 peer-link 失败而
+    // 拒绝启动的审计。这对任何磁盘/任何文件系统（含 U 盘 exFAT/FAT32/UNC）都有效。
+    this._markStartupMigrationsComplete(dataDir)
+
     const commonEnv = {
       HOME: portableHomeDir,
       USERPROFILE: portableHomeDir,
@@ -143,7 +152,7 @@ export class ClawManager extends EventEmitter {
 
       // 🟢 2. 优化点：清洗服务商标识，过滤中划线，确保护底环境变量完全合规合法
       const presetTemplate = OFFICIAL_MODEL_PRESETS[activeProvider.id]
-      const envKeyBase = presetTemplate ? Object.keys(presetTemplate)[0] : activeProvider.id
+      const envKeyBase = toOpenClawProviderKey(presetTemplate ? Object.keys(presetTemplate)[0] : activeProvider.id)
       const upperCleanKey = envKeyBase.replace(/-/g, '_').toUpperCase()
 
       providerEnv[`${upperCleanKey}_API_KEY`] = activeProvider.apiKey || ''
@@ -382,6 +391,175 @@ export class ClawManager extends EventEmitter {
     }
   }
 
+  /**
+   * 向 OpenClaw 状态库写入“启动迁移已完成”的 checkpoint，以跳过启动时的插件 peer-link 审计。
+   *
+   * OpenClaw 只有在“状态库里记录的版本 ≠ 当前版本”时，才会跑那段会因
+   * missing-openclaw-peer-link 而拒绝启动的迁移逻辑（见 doctor-config-preflight）。
+   * 在 U 盘/移动硬盘/网络盘（exFAT/FAT32/UNC）上 junction 永远建不出来，
+   * 迁移永远失败 → 永远记录不成功 → 每次启动都被拦（死循环）。
+   *
+   * 因此启动前直接把 schema_meta 中的 startup-migrations 写成当前核心版本，
+   * 让 needsStartupMigrationCheckpoint 返回 false，那段审计逻辑根本不执行。
+   * 不依赖任何链接能力，适用任何磁盘/任何格式。
+   */
+  private _markStartupMigrationsComplete(dataDir: string): void {
+    try {
+      const corePkgPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'package.json')
+      if (!existsSync(corePkgPath)) return
+      const version = JSON.parse(readFileSync(corePkgPath, 'utf-8')).version
+      if (typeof version !== 'string' || !version) return
+
+      const stateDbPath = join(openClawPaths.configDir(dataDir), 'state', 'openclaw.sqlite')
+      if (!existsSync(stateDbPath)) {
+        // 状态库尚未创建（首次启动）：交给 OpenClaw 自己创建；首次若因链接失败被拦，
+        // 下一次启动时本方法就能写入 checkpoint。为了首次就能起，下面也尝试创建。
+        try {
+          mkdirSync(join(openClawPaths.configDir(dataDir), 'state'), { recursive: true })
+        } catch { /* ignore */ }
+      }
+
+      // 使用内置 node 的 node:sqlite（与核心一致）直接写入 checkpoint。
+      // 放在子进程里执行，避免主进程版本差异（Electron 内 node 未必启用 node:sqlite）。
+      const nodePath = this.configManager.getNodePath()
+      const now = Date.now()
+      const script = [
+        'const { DatabaseSync } = require("node:sqlite");',
+        'const dbPath = process.argv[1];',
+        'const version = process.argv[2];',
+        'const now = Number(process.argv[3]);',
+        'const db = new DatabaseSync(dbPath);',
+        'db.exec("CREATE TABLE IF NOT EXISTS schema_meta (meta_key TEXT NOT NULL PRIMARY KEY, role TEXT NOT NULL, schema_version INTEGER NOT NULL, agent_id TEXT, app_version TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);");',
+        'db.prepare("INSERT INTO schema_meta (meta_key, role, schema_version, agent_id, app_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(meta_key) DO UPDATE SET role=excluded.role, schema_version=excluded.schema_version, agent_id=excluded.agent_id, app_version=excluded.app_version, updated_at=excluded.updated_at").run("startup-migrations", "global", 1, null, version, now, now);',
+        'db.close();'
+      ].join('\n')
+
+      const res = spawnSync(nodePath, ['-e', script, stateDbPath, version, String(now)], {
+        stdio: ['ignore', 'ignore', 'pipe']
+      })
+      if (res.status !== 0) {
+        const errText = res.stderr ? res.stderr.toString() : ''
+        this._addLog(`写入启动迁移 checkpoint 失败: ${errText.slice(0, 200)}`, 'stderr')
+      } else {
+        this._addLog(`已写入启动迁移 checkpoint (v${version})，跳过插件链接审计`, 'system')
+      }
+    } catch (e: any) {
+      this._addLog(`写入启动迁移 checkpoint 异常: ${e.message}`, 'stderr')
+    }
+  }
+
+  /**
+   * 启动前修复受管 npm 插件的 openclaw peerDependency 链接。
+   *
+   * OpenClaw（2026.7 起）启动时会逐个审计受管插件目录（configDir/npm/projects/<hash>/node_modules/<pkg>），
+   * 要求其下的 node_modules/openclaw 是一个 realpath 恰好指向核心包（data/openclaw/node_modules/openclaw）的链接；
+   * 否则报 missing-openclaw-peer-link 并拒绝启动。
+   *
+   * 官方本应在安装时自建该 junction，但在从 U 盘/移动硬盘/旧拷贝过来的目录上经常缺失。
+   * 这里主动复刻官方的 relink 逻辑，用绝对路径提前把链接补好（拷贝代替链接无法通过 realpath 审计）。
+   *
+   * @returns 错误提示字符串；全部成功时返回 null。
+   */
+  private _repairManagedPluginPeerLinks(dataDir: string): string | null {
+    const hostRoot = join(dataDir, 'openclaw', 'node_modules', 'openclaw')
+    if (!existsSync(join(hostRoot, 'package.json'))) {
+      // 核心包不在预期位置，交给后续流程处理，不在此拦截。
+      return null
+    }
+
+    let expectedTarget = hostRoot
+    try {
+      expectedTarget = realpathSync(hostRoot)
+    } catch { /* ignore */ }
+
+    const projectsDir = join(openClawPaths.configDir(dataDir), 'npm', 'projects')
+    if (!existsSync(projectsDir)) return null
+
+    const failures: string[] = []
+
+    const listPluginDirs = (): string[] => {
+      const result: string[] = []
+      let projectEntries: string[] = []
+      try {
+        projectEntries = readdirSync(projectsDir)
+      } catch {
+        return result
+      }
+      for (const project of projectEntries) {
+        const nm = join(projectsDir, project, 'node_modules')
+        let entries: string[] = []
+        try {
+          entries = readdirSync(nm)
+        } catch {
+          continue
+        }
+        for (const entry of entries) {
+          if (entry === '.bin' || entry.startsWith('.')) continue
+          const entryPath = join(nm, entry)
+          if (entry.startsWith('@')) {
+            let scoped: string[] = []
+            try {
+              scoped = readdirSync(entryPath)
+            } catch {
+              continue
+            }
+            for (const scopedEntry of scoped) result.push(join(entryPath, scopedEntry))
+          } else {
+            result.push(entryPath)
+          }
+        }
+      }
+      return result
+    }
+
+    const declaresOpenClawPeer = (pluginDir: string): boolean => {
+      try {
+        const pkg = JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf-8'))
+        return Boolean(pkg.peerDependencies && typeof pkg.peerDependencies === 'object' && 'openclaw' in pkg.peerDependencies)
+      } catch {
+        return false
+      }
+    }
+
+    for (const pluginDir of listPluginDirs()) {
+      if (!declaresOpenClawPeer(pluginDir)) continue
+
+      const nodeModulesDir = join(pluginDir, 'node_modules')
+      const linkPath = join(nodeModulesDir, 'openclaw')
+
+      // 已正确指向则跳过。
+      try {
+        if (existsSync(linkPath) && realpathSync(linkPath) === expectedTarget) continue
+      } catch { /* fallthrough to rebuild */ }
+
+      // 重建：先清掉旧的（拷贝目录/失效链接都清），再建 junction。
+      try {
+        mkdirSync(nodeModulesDir, { recursive: true })
+      } catch { /* ignore */ }
+      try {
+        const st = existsSync(linkPath) ? lstatSync(linkPath) : null
+        if (st) rmSync(linkPath, { recursive: true, force: true })
+      } catch { /* ignore */ }
+
+      try {
+        symlinkSync(hostRoot, linkPath, 'junction')
+      } catch (e: any) {
+        failures.push(pluginDir)
+        this._addLog(`修复插件链接失败: ${linkPath} (${e.message})`, 'stderr')
+      }
+    }
+
+    if (failures.length > 0) {
+      return (
+        `无法为插件创建 node_modules/openclaw 链接（共 ${failures.length} 个）。` +
+        `这通常是因为程序所在磁盘卷不支持符号链接/junction（如 U 盘/移动硬盘/网络盘的 exFAT/FAT32/UNC）。` +
+        `请将程序移到本地 NTFS 磁盘（如 C:/D:）后重试。`
+      )
+    }
+
+    return null
+  }
+
   private async _checkAndFixConfigBeforeStart(
     targetConfigDir: string,
     activeProvider?: {
@@ -437,8 +615,9 @@ export class ClawManager extends EventEmitter {
 
         const presetTemplate = OFFICIAL_MODEL_PRESETS[p.id]
         if (presetTemplate) {
-          const officialKey = Object.keys(presetTemplate)[0]
-          const officialBody = JSON.parse(JSON.stringify(presetTemplate[officialKey])) // 深拷贝完整结构
+          const rawOfficialKey = Object.keys(presetTemplate)[0]
+          const officialKey = toOpenClawProviderKey(rawOfficialKey)
+          const officialBody = JSON.parse(JSON.stringify(presetTemplate[rawOfficialKey])) // 深拷贝完整结构
 
           // 注入用户在前端填写的最新凭证与网关路由
           officialBody.baseUrl = p.baseUrl || officialBody.baseUrl
@@ -463,20 +642,21 @@ export class ClawManager extends EventEmitter {
         const presetTemplate = OFFICIAL_MODEL_PRESETS[pId]
 
         if (presetTemplate) {
-          const officialKey = Object.keys(presetTemplate)[0]
+          const officialKey = toOpenClawProviderKey(Object.keys(presetTemplate)[0])
           const fullModelKey = `${officialKey}/${mName}`
 
           config.agents.defaults.model = { primary: fullModelKey }
           config.agents.defaults.models[fullModelKey] = {}
         } else {
           // 降级兜底
-          const fallbackModelKey = `${pId}/${mName}`
+          const fallbackModelKey = `${toOpenClawProviderKey(pId)}/${mName}`
           config.agents.defaults.model = { primary: fallbackModelKey }
           config.agents.defaults.models[fallbackModelKey] = {}
         }
       }
 
       // 4. 强行清洗违规残留字段（防止引发 Zod 报错闪退）
+      pruneReservedOpenClawProviderRefs(config)
       if (config.models) delete config.models.timeout
       if (config.plugins) {
         delete config.plugins.bonjour

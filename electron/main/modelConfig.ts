@@ -664,3 +664,65 @@ export const OFFICIAL_MODEL_PRESETS: Record<string, any> = {
   LONGCAT_DEFAULT_PROVIDERS: LONGCAT_DEFAULT_PROVIDERS.longCat,
   CUSTOM_DEFAULT_PROVIDERS: CUSTOM_DEFAULT_PROVIDERS.custom,
 };
+
+// ===================== OpenClaw 外部 provider 命名避让 =====================
+// OpenClaw（2026.7 起）会把配置里出现的 provider id / 别名（按小写匹配）
+// 视为“官方外部 provider 插件”，启动时强制执行
+// `plugins install @openclaw/<id>-provider`。这些插件将 openclaw 声明为
+// peerDependency，需要在插件目录内建立 node_modules/openclaw 的 junction 链接，
+// 而在 U 盘 / 移动硬盘 / 网络盘（exFAT/FAT32/UNC）上无法创建 junction，
+// 从而导致 missing-openclaw-peer-link，网关启动失败。
+// 我们的 longCat/deepseek/kimi 等都是内联的 openai-completions provider（已自带
+// baseUrl+apiKey），本不需要外部插件。因此写入 openclaw.json 时，把会与该
+// 目录冲突的 provider key / 模型前缀 / env 变量名统一改成带前缀的安全名，
+// 绕开这个自动安装机制（功能不受影响，仍是普通内联 provider）。
+export const RESERVED_OPENCLAW_PROVIDER_IDS: ReadonlySet<string> = new Set([
+  'amazon-bedrock', 'amazon-bedrock-mantle', 'anthropic-vertex', 'arcee', 'cerebras',
+  'chutes', 'cloudflare-ai-gateway', 'codex', 'cohere', 'deepinfra', 'deepseek',
+  'featherless', 'fireworks', 'gmi', 'groq', 'kilocode', 'kimi', 'longcat', 'meta',
+  'moonshot', 'pixverse', 'qianfan', 'qwen', 'qwen-oauth', 'stepfun', 'stepfun-plan',
+  'tencent', 'tencent-tokenhub', 'tencent-tokenplan', 'venice', 'vercel-ai-gateway', 'zai',
+  'gmi-cloud', 'gmicloud', 'meituan-longcat', 'kimi-coding', 'qwencloud', 'modelstudio',
+  'dashscope', 'qwen-portal', 'qwen-cli', 'fireworks-ai', 'moonshotai', 'moonshot-ai',
+  'z-ai', 'z.ai',
+])
+
+export const SAFE_PROVIDER_KEY_PREFIX = 'umiclaw-'
+
+/** Add a safe prefix when a provider key would collide with the OpenClaw external provider catalog; otherwise return as-is. */
+export function toOpenClawProviderKey(rawKey: string): string {
+  const key = (rawKey || '').trim()
+  if (!key) return key
+  return RESERVED_OPENCLAW_PROVIDER_IDS.has(key.toLowerCase())
+    ? SAFE_PROVIDER_KEY_PREFIX + key
+    : key
+}
+
+/** Whether a provider key (models.providers key or model prefix) would trigger external plugin install. */
+export function isReservedOpenClawProviderKey(rawKey: string): boolean {
+  const key = (rawKey || '').trim().toLowerCase()
+  return key.length > 0 && RESERVED_OPENCLAW_PROVIDER_IDS.has(key)
+}
+
+/**
+ * Prune conflicting leftovers in openclaw.json that trigger external provider plugin installs:
+ *  - models.providers keys matching a reserved id
+ *  - agents.defaults.models "provider/model" prefixes matching a reserved id
+ * Safe to delete because we now write providers under the safe key.
+ */
+export function pruneReservedOpenClawProviderRefs(config: any): void {
+  if (!config || typeof config !== 'object') return
+  const providers = config.models && config.models.providers
+  if (providers && typeof providers === 'object') {
+    for (const key of Object.keys(providers)) {
+      if (isReservedOpenClawProviderKey(key)) delete providers[key]
+    }
+  }
+  const models = config.agents && config.agents.defaults && config.agents.defaults.models
+  if (models && typeof models === 'object') {
+    for (const key of Object.keys(models)) {
+      const prefix = key.includes('/') ? key.slice(0, key.indexOf('/')) : key
+      if (isReservedOpenClawProviderKey(prefix)) delete models[key]
+    }
+  }
+}

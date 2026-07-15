@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events'
 import { join, dirname, delimiter as pathDelimiter } from 'path'
-import { existsSync, mkdirSync, createWriteStream, rmSync, writeFileSync, readFileSync, readdirSync, statSync, copyFileSync, renameSync, appendFileSync, cpSync } from 'fs'
+import { existsSync, mkdirSync, createWriteStream, rmSync, writeFileSync, readFileSync, readdirSync, statSync, copyFileSync, renameSync, appendFileSync, cpSync, symlinkSync, realpathSync } from 'fs'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { createHash } from 'crypto'
@@ -394,7 +394,17 @@ export class DownloadManager extends EventEmitter {
     // 4. 关键：把宿主 openclaw 真实拷贝进插件的 node_modules/openclaw（替代 junction）。
     const openClawDest = join(pluginDest, 'node_modules', 'openclaw')
     mkdirSync(dirname(openClawDest), { recursive: true })
-    cpSync(openClawSrc, openClawDest, { recursive: true })
+    try {
+      if (existsSync(openClawDest)) rmSync(openClawDest, { recursive: true, force: true })
+      const linkTarget = (() => { try { return realpathSync(openClawSrc) } catch { return openClawSrc } })()
+      symlinkSync(linkTarget, openClawDest, 'junction')
+    } catch (e: any) {
+      this._writeDebugLog(`[AssembleWeixin] junction fallback to copy: ${e.message}`)
+      try {
+        if (existsSync(openClawDest)) rmSync(openClawDest, { recursive: true, force: true })
+      } catch { /* ignore */ }
+      cpSync(openClawSrc, openClawDest, { recursive: true })
+    }
 
     return existsSync(join(managedPluginDir, 'package.json'))
   }
