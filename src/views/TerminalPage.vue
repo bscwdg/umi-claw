@@ -57,10 +57,13 @@
 </template>
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from "vue";
+import { useRoute } from "vue-router";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
+
+const route = useRoute();
 
 const QUICK_CMDS = [
   { label: "状态 📊", args: ["status"] },
@@ -273,6 +276,26 @@ onMounted(() => {
       isRunning.value = false;
     }
   });
+
+  // 渠道页等带 autoRun 跳转过来时自动执行预填命令（如微信登录、飞书配对审批）
+  const autoRun = route.query.autoRun;
+  if (typeof autoRun === "string" && autoRun.trim()) {
+    const parts = autoRun
+      .trim()
+      .replace(/^openclaw\s+/, "")
+      .split(/\s+/)
+      .filter(Boolean);
+    if (parts.length) {
+      // 等终端布局就绪后再执行，避免首帧写入丢失
+      nextTick(() => {
+        const isInteractiveCmd = ["onboard", "setup", "login", "init", "doctor"].some(
+          (c) => parts[0] === c
+        );
+        if (isInteractiveCmd) startInteractive(parts);
+        else runCmd(parts);
+      });
+    }
+  }
 });
 
 onUnmounted(() => {
@@ -303,7 +326,7 @@ onUnmounted(() => {
   height: 100vh;
   padding: 20px;
   box-sizing: border-box;
-  background: var(--bg);
+  background: var(--bg-base);
 }
 .page-header {
   margin-bottom: 15px;
@@ -311,12 +334,12 @@ onUnmounted(() => {
 .page-header h2 {
   font-size: 1.2rem;
   margin: 0 0 4px;
-  color: var(--text);
+  color: var(--text-primary);
 }
 .page-sub {
   font-size: 0.8rem;
   margin: 0;
-  color: var(--text2);
+  color: var(--text-secondary);
 }
 
 .quick-bar {
@@ -329,15 +352,15 @@ onUnmounted(() => {
   padding: 6px 14px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg2);
-  color: var(--text);
+  background: var(--bg-surface);
+  color: var(--text-primary);
   font-size: 0.8rem;
   cursor: pointer;
   transition: all 0.2s;
 }
 .q-btn:hover:not(:disabled) {
   border-color: var(--accent);
-  background: var(--bg3);
+  background: var(--bg-elevated);
 }
 .q-btn:disabled {
   opacity: 0.4;
@@ -352,8 +375,8 @@ onUnmounted(() => {
   background: rgba(16, 185, 129, 0.1);
 }
 .q-btn-stop {
-  border-color: var(--danger);
-  color: var(--danger);
+  border-color: var(--red);
+  color: var(--red);
 }
 .q-btn-stop:hover:not(:disabled) {
   background: rgba(239, 68, 68, 0.1);

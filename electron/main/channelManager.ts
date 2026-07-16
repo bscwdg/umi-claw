@@ -3,7 +3,7 @@ import { EventEmitter } from 'events'
 import path from 'path'
 import fs from 'fs'
 import { ConfigManager } from './configManager'
-import { openClawPaths } from './openClawPaths'
+import { openClawPaths, buildOpenClawEnv } from './openClawPaths'
 
 export class ChannelManager extends EventEmitter {
   constructor(private configManager: ConfigManager) {
@@ -12,20 +12,6 @@ export class ChannelManager extends EventEmitter {
 
   private get dataDir() {
     return this.configManager.getDataDir()
-  }
-
-  private get openClawEnv() {
-    const portableHomeDir = openClawPaths.portableHome(this.dataDir)
-    const targetConfigDir = openClawPaths.configDir(this.dataDir)
-    return {
-      ...process.env,
-      HOME: portableHomeDir,
-      USERPROFILE: portableHomeDir,
-      OPENCLAW_CONFIG_DIR: targetConfigDir,
-      OPENCLAW_DATA_DIR: openClawPaths.openClawData(this.dataDir),
-      OPENCLAW_DISABLE_BONJOUR: '1',
-      OPENCLAW_GATEWAY_MODE: 'local'
-    }
   }
 
   isPluginInstalled(pluginId: string): boolean {
@@ -45,9 +31,13 @@ export class ChannelManager extends EventEmitter {
       }
 
       this.emit('log', `[feishu] installing plugin ${pluginPkg} ...`, 'system')
+      const env = buildOpenClawEnv(this.dataDir, nodePath, {
+        OPENCLAW_DISABLE_BONJOUR: '1',
+        OPENCLAW_GATEWAY_MODE: 'local'
+      })
       const proc = spawn(nodePath, [clawJsPath, 'plugins', 'install', pluginPkg], {
         cwd: openClawPaths.installDir(this.dataDir),
-        env: this.openClawEnv,
+        env,
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe']
       })

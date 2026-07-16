@@ -1,4 +1,4 @@
-import { join } from 'path'
+import { join, dirname } from 'path'
 
 /**
  * OpenClaw 网关鉴权 token。
@@ -44,3 +44,39 @@ export const openClawPaths = {
 
 /** 把 Windows 反斜杠统一成正斜杠，兼容 OpenClaw / Node 内部处理 */
 export const toPosix = (p: string) => p.replace(/\\/g, '/')
+
+/**
+ * 构建 OpenClaw 子进程共享的基础环境变量。
+ *
+ * 收敛此前散落在 index.ts / clawManager.ts / channelManager.ts 三处的重复拼装，
+ * 统一 HOME/USERPROFILE/OPENCLAW_CONFIG_DIR/OPENCLAW_DATA_DIR、PATH 隔离（绿色 Node 顶到最前）
+ * 以及 NODE_ENV。调用方可在此基础上 spread 自己的特有变量（如 PORT、GATEWAY_MODE 等）。
+ *
+ * @param dataDir  数据目录（configManager.getDataDir()）
+ * @param nodePath 绿色 node 可执行文件绝对路径（用于把其 bin 目录顶到 PATH 最前）
+ * @param extra    额外覆盖的环境变量
+ */
+export function buildOpenClawEnv(
+  dataDir: string,
+  nodePath: string,
+  extra: Record<string, string> = {}
+): NodeJS.ProcessEnv {
+  const configDir = toPosix(openClawPaths.configDir(dataDir))
+  const portableHome = toPosix(openClawPaths.portableHome(dataDir))
+  const openClawData = toPosix(openClawPaths.openClawData(dataDir))
+
+  const nodeBinDir = dirname(nodePath)
+  const pathDelimiter = process.platform === 'win32' ? ';' : ':'
+  const isolatedPath = `${nodeBinDir}${pathDelimiter}${process.env.PATH || ''}`
+
+  return {
+    ...process.env,
+    PATH: isolatedPath,
+    HOME: portableHome,
+    USERPROFILE: portableHome,
+    OPENCLAW_CONFIG_DIR: configDir,
+    OPENCLAW_DATA_DIR: openClawData,
+    NODE_ENV: 'production',
+    ...extra
+  }
+}

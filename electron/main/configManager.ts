@@ -266,6 +266,14 @@ export class ConfigManager {
   }
 
   /**
+   * 同步 openclaw.json，供启动流程在 spawn 前调用，确保凭证/模型/渠道是最新的。
+   * 内部等价于 _syncOpenClawConfig，对外暴露一个稳定入口，避免 clawManager 重复实现。
+   */
+  syncOpenClawConfig(): void {
+    this._syncOpenClawConfig()
+  }
+
+  /**
    * 读取 modelConfig.ts 中某个服务商的官方预设模型列表
    * @param configName 例如 'DEEPSEEK_DEFAULT_PROVIDERS'
    * @returns 模型数组 [{ id, name, contextWindow, maxTokens, input, reasoning }]
@@ -562,8 +570,47 @@ private _syncOpenClawConfig(): void {
     const content = JSON.stringify(existingConfig, null, 2)
     writeFileSync(this.openClawConfigPath, content, 'utf-8')
     console.log('[ConfigManager] openclaw.json 已使用新版预设结构同步完成。')
+
+    // 同步凭证库 auth-profiles.json：把所有已填 API Key 的服务商写一份，
+    // 作为 openclaw.json 之外的双保险，供 OpenClaw 凭证管理读取。
+    this._syncAuthProfiles(allProviders)
   } catch (err: any) {
     console.error('[ConfigManager] 同步 OpenClaw 配置失败:', err.message)
+  }
+}
+
+/**
+ * 同步 auth-profiles.json 凭证库（<configDir>/agents/main/agent/auth-profiles.json）。
+ * 仅写入已配置 API Key 的服务商；读取失败时从空对象重建，不阻断主流程。
+ */
+private _syncAuthProfiles(allProviders: ModelProvider[]): void {
+  try {
+    const agentAuthDir = join(openClawPaths.configDir(this.dataDir), 'agents', 'main', 'agent')
+    mkdirSync(agentAuthDir, { recursive: true })
+    const authProfilesPath = join(agentAuthDir, 'auth-profiles.json')
+
+    let authProfiles: Record<string, any> = {}
+    if (existsSync(authProfilesPath)) {
+      try {
+        const authRaw = readFileSync(authProfilesPath, 'utf-8')
+        const parsed = JSON.parse(authRaw)
+        if (parsed && typeof parsed === 'object') authProfiles = parsed
+      } catch {
+        authProfiles = {}
+      }
+    }
+
+    for (const p of allProviders) {
+      if (p.apiKey) {
+        authProfiles[p.id] = {
+          apiKey: p.apiKey,
+          ...(p.baseUrl ? { baseUrl: p.baseUrl } : {})
+        }
+      }
+    }
+    writeFileSync(authProfilesPath, JSON.stringify(authProfiles, null, 2), 'utf-8')
+  } catch (err: any) {
+    console.warn('[ConfigManager] 同步 auth-profiles.json 失败:', err.message)
   }
 }
   getRuntimeDir() {

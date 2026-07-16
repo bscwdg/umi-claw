@@ -5,8 +5,8 @@ import { existsSync, mkdirSync, rmSync, lstatSync, realpathSync, readdirSync, re
 import { promises as fs } from "fs";
 import { ConfigManager } from './configManager'
 import { promisify } from "util";
-import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawProviderRefs } from './modelConfig' // 🟢 1. 确保对齐你真实创建的文件名
-import { GATEWAY_TOKEN, openClawPaths, toPosix } from './openClawPaths'
+import { toOpenClawProviderKey } from './modelConfig'
+import { openClawPaths, toPosix, buildOpenClawEnv } from './openClawPaths'
 
 export interface ClawStatus {
   running: boolean
@@ -109,11 +109,12 @@ export class ClawManager extends EventEmitter {
       return { success: false, error: '未找到 OpenClaw 核心库，请先初始化环境' }
     }
 
-    const portableHomeDir = toPosix(openClawPaths.portableHome(dataDir))
     const targetConfigDir = toPosix(openClawPaths.configDir(dataDir))
 
+    // 启动前同步 openclaw.json：凭证、激活模型、渠道等以 configManager 为唯一真相源，
+    // 避免此前在本类内重复实现（且曾用 p.id 取 OFFICIAL_MODEL_PRESETS 导致死分支）。
     try {
-      await this._checkAndFixConfigBeforeStart(targetConfigDir, activeProvider)
+      this.configManager.syncOpenClawConfig()
     } catch (err: any) {
       return { success: false, error: `配置初始化失败: ${err.message}` }
     }
@@ -127,20 +128,15 @@ export class ClawManager extends EventEmitter {
     // 拒绝启动的审计。这对任何磁盘/任何文件系统（含 U 盘 exFAT/FAT32/UNC）都有效。
     this._markStartupMigrationsComplete(dataDir)
 
-    const commonEnv = {
-      HOME: portableHomeDir,
-      USERPROFILE: portableHomeDir,
-      OPENCLAW_CONFIG_DIR: targetConfigDir,
-      OPENCLAW_DATA_DIR: toPosix(openClawPaths.openClawData(dataDir)),
+    const commonEnv = buildOpenClawEnv(dataDir, nodePath, {
       PORT: String(this.port),
-      NODE_ENV: 'production',
       OPENCLAW_DISABLE_BONJOUR: '1',
       BONJOUR_DISABLE: '1',
       OPENCLAW_GATEWAY_MODE: 'local',
       GATEWAY_MODE: 'local',
       gateway__mode: 'local',
-      NODE_CONFIG_DIR: targetConfigDir,
-    }
+      NODE_CONFIG_DIR: targetConfigDir
+    })
 
     const providerEnv: Record<string, string> = {}
     if (activeProvider) {
@@ -150,9 +146,8 @@ export class ClawManager extends EventEmitter {
       providerEnv.OPENAI_API_KEY = activeProvider.apiKey || ''
       providerEnv.OPENAI_BASE_URL = activeProvider.baseUrl ?? ''
 
-      // 🟢 2. 优化点：清洗服务商标识，过滤中划线，确保护底环境变量完全合规合法
-      const presetTemplate = OFFICIAL_MODEL_PRESETS[activeProvider.id]
-      const envKeyBase = toOpenClawProviderKey(presetTemplate ? Object.keys(presetTemplate)[0] : activeProvider.id)
+      // 同时写一份以服务商安全 key 命名的环境变量，便于 OpenClaw 内联 provider 识别。
+      const envKeyBase = toOpenClawProviderKey(activeProvider.id)
       const upperCleanKey = envKeyBase.replace(/-/g, '_').toUpperCase()
 
       providerEnv[`${upperCleanKey}_API_KEY`] = activeProvider.apiKey || ''
@@ -319,10 +314,6 @@ export class ClawManager extends EventEmitter {
 
     this.process.stdout?.on('data', (data: Buffer) => {
       const rawChunk = data.toString()
-
-      if (rawChunk.includes('🔑') || rawChunk.includes('QR') || rawChunk.includes('扫码') || rawChunk.includes('weixin')) {
-        this.emit('weixin:qrcode-stream', rawChunk)
-      }
 
       const lines = rawChunk.split('\n').filter(Boolean)
       lines.forEach((line) => {
@@ -558,165 +549,5 @@ export class ClawManager extends EventEmitter {
     }
 
     return null
-  }
-
-  private async _checkAndFixConfigBeforeStart(
-    targetConfigDir: string,
-    activeProvider?: {
-      id: string
-      model: string
-      apiKey?: string
-      baseUrl?: string
-    }
-  ): Promise<void> {
-    try {
-      mkdirSync(targetConfigDir, { recursive: true })
-
-      const portableConfigPath = join(targetConfigDir, 'openclaw.json')
-      let config: any = {}
-
-      if (existsSync(portableConfigPath)) {
-        try {
-          const raw = await fs.readFile(portableConfigPath, 'utf-8')
-          config = JSON.parse(raw)
-        } catch (e) {
-          console.warn('[OpenClaw] 配置文件解析失败，将重置配置', e)
-          config = {}
-        }
-      }
-
-      // 1. 初始化并保障基础树状骨架
-      config.gateway ??= { mode: "local", auth: { mode: "token", token: GATEWAY_TOKEN } }
-      config.channels ??= {}
-      config.skills ??= {}
-      config.plugins ??= { entries: { "openclaw-weixin": { "enabled": true } } }
-      config.wizard ??= {
-        "lastRunAt": new Date().toISOString(),
-        "lastRunVersion": "2026.6.8",
-        "lastRunCommand": "doctor",
-        "lastRunMode": "local"
-      }
-      config.agents ??= {}
-      config.agents.defaults ??= {}
-      config.agents.defaults.models ??= {}
-
-      config.models ??= {}
-      config.models.mode = "merge"
-      config.models.providers ??= {}
-
-      // 🌟 核心破局点：从 configManager 捞出前端保存的“全量提供商列表”
-      const allFrontendProviders = this.configManager.getConfig().providers || []
-
-      // 2. 遍历所有提供商，只要填了 API Key 的，全部无死角写进配置文件
-      for (const p of allFrontendProviders) {
-        if (!p.apiKey || p.apiKey.trim() === '') {
-          continue // 没填 Key 的直接跳过
-        }
-
-        const presetTemplate = OFFICIAL_MODEL_PRESETS[p.id]
-        if (presetTemplate) {
-          const rawOfficialKey = Object.keys(presetTemplate)[0]
-          const officialKey = toOpenClawProviderKey(rawOfficialKey)
-          const officialBody = JSON.parse(JSON.stringify(presetTemplate[rawOfficialKey])) // 深拷贝完整结构
-
-          // 注入用户在前端填写的最新凭证与网关路由
-          officialBody.baseUrl = p.baseUrl || officialBody.baseUrl
-          officialBody.apiKey = p.apiKey
-          
-          // 💡 确保最关键的 api 驱动字段被完美继承
-          officialBody.api = officialBody.api || "openai-completions"
-
-          // 增量合并：如果该服务商已存在，平滑保留或更新其内部属性
-          config.models.providers[officialKey] = {
-            ...config.models.providers[officialKey], // 保留可能存在的自定义字段
-            ...officialBody                         // 注入完整的模板（含 models、api、baseUrl、apiKey 等）
-          }
-          console.log(`[OpenClaw] 成功同步已配置的厂商: ${officialKey}`)
-        }
-      }
-
-      // 3. 处理当前被激活选中的那一个模型的 Primary 指向
-      if (activeProvider) {
-        const pId = activeProvider.id || 'openai'
-        const mName = activeProvider.model
-        const presetTemplate = OFFICIAL_MODEL_PRESETS[pId]
-
-        if (presetTemplate) {
-          const officialKey = toOpenClawProviderKey(Object.keys(presetTemplate)[0])
-          const fullModelKey = `${officialKey}/${mName}`
-
-          config.agents.defaults.model = { primary: fullModelKey }
-          config.agents.defaults.models[fullModelKey] = {}
-        } else {
-          // 降级兜底
-          const fallbackModelKey = `${toOpenClawProviderKey(pId)}/${mName}`
-          config.agents.defaults.model = { primary: fallbackModelKey }
-          config.agents.defaults.models[fallbackModelKey] = {}
-        }
-      }
-
-      // 4. 强行清洗违规残留字段（防止引发 Zod 报错闪退）
-      pruneReservedOpenClawProviderRefs(config)
-      if (config.models) delete config.models.timeout
-      if (config.plugins) {
-        delete config.plugins.bonjour
-        delete (config.plugins as any)['talk-voice']
-      }
-
-      // 5. 保持微信通道
-      if (!config.channels['openclaw-weixin']) {
-        config.channels['openclaw-weixin'] = {
-          "enabled": true,
-          "provider": "@tencent-weixin/openclaw-weixin",
-          "config": { "appId": "", "appSecret": "" }
-        }
-      }
-
-      config.meta = {
-        lastTouchedVersion: 'latest',
-        lastTouchedAt: new Date().toISOString()
-      }
-
-      // 6. 安全写回磁盘
-      await fs.writeFile(
-        portableConfigPath,
-        JSON.stringify(config, null, 2),
-        'utf-8'
-      )
-
-      // 7. 同步更新凭证库 auth-profiles.json
-      const agentAuthDir = join(targetConfigDir, 'agents', 'main', 'agent')
-      mkdirSync(agentAuthDir, { recursive: true })
-      const authProfilesPath = join(agentAuthDir, 'auth-profiles.json')
-
-      let authProfiles: Record<string, any> = {}
-      if (existsSync(authProfilesPath)) {
-        try {
-          const authRaw = await fs.readFile(authProfilesPath, 'utf-8')
-          authProfiles = JSON.parse(authRaw)
-        } catch (e) {
-          authProfiles = {}
-        }
-      }
-
-      // 同样遍历把所有有 Key 的账号同步进 auth-profiles 做到双保险
-      for (const p of allFrontendProviders) {
-        if (p.apiKey) {
-          authProfiles[p.id] = {
-            apiKey: p.apiKey,
-            ...(p.baseUrl ? { baseUrl: p.baseUrl } : {})
-          }
-        }
-      }
-      await fs.writeFile(
-        authProfilesPath,
-        JSON.stringify(authProfiles, null, 2),
-        'utf-8'
-      )
-
-    } catch (err: any) {
-      console.error('OpenClaw 配置初始化失败:', err)
-      throw err
-    }
   }
 }

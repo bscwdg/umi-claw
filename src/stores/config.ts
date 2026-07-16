@@ -32,11 +32,12 @@ export interface AppConfig {
   minimizeToTray: boolean
   closeAction: 'ask' | 'tray' | 'exit'
   useChineseMirror: boolean
-  logLevel: string
-  language: string
+  logLevel: 'debug' | 'info' | 'warn' | 'error'
+  language: 'zh-CN' | 'en-US'
   theme: string
   themeBase?: string
   themeAccent?: string
+  channels?: Record<string, Record<string, unknown>>
 }
 
 export const useConfigStore = defineStore('config', () => {

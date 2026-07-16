@@ -163,7 +163,7 @@ function goToWeixinLogin() {
   // 直接通过内置路由对象，带着暗号跳转到终端控制台页面
   router.push({
     path: "/terminal", // 👈 如果你的终端控制台路由叫 /console，请改成 /console
-    query: { autoRun: "channels login weixin" },
+    query: { autoRun: "channels login --channel openclaw-weixin" },
   });
 }
 
@@ -446,11 +446,11 @@ async function save() {
             if (res?.success) {
               savedMsg.value = "✅ 飞书插件已安装，请重启 OpenClaw 生效";
             } else {
-              savedMsg.value = `⚠️ 配置已保存，但插件安装失败：$${res?.error || "未知错误"}`;
+              savedMsg.value = `⚠️ 配置已保存，但插件安装失败：${res?.error || "未知错误"}`;
             }
           }
         } catch (e) {
-          savedMsg.value = `⚠️ 配置已保存，但插件安装失败：$${e}`;
+          savedMsg.value = `⚠️ 配置已保存，但插件安装失败：${e}`;
         }
       }
     } else {
@@ -479,12 +479,12 @@ async function save() {
 .page-header h2 {
   font-size: 1.1rem;
   font-weight: 700;
-  color: var(--text);
+  color: var(--text-primary);
   margin-bottom: 2px;
 }
 .page-sub {
   font-size: 0.8rem;
-  color: var(--text2);
+  color: var(--text-secondary);
 }
 .channels-list {
   display: flex;
@@ -495,12 +495,12 @@ async function save() {
 .channel-card {
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: var(--bg2);
+  background: var(--bg-surface);
   overflow: hidden;
   transition: border-color 0.15s;
 }
 .channel-card.configured {
-  border-color: var(--success);
+  border-color: var(--green);
 }
 .channel-card.expanded {
   border-color: var(--accent);
@@ -514,7 +514,7 @@ async function save() {
   user-select: none;
 }
 .channel-header:hover {
-  background: var(--bg3);
+  background: var(--bg-elevated);
 }
 .ch-icon {
   font-size: 1.3rem;
@@ -528,25 +528,25 @@ async function save() {
   display: block;
   font-weight: 600;
   font-size: 0.9rem;
-  color: var(--text);
+  color: var(--text-primary);
 }
 .ch-desc {
   display: block;
   font-size: 0.75rem;
-  color: var(--text2);
+  color: var(--text-secondary);
   margin-top: 1px;
 }
 .ch-badge {
   font-size: 0.7rem;
   padding: 2px 8px;
   border-radius: 10px;
-  background: color-mix(in srgb, var(--success) 15%, transparent);
-  color: var(--success);
+  background: color-mix(in srgb, var(--green) 15%, transparent);
+  color: var(--green);
   flex-shrink: 0;
 }
 .ch-arrow {
   font-size: 0.7rem;
-  color: var(--text3);
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 .channel-form {
@@ -564,15 +564,15 @@ async function save() {
 }
 .form-group label {
   font-size: 0.8rem;
-  color: var(--text2);
+  color: var(--text-secondary);
   font-weight: 500;
 }
 .form-input {
   padding: 9px 12px;
-  background: var(--bg3);
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 7px;
-  color: var(--text);
+  color: var(--text-primary);
   font-size: 0.85rem;
   outline: none;
   transition: border-color 0.15s;
@@ -585,7 +585,7 @@ async function save() {
   align-items: center;
   gap: 8px;
   font-size: 0.85rem;
-  color: var(--text);
+  color: var(--text-primary);
   cursor: pointer;
 }
 .form-check input {
@@ -595,7 +595,7 @@ async function save() {
 }
 .form-hint {
   font-size: 0.75rem;
-  color: var(--text2);
+  color: var(--text-secondary);
 }
 .hint-link {
   background: none;
@@ -618,14 +618,14 @@ async function save() {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 5px 12px;
-  color: var(--text2);
+  color: var(--text-secondary);
   font-size: 0.78rem;
   cursor: pointer;
   transition: all 0.15s;
 }
 .docs-btn:hover {
-  background: var(--bg3);
-  color: var(--text);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
   border-color: var(--accent);
 }
 .save-row {
@@ -637,7 +637,7 @@ async function save() {
 }
 .save-msg {
   font-size: 0.82rem;
-  color: var(--text);
+  color: var(--text-primary);
   font-weight: 500;
 }
 .btn {
@@ -679,20 +679,20 @@ async function save() {
   }
 }
 .tip-card {
-  background: color-mix(in srgb, var(--info) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--info) 25%, transparent);
+  background: color-mix(in srgb, var(--blue) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--blue) 25%, transparent);
   border-radius: 8px;
   padding: 12px 16px;
   font-size: 0.8rem;
-  color: var(--text2);
+  color: var(--text-secondary);
   line-height: 1.6;
   margin-bottom: 16px;
 }
 .tip-card strong {
-  color: var(--text);
+  color: var(--text-primary);
 }
 .tip-card code {
-  background: var(--bg3);
+  background: var(--bg-elevated);
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 0.85em;
@@ -702,7 +702,7 @@ async function save() {
 .weixin-card {
   border: 1px solid color-mix(in srgb, #10b981 40%, transparent);
   border-radius: 10px;
-  background: color-mix(in srgb, #10b981 5%, var(--bg2));
+  background: color-mix(in srgb, #10b981 5%, var(--bg-surface));
   padding: 16px;
   margin-top: 4px;
 }
@@ -742,16 +742,16 @@ async function save() {
 .step-title {
   font-size: 0.88rem;
   font-weight: 600;
-  color: var(--text);
+  color: var(--text-primary);
   margin-bottom: 2px;
 }
 .step-desc {
   font-size: 0.78rem;
-  color: var(--text2);
+  color: var(--text-secondary);
   margin-bottom: 8px;
 }
 .step-desc code {
-  background: var(--bg3);
+  background: var(--bg-elevated);
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 0.85em;
@@ -781,9 +781,9 @@ async function save() {
 .weixin-msg {
   margin-top: 12px;
   font-size: 0.82rem;
-  color: var(--text2);
+  color: var(--text-secondary);
   padding: 8px 12px;
-  background: var(--bg3);
+  background: var(--bg-elevated);
   border-radius: 6px;
 }
 </style>

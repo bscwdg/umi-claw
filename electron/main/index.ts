@@ -9,13 +9,13 @@ import {
   nativeImage,
   protocol
 } from 'electron'
-import { join, parse, dirname } from 'path'
+import { join, parse } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { ClawManager } from './clawManager'
 import { ConfigManager } from './configManager'
 import { DownloadManager, type DownloadProgress } from './downloadManager'
 import { ChannelManager } from './channelManager'
-import { openClawPaths, toPosix } from './openClawPaths'
+import { openClawPaths, buildOpenClawEnv } from './openClawPaths'
 import { readFileSync, existsSync } from 'fs'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 
@@ -42,33 +42,14 @@ const activeTerminalSessions = new Map<string, TerminalSession>()
 function getOpenClawRuntimeConfig() {
   const dataDir = configManager.getDataDir()
   const nodePath = configManager.getNodePath() // D:\...\data\runtime\node-win32-x64\node.exe
-  const targetConfigDir = openClawPaths.portableHome(dataDir)
   const clawJsPath = openClawPaths.clawJs(dataDir)
+  const targetConfigDir = openClawPaths.portableHome(dataDir)
 
-  // 统一路径分隔符为正斜杠，兼容 Node.js 内部处理
-  const safeConfigDir = toPosix(targetConfigDir)
-  const safeDataDir = toPosix(openClawPaths.openClawData(dataDir))
-
-  // 🌟 核心修复：精准拿到绿色 Node 所在的 bin 目录
-  const nodeBinDir = dirname(nodePath)
-
-  // 🌟 核心修复：拼装跨平台的环境变量隔离，把绿色 Node 目录强行顶到最前面
-  const pathDelimiter = process.platform === 'win32' ? ';' : ':'
-  const systemPath = process.env.PATH || ''
-  const isolatedPath = `${nodeBinDir}${pathDelimiter}${systemPath}`
-
-  const env = {
-    ...process.env,
-    PATH: isolatedPath,
-    HOME: safeConfigDir,        // 🚀 此时 safeConfigDir 已经变成了 .../config
-    USERPROFILE: safeConfigDir, // 🚀 此时 OpenClaw 的 doctor 会在里面完美建出 .openclaw 且绝不套娃
-    OPENCLAW_CONFIG_DIR: toPosix(openClawPaths.configDir(dataDir)),
-    OPENCLAW_DATA_DIR: safeDataDir,
-    NODE_ENV: 'production',
+  const env = buildOpenClawEnv(dataDir, nodePath, {
     LANG: 'zh_CN.UTF-8',
     LC_ALL: 'zh_CN.UTF-8',
     PYTHONIOENCODING: 'utf-8'
-  }
+  })
 
   return {
     nodePath,
@@ -243,7 +224,10 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    // 仅放行 http/https，拦截 file://、javascript: 等危险协议
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      shell.openExternal(url)
+    }
     return { action: 'deny' }
   })
 
@@ -649,19 +633,15 @@ function registerIpcHandlers(): void {
   })
   ipcMain.handle('test-connection', async (_, config) => {
     try {
-      const response = await fetch(
-        `${config.baseUrl}/models`,
-        {
-          headers: {
-            Authorization: `Bearer ${config.apiKey}`
-          }
-        }
-      )
-      const data = await response.json()
-      return {
-        success: true,
-        models: data.data.map((m) => m.id)
+      const response = await fetch(`${config.baseUrl}/models`, {
+        headers: { Authorization: `Bearer ${config.apiKey}` }
+      })
+      if (!response.ok) {
+        return { success: false, error: `HTTP ${response.status}` }
       }
+      const data = await response.json()
+      const models = Array.isArray(data?.data) ? data.data.map((m: any) => m.id) : []
+      return { success: true, models }
     } catch (error) {
       return {
         success: false,

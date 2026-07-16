@@ -56,16 +56,12 @@ umi-claw/
 │   │   ├── About.vue          # 关于
 │   │   └── components/        # 通用组件
 │   │       ├── ConfirmDialog.vue       # 确认对话框（关闭确认等）
-│   │       ├── ModelPickerModal.vue    # 模型选择弹窗
-│   │       ├── ChannelConfigDialog.vue # 渠道配置弹窗
-│   │       └── TerminalDialog.vue      # 终端交互弹窗
+│   │       └── ModelPickerModal.vue    # 模型选择弹窗
 │   ├── stores/
 │   │   ├── claw.ts            # OpenClaw 状态
 │   │   └── config.ts          # 配置状态
 │   ├── composables/
 │   │   └── useToast.ts        # 全局提示
-│   ├── shared/
-│   │   └── channelSchemas.ts  # 渠道配置表单 schema
 │   ├── assets/style.css       # 全局样式
 │   ├── App.vue                # 根组件（标题栏+侧边栏+关闭确认）
 │   └── renderer/
