@@ -424,7 +424,7 @@ async function testConnection() {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  max-width: 900px;
+  width: 100%;
 }
 .page-header {
   display: flex;

@@ -241,7 +241,7 @@ window.api.skills.list().then((s) => (skillCount.value = s.filter((x) => x.insta
 </script>
 
 <style scoped>
-.dashboard { display: flex; flex-direction: column; gap: 20px; max-width: 900px; }
+.dashboard { display: flex; flex-direction: column; gap: 20px; width: 100%; }
 
 .page-header {
   display: flex;

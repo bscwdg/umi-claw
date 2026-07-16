@@ -83,7 +83,7 @@ function open(url: string) {
 </script>
 
 <style scoped>
-.about-page { display: flex; flex-direction: column; gap: 20px; max-width: 800px; }
+.about-page { display: flex; flex-direction: column; gap: 20px; width: 100%; }
 
 .hero {
   display: flex; flex-direction: column; align-items: center;

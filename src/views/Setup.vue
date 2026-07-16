@@ -434,7 +434,7 @@ onUnmounted(() => offProgress?.());
   display: flex;
   flex-direction: column;
   gap: 20px;
-  max-width: 700px;
+  width: 100%;
 }
 .page-header {
   display: flex;
