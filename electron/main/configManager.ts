@@ -1,8 +1,8 @@
 import { app,dialog } from 'electron'
 import { join, dirname ,basename} from 'path'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync } from 'fs'
 import AdmZip from 'adm-zip'
-import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawProviderRefs } from './modelConfig'
+import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawProviderRefs, isReservedOpenClawProviderKey } from './modelConfig'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
 
 export interface PresetModel {
@@ -301,12 +301,24 @@ export class ConfigManager {
    * @param fallback 读取失败时返回的兜底配置
    * @param onError 解析失败时的可选日志回调
    */
+  /**
+   * Read and parse openclaw.json, tolerating a UTF-8 BOM prefix.
+   * Some editors (e.g. Windows Notepad) or external writers may prepend a BOM,
+   * which makes JSON.parse throw "Unexpected token". Strip it defensively.
+   */
+  private _parseOpenClawJsonRaw(): any {
+    let text = readFileSync(this.openClawConfigPath, 'utf-8')
+    if (text.charCodeAt(0) === 0xfeff) {
+      text = text.slice(1)
+    }
+    return JSON.parse(text)
+  }
   private _readOpenClawConfig(fallback: any, onError?: (e: unknown) => void): any {
     if (!existsSync(this.openClawConfigPath)) {
       return fallback
     }
     try {
-      const parsed = JSON.parse(readFileSync(this.openClawConfigPath, 'utf-8'))
+      const parsed = this._parseOpenClawJsonRaw()
       if (parsed && typeof parsed === 'object') {
         return parsed
       }
@@ -324,6 +336,26 @@ export class ConfigManager {
   private _parseFrontMatterField(content: string, field: string): string | undefined {
     const match = content.match(new RegExp(`${field}:\\s*["']?(.*?)["']?(\\r?\\n|$)`))
     return match && match[1] ? match[1].trim() : undefined
+  }
+
+  /**
+   * Atomically write text to a path: write to a temp file then rename over the target.
+   * Prevents readers from seeing a half-written file and reduces multi-writer races.
+   */
+  private _atomicWriteFileSync(targetPath: string, content: string): void {
+    const tmpPath = `${targetPath}.tmp.${process.pid}.${Date.now()}`
+    writeFileSync(tmpPath, content, 'utf-8')
+    try {
+      renameSync(tmpPath, targetPath)
+    } catch (renameErr) {
+      // 某些文件系统（exFAT/FAT32 等）对「rename 覆盖已存在文件」支持不佳，回退为直接写目标文件。
+      // 回退写入成功即视为整体成功——不再抛出 rename 错误，否则调用方会误判「同步失败」而文件其实已落盘。
+      try {
+        writeFileSync(targetPath, content, 'utf-8')
+      } finally {
+        try { if (existsSync(tmpPath)) { renameSync(tmpPath, `${tmpPath}.stale`) } } catch { /* ignore */ }
+      }
+    }
   }
 
   /**
@@ -421,7 +453,20 @@ private _syncOpenClawConfig(): void {
       }
     }
 
-    existingConfig = this._readOpenClawConfig(existingConfig)
+    // 读取已有 openclaw.json：只读一次并复用解析结果，避免「守卫读一遍、兜底再读一遍」之间的
+    // TOCTOU 窗口——若文件在两次读之间被截断，守卫通过而兜底返回骨架，反而会用骨架覆盖真实配置
+    // （正是守卫想防的 clobber）。
+    let parsedExisting: any = null
+    if (existsSync(this.openClawConfigPath)) {
+      try {
+        parsedExisting = this._parseOpenClawJsonRaw()
+        if (!parsedExisting || typeof parsedExisting !== 'object') parsedExisting = null
+      } catch (parseErr) {
+        console.error('[ConfigManager] openclaw.json parse failed; skip sync to avoid overwriting config with skeleton', parseErr)
+        return
+      }
+    }
+    existingConfig = parsedExisting || existingConfig
 
     // ----- 保证基础骨架存在 -----
     existingConfig.agents = existingConfig.agents || {}
@@ -464,8 +509,19 @@ private _syncOpenClawConfig(): void {
         if (Array.isArray(p.customModels) && p.customModels.length) {
           const baseModels = Array.isArray(officialBody.models) ? officialBody.models : []
           const merged = [...baseModels]
-          for (const cm of p.customModels) {
-            if (!cm || !cm.id) continue
+          for (const rawCm of p.customModels) {
+            if (!rawCm || !rawCm.id) continue
+            // OpenClaw model schema 规范化：name 缺失/空白则用 id 兜底；
+            // input/contextWindow/maxTokens/cost 缺失则补最小合法默认，避免自定义模型
+            // 因缺字段被网关 Zod 校验拒绝（仅补缺失项，用户显式值保留）。
+            const cm = {
+              input: ["text"],
+              contextWindow: 8192,
+              maxTokens: 4096,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              ...rawCm,
+              name: (rawCm.name && String(rawCm.name).trim()) ? rawCm.name : rawCm.id,
+            }
             const idx = merged.findIndex((m: any) => m && m.id === cm.id)
             if (idx >= 0) {
               merged[idx] = { ...merged[idx], ...cm }
@@ -504,6 +560,38 @@ private _syncOpenClawConfig(): void {
       const fullModelKey = `${pId}/${mName}`
       existingConfig.agents.defaults.model = { primary: fullModelKey }
       existingConfig.agents.defaults.models[fullModelKey] = {}
+    }
+
+    // ----- 清理累积残留（只写不清会导致 openclaw.json 持续膨胀）-----
+    // 1) models.providers：以「当前已填 apiKey 的 provider 安全 key 集合」为白名单，
+    //    删除曾启用、现已清空 key 或从列表移除的 provider 残留。保留 id 键已由
+    //    pruneReservedOpenClawProviderRefs 处理，这里处理其余普通 provider。
+    const liveProviderKeys = new Set(
+      (this.config.providers || [])
+        .filter(p => p.apiKey && p.apiKey.trim() !== '')
+        .map(p => toOpenClawProviderKey(p.id))
+    )
+    if (existingConfig.models?.providers) {
+      for (const key of Object.keys(existingConfig.models.providers)) {
+        if (!liveProviderKeys.has(key) && !isReservedOpenClawProviderKey(key)) {
+          // 保留 id 不删（交给 prune 流程统一判定），其余不在白名单的一律清理
+          delete existingConfig.models.providers[key]
+        }
+      }
+    }
+    // 2) agents.defaults.models：只保留当前 activeProvider 的 fullModelKey，
+    //    删除历史切换 provider 累积下来的旧模型键。
+    if (activeProvider) {
+      const pId = toOpenClawProviderKey(activeProvider.id)
+      const keepKey = `${pId}/${activeProvider.model}`
+      const modelsMap = existingConfig.agents?.defaults?.models
+      if (modelsMap && typeof modelsMap === 'object') {
+        for (const key of Object.keys(modelsMap)) {
+          if (key !== keepKey && !isReservedOpenClawProviderKey(key.split('/')[0])) {
+            delete modelsMap[key]
+          }
+        }
+      }
     }
 
     // 清理多余字段
@@ -568,7 +656,7 @@ private _syncOpenClawConfig(): void {
     }
 
     const content = JSON.stringify(existingConfig, null, 2)
-    writeFileSync(this.openClawConfigPath, content, 'utf-8')
+    this._atomicWriteFileSync(this.openClawConfigPath, content)
     console.log('[ConfigManager] openclaw.json 已使用新版预设结构同步完成。')
 
     // 同步凭证库 auth-profiles.json：把所有已填 API Key 的服务商写一份，
@@ -696,9 +784,18 @@ private _syncAuthProfiles(allProviders: ModelProvider[]): void {
         skills: { entries: {} }
       }
 
-      openClawConfig = this._readOpenClawConfig(openClawConfig, (e) =>
-        console.warn('[ConfigManager] 读取 openclaw.json 失败，将采用全新骨架覆盖', e)
-      )
+      // 只读一次并复用解析结果，避免守卫/兜底双读的 TOCTOU 窗口（同 _syncOpenClawConfig）
+      let parsedForToggle: any = null
+      if (existsSync(this.openClawConfigPath)) {
+        try {
+          parsedForToggle = this._parseOpenClawJsonRaw()
+          if (!parsedForToggle || typeof parsedForToggle !== 'object') parsedForToggle = null
+        } catch (parseErr) {
+          console.error('[ConfigManager] openclaw.json parse failed; skip skill toggle to avoid overwriting config', parseErr)
+          return
+        }
+      }
+      openClawConfig = parsedForToggle || openClawConfig
 
       // 2. 强保障 skills 节点存在
       openClawConfig.skills = openClawConfig.skills || {}
@@ -709,7 +806,7 @@ private _syncAuthProfiles(allProviders: ModelProvider[]): void {
         enabled: enabled
       }
       // 4. 安全回写到磁盘
-      writeFileSync(this.openClawConfigPath, JSON.stringify(openClawConfig, null, 2), 'utf-8')
+      this._atomicWriteFileSync(this.openClawConfigPath, JSON.stringify(openClawConfig, null, 2))
       console.log(`[ConfigManager] 本地技能 [${skillId}] 状态已成功切换为: ${enabled}`)
 
     } catch (err) {

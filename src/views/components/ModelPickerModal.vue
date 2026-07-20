@@ -47,6 +47,14 @@
             <div class="model-actions">
               <span v-if="m.id === current" class="badge badge-green">当前</span>
               <button
+                v-if="m.source === 'remote'"
+                class="btn btn-sm"
+                title="添加到自定义模型列表"
+                @click.stop="addRemoteModel(m)"
+              >
+                ➕ 添加
+              </button>
+              <button
                 v-if="m.source === 'custom'"
                 class="icon-btn danger"
                 title="删除该自定义模型"
@@ -161,6 +169,13 @@ const showAddForm = ref(false);
 const showDeleteConfirm = ref(false);
 const pendingDelete = ref<ModelRow | null>(null);
 
+const DEFAULT_REMOTE_MODEL = {
+  contextWindow: 8192,
+  maxTokens: 4096,
+  input: ["text"] as string[],
+  reasoning: false,
+};
+
 const createForm = () => ({
   id: "",
   name: "",
@@ -272,16 +287,36 @@ function addModel() {
     return;
   }
   const entry: PresetModel = { id };
-  if (form.name.trim()) entry.name = form.name.trim();
-  else entry.name = id;
-  if (typeof form.contextWindow === "number") entry.contextWindow = form.contextWindow;
-  if (typeof form.maxTokens === "number") entry.maxTokens = form.maxTokens;
-  if (form.input.length) entry.input = [...form.input];
+  entry.name = form.name.trim() || id;
+  // 与 main 层 schema 兜底保持一致：始终写完整字段，避免用户未填时写入缺字段模型。
+  entry.contextWindow = typeof form.contextWindow === "number" ? form.contextWindow : DEFAULT_REMOTE_MODEL.contextWindow;
+  entry.maxTokens = typeof form.maxTokens === "number" ? form.maxTokens : DEFAULT_REMOTE_MODEL.maxTokens;
+  entry.input = form.input.length ? [...form.input] : [...DEFAULT_REMOTE_MODEL.input];
   if (form.reasoning) entry.reasoning = true;
   list.push(entry);
   emit("update-custom", list);
   select(id);
   resetForm();
+  error.value = "";
+}
+
+function addRemoteModel(row: ModelRow) {
+  const id = row.id?.trim();
+  if (!id) return;
+  const list = [...(props.provider?.customModels || [])];
+  if (list.some((m) => m.id === id)) {
+    select(id);
+    return;
+  }
+  const entry: PresetModel = { id };
+  entry.name = row.name && row.name !== id ? row.name : id;
+  entry.contextWindow = typeof row.contextWindow === "number" ? row.contextWindow : DEFAULT_REMOTE_MODEL.contextWindow;
+  entry.maxTokens = typeof row.maxTokens === "number" ? row.maxTokens : DEFAULT_REMOTE_MODEL.maxTokens;
+  entry.input = row.input && row.input.length ? [...row.input] : [...DEFAULT_REMOTE_MODEL.input];
+  entry.reasoning = row.reasoning ?? DEFAULT_REMOTE_MODEL.reasoning;
+  list.push(entry);
+  emit("update-custom", list);
+  select(id);
   error.value = "";
 }
 
