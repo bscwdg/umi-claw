@@ -712,9 +712,14 @@ if (app.isPackaged) {
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.clawdesktop.app')
-
   protocol.handle('app', async (request) => {
     let urlPath = request.url.replace('app://', '')
+
+    // 修复：去掉开头的所有斜杠，避免 Windows path.join 把路径解析成绝对路径导致文件找不到
+    // 当 URL 是 app:///assets/xxx.js 时，替换后得到 /assets/xxx.js，开头斜杠会导致 join(outDir, urlPath) 出错
+    while (urlPath.startsWith('/') || urlPath.startsWith('\\')) {
+      urlPath = urlPath.substring(1);
+    }
 
     // 如果是根路径，默认指向 index.html
     if (urlPath === '' || urlPath === '/') {

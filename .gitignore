@@ -16,3 +16,4 @@ config
 # build artifacts
 *.tsbuildinfo
 electron.vite.config.*.mjs
+CLAUDE.md
