@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events'
-import { ChildProcess, spawn, spawnSync, exec } from 'child_process'
+import { ChildProcess, spawn, exec, execFile } from 'child_process'
 import { join, resolve } from 'path'
-import { existsSync, mkdirSync, rmSync, lstatSync, realpathSync, readdirSync, readFileSync, symlinkSync } from 'fs'
+import { existsSync, mkdirSync, rmSync, readFileSync } from 'fs'
 import { promises as fs } from "fs";
 import { ConfigManager } from './configManager'
 import { promisify } from "util";
@@ -44,6 +44,14 @@ const BUILTIN_SKILLS: Omit<SkillInfo, 'installed'>[] = [
 ]
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+/**
+ * 异步判断路径是否存在。用于启动期热路径，替代同步 existsSync，
+ * 避免在主进程事件循环上阻塞（U 盘/exFAT 上单次 stat 延迟较大）。
+ */
+const pathExists = (p: string): Promise<boolean> =>
+  fs.access(p).then(() => true).catch(() => false);
 
 export class ClawManager extends EventEmitter {
   private process: ChildProcess | null = null
@@ -62,9 +70,8 @@ export class ClawManager extends EventEmitter {
   async _killGhostProcesses() {
     if (process.platform !== "win32") return
 
-    for (const imageName of ["bun.exe", "openclaw.exe"]) {
-      await this._killByImageName(imageName)
-    }
+    // 两个镜像的 taskkill 互不依赖，并行执行以缩短启动前等待。
+    await Promise.all(["bun.exe", "openclaw.exe"].map((name) => this._killByImageName(name)))
     console.log("🧹 僵尸进程清理尝试完毕。")
   }
 
@@ -82,7 +89,7 @@ export class ClawManager extends EventEmitter {
     }
   }
 
-  async start(): Promise<{ success: boolean; error?: string }> {
+  async start(): Promise<{ success: boolean; error?: string; warning?: string }> {
     console.log('启动 OpenClaw...', new Date().toISOString())
 
     if (this.process) {
@@ -122,11 +129,16 @@ export class ClawManager extends EventEmitter {
     // 启动前主动修复受管插件的 openclaw peerDependency junction 链接。
     // OpenClaw 新版会审计每个插件目录下的 node_modules/openclaw 是否真实指向核心包（realpath 相等），
     // 否则报 missing-openclaw-peer-link 并拒绝启动。这里提前把链接补建好。
-    // best-effort：在支持链接的卷（NTFS）上尽量把真实 junction 补好。
-    this._repairManagedPluginPeerLinks(dataDir)
+    // best-effort：在支持链接的卷（NTFS）上尽量把真实 junction 补好；失败不阻断启动（见下方 checkpoint 兜底）。
+    const peerLinkWarning = await this._repairManagedPluginPeerLinks(dataDir)
+    if (peerLinkWarning) {
+      // 链接补建失败（多为 U 盘/exFAT 等不支持 junction 的卷）：
+      // 写进日志面板，并作为 warning 带回前端提示用户（不阻断启动）。
+      this._addLog(peerLinkWarning, 'stderr')
+    }
     // 关键根治：直接写入启动迁移 checkpoint，让 OpenClaw 跳过会因 peer-link 失败而
     // 拒绝启动的审计。这对任何磁盘/任何文件系统（含 U 盘 exFAT/FAT32/UNC）都有效。
-    this._markStartupMigrationsComplete(dataDir)
+    await this._markStartupMigrationsComplete(dataDir)
 
     const commonEnv = buildOpenClawEnv(dataDir, nodePath, {
       PORT: String(this.port),
@@ -179,7 +191,7 @@ export class ClawManager extends EventEmitter {
       this.startedAt = Date.now()
       this._setupProcessEvents()
       this.emit('statusChange', true, this.port)
-      return { success: true }
+      return { success: true, warning: peerLinkWarning || undefined }
     } catch (err: any) {
       this.process = null
       return { success: false, error: err.message }
@@ -394,7 +406,7 @@ export class ClawManager extends EventEmitter {
    * 让 needsStartupMigrationCheckpoint 返回 false，那段审计逻辑根本不执行。
    * 不依赖任何链接能力，适用任何磁盘/任何格式。
    */
-  private _markStartupMigrationsComplete(dataDir: string): void {
+  private async _markStartupMigrationsComplete(dataDir: string): Promise<void> {
     try {
       const corePkgPath = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'package.json')
       if (!existsSync(corePkgPath)) return
@@ -425,14 +437,16 @@ export class ClawManager extends EventEmitter {
         'db.close();'
       ].join('\n')
 
-      const res = spawnSync(nodePath, ['-e', script, stateDbPath, version, String(now)], {
-        stdio: ['ignore', 'ignore', 'pipe']
-      })
-      if (res.status !== 0) {
-        const errText = res.stderr ? res.stderr.toString() : ''
-        this._addLog(`写入启动迁移 checkpoint 失败: ${errText.slice(0, 200)}`, 'stderr')
-      } else {
+      try {
+        // execFile 默认捕获 stderr（失败时挂在 error.stderr 上），无需 stdio 配置；
+        // windowsHide 避免闪现控制台窗口。
+        await execFileAsync(nodePath, ['-e', script, stateDbPath, version, String(now)], {
+          windowsHide: true
+        })
         this._addLog(`已写入启动迁移 checkpoint (v${version})，跳过插件链接审计`, 'system')
+      } catch (e: any) {
+        const errText = e?.stderr ? String(e.stderr).slice(0, 200) : (e?.message || '')
+        this._addLog(`写入启动迁移 checkpoint 失败: ${errText}`, 'stderr')
       }
     } catch (e: any) {
       this._addLog(`写入启动迁移 checkpoint 异常: ${e.message}`, 'stderr')
@@ -451,28 +465,28 @@ export class ClawManager extends EventEmitter {
    *
    * @returns 错误提示字符串；全部成功时返回 null。
    */
-  private _repairManagedPluginPeerLinks(dataDir: string): string | null {
+  private async _repairManagedPluginPeerLinks(dataDir: string): Promise<string | null> {
     const hostRoot = join(dataDir, 'openclaw', 'node_modules', 'openclaw')
-    if (!existsSync(join(hostRoot, 'package.json'))) {
+    if (!(await pathExists(join(hostRoot, 'package.json')))) {
       // 核心包不在预期位置，交给后续流程处理，不在此拦截。
       return null
     }
 
     let expectedTarget = hostRoot
     try {
-      expectedTarget = realpathSync(hostRoot)
+      expectedTarget = await fs.realpath(hostRoot)
     } catch { /* ignore */ }
 
     const projectsDir = join(openClawPaths.configDir(dataDir), 'npm', 'projects')
-    if (!existsSync(projectsDir)) return null
+    if (!(await pathExists(projectsDir))) return null
 
     const failures: string[] = []
 
-    const listPluginDirs = (): string[] => {
+    const listPluginDirs = async (): Promise<string[]> => {
       const result: string[] = []
       let projectEntries: string[] = []
       try {
-        projectEntries = readdirSync(projectsDir)
+        projectEntries = await fs.readdir(projectsDir)
       } catch {
         return result
       }
@@ -480,7 +494,7 @@ export class ClawManager extends EventEmitter {
         const nm = join(projectsDir, project, 'node_modules')
         let entries: string[] = []
         try {
-          entries = readdirSync(nm)
+          entries = await fs.readdir(nm)
         } catch {
           continue
         }
@@ -490,7 +504,7 @@ export class ClawManager extends EventEmitter {
           if (entry.startsWith('@')) {
             let scoped: string[] = []
             try {
-              scoped = readdirSync(entryPath)
+              scoped = await fs.readdir(entryPath)
             } catch {
               continue
             }
@@ -503,37 +517,37 @@ export class ClawManager extends EventEmitter {
       return result
     }
 
-    const declaresOpenClawPeer = (pluginDir: string): boolean => {
+    const declaresOpenClawPeer = async (pluginDir: string): Promise<boolean> => {
       try {
-        const pkg = JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf-8'))
+        const pkg = JSON.parse(await fs.readFile(join(pluginDir, 'package.json'), 'utf-8'))
         return Boolean(pkg.peerDependencies && typeof pkg.peerDependencies === 'object' && 'openclaw' in pkg.peerDependencies)
       } catch {
         return false
       }
     }
 
-    for (const pluginDir of listPluginDirs()) {
-      if (!declaresOpenClawPeer(pluginDir)) continue
+    for (const pluginDir of await listPluginDirs()) {
+      if (!(await declaresOpenClawPeer(pluginDir))) continue
 
       const nodeModulesDir = join(pluginDir, 'node_modules')
       const linkPath = join(nodeModulesDir, 'openclaw')
 
-      // 已正确指向则跳过。
+      // 已正确指向则跳过（realpath 对不存在/失效链接会抛错，自动落入重建分支）。
       try {
-        if (existsSync(linkPath) && realpathSync(linkPath) === expectedTarget) continue
+        if (await fs.realpath(linkPath) === expectedTarget) continue
       } catch { /* fallthrough to rebuild */ }
 
       // 重建：先清掉旧的（拷贝目录/失效链接都清），再建 junction。
       try {
-        mkdirSync(nodeModulesDir, { recursive: true })
+        await fs.mkdir(nodeModulesDir, { recursive: true })
       } catch { /* ignore */ }
+      // force:true 让路径不存在时也不报错；recursive 兼容旧的是目录而非链接的情况。
       try {
-        const st = existsSync(linkPath) ? lstatSync(linkPath) : null
-        if (st) rmSync(linkPath, { recursive: true, force: true })
+        await fs.rm(linkPath, { recursive: true, force: true })
       } catch { /* ignore */ }
 
       try {
-        symlinkSync(hostRoot, linkPath, 'junction')
+        await fs.symlink(hostRoot, linkPath, 'junction')
       } catch (e: any) {
         failures.push(pluginDir)
         this._addLog(`修复插件链接失败: ${linkPath} (${e.message})`, 'stderr')

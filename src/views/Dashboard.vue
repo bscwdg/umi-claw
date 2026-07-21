@@ -178,6 +178,7 @@ async function handleStart() {
   errorMsg.value = ''
   const result = await clawStore.start()
   if (!result.success) errorMsg.value = result.error || '启动失败'
+  else if (result.warning) showToast(result.warning, 'warning')
   actionLoading.value = false
 }
 
@@ -193,6 +194,7 @@ async function handleRestart() {
   errorMsg.value = ''
   const result = await clawStore.restart()
   if (!result.success) errorMsg.value = result.error || '重启失败'
+  else if (result.warning) showToast(result.warning, 'warning')
   actionLoading.value = false
 }
 
@@ -354,4 +356,5 @@ window.api.skills.list().then((s) => (skillCount.value = s.filter((x) => x.insta
 }
 .toast.success { background: rgba(63,185,80,0.9); color: #fff; }
 .toast.error   { background: rgba(248,81,73,0.9); color: #fff; }
+.toast.warning { background: rgba(230,162,60,0.95); color: #fff; }
 </style>
