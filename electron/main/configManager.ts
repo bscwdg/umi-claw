@@ -618,6 +618,18 @@ private _syncOpenClawConfig(): void {
 
     // channel config injection (native channels such as feishu)
     existingConfig.channels = existingConfig.channels || {}
+
+    // 兼容老版 feishu 插件：群白名单字段由 allowGroups 改名为 groupAllowFrom（v2026.6.x 起）。
+    // openclaw.json 里残留的 allowGroups 会被新版 schema（additionalProperties:false）当作非法附加属性拒绝，
+    // 导致网关启动失败（exit 78）。同步时迁移到新字段并删除旧字段；若已显式配置 groupAllowFrom 则不覆盖。
+    const feishuExisting = existingConfig.channels.feishu
+    if (feishuExisting && Array.isArray(feishuExisting.allowGroups)) {
+      if (feishuExisting.groupAllowFrom === undefined) {
+        feishuExisting.groupAllowFrom = feishuExisting.allowGroups
+      }
+      delete feishuExisting.allowGroups
+    }
+
     const uiChannels = this.config.channels || {}
     const feishuCfg = uiChannels.feishu as Record<string, unknown> | undefined
     if (feishuCfg && feishuCfg.enabled) {
