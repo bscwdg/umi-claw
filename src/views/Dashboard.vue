@@ -238,8 +238,8 @@ function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false })
 }
 
-// 加载技能数量
-window.api.skills.list().then((s) => (skillCount.value = s.filter((x) => x.installed).length))
+// 加载技能数量：与「技能管理」页同源，统计便携式 skills 目录下扫描到的技能总数
+window.api.skills.getInstalledSkills().then((s) => (skillCount.value = s.length))
 </script>
 
 <style scoped>

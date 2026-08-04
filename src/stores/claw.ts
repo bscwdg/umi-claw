@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 
 export interface LogEntry {
   line: string
@@ -15,9 +15,14 @@ export const useClawStore = defineStore('claw', () => {
   const logs = ref<LogEntry[]>([])
   const maxLogs = 1000
 
+  // 驱动 uptime 周期刷新的「当前时间」。computed 无法追踪 Date.now()，
+  // 必须借助响应式 tick，否则启动后时间会一直停在首次求值的那个值、不再跳动。
+  const now = ref(Date.now())
+  let ticker: ReturnType<typeof setInterval> | null = null
+
   const uptime = computed(() => {
     if (!running.value || !startedAt.value) return null
-    const ms = Date.now() - startedAt.value
+    const ms = now.value - startedAt.value
     const s = Math.floor(ms / 1000)
     const m = Math.floor(s / 60)
     const h = Math.floor(m / 60)
@@ -25,6 +30,20 @@ export const useClawStore = defineStore('claw', () => {
     if (m > 0) return `${m}m ${s % 60}s`
     return `${s}s`
   })
+
+  // 服务运行时每秒 tick 让 uptime 跳动；停止时清掉定时器，既实现「归零」又省 CPU。
+  watch(
+    running,
+    (isRunning) => {
+      if (isRunning) {
+        if (!ticker) ticker = setInterval(() => (now.value = Date.now()), 1000)
+      } else if (ticker) {
+        clearInterval(ticker)
+        ticker = null
+      }
+    },
+    { immediate: true }
+  )
 
   function addLog(entry: LogEntry) {
     logs.value.push(entry)
