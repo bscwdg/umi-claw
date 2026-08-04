@@ -5,7 +5,7 @@
       <h1>Umi Claw</h1>
       <p class="text-muted">OpenClaw 便携管理工具 · 基于 Electron + Vue3 + Vite</p>
       <div class="version-badges">
-        <span class="badge badge-blue">v1.0.0</span>
+        <span class="badge badge-blue">v{{ version }}</span>
         <span class="badge badge-green">Electron 30</span>
         <span class="badge badge-purple">Vue 3</span>
       </div>
@@ -67,6 +67,14 @@
 </template>
 
 <script setup lang="ts">
+import { ref, onMounted } from 'vue'
+
+const version = ref('')
+
+onMounted(async () => {
+  version.value = await window.api.app.getVersion()
+})
+
 const techStack = [
   { name: 'Electron 30', desc: '跨平台桌面应用框架' },
   { name: 'Vue 3.4', desc: '渐进式前端框架' },

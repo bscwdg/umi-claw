@@ -69,6 +69,10 @@ export const useClawStore = defineStore('claw', () => {
     if (result.success) {
       running.value = true
       startedAt.value = Date.now()
+    } else {
+      // 启动失败（含“已在运行中”）：以主进程真实状态为准对齐，
+      // 避免前端按钮卡在“启动”态不随实际状态变化。
+      await fetchStatus()
     }
     return result
   }
@@ -78,6 +82,8 @@ export const useClawStore = defineStore('claw', () => {
     if (result.success) {
       running.value = false
       startedAt.value = undefined
+    } else {
+      await fetchStatus()
     }
     return result
   }
@@ -87,6 +93,8 @@ export const useClawStore = defineStore('claw', () => {
     if (result.success) {
       running.value = true
       startedAt.value = Date.now()
+    } else {
+      await fetchStatus()
     }
     return result
   }

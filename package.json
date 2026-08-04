@@ -40,5 +40,36 @@
     "typescript": "^5.4.5",
     "vite": "^5.2.8",
     "vue-tsc": "^2.0.13"
+  },
+  "build": {
+    "appId": "com.clawdesktop.app",
+    "productName": "Umi Claw",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "resources"
+      }
+    ],
+    "win": {
+      "icon": "resources/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Umi Claw"
+    }
   }
 }

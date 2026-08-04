@@ -85,7 +85,7 @@ import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 const api = window.api
 const clawStore = useClawStore()
 const configStore = useConfigStore()
-const version = '1.0.0'
+const version = ref('')
 
 const navItems = [
   { to: '/dashboard', icon: '🏠', label: '控制台' },
@@ -115,6 +115,7 @@ function onCloseConfirmTray() {
 
 onMounted(async () => {
   await Promise.all([configStore.load(), clawStore.fetchStatus()])
+  version.value = await api.app.getVersion()
   cleanup = clawStore.setupListeners()
   // 主进程请求关闭时弹出确认框
   closeCleanup = api.window.onCloseRequest(() => {

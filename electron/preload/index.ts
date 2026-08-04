@@ -90,6 +90,11 @@ const api = {
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url)
   },
 
+  // 应用信息
+  app: {
+    getVersion: () => ipcRenderer.invoke('app:getVersion')
+  },
+
   dialog: {
     showMessage: (options: any) => ipcRenderer.invoke('dialog:showMessage', options)
   },

@@ -187,7 +187,9 @@ function handleWindowClose(e: Electron.Event): void {
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    icon: join(__dirname, "../../resources/icon.ico"),
+    icon: app.isPackaged
+      ? join(process.resourcesPath, 'resources', 'icon.ico')
+      : join(__dirname, "../../resources/icon.ico"),
     width: 1100,
     height: 720,
     minWidth: 900,
@@ -356,6 +358,9 @@ function registerIpcHandlers(): void {
     const port = configManager.getConfig().port || 3213
     shell.openExternal(`http://localhost:${port}`)
   })
+
+  // 应用版本：以 package.json 的 version 为唯一真相源（app.getVersion() 直接返回它）
+  ipcMain.handle('app:getVersion', () => app.getVersion())
 
   // 配置管理
   ipcMain.handle('config:get', () => configManager.getConfig())
