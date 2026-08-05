@@ -191,7 +191,14 @@ export class ConfigManager {
 
   constructor() {
     // 确定数据目录
-    if (app.isPackaged) {
+    // 优先级：CLAW_DATA_DIR 环境变量 > 默认规则
+    // - 默认用于正式分发的生产环境：exe 同级目录下的 data 文件夹
+    // - 设置 CLAW_DATA_DIR 可让本地安装版与开发环境共享同一份 data，
+    //   便于使用 openclaw（需通过带环境变量的启动脚本运行，避免双实例同时写同一份数据）
+    const envDataDir = process.env.CLAW_DATA_DIR
+    if (envDataDir) {
+      this.dataDir = envDataDir
+    } else if (app.isPackaged) {
       // 生产环境：exe 同级目录下的 data 文件夹
       const exePath = app.getPath('exe')
       this.dataDir = join(dirname(exePath), 'data')
