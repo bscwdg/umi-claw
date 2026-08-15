@@ -10,6 +10,54 @@
       </div>
 
       <div class="modal-body">
+        <div class="add-panel">
+          <div class="add-head" @click="showAddForm = !showAddForm">
+            <span>➕ {{ showAddForm ? "收起" : "新增自定义模型" }}</span>
+          </div>
+          <div v-if="showAddForm" class="add-form">
+            <div class="add-row">
+              <label>模型 ID<span class="req">*</span></label>
+              <input class="form-input mono" v-model="form.id" placeholder="如 gpt-4o-mini" />
+            </div>
+            <div class="add-row">
+              <label>显示名称</label>
+              <input class="form-input" v-model="form.name" placeholder="留空则同 ID" />
+            </div>
+            <div class="add-grid">
+              <div class="add-row">
+                <label>上下文窗口 <span class="unit">(最大输入长度，如 128K / 1M / 128000)</span></label>
+                <input class="form-input mono" v-model="form.contextWindowRaw" placeholder="如 128K 或 128000" />
+                <span v-if="parsedContextWindow != null" class="converted-hint">= {{ parsedContextWindow.toLocaleString() }} tokens</span>
+              </div>
+              <div class="add-row">
+                <label>最大输出 <span class="unit">(单次回复上限，如 16K / 1M / 16384)</span></label>
+                <input class="form-input mono" v-model="form.maxTokensRaw" placeholder="如 16K 或 16384" />
+                <span v-if="parsedMaxTokens != null" class="converted-hint">= {{ parsedMaxTokens.toLocaleString() }} tokens</span>
+              </div>
+            </div>
+            <div class="add-grid">
+              <div class="add-row">
+                <label>输入模态</label>
+                <div class="checks">
+                  <label class="chk"><input type="checkbox" value="text" v-model="form.input" />文本</label>
+                  <label class="chk"><input type="checkbox" value="image" v-model="form.input" />图片</label>
+                  <label class="chk"><input type="checkbox" value="audio" v-model="form.input" />音频</label>
+                </div>
+              </div>
+              <div class="add-row">
+                <label>能力</label>
+                <label class="chk"><input type="checkbox" v-model="form.reasoning" />支持推理</label>
+              </div>
+            </div>
+            <div class="add-actions">
+              <button class="btn btn-sm" @click="resetForm">重置</button>
+              <button class="btn btn-primary btn-sm" @click="addModel" :disabled="!form.id.trim()">
+                ➕ 添加
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="toolbar">
           <div class="text-sm text-muted">
             {{ loading ? "正在拉取在线模型..." : `预设 ${presetCount} · 自定义 ${customCount} · 在线 ${remoteCount} · 共 ${models.length}` }}
@@ -65,53 +113,7 @@
             </div>
           </div>
           <div v-if="!loading && !models.length && !error" class="text-muted text-sm empty">
-            暂无模型，可点击「拉取在线模型」或在下方新增
-          </div>
-        </div>
-
-        <div class="add-panel">
-          <div class="add-head" @click="showAddForm = !showAddForm">
-            <span>{{ showAddForm ? "▾" : "▸" }} 新增自定义模型</span>
-          </div>
-          <div v-if="showAddForm" class="add-form">
-            <div class="add-row">
-              <label>模型 ID<span class="req">*</span></label>
-              <input class="form-input mono" v-model="form.id" placeholder="如 gpt-4o-mini" />
-            </div>
-            <div class="add-row">
-              <label>显示名称</label>
-              <input class="form-input" v-model="form.name" placeholder="留空则同 ID" />
-            </div>
-            <div class="add-grid">
-              <div class="add-row">
-                <label>上下文窗口 <span class="unit">(tokens，最大输入长度)</span></label>
-                <input class="form-input mono" type="number" v-model.number="form.contextWindow" placeholder="如 128000（约 128K tokens）" />
-              </div>
-              <div class="add-row">
-                <label>最大输出 <span class="unit">(tokens，单次回复上限)</span></label>
-                <input class="form-input mono" type="number" v-model.number="form.maxTokens" placeholder="如 16384（约 16K tokens）" />
-              </div>
-            </div>
-            <div class="add-grid">
-              <div class="add-row">
-                <label>输入模态</label>
-                <div class="checks">
-                  <label class="chk"><input type="checkbox" value="text" v-model="form.input" />文本</label>
-                  <label class="chk"><input type="checkbox" value="image" v-model="form.input" />图片</label>
-                  <label class="chk"><input type="checkbox" value="audio" v-model="form.input" />音频</label>
-                </div>
-              </div>
-              <div class="add-row">
-                <label>能力</label>
-                <label class="chk"><input type="checkbox" v-model="form.reasoning" />支持推理</label>
-              </div>
-            </div>
-            <div class="add-actions">
-              <button class="btn btn-sm" @click="resetForm">重置</button>
-              <button class="btn btn-primary btn-sm" @click="addModel" :disabled="!form.id.trim()">
-                ➕ 添加
-              </button>
-            </div>
+            暂无模型，可点击「拉取在线模型」或在上方新增
           </div>
         </div>
       </div>
@@ -179,12 +181,36 @@ const DEFAULT_REMOTE_MODEL = {
 const createForm = () => ({
   id: "",
   name: "",
-  contextWindow: undefined as number | undefined,
-  maxTokens: undefined as number | undefined,
+  contextWindowRaw: "",
+  maxTokensRaw: "",
   input: [] as string[],
   reasoning: false,
 });
 const form = reactive(createForm());
+
+/**
+ * 解析用户输入的 token 数量，支持三种写法（大小写不限）：
+ *   - "128K" / "1.5M" 等带单位缩写
+ *   - "128000" 原始数字
+ *   - 空串返回 undefined（走默认值）
+ * 无法解析返回 null（用于提示输入有误）。
+ */
+function parseTokens(raw: string): number | undefined | null {
+  const s = (raw || "").trim();
+  if (!s) return undefined;
+  const m = s.match(/^(\d+(?:\.\d+)?)\s*([kKmM]?)$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  const unit = m[2].toLowerCase();
+  const value = unit === "m" ? n * 1_000_000 : unit === "k" ? n * 1_000 : n;
+  return Math.round(value);
+}
+
+const parsedContextWindow = computed(() => parseTokens(form.contextWindowRaw));
+const parsedMaxTokens = computed(() => parseTokens(form.maxTokensRaw));
+const hasTokenInputError = computed(
+  () => parsedContextWindow.value === null || parsedMaxTokens.value === null
+);
 
 const customModels = computed<ModelRow[]>(() =>
   (props.provider?.customModels || []).map((m) => ({
@@ -222,7 +248,7 @@ watch(
       current.value = props.provider.model;
       remoteModels.value = [];
       error.value = "";
-      showAddForm.value = false;
+      showAddForm.value = true;
       resetForm();
       await loadPresets();
     }
@@ -281,6 +307,10 @@ function select(model: string) {
 function addModel() {
   const id = form.id.trim();
   if (!id) return;
+  if (hasTokenInputError.value) {
+    error.value = "上下文窗口 / 最大输出格式有误：请填写 128K、1.5M 或 128000 这类写法";
+    return;
+  }
   const list = [...(props.provider?.customModels || [])];
   if (list.some((m) => m.id === id) || models.value.some((m) => m.id === id && m.source !== "remote")) {
     error.value = `模型 ID「${id}」已存在`;
@@ -289,8 +319,8 @@ function addModel() {
   const entry: PresetModel = { id };
   entry.name = form.name.trim() || id;
   // 与 main 层 schema 兜底保持一致：始终写完整字段，避免用户未填时写入缺字段模型。
-  entry.contextWindow = typeof form.contextWindow === "number" ? form.contextWindow : DEFAULT_REMOTE_MODEL.contextWindow;
-  entry.maxTokens = typeof form.maxTokens === "number" ? form.maxTokens : DEFAULT_REMOTE_MODEL.maxTokens;
+  entry.contextWindow = parsedContextWindow.value ?? DEFAULT_REMOTE_MODEL.contextWindow;
+  entry.maxTokens = parsedMaxTokens.value ?? DEFAULT_REMOTE_MODEL.maxTokens;
   entry.input = form.input.length ? [...form.input] : [...DEFAULT_REMOTE_MODEL.input];
   if (form.reasoning) entry.reasoning = true;
   list.push(entry);
@@ -529,16 +559,18 @@ function close() {
   padding: 16px 0;
 }
 .add-panel {
-  border: 1px solid var(--border-muted, #edeef0);
+  border: 1px solid var(--accent, #388bfd);
   border-radius: var(--radius-sm, 6px);
   overflow: hidden;
   flex-shrink: 0;
+  background: var(--accent-muted, rgba(56, 139, 253, 0.06));
 }
 .add-head {
   padding: 10px 12px;
   cursor: pointer;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
+  color: var(--accent, #388bfd);
   user-select: none;
 }
 .add-head:hover {
@@ -563,6 +595,10 @@ function close() {
 .unit {
   color: var(--text-secondary, #8b949e);
   font-weight: 400;
+}
+.converted-hint {
+  font-size: 12px;
+  color: var(--accent, #388bfd);
 }
 .req {
   color: #f85149;
