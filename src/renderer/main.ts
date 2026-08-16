@@ -16,7 +16,8 @@ const router = createRouter({
     { path: '/setup', component: () => import('../views/Setup.vue') },
     { path: '/channelsPage', component: () => import('../views/ChannelsPage.vue') },
     { path: '/terminal', component: () => import('../views/TerminalPage.vue') },
-    { path: '/about', component: () => import('../views/About.vue') }
+    { path: '/about', component: () => import('../views/About.vue') },
+    { path: '/obsidian', component: () => import('../views/ObsidianPage.vue') }
   ]
 })
 

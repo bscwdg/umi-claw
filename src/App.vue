@@ -95,6 +95,7 @@ const navItems = [
   { to: '/setup',     icon: '🔧', label: '环境初始化' },
   { to: '/channelsPage',     icon: '📩', label: '渠道接入' },
   { to: '/terminal',     icon: '💻', label: 'OpenClaw终端' },
+  { to: '/obsidian',     icon: '📚', label: '知识库' },
   { to: '/about',     icon: 'ℹ️', label: '关于' }
 ]
 

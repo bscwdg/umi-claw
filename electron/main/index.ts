@@ -15,6 +15,8 @@ import { ClawManager } from './clawManager'
 import { ConfigManager } from './configManager'
 import { DownloadManager, type DownloadProgress } from './downloadManager'
 import { ChannelManager } from './channelManager'
+import { ObsidianManager } from './obsidian/obsidianManager'
+import { EMBEDDING_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv } from './openClawPaths'
 import { readFileSync, existsSync } from 'fs'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
@@ -31,6 +33,7 @@ let clawManager: ClawManager
 let configManager: ConfigManager
 let downloadManager: DownloadManager
 let channelManager: ChannelManager
+let obsidianManager: ObsidianManager
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -655,6 +658,28 @@ function registerIpcHandlers(): void {
     }
   })
 
+  // ── Obsidian 知识库 ──
+  ipcMain.handle('obsidian:getConfig', () => obsidianManager.getObsidianConfig())
+  ipcMain.handle('obsidian:saveConfig', (_e, cfg) => obsidianManager.saveObsidianConfig(cfg))
+  ipcMain.handle('obsidian:selectVault', async () => obsidianManager.selectVault())
+  ipcMain.handle('obsidian:getIndexStatus', () => obsidianManager.getIndexStatus())
+  ipcMain.handle('obsidian:rebuildIndex', async () => {
+    try {
+      return await obsidianManager.rebuildIndex()
+    } catch (e: any) {
+      return { success: false, error: e.message }
+    }
+  })
+  ipcMain.handle('obsidian:cancelIndex', async () => obsidianManager.cancelIndex())
+  ipcMain.handle('obsidian:testEmbedding', async (_e, arg) => {
+    // 不吞异常：失败时抛出，由渲染进程 try/catch 统一捕获。
+    // 否则返回 {success:false} 会被前端当作成功（r.dim 为 undefined 仍显示"连通"）。
+    return await obsidianManager.testEmbedding(arg)
+  })
+  ipcMain.handle('obsidian:getEmbeddingPresets', () => EMBEDDING_PRESETS)
+  // 检索测试：失败时抛出，由渲染进程统一捕获展示
+  ipcMain.handle('obsidian:testSearch', async (_e, arg) => obsidianManager.testSearch(arg))
+
 }
 
 // ─── 推送日志到渲染进程 ────────────────────────────────────────────────────────
@@ -773,7 +798,16 @@ app.whenReady().then(() => {
     new ChannelManager(
       configManager
     )
+  obsidianManager = new ObsidianManager(configManager)
+  // 注入 Obsidian MCP 配置生成器：_syncOpenClawConfig 写回 openclaw.json 时调用
+  configManager.setObsidianMcpInjector(() => obsidianManager.buildMcpServerConfig())
 
+  // Obsidian 索引进度转发到渲染进程
+  obsidianManager.on('progress', (data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('obsidian:index-progress', data)
+    }
+  })
 
   registerIpcHandlers()
   createWindow()

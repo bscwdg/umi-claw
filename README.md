@@ -13,6 +13,7 @@
 - 🤖 **多个个模型服务商** — DeepSeek、Kimi、通义千问、OpenAI 等
 - 📋 **实时日志监控** —— 带过滤、导出功能的日志查看器，日志文件：`data/logs/runtime-debug.log`
 - 📩 **多渠道接入** — 内置微信，支持飞书自建应用（长连接，界面一键装插件）
+- 📚 **Obsidian 知识库** — 笔记向量化语义检索，以 MCP 工具喂给模型，按需取片段省 token
 - 💾 **便携模式** — 可放置在 U 盘，数据随身带走
 - 🌐 **国内镜像加速** — npmmirror + GitHub 代理，无需翻墙
 
@@ -40,7 +41,10 @@ umi-claw/
 │   │   ├── downloadManager.ts # 环境下载安装
 │   │   ├── channelManager.ts  # 渠道（微信等）安装与管理
 │   │   ├── channelCatalog.ts  # 渠道目录 / 元信息
-│   │   └── modelConfig.ts     # 模型预设配置
+│   │   ├── modelConfig.ts     # 模型预设配置（含 embedding 预设）
+│   │   └── obsidian/          # Obsidian 知识库管理
+│   │       ├── obsidianManager.ts  # 配置/索引/检索测试/MCP 配置生成
+│   │       └── types.ts            # 类型定义
 │   └── preload/
 │       ├── index.ts           # Preload / IPC 桥接
 │       └── index.d.ts         # window.api 类型声明
@@ -53,6 +57,7 @@ umi-claw/
 │   │   ├── Setup.vue          # 环境初始化
 │   │   ├── ChannelsPage.vue   # 渠道接入
 │   │   ├── TerminalPage.vue   # OpenClaw 终端
+│   │   ├── ObsidianPage.vue   # 知识库（Obsidian）
 │   │   ├── About.vue          # 关于
 │   │   └── components/        # 通用组件
 │   │       ├── ConfirmDialog.vue       # 确认对话框（关闭确认等）
@@ -68,6 +73,13 @@ umi-claw/
 │       ├── main.ts            # Vue 入口 / 路由
 │       └── index.html         # 渲染进程 HTML
 ├── resources/                 # 应用图标等静态资源
+│   └── obsidian/              # 知识库子进程脚本（零依赖，绿色 node 拉起）
+│       ├── indexer.mjs        # 索引器：扫描 vault、切块、embedding、写向量库
+│       ├── mcp-server.mjs     # MCP server（stdio JSON-RPC），OpenClaw 拉起
+│       ├── db.mjs             # sqlite 向量库封装（node:sqlite）
+│       ├── embeddings.mjs     # embedding API 适配（OpenAI 兼容 / Cohere）
+│       ├── markdown.mjs       # front matter / 切块 / 标签 / wikilink 解析
+│       └── search.mjs         # 检索测试脚本（与 search_notes 同链路）
 ├── electron.vite.config.ts
 ├── electron-builder.json5
 └── package.json
@@ -188,6 +200,18 @@ window.api.terminal.removeListeners()             // 移除 PTY 监听
 window.api.channels.isPluginInstalled(id)     // 查询渠道插件是否已安装（如 'feishu'）
 window.api.channels.installPlugin(pkg)         // 安装渠道插件（如 '@openclaw/feishu'），安装日志走 claw.onLog
 
+// ── 知识库（Obsidian）──
+window.api.obsidian.getConfig()            // 读取知识库配置
+window.api.obsidian.saveConfig(cfg)        // 保存配置（触发 openclaw.json 的 MCP 注入）
+window.api.obsidian.selectVault()          // 系统对话框选择 vault 目录
+window.api.obsidian.getIndexStatus()       // 索引状态（笔记数/块数/维度/错误等）
+window.api.obsidian.rebuildIndex()         // 重建索引（spawn indexer 子进程）
+window.api.obsidian.cancelIndex()          // 取消进行中的索引
+window.api.obsidian.testEmbedding(arg)     // 测试 embedding 连通，返回维度
+window.api.obsidian.getEmbeddingPresets()  // embedding 模型预设列表
+window.api.obsidian.testSearch(arg)        // 检索测试（与 MCP search_notes 同链路）
+window.api.obsidian.onIndexProgress(cb)    // 监听索引进度，返回取消订阅函数
+
 // ── 其他工具 ──
 window.api.shell.openExternal(url)    // 用系统默认浏览器打开链接
 window.api.dialog.showMessage(opts)   // 弹出系统原生消息框
@@ -226,6 +250,40 @@ openclaw pairing approve feishu <配对码>  # 审批通过
 ```
 
 > 群聊中默认需要 @机器人 才会响应，可在渠道卡片中关闭。
+
+## 知识库（Obsidian）
+
+把 Obsidian 笔记库接入模型：笔记按标题切块并向量化，存入本地 sqlite 向量库；
+OpenClaw 通过 MCP 工具按需检索片段，不用把整个知识库塞进上下文。
+
+- **向量库本地存储**：`data/config/.openclaw/obsidian/index.db`（node:sqlite，零原生依赖）
+- **embedding 两种来源**：预设（复用模型配置里已填 key 的服务商：百炼/智谱/硅基流动/豆包/OpenAI/本地 Ollama）或自定义（直填 baseUrl/key，可接 Cohere 等）
+- **增量索引**：全量重建支持 mtime+hash 跳过未变文件；MCP server 常驻 watcher 监听 vault 变更，笔记增删改 1.5s 内自动增量索引
+
+### 使用步骤
+
+1. 在「模型配置」为某服务商填好 API Key（或在知识库页用自定义 embedding 直填凭据）
+2. 进入「知识库」页，选择 Obsidian Vault 目录
+3. 选择 embedding 模型并点击「测试连通」
+4. 点击「重建索引」（首次较慢，后续增量）
+5. 打开「启用 Obsidian 集成」并保存配置
+6. 重启 OpenClaw，模型即可调用知识库工具
+
+### MCP 工具
+
+启用后注入 `openclaw.json` 的 `mcp.servers.obsidian`，提供以下工具：
+
+| 工具 | 说明 |
+|------|------|
+| `search_notes` | 语义检索笔记片段（支持自然语言 query、limit、tag 过滤） |
+| `read_note` | 读取整篇笔记 |
+| `list_notes` | 列出已索引笔记（可按文件夹 / 标签过滤） |
+| `create_note` / `update_note` | 创建 / 更新笔记（写后自动增量索引） |
+| `get_backlinks` / `get_outgoing_links` | 反向 / 正向 wikilink 查询 |
+| `get_tags` | 全库标签统计 |
+
+> 切换 embedding 模型后需重新「重建索引」，应用会检测到签名变化自动清掉旧向量库。
+> 代码块内容不参与语义索引（避免污染切块），但 `read_note` 可读取全文。
 
 ## 便携模式
 

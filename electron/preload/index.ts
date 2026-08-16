@@ -120,6 +120,25 @@ const api = {
       ipcRenderer.removeAllListeners('term:pty-chunk')
       ipcRenderer.removeAllListeners('term:pty-exit')
     }
+  },
+
+  // Obsidian 知识库
+  obsidian: {
+    getConfig: () => ipcRenderer.invoke('obsidian:getConfig'),
+    saveConfig: (cfg: any) => ipcRenderer.invoke('obsidian:saveConfig', cfg),
+    selectVault: () => ipcRenderer.invoke('obsidian:selectVault'),
+    getIndexStatus: () => ipcRenderer.invoke('obsidian:getIndexStatus'),
+    rebuildIndex: () => ipcRenderer.invoke('obsidian:rebuildIndex'),
+    cancelIndex: () => ipcRenderer.invoke('obsidian:cancelIndex'),
+    testEmbedding: (arg: any) => ipcRenderer.invoke('obsidian:testEmbedding', arg),
+    getEmbeddingPresets: () => ipcRenderer.invoke('obsidian:getEmbeddingPresets'),
+    testSearch: (arg: { query: string; limit?: number; tag?: string }) =>
+      ipcRenderer.invoke('obsidian:testSearch', arg),
+    onIndexProgress: (cb: (data: any) => void) => {
+      const handler = (_: unknown, data: any) => cb(data)
+      ipcRenderer.on('obsidian:index-progress', handler)
+      return () => ipcRenderer.off('obsidian:index-progress', handler)
+    }
   }
 }
 

@@ -4,6 +4,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readd
 import AdmZip from 'adm-zip'
 import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawProviderRefs, isReservedOpenClawProviderKey } from './modelConfig'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
+import type { ObsidianConfig } from './obsidian/types'
 
 export interface PresetModel {
   id: string
@@ -43,6 +44,7 @@ export interface AppConfig {
   themeBase?: string
   themeAccent?: string
   channels?: Record<string, Record<string, unknown>>
+  obsidian?: ObsidianConfig
 }
 
 const DEFAULT_PROVIDERS: ModelProvider[] = [
@@ -188,6 +190,12 @@ export class ConfigManager {
   private config: AppConfig
   private openClawConfigPath: string
   private portableSkillsDir: string
+  /** Obsidian MCP 注入器：返回 mcp.servers.obsidian 配置，未启用返回 null */
+  private obsidianMcpInjector: (() => Record<string, unknown> | null) | null = null
+
+  setObsidianMcpInjector(fn: (() => Record<string, unknown> | null) | null): void {
+    this.obsidianMcpInjector = fn
+  }
 
   constructor() {
     // 确定数据目录
@@ -674,6 +682,9 @@ private _syncOpenClawConfig(): void {
       lastTouchedAt: new Date().toISOString()
     }
 
+    // 注入 Obsidian MCP server 配置（由 ObsidianManager 提供）
+    this._injectObsidianMcp(existingConfig)
+
     const content = JSON.stringify(existingConfig, null, 2)
     this._atomicWriteFileSync(this.openClawConfigPath, content)
     console.log('[ConfigManager] openclaw.json 已使用新版预设结构同步完成。')
@@ -683,6 +694,27 @@ private _syncOpenClawConfig(): void {
     this._syncAuthProfiles(allProviders)
   } catch (err: any) {
     console.error('[ConfigManager] 同步 OpenClaw 配置失败:', err.message)
+  }
+}
+
+/**
+ * 注入 Obsidian MCP server 配置到 openclaw.json 的 mcp.servers.obsidian。
+ * 由 ObsidianManager 通过 setObsidianMcpInjector 提供生成器；未启用则移除已存在的 obsidian 条目。
+ */
+private _injectObsidianMcp(existingConfig: any): void {
+  if (!this.obsidianMcpInjector) return
+  existingConfig.mcp = existingConfig.mcp || {}
+  existingConfig.mcp.servers = existingConfig.mcp.servers || {}
+  const obsidianCfg = this.obsidianMcpInjector()
+  if (obsidianCfg) {
+    existingConfig.mcp.servers.obsidian = obsidianCfg
+  } else if (existingConfig.mcp.servers.obsidian) {
+    delete existingConfig.mcp.servers.obsidian
+  }
+  // 清理空节点：只删空的 servers，不删 mcp 本身——mcp 上未来可能挂其他字段
+  //（timeout 等），整删会把它们一起抹掉。
+  if (existingConfig.mcp.servers && Object.keys(existingConfig.mcp.servers).length === 0) {
+    delete existingConfig.mcp.servers
   }
 }
 

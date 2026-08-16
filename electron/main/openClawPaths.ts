@@ -39,7 +39,13 @@ export const openClawPaths = {
     join(dataDir, 'config', '.openclaw', 'skills'),
 
   /** OpenClaw 数据目录（data/） */
-  openClawData: (dataDir: string) => join(dataDir, 'data')
+  openClawData: (dataDir: string) => join(dataDir, 'data'),
+
+  /** Obsidian 集成数据目录（向量库 + 状态文件） */
+  obsidianDir: (dataDir: string) => join(dataDir, 'config', '.openclaw', 'obsidian'),
+
+  /** Obsidian 向量库文件 */
+  obsidianDb: (dataDir: string) => join(dataDir, 'config', '.openclaw', 'obsidian', 'index.db')
 }
 
 /** 把 Windows 反斜杠统一成正斜杠，兼容 OpenClaw / Node 内部处理 */
