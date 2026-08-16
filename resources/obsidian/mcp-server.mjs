@@ -87,10 +87,20 @@ function resolveVaultPath(rel) {
 }
 
 // ── 工具定义 ──
+// search_notes 的描述随主动检索开关（OBS_PROACTIVE_SEARCH，默认开）切换：
+// 开 = 强指令，问题可能相关就先检索；关 = 中性描述，等用户明确要求。
+const SEARCH_NOTES_DESC_PROACTIVE =
+  '在用户的 Obsidian 知识库中语义检索笔记片段。返回最相关的若干文本块（含文件相对路径、标题层级、内容片段、相似度分数）。' +
+  '重要：无需用户明确要求，只要问题可能涉及用户的个人知识、过往记录、想法、项目资料、读书/会议笔记等内容，就应主动先调用本工具检索，再结合检索结果回答。' +
+  '用户的笔记、想法、日常记录都存放在本知识库中--当用户问「我之前记过/写过/说过什么」这类问题时，指的是本知识库的内容，应优先用本工具检索，而不是其他记忆类工具；若本工具未命中，再回退使用其他记忆类工具检索。' +
+  '用户的很多背景信息记录在知识库中而不是对话上下文里，不检索就回答很可能遗漏或编造。'
+const SEARCH_NOTES_DESC_NEUTRAL =
+  '在 Obsidian 知识库中语义检索笔记片段。返回最相关的若干文本块（含文件相对路径、标题层级、内容片段、相似度分数）。用于回答关于用户笔记内容的问题。'
+
 const TOOLS = [
   {
     name: 'search_notes',
-    description: '在 Obsidian 知识库中语义检索笔记片段。返回最相关的若干文本块（含文件相对路径、标题层级、内容片段、相似度分数）。用于回答关于用户笔记内容的问题。',
+    description: process.env.OBS_PROACTIVE_SEARCH === '0' ? SEARCH_NOTES_DESC_NEUTRAL : SEARCH_NOTES_DESC_PROACTIVE,
     inputSchema: {
       type: 'object',
       properties: {

@@ -16,7 +16,8 @@ const DEFAULT_OBSIDIAN_CONFIG: ObsidianConfig = {
   embeddingModel: '',
   embeddingAdapter: 'openai',
   chunkSize: 800,
-  maxChunksPerNote: 50
+  maxChunksPerNote: 50,
+  proactiveSearch: true
 }
 
 /**
@@ -115,7 +116,9 @@ export class ObsidianManager extends EventEmitter {
         OBS_EMBEDDING_BASE_URL: emb.baseUrl,
         OBS_EMBEDDING_API_KEY: emb.apiKey,
         OBS_EMBEDDING_MODEL: emb.model,
-        OBS_EMBEDDING_ADAPTER: emb.adapter
+        OBS_EMBEDDING_ADAPTER: emb.adapter,
+        // 主动检索开关：'0' 时 search_notes 用中性描述（只在用户明确要求时检索）
+        OBS_PROACTIVE_SEARCH: cfg.proactiveSearch === false ? '0' : '1'
       }
     }
   }

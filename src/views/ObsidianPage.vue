@@ -37,6 +37,21 @@
           ⚠ 已配置 vault 但未启用集成，开启后才会注入到 openclaw.json 的 mcp.servers.obsidian
         </div>
       </div>
+
+      <!-- 主动检索开关 -->
+      <div class="row" style="margin-top: 8px">
+        <div style="flex: 1">
+          <div class="label">主动检索</div>
+          <div class="text-muted text-sm">
+            开启后模型无需点名，问题可能涉及笔记内容时自动调用 search_notes 先检索再回答；
+            关闭后仅在明确要求查知识库时才检索。改动保存并重启 OpenClaw 后生效。
+          </div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" v-model="cfg.proactiveSearch" />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
     </div>
 
     <!-- embedding 配置 -->
@@ -262,6 +277,7 @@ interface ObsidianConfig {
   customEmbedding?: CustomEmbedding
   chunkSize?: number
   maxChunksPerNote?: number
+  proactiveSearch?: boolean
 }
 interface IndexStatus {
   indexing: boolean
@@ -297,7 +313,8 @@ const cfg = ref<ObsidianConfig>({
   embeddingAdapter: 'openai',
   customEmbedding: { baseUrl: '', apiKey: '', model: '', dim: 1024, adapter: 'openai' },
   chunkSize: 800,
-  maxChunksPerNote: 50
+  maxChunksPerNote: 50,
+  proactiveSearch: true
 })
 const presets = ref<EmbeddingPreset[]>([])
 const embeddingPresetId = ref('')
@@ -419,6 +436,11 @@ async function load() {
   // customEmbedding 兜底（旧配置可能没有）
   if (!cfg.value.customEmbedding) {
     cfg.value.customEmbedding = { baseUrl: '', apiKey: '', model: '', dim: 1024, adapter: 'openai' }
+  }
+  // proactiveSearch 兜底：后端 getObsidianConfig 已合并默认值，这里防手改配置
+  // 写入 null 等异常值导致 checkbox 显示与实际行为（=== false 才算关）不一致
+  if (typeof cfg.value.proactiveSearch !== 'boolean') {
+    cfg.value.proactiveSearch = true
   }
   // 匹配当前配置对应的预设
   const m = presets.value.find(

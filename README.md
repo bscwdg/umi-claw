@@ -118,6 +118,17 @@ npm run build:linux  # Linux
 npm run build:all
 ```
 
+### 国内镜像打包（Windows PowerShell）
+
+打包时 Electron 及 electron-builder 二进制需从 GitHub 下载，国内网络容易超时失败。可先设置 npmmirror 镜像和本地缓存目录再构建：
+
+```powershell
+$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
+$env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
+$env:ELECTRON_BUILDER_CACHE="D:\work2026\files\claw-desktop\electron-builder-cache"  # 缓存目录可按需改成自己的路径
+npm run build:win
+```
+
 ## IPC API 设计
 
 主进程通过 `window.api` 暴露给渲染进程：

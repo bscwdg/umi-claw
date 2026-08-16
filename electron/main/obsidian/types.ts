@@ -41,6 +41,8 @@ export interface ObsidianConfig {
   chunkSize?: number
   /** 单篇笔记最大切块数，防止超大笔记拖垮索引，默认 50 */
   maxChunksPerNote?: number
+  /** 主动检索：开启后模型无需用户点名，问题可能相关即自动调用 search_notes，默认 true */
+  proactiveSearch?: boolean
 }
 
 /** 索引状态快照（从向量库 meta 表与文件计数派生） */
