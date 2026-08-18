@@ -69,7 +69,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Umi Claw"
+      "shortcutName": "Umi Claw",
+      "include": "build/installer.nsh"
     }
   }
 }

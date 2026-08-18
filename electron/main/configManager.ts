@@ -1,5 +1,5 @@
 import { app,dialog } from 'electron'
-import { join, dirname ,basename} from 'path'
+import { join, dirname, basename } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync } from 'fs'
 import AdmZip from 'adm-zip'
 import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawProviderRefs, isReservedOpenClawProviderKey } from './modelConfig'
@@ -199,17 +199,27 @@ export class ConfigManager {
 
   constructor() {
     // 确定数据目录
-    // 优先级：CLAW_DATA_DIR 环境变量 > 默认规则
-    // - 默认用于正式分发的生产环境：exe 同级目录下的 data 文件夹
+    // 优先级：CLAW_DATA_DIR 环境变量 > 便携模式 > 默认规则
+    // - 便携模式：exe 同级存在 data 文件夹时启用（U 盘携带等场景），
+    //   数据跟随程序，更新直接替换程序文件即可
+    // - 普通安装默认：%APPDATA%\UmiClaw\data（与安装目录分离，
+    //   NSIS 更新时会清空安装目录，数据放安装目录内会被删、也容易被其他程序占用卡住更新）
     // - 设置 CLAW_DATA_DIR 可让本地安装版与开发环境共享同一份 data，
     //   便于使用 openclaw（需通过带环境变量的启动脚本运行，避免双实例同时写同一份数据）
     const envDataDir = process.env.CLAW_DATA_DIR
     if (envDataDir) {
       this.dataDir = envDataDir
     } else if (app.isPackaged) {
-      // 生产环境：exe 同级目录下的 data 文件夹
       const exePath = app.getPath('exe')
-      this.dataDir = join(dirname(exePath), 'data')
+      const portableDataDir = join(dirname(exePath), 'data')
+      if (existsSync(portableDataDir)) {
+        // 便携模式（U 盘等）：exe 同级存在 data 时数据跟随程序走，
+        // 更新时直接替换程序文件即可，数据目录原地不动
+        this.dataDir = portableDataDir
+      } else {
+        // 普通安装：%APPDATA%\UmiClaw\data
+        this.dataDir = join(app.getPath('appData'), 'UmiClaw', 'data')
+      }
     } else {
       // 开发环境：项目根目录下的 data 文件夹
       this.dataDir = join(process.cwd(), 'data')

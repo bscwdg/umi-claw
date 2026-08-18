@@ -5,7 +5,7 @@ REM Launch installed Umi Claw sharing the dev data directory.
 REM Do NOT run alongside electron-vite dev: both write data/config/app.json.
 
 set "CLAW_DATA_DIR=%~dp0data"
-set "CLAW_EXE=D:\Umi Claw\Umi Claw.exe"
+set "CLAW_EXE=%LOCALAPPDATA%\Programs\Umi Claw\Umi Claw.exe"
 
 if not exist "%CLAW_EXE%" (
   echo [ERROR] exe not found: %CLAW_EXE%

@@ -9,7 +9,7 @@ import {
   nativeImage,
   protocol
 } from 'electron'
-import { join, parse } from 'path'
+import { join, parse, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { ClawManager } from './clawManager'
 import { ConfigManager } from './configManager'
@@ -729,10 +729,20 @@ protocol.registerSchemesAsPrivileged([
   }
 ])
 if (app.isPackaged) {
-  // 生产环境下，直接写在软件运行根目录的 context-data 文件夹里
-  const customUserDataPath = join(process.resourcesPath, '../context-data')
-  app.setPath('userData', customUserDataPath)
-  app.setPath('sessionData', customUserDataPath)
+  const exeDir = dirname(app.getPath('exe'))
+  if (existsSync(join(exeDir, 'data'))) {
+    // 便携模式（U 盘等，与 configManager 的便携判定一致）：
+    // Electron 用户数据同样跟随 exe，保证换机器数据完整
+    const portableUserData = join(exeDir, 'context-data')
+    app.setPath('userData', portableUserData)
+    app.setPath('sessionData', portableUserData)
+  } else {
+    // 普通安装：用户数据放 %APPDATA%\UmiClaw（与安装目录分离，
+    // NSIS 更新时会清空安装目录，用户数据放里面会被一并清掉）
+    const appDataRoot = join(app.getPath('appData'), 'UmiClaw')
+    app.setPath('userData', appDataRoot)
+    app.setPath('sessionData', appDataRoot)
+  }
 } else {
   // 开发环境下保持默认，或者指向项目内的临时夹
   app.setPath('userData', join(__dirname, '../../.dev-user-data'))

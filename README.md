@@ -81,7 +81,8 @@ umi-claw/
 │       ├── markdown.mjs       # front matter / 切块 / 标签 / wikilink 解析
 │       └── search.mjs         # 检索测试脚本（与 search_notes 同链路）
 ├── electron.vite.config.ts
-├── electron-builder.json5
+├── build/
+│   └── installer.nsh           # NSIS 钩子：升级时自动搬迁旧版数据目录
 └── package.json
 ```
 
@@ -125,9 +126,23 @@ npm run build:all
 ```powershell
 $env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
 $env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
-$env:ELECTRON_BUILDER_CACHE="D:\work2026\files\claw-desktop\electron-builder-cache"  # 缓存目录可按需改成自己的路径
+$env:ELECTRON_BUILDER_CACHE="D:\work2026\umi-claw\electron-builder-cache"  # 缓存目录可按需改成自己的路径
 npm run build:win
 ```
+
+> 注意：解压 electron-builder 的 winCodeSign 缓存需要创建符号链接权限，请在**管理员 PowerShell**中运行上述命令，或先开启 Windows「开发人员模式」（设置 → 系统 → 开发者选项）。普通权限终端打包会在 `Cannot create symbolic link` 处失败。
+
+### 便携模式（U 盘使用）
+
+正常安装版的数据放在 `%APPDATA%\UmiClaw`（与安装目录分离，更新/卸载不会动数据）。如果需要 U 盘携带：
+
+1. 解压安装包或复制 `release\win-unpacked` 到 U 盘
+2. 在 exe 同级手动创建 `data` 文件夹（可从已初始化的环境拷贝）
+3. 启动后即进入便携模式：`data` 和 `context-data` 都跟随 exe，换机器数据完整
+
+便携模式下的更新**不走安装器**：直接替换程序文件即可（保留 `data` 和 `context-data` 两个文件夹）。注意便携模式下数据文件更容易被其他程序（Excel、WPS 等）占用，替换前先关闭相关程序。
+
+> 安装器升级旧版本时（`build/installer.nsh`），会自动把旧安装在安装目录里的 `data`/`context-data` 搬到 `%APPDATA%\UmiClaw`，老用户直接装新包即可，无需手动处理。
 
 ## IPC API 设计
 
