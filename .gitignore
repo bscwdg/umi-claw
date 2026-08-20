@@ -17,3 +17,4 @@ config
 *.tsbuildinfo
 electron.vite.config.*.mjs
 CLAUDE.md
+.claude/

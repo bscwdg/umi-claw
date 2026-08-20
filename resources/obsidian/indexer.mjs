@@ -59,7 +59,8 @@ async function main() {
   const dbPath = args.db
   const chunkSize = parseInt(args['chunk-size'] || '800', 10)
   const maxChunks = parseInt(args['max-chunks'] || '50', 10)
-  // 顺手优化：豆包 embedding-large 单批 64，但 OpenAI 旧版只接受 32。默认 64，遇到 422 在 embeddings.mjs 内部降批重试。
+  // 顺手优化：豆包 embedding-large 单批 64。批量超限的 400/422 会在 embeddings.mjs
+  // 内部按报错里的 "max N" 自动降批重试（OpenAI 旧版 32、智谱 10 都能自适应）。
   const batchSize = parseInt(args['batch-size'] || '64', 10)
   const embeddingCfg = {
     baseUrl: process.env.OBS_EMBEDDING_BASE_URL,
@@ -123,9 +124,14 @@ async function main() {
     const mtime = Math.floor(stat.mtimeMs)
     const hash = createHash('sha1').update(content).digest('hex').slice(0, 16)
 
-    // 增量：mtime + hash 未变则跳过
+    // 增量：mtime + hash 未变则跳过。但向量留空的笔记不算完成——之前 embedding
+    // 失败（或建库时没配凭据）的，重跑时必须重新尝试，否则失败一次就永远只有文本索引。
     const existing = getFile(db, rp)
-    if (existing && existing.hash === hash && existing.mtime === mtime) {
+    const unchanged = existing && existing.hash === hash && existing.mtime === mtime
+    const missingEmb = needEmbed && !!db.prepare(
+      'SELECT 1 FROM chunks WHERE file_path = ? AND embedding IS NULL LIMIT 1'
+    ).get(rp)
+    if (unchanged && !missingEmb) {
       emit({ type: 'progress', phase: 'embedding', processed, total, message: '跳过（未变） ' + rp })
       continue
     }
