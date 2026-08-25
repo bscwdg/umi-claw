@@ -12,7 +12,7 @@
 - 🧩 **内置中文技能** — 开箱即用的中文 AI 能力
 - 🤖 **多个个模型服务商** — DeepSeek、Kimi、通义千问、OpenAI 等
 - 📋 **实时日志监控** —— 带过滤、导出功能的日志查看器，日志文件：`data/logs/runtime-debug.log`
-- 📩 **多渠道接入** — 内置微信，支持飞书自建应用（长连接，界面一键装插件）
+- 📩 **多渠道接入** — 内置微信，支持企业微信官方插件（扫码即接入）、飞书自建应用（长连接，界面一键装插件）
 - 📚 **Obsidian 知识库** — 笔记向量化语义检索，以 MCP 工具喂给模型，按需取片段省 token
 - 💾 **便携模式** — 可放置在 U 盘，数据随身带走
 - 🌐 **国内镜像加速** — npmmirror + GitHub 代理，无需翻墙
@@ -55,13 +55,15 @@ umi-claw/
 │   │   ├── Skills.vue         # 技能管理
 │   │   ├── Logs.vue           # 运行日志
 │   │   ├── Setup.vue          # 环境初始化
-│   │   ├── ChannelsPage.vue   # 渠道接入
-│   │   ├── TerminalPage.vue   # OpenClaw 终端
+│   │   ├── ChannelsPage.vue   # 渠道接入（微信/企微/飞书）
+│   │   ├── TerminalPage.vue   # OpenClaw 终端（支持 openclaw/npx 双运行时）
 │   │   ├── ObsidianPage.vue   # 知识库（Obsidian）
 │   │   ├── About.vue          # 关于
 │   │   └── components/        # 通用组件
 │   │       ├── ConfirmDialog.vue       # 确认对话框（关闭确认等）
 │   │       └── ModelPickerModal.vue    # 模型选择弹窗
+│   ├── types/
+│   │   └── terminal.ts        # 终端运行时类型（TerminalRuntime）
 │   ├── stores/
 │   │   ├── claw.ts            # OpenClaw 状态
 │   │   └── config.ts          # 配置状态
@@ -213,8 +215,9 @@ window.api.log.clearLogs()            // 清空日志文件
 // 包含主进程日志 + OpenClaw 子进程 stdout/stderr
 
 // ── 终端（PTY）──
-window.api.terminal.runCommand(args)              // 执行一次性命令
-window.api.terminal.startPty(args, cols, rows)    // 启动 PTY 会话
+// runtime 参数（可选）: 'openclaw'（默认）| 'npx'（便携 npx-cli，用于企微官方安装向导等 npm 包命令）
+window.api.terminal.runCommand(args, runtime?)       // 执行一次性命令
+window.api.terminal.startPty(args, cols, rows, runtime?) // 启动 PTY 会话
 window.api.terminal.inputPty(sid, data)           // 向 PTY 写入输入
 window.api.terminal.resizePty(sid, cols, rows)    // 调整 PTY 尺寸
 window.api.terminal.stopPty(sid)                  // 停止 PTY 会话
@@ -243,12 +246,29 @@ window.api.shell.openExternal(url)    // 用系统默认浏览器打开链接
 window.api.dialog.showMessage(opts)   // 弹出系统原生消息框
 ```
 
-## 渠道接入（飞书）
+## 渠道接入
 
-应用已内置微信渠道，并支持接入飞书。飞书为**插件驱动**渠道（与微信一致），
-除填写凭证外还需安装官方插件 `@openclaw/feishu`，界面已将这一步自动化。
+应用内置微信渠道，同时支持**企业微信官方插件**和**飞书自建应用**两种扩展渠道。
 
-### 前置准备（飞书开放平台）
+### 企业微信（官方插件，推荐）
+
+企业微信接入使用官方脚手架 `@wecom/wecom-openclaw-cli`，**无需 CorpID/Secret**，扫码即可完成接入。
+
+#### 接入步骤
+
+1. 进入「渠道接入」页，找到**企业微信（官方插件）**卡片
+2. 点击「💼 企微扫码接入」，自动跳转到终端并运行官方安装向导
+3. 向导会自动完成：安装插件 → 企业微信扫码 → 一键创建机器人
+4. 机器人创建成功后**重启 OpenClaw**，前往企业微信即可开始对话
+
+> 企微 CLI 通过 npx 运行，会自动检测便携 Node.js 环境。国内用户默认走 npmmirror 镜像加速。
+> 安装过程中如遇问题，可在终端手动执行 `npx -y @wecom/wecom-openclaw-cli doctor` 诊断。
+
+### 飞书（自建应用）
+
+飞书为**插件驱动**渠道（与微信一致），除填写凭证外还需安装官方插件 `@openclaw/feishu`，界面已将这一步自动化。
+
+#### 前置准备（飞书开放平台）
 
 1. 在[飞书开放平台](https://open.feishu.cn/)创建**企业自建应用**。
 2. 在「凭证与基础信息」复制 **App ID**（`cli_xxx`）与 **App Secret**。
@@ -257,7 +277,7 @@ window.api.dialog.showMessage(opts)   // 弹出系统原生消息框
    - 长连接无需公网回调，`Encrypt Key` / `Verification Token` 可留空。
 5. **发布应用**并等待管理员审核通过。
 
-### 在应用内接入
+#### 在应用内接入
 
 1. 进入「渠道接入」页，展开**飞书自建应用**，填写 App ID / App Secret，
    并按需设置私聊策略、群聊策略、是否需要 @机器人。
@@ -265,7 +285,7 @@ window.api.dialog.showMessage(opts)   // 弹出系统原生消息框
    （首次约 1-2 分钟，安装日志实时显示在「日志」页，前缀 `[feishu]`）。
 3. 安装完成后**重启 OpenClaw**，飞书长连接会自动建立。
 
-### 首次私聊配对
+#### 首次私聊配对
 
 私聊默认策略为 `pairing`：陌生人首次私聊会生成配对码，需要审批。
 可点击飞书卡片的「前往终端配对审批」，或在终端页执行：
