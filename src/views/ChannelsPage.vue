@@ -139,6 +139,49 @@
       </div>
       <div v-if="weixinMsg" class="weixin-msg">{{ weixinMsg }}</div>
     </div>
+
+    <div class="weixin-card wecom-card">
+      <div class="weixin-header">
+        <span class="ch-icon">💼</span>
+        <div class="ch-info">
+          <span class="ch-label">企业微信（官方插件）</span>
+          <span class="ch-desc"
+            >运行官方安装向导：安装插件、扫码接入、一键创建机器人，无需 CorpID/Secret</span
+          >
+        </div>
+        <button
+          class="docs-btn"
+          @click="
+            openExternalUrl('https://www.npmjs.com/package/@wecom/wecom-openclaw-cli')
+          "
+        >
+          📖 文档
+        </button>
+      </div>
+      <div class="weixin-steps">
+        <div class="weixin-step">
+          <span class="step-num">1</span>
+          <div class="step-body">
+            <div class="step-title">安装插件并扫码</div>
+            <div class="step-desc">
+              切换到「终端」页面运行官方安装向导，按提示用企业微信扫码接入、一键创建机器人
+            </div>
+            <button class="btn btn-outline-sm wecom-outline" @click="goToWecomLogin">
+              💼 企微扫码接入
+            </button>
+          </div>
+        </div>
+        <div class="weixin-step">
+          <span class="step-num">2</span>
+          <div class="step-body">
+            <div class="step-title">重启 OpenClaw</div>
+            <div class="step-desc">
+              机器人创建成功后重启服务，企业微信渠道即可上线，前往企业微信开始对话
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -164,6 +207,17 @@ function goToWeixinLogin() {
   router.push({
     path: "/terminal", // 👈 如果你的终端控制台路由叫 /console，请改成 /console
     query: { autoRun: "channels login --channel openclaw-weixin" },
+  });
+}
+
+// ── 2.1 路由跳切企微官方安装向导 ──────────────────────────────────────────
+// 企微接入走 @wecom/wecom-openclaw-cli（npm 包 CLI，非 openclaw 子命令），
+// 终端页识别 autoRun 的 npx 前缀后会以交互式 PTY 拉起向导：
+// 安装插件 -> 扫码接入 -> 一键创建机器人 -> 自动接入本地 OpenClaw
+function goToWecomLogin() {
+  router.push({
+    path: "/terminal",
+    query: { autoRun: "npx -y @wecom/wecom-openclaw-cli install" },
   });
 }
 
@@ -705,6 +759,18 @@ async function save() {
   background: color-mix(in srgb, #10b981 5%, var(--bg-surface));
   padding: 16px;
   margin-top: 4px;
+}
+/* 企微品牌蓝卡片 */
+.wecom-card {
+  border-color: color-mix(in srgb, #0082f0 40%, transparent);
+  background: color-mix(in srgb, #0082f0 5%, var(--bg-surface));
+}
+.wecom-outline {
+  border-color: #0082f0;
+  color: #0082f0;
+}
+.wecom-outline:hover:not(:disabled) {
+  background: color-mix(in srgb, #0082f0 10%, transparent);
 }
 .weixin-header {
   display: flex;

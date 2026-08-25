@@ -20,6 +20,7 @@ import { EMBEDDING_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv } from './openClawPaths'
 import { readFileSync, existsSync } from 'fs'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
+import type { TerminalRuntime } from '../../src/types/terminal'
 
 // 类型定义
 interface TerminalSession {
@@ -60,6 +61,38 @@ function getOpenClawRuntimeConfig() {
     cwd: openClawPaths.installDir(dataDir),
     env,
     targetConfigDir
+  }
+}
+
+/**
+ * 解析终端命令入口与配套环境变量。
+ * npx 模式下按用户的镜像开关注入 npm_config_registry，加快国内网络拉包；
+ * 同时把 npm 缓存固定到便携数据目录（Windows 的 npm 默认缓存走 LOCALAPPDATA，
+ * 不显式指定会在宿主机用户目录留缓存，破坏便携隔离）。
+ * 其余环境（HOME/USERPROFILE 指向便携 config 目录）与 openclaw 一致，
+ * 企微 CLI 正是靠 USERPROFILE/.openclaw 定位本应用托管的 OpenClaw 配置。
+ */
+function resolveTerminalRuntime(runtime?: TerminalRuntime): { entryJs: string; env: NodeJS.ProcessEnv; error?: string } {
+  const { clawJsPath, env } = getOpenClawRuntimeConfig()
+  if (runtime !== 'npx') {
+    return { entryJs: clawJsPath, env }
+  }
+  const dataDir = configManager.getDataDir()
+  const nodePath = configManager.getNodePath()
+  const npxJs = join(dirname(nodePath), 'node_modules', 'npm', 'bin', 'npx-cli.js')
+  if (!existsSync(npxJs)) {
+    return { entryJs: '', env, error: `未找到便携 npx 入口: ${npxJs}，请先完成运行环境下载` }
+  }
+  const registry = configManager.getConfig().useChineseMirror
+    ? 'https://registry.npmmirror.com'
+    : 'https://registry.npmjs.org'
+  return {
+    entryJs: npxJs,
+    env: {
+      ...env,
+      npm_config_registry: registry,
+      npm_config_cache: join(dataDir, 'config', '.npm-cache')
+    }
   }
 }
 
@@ -503,8 +536,13 @@ function registerIpcHandlers(): void {
   /**
    * 执行一次性命令 (Snapshot)
    */
-  const handleRunCommand = async (_e: any, args: string[]) => {
-    const { nodePath, clawJsPath, cwd, env } = getOpenClawRuntimeConfig()
+  const handleRunCommand = async (_e: any, args: string[], runtime?: TerminalRuntime) => {
+    const { nodePath, cwd } = getOpenClawRuntimeConfig()
+    const { entryJs, env, error } = resolveTerminalRuntime(runtime)
+
+    if (error) {
+      return { stdout: '', stderr: error, code: -1 }
+    }
 
     // 基本的安全检查：限制参数长度，防止缓冲区溢出或极端情况
     if (args.length > 100) {
@@ -513,7 +551,7 @@ function registerIpcHandlers(): void {
 
     return new Promise((resolve) => {
       try {
-        const proc = spawn(nodePath, [clawJsPath, ...args], {
+        const proc = spawn(nodePath, [entryJs, ...args], {
           env,
           cwd,
           stdio: ['ignore', 'pipe', 'pipe'] // 明确指定 stdio
@@ -543,7 +581,7 @@ function registerIpcHandlers(): void {
   /**
    * 启动交互式 PTY 会话
    */
-  const handleStartPty = async (_event: any, args: string[], _cols?: number, _rows?: number) => {
+  const handleStartPty = async (_event: any, args: string[], _cols?: number, _rows?: number, runtime?: TerminalRuntime) => {
     // 如果已有活跃会话，先关闭它（单例模式策略，防止资源泄露）
     // 如果需要多会话，应移除此步并使用 sessionId 区分
     if (activeTerminalSessions.size > 0) {
@@ -551,11 +589,19 @@ function registerIpcHandlers(): void {
       killAllTerminalSessions()
     }
 
-    const { nodePath, clawJsPath, cwd, env } = getOpenClawRuntimeConfig()
+    const { nodePath, cwd } = getOpenClawRuntimeConfig()
+    const { entryJs, env, error } = resolveTerminalRuntime(runtime)
     const sessionId = `session_${Date.now()}`
 
+    if (error) {
+      // 返回带 error 字段的结果而非 null，让前端能拿到具体错误原因。
+      // 不走 pty-chunk 发错误消息：前端 listener 按 sessionId 过滤，
+      // 此时尚未建立 session，消息会被丢弃。
+      return { error }
+    }
+
     try {
-      const ptyProc = spawn(nodePath, [clawJsPath, ...args], {
+      const ptyProc = spawn(nodePath, [entryJs, ...args], {
         env,
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'] // 需要 stdin 所以第一个是 pipe

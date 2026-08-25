@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
+import type { TerminalRuntime } from '../../src/types/terminal'
 console.log('✅ preload loaded')
 // 完整类型化的 API
 const api = {
@@ -107,8 +108,10 @@ const api = {
   },
   // 终端
   terminal: {
-    runCommand: (args: string[]) => ipcRenderer.invoke('term:run', args),
-    startPty: (args: string[], cols: number, rows: number) => ipcRenderer.invoke('term:pty-start', args, cols, rows),
+    runCommand: (args: string[], runtime?: TerminalRuntime) =>
+      ipcRenderer.invoke('term:run', args, runtime),
+    startPty: (args: string[], cols: number, rows: number, runtime?: TerminalRuntime) =>
+      ipcRenderer.invoke('term:pty-start', args, cols, rows, runtime),
     inputPty: (sid: string, data: string) => ipcRenderer.invoke('term:pty-input', sid, data),
     resizePty: (sid: string, cols: number, rows: number) => ipcRenderer.invoke('term:pty-resize', sid, cols, rows),
     stopPty: (sid: string) => ipcRenderer.invoke('term:pty-stop', sid),

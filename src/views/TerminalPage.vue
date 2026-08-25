@@ -25,6 +25,14 @@
         💚 微信登录 (扫码)
       </button>
       <button
+        class="q-btn q-btn-wecom"
+        :disabled="isRunning || isInteractive"
+        @click="wecomInstall"
+        title="运行企微官方安装向导：安装插件、扫码接入、一键创建机器人"
+      >
+        💼 企微扫码接入
+      </button>
+      <button
         class="q-btn q-btn-stop"
         :disabled="!isInteractive"
         @click="stopInteractive"
@@ -62,6 +70,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
+import type { TerminalRuntime } from "../types/terminal";
 
 const route = useRoute();
 
@@ -172,13 +181,15 @@ function initTerm() {
 }
 
 // ── 执行一键查询快照 ──
-async function runCmd(args: string[]) {
+async function runCmd(args: string[], runtime: TerminalRuntime = "openclaw") {
   if (isRunning.value || isInteractive.value) return;
   isRunning.value = true;
-  term?.writeln(`\r\n\x1b[94m$ openclaw ${args.join(" ")}\x1b[0m`);
+  term?.writeln(
+    `\r\n\x1b[94m$ ${runtime === "npx" ? "npx" : "openclaw"} ${args.join(" ")}\x1b[0m`
+  );
 
   try {
-    const result = await window.api.terminal.runCommand(args);
+    const result = await window.api.terminal.runCommand(args, runtime);
     if (result.stdout) term?.write(result.stdout);
     if (result.stderr) term?.write(result.stderr);
   } catch (e) {
@@ -194,26 +205,39 @@ async function wechatLogin() {
   await runCmd(['config', 'set', 'plugins.entries.openclaw-weixin.enabled', 'true']);
   await startInteractive(['channels', 'login', '--channel', 'openclaw-weixin']);
 }
+
+// 企微官方安装向导：npx 拉起 CLI，安装插件 + 扫码接入 + 一键创建机器人
+async function wecomInstall() {
+  if (isRunning.value || isInteractive.value) return;
+  await startInteractive(['-y', '@wecom/wecom-openclaw-cli', 'install'], 'npx');
+}
 // ── 激活全双工交互（如微信扫码） ──
-async function startInteractive(args: string[]) {
+async function startInteractive(args: string[], runtime: TerminalRuntime = "openclaw") {
   if (isRunning.value || isInteractive.value) return;
   isRunning.value = true;
   isInteractive.value = true;
 
-  term?.writeln(`\r\n\x1b[94m$ openclaw ${args.join(" ")}\x1b[0m`);
+  term?.writeln(
+    `\r\n\x1b[94m$ ${runtime === "npx" ? "npx" : "openclaw"} ${args.join(" ")}\x1b[0m`
+  );
   term?.writeln(
     "\x1b[93m[进入交互模式] 正在拉起进程流，如需退出请点击'停止交互'...\x1b[0m\r\n"
   );
   term?.focus();
 
   try {
-    const sid = await window.api.terminal.startPty(
+    const result = await window.api.terminal.startPty(
       args,
       term?.cols ?? 80,
-      term?.rows ?? 24
+      term?.rows ?? 24,
+      runtime
     );
-    if (sid) {
-      sessionId.value = sid;
+    // 后端出错时返回 { error } 而非 sessionId，直接展示具体原因
+    if (result && typeof result === 'object' && 'error' in result) {
+      term?.writeln(`\x1b[91m${result.error}\x1b[0m`);
+      isInteractive.value = false;
+    } else if (result) {
+      sessionId.value = result;
     } else {
       term?.writeln("\x1b[91m进程管道对接失败\x1b[0m");
       isInteractive.value = false;
@@ -241,13 +265,21 @@ function handleEnter() {
   if (!cmd || isRunning.value || isInteractive.value) return;
   cmdHistory.value.unshift(cmd);
   input.value = "";
+  // npx 命令（企微官方安装向导等 npm 包 CLI）：走交互式 PTY
+  //（npx 拉包 + 安装向导通常长驻交互，扫码也依赖 stdin/stdout 实时流）
+  if (/^npx\s+/i.test(cmd)) {
+    const npxParts = cmd.split(/\s+/).filter(Boolean);
+    startInteractive(npxParts.slice(1), "npx");
+    return;
+  }
   const parts = cmd
     .replace(/^openclaw\s+/, "")
     .split(/\s+/)
     .filter(Boolean);
-  // 如果输入的是 onboard / setup / login 或者是微信专有命令，走交互式 PTY
+  // 如果输入的是 onboard / setup / login 等交互命令（含 `channels login` 这类
+  // 二级子命令形式），走交互式 PTY
   const isInteractiveCmd = ["onboard", "setup", "login", "init", "doctor"].some(
-    (c) => parts[0] === c
+    (c) => parts.includes(c)
   );
   if (isInteractiveCmd) {
     startInteractive(parts);
@@ -277,19 +309,27 @@ onMounted(() => {
     }
   });
 
-  // 渠道页等带 autoRun 跳转过来时自动执行预填命令（如微信登录、飞书配对审批）
+  // 渠道页等带 autoRun 跳转过来时自动执行预填命令（如微信登录、飞书配对审批、企微扫码接入）
   const autoRun = route.query.autoRun;
   if (typeof autoRun === "string" && autoRun.trim()) {
-    const parts = autoRun
-      .trim()
+    const raw = autoRun.trim();
+    // npx 命令（企微官方安装向导）：整条走交互式 PTY（拉包+扫码为长驻交互流程）
+    if (/^npx\s+/i.test(raw)) {
+      const npxParts = raw.split(/\s+/).filter(Boolean);
+      nextTick(() => startInteractive(npxParts.slice(1), "npx"));
+      return;
+    }
+    const parts = raw
       .replace(/^openclaw\s+/, "")
       .split(/\s+/)
       .filter(Boolean);
     if (parts.length) {
       // 等终端布局就绪后再执行，避免首帧写入丢失
       nextTick(() => {
+        // 交互判定看整条命令而不仅是首词：`channels login --channel xxx`
+        // 这类「二级子命令是 login」的扫码流程同样是交互式的
         const isInteractiveCmd = ["onboard", "setup", "login", "init", "doctor"].some(
-          (c) => parts[0] === c
+          (c) => parts.includes(c)
         );
         if (isInteractiveCmd) startInteractive(parts);
         else runCmd(parts);
@@ -373,6 +413,15 @@ onUnmounted(() => {
 }
 .q-btn-weixin:hover:not(:disabled) {
   background: rgba(16, 185, 129, 0.1);
+}
+/* 企微品牌蓝 #0082f0 */
+.q-btn-wecom {
+  border-color: #0082f0;
+  color: #0082f0;
+  font-weight: 600;
+}
+.q-btn-wecom:hover:not(:disabled) {
+  background: rgba(0, 130, 240, 0.1);
 }
 .q-btn-stop {
   border-color: var(--red);
