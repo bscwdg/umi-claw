@@ -27,6 +27,10 @@ export interface ModelProvider {
   enabled: boolean,
   configName: string,
   customModels?: PresetModel[]
+  /** Provider 请求超时（秒），写入 openclaw.json 的 models.providers.<id>.timeoutSeconds；国内模型卡顿建议调大 */
+  timeoutSeconds?: number
+  /** 获取模型列表的接口地址：完整 URL 或路径（如 /models），留空默认 {baseUrl}/models，仅本应用测试/拉取用 */
+  modelsListUrl?: string
 }
 
 export interface AppConfig {
@@ -530,6 +534,15 @@ private _syncOpenClawConfig(): void {
         officialBody.baseUrl = p.baseUrl || officialBody.baseUrl
         officialBody.apiKey = p.apiKey
         officialBody.api = officialBody.api || "openai-completions"
+        // 请求超时：合法正数写入 provider 级 timeoutSeconds（OpenClaw 原生字段，
+        // 国内慢模型卡顿可调大）；无效/未填时显式置 undefined，避免下方
+        // {...旧值, ...officialBody} 合并残留上次设置的旧超时
+        //（JSON.stringify 会忽略 undefined 值，落盘时该键自然消失）
+        const timeoutSeconds = Number(p.timeoutSeconds)
+        officialBody.timeoutSeconds =
+          Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
+            ? Math.min(Math.round(timeoutSeconds), 86400)
+            : undefined
         // 合并用户自定义模型（去重，自定义覆盖同 id 预设）
         if (Array.isArray(p.customModels) && p.customModels.length) {
           const baseModels = Array.isArray(officialBody.models) ? officialBody.models : []

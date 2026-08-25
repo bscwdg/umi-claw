@@ -12,7 +12,8 @@
       <div class="modal-body">
         <div class="add-panel">
           <div class="add-head" @click="showAddForm = !showAddForm">
-            <span>➕ {{ showAddForm ? "收起" : "新增自定义模型" }}</span>
+            <span>{{ editingId ? `✏️ 编辑模型：${editingId}` : `➕ ${showAddForm ? "收起" : "新增自定义模型"}` }}</span>
+            <span class="hint-icon" @click.stop>ℹ️<span class="hint-pop">提示：增加模型建议先搜索模型参数（上下文窗口、最大输出、输入模态、是否支持推理等），参数不准可能限制模型能力。</span></span>
           </div>
           <div v-if="showAddForm" class="add-form">
             <div class="add-row">
@@ -50,9 +51,10 @@
               </div>
             </div>
             <div class="add-actions">
-              <button class="btn btn-sm" @click="resetForm">重置</button>
-              <button class="btn btn-primary btn-sm" @click="addModel" :disabled="!form.id.trim()">
-                ➕ 添加
+              <button v-if="editingId" class="btn btn-sm" @click="cancelEdit">取消编辑</button>
+              <button class="btn btn-sm" @click="resetForm">{{ editingId ? "清空重填" : "重置" }}</button>
+              <button class="btn btn-primary btn-sm" @click="saveModel" :disabled="!form.id.trim()">
+                {{ editingId ? "💾 保存修改" : "➕ 添加" }}
               </button>
             </div>
           </div>
@@ -101,6 +103,13 @@
                 @click.stop="addRemoteModel(m)"
               >
                 ➕ 添加
+              </button>
+              <button
+                class="icon-btn edit"
+                :title="editTitle(m)"
+                @click.stop="startEdit(m)"
+              >
+                ✏️
               </button>
               <button
                 v-if="m.source === 'custom'"
@@ -170,6 +179,8 @@ const current = ref("");
 const showAddForm = ref(false);
 const showDeleteConfirm = ref(false);
 const pendingDelete = ref<ModelRow | null>(null);
+/** 正在编辑的自定义模型 id（表单处于编辑模式）；null = 新增模式 */
+const editingId = ref<string | null>(null);
 
 const DEFAULT_REMOTE_MODEL = {
   contextWindow: 8192,
@@ -249,6 +260,7 @@ watch(
       remoteModels.value = [];
       error.value = "";
       showAddForm.value = true;
+      editingId.value = null;
       resetForm();
       await loadPresets();
     }
@@ -283,6 +295,8 @@ async function fetchRemote() {
     const res = await window.api.config.testConnection({
       apiKey: props.provider.apiKey,
       baseUrl: props.provider.baseUrl,
+      modelsListUrl: props.provider.modelsListUrl,
+      timeoutSeconds: props.provider.timeoutSeconds,
     });
     if (res.success) {
       remoteModels.value = (res.models || []).map((id: string) => ({
@@ -304,7 +318,48 @@ function select(model: string) {
   emit("select", model);
 }
 
-function addModel() {
+/**
+ * 把 token 数量转回表单友好写法（128000 -> "128K"，1048576 -> "1M"），
+ * 用于编辑模型时预填表单。不能整除的保留原始数字。
+ */
+function toRawTokens(n?: number): string {
+  if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) return "";
+  if (n % 1_000_000 === 0) return `${n / 1_000_000}M`;
+  if (n % 1_000 === 0) return `${n / 1_000}K`;
+  return String(n);
+}
+
+function editTitle(m: ModelRow): string {
+  if (m.source === "custom") return "编辑该自定义模型";
+  if (m.source === "preset") return "编辑（保存为自定义模型，覆盖预设参数）";
+  return "编辑参数并添加为自定义模型";
+}
+
+/** 打开编辑：预填表单并展开。编辑预设/在线模型时保存为同 id 的自定义模型（覆盖预设参数）。 */
+function startEdit(m: ModelRow) {
+  editingId.value = m.id;
+  form.id = m.id;
+  form.name = m.name && m.name !== m.id ? m.name : "";
+  form.contextWindowRaw = toRawTokens(m.contextWindow);
+  form.maxTokensRaw = toRawTokens(m.maxTokens);
+  form.input = m.input && m.input.length ? [...m.input] : [];
+  form.reasoning = !!m.reasoning;
+  showAddForm.value = true;
+  error.value = "";
+}
+
+/** 取消编辑：退出编辑模式，清空表单回到新增状态 */
+function cancelEdit() {
+  editingId.value = null;
+  resetForm();
+}
+
+/**
+ * 保存模型（新增 / 编辑统一入口）。
+ * 编辑自定义模型时原位替换（id 可改）；编辑预设/在线模型时保存为自定义模型，
+ * 与预设同 id 的自定义条目会在合并时覆盖预设参数。
+ */
+function saveModel() {
   const id = form.id.trim();
   if (!id) return;
   if (hasTokenInputError.value) {
@@ -312,7 +367,16 @@ function addModel() {
     return;
   }
   const list = [...(props.provider?.customModels || [])];
-  if (list.some((m) => m.id === id) || models.value.some((m) => m.id === id && m.source !== "remote")) {
+  // 编辑时定位原条目（原 id 可能已被修改）
+  const selfIdx = editingId.value ? list.findIndex((m) => m.id === editingId.value) : -1;
+  // 冲突检查：与已有自定义模型重名（编辑时排除自身原条目）；
+  // 仅「新增模式」禁止与预设重名。编辑预设/在线模型（editingId 有值但不在
+  // customModels 中，selfIdx 为 -1）允许保留/使用预设同 id 保存--
+  // 这正是"自定义覆盖预设"的能力，不能误判为重名冲突。
+  const clash =
+    list.some((m, i) => m.id === id && i !== selfIdx) ||
+    (!editingId.value && models.value.some((m) => m.id === id && m.source === "preset"));
+  if (clash) {
     error.value = `模型 ID「${id}」已存在`;
     return;
   }
@@ -323,7 +387,11 @@ function addModel() {
   entry.maxTokens = parsedMaxTokens.value ?? DEFAULT_REMOTE_MODEL.maxTokens;
   entry.input = form.input.length ? [...form.input] : [...DEFAULT_REMOTE_MODEL.input];
   if (form.reasoning) entry.reasoning = true;
-  list.push(entry);
+  if (selfIdx >= 0) {
+    list[selfIdx] = entry; // 编辑：原位替换
+  } else {
+    list.push(entry); // 新增，或编辑预设/在线模型（保存为自定义覆盖）
+  }
   emit("update-custom", list);
   select(id);
   resetForm();
@@ -364,11 +432,17 @@ function confirmRemoveModel() {
     const fallback = list[0]?.id || presetModels.value[0]?.id || "";
     if (fallback) select(fallback);
   }
+  // 删掉的正是编辑中的模型：退出编辑模式，避免表单指向已不存在的条目
+  if (editingId.value === row.id) {
+    resetForm();
+  }
   pendingDelete.value = null;
 }
 
 function resetForm() {
   Object.assign(form, createForm());
+  // 回到新增模式：清空/重置都意味着放弃当前编辑
+  editingId.value = null;
 }
 
 function fmt(n: number): string {
@@ -531,6 +605,20 @@ function close() {
   border-color: #f85149;
   color: #ff8781;
 }
+/* 编辑按钮：中性蓝色调，与删除（红色）区分 */
+.icon-btn.edit {
+  border-color: rgba(56, 139, 253, 0.4);
+  background: rgba(56, 139, 253, 0.12);
+  color: #388bfd;
+}
+.icon-btn.edit::after {
+  content: "编辑";
+}
+.icon-btn.edit:hover {
+  background: rgba(56, 139, 253, 0.22);
+  border-color: #388bfd;
+  color: #58a6ff;
+}
 .tag {
   font-size: 11px;
   color: var(--text-secondary, var(--text-muted));
@@ -572,6 +660,45 @@ function close() {
   font-weight: 600;
   color: var(--accent, #388bfd);
   user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+/* 表单头部的提示图标：悬停弹出说明气泡 */
+.hint-icon {
+  position: relative;
+  cursor: help;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-muted, #8b949e);
+  flex-shrink: 0;
+}
+.hint-icon:hover {
+  color: var(--accent, #388bfd);
+}
+.hint-pop {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 250px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-elevated, #22272e);
+  border: 1px solid var(--border, #eef0f2);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  color: var(--text-primary, #e6edf3);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: normal;
+  text-align: left;
+  z-index: 10;
+  cursor: default;
+}
+.hint-icon:hover .hint-pop {
+  display: block;
 }
 .add-head:hover {
   background: var(--bg-hover, rgba(127, 127, 127, 0.08));

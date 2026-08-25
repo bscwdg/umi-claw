@@ -11,6 +11,10 @@ export interface ModelProvider {
   enabled: boolean
   configName?: string
   customModels?: PresetModel[]
+  /** 请求超时（秒），国内模型卡顿建议调大 */
+  timeoutSeconds?: number
+  /** 获取模型列表的接口地址：完整 URL 或路径（如 /models），留空默认 {baseUrl}/models */
+  modelsListUrl?: string
 }
 
 export interface PresetModel {

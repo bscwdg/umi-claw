@@ -641,8 +641,22 @@ function registerIpcHandlers(): void {
   })
   ipcMain.handle('test-connection', async (_, config) => {
     try {
-      const response = await fetch(`${config.baseUrl}/models`, {
-        headers: { Authorization: `Bearer ${config.apiKey}` }
+      // 模型列表接口：modelsListUrl 支持完整 URL 或路径，留空默认 {baseUrl}/models
+      const customListUrl = String(config.modelsListUrl || '').trim()
+      const base = String(config.baseUrl || '').replace(/\/+$/, '')
+      const listUrl = customListUrl
+        ? /^https?:\/\//i.test(customListUrl)
+          ? customListUrl
+          : `${base}${customListUrl.startsWith('/') ? customListUrl : `/${customListUrl}`}`
+        : `${base}/models`
+      // 超时：未配置时默认 30s，防止国内网络下 fetch 长时间挂起无响应
+      const rawTimeout = Number(config.timeoutSeconds)
+      const timeoutSeconds = Number.isFinite(rawTimeout) && rawTimeout > 0
+        ? Math.min(Math.round(rawTimeout), 86400)
+        : 30
+      const response = await fetch(listUrl, {
+        headers: { Authorization: `Bearer ${config.apiKey}` },
+        signal: AbortSignal.timeout(timeoutSeconds * 1000)
       })
       if (!response.ok) {
         return { success: false, error: `HTTP ${response.status}` }
@@ -650,10 +664,12 @@ function registerIpcHandlers(): void {
       const data = await response.json()
       const models = Array.isArray(data?.data) ? data.data.map((m: any) => m.id) : []
       return { success: true, models }
-    } catch (error) {
+    } catch (error: any) {
+      const msg = error instanceof Error ? error.message : String(error)
+      const isTimeout = error?.name === 'TimeoutError' || /timeout/i.test(msg)
       return {
         success: false,
-        error: error instanceof Error ? error.message : String(error)
+        error: isTimeout ? `请求超时，国内模型卡顿可在配置中调大超时时间` : msg
       }
     }
   })

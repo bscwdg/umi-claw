@@ -68,6 +68,32 @@
               </button>
             </div>
           </div>
+          <div class="form-group span-2">
+            <label class="form-label">
+              获取模型接口
+              <span class="field-hint" title="用于「测试」和弹窗里的「拉取在线模型」。支持完整 URL（https://...）或路径（如 /models）；留空默认在 Base URL 后拼接 /models">ℹ️</span>
+            </label>
+            <div class="input-with-action">
+              <input
+                class="form-input mono"
+                v-model="currentProvider.modelsListUrl"
+                :placeholder="`留空默认 ${currentProvider.baseUrl || 'https://...'}/models`"
+              />
+              <button
+                class="btn"
+                @click="testConnection"
+                :disabled="
+                  !currentProvider.apiKey ||
+                  testing ||
+                  (!currentProvider.baseUrl && !currentProvider.modelsListUrl?.trim().startsWith('http'))
+                "
+                style="height: 36px; white-space: nowrap"
+                title="测试连接该接口，获取模型列表"
+              >
+                {{ testing ? "测试中..." : testResult || "🔌 测试" }}
+              </button>
+            </div>
+          </div>
           <div class="form-group">
             <label class="form-label">模型名称</label>
             <div class="input-with-action">
@@ -87,15 +113,18 @@
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">测试连接</label>
-            <button
-              class="btn"
-              @click="testConnection"
-              :disabled="!currentProvider.apiKey || testing"
-              style="height: 36px"
-            >
-              {{ testing ? "测试中..." : testResult || "🔌 测试" }}
-            </button>
+            <label class="form-label">
+              请求超时（秒）
+              <span class="field-hint" title="单次模型请求的超时时间，超时会被中断。国内模型卡顿、响应慢时可调大（如 120～300 秒）">ℹ️</span>
+            </label>
+            <input
+              class="form-input mono"
+              type="number"
+              min="1"
+              step="1"
+              v-model.number="currentProvider.timeoutSeconds"
+              placeholder="默认 30"
+            />
           </div>
         </div>
       </div>
@@ -380,6 +409,12 @@ async function saveConfig() {
   saving.value = true;
   try {
     const formatValue = JSON.parse(JSON.stringify(config.value));
+    // 清理空值字段，避免落盘脏数据：v-model.number 清空数字框后是 ""（非 undefined），
+    // 直接落盘会出现 "timeoutSeconds": ""；modelsListUrl 纯空格同样清掉
+    for (const p of formatValue.providers ?? []) {
+      if (p.timeoutSeconds === "" || p.timeoutSeconds == null) delete p.timeoutSeconds;
+      if (typeof p.modelsListUrl === "string" && !p.modelsListUrl.trim()) delete p.modelsListUrl;
+    }
     await configStore.save(formatValue);
     // 去读取修改配置
     showToast("配置已保存", "success");
@@ -407,9 +442,11 @@ async function testConnection() {
     const res = await window.api.config.testConnection({
       apiKey: currentProvider.value.apiKey,
       baseUrl: currentProvider.value.baseUrl,
+      modelsListUrl: currentProvider.value.modelsListUrl,
+      timeoutSeconds: currentProvider.value.timeoutSeconds,
     });
     console.log("res", res);
-    testResult.value = res.success ?  `连接成功，发现 ${res.models.length} 个模型` : `❌ HTTP ${res.error}`;
+    testResult.value = res.success ?  `连接成功，发现 ${res.models.length} 个模型` : `❌ ${res.error}`;
   } catch (e: any) {
     console.log("res", e);
     testResult.value = "❌ 连接失败";
@@ -476,6 +513,13 @@ async function testConnection() {
 .input-with-action {
   display: flex;
   gap: 8px;
+}
+/* 表单 label 里的提示图标：鼠标悬停显示 title 说明 */
+.field-hint {
+  cursor: help;
+  margin-left: 4px;
+  opacity: 0.65;
+  font-size: 12px;
 }
 
 /* All Providers */
