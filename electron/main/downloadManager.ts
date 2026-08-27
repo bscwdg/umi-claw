@@ -781,7 +781,7 @@ export class DownloadManager extends EventEmitter {
           "bonjour": { "enabled": false },
           "talk-voice": { "enabled": false }
         },
-        "models": { "timeout": 30000 }
+        "models": { "timeout": 900000 }
       }
       const configContent = JSON.stringify(fullSecureConfig, null, 2)
       const filePath = join(configDir, 'openclaw.json')

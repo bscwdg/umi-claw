@@ -535,14 +535,14 @@ private _syncOpenClawConfig(): void {
         officialBody.apiKey = p.apiKey
         officialBody.api = officialBody.api || "openai-completions"
         // 请求超时：合法正数写入 provider 级 timeoutSeconds（OpenClaw 原生字段，
-        // 国内慢模型卡顿可调大）；无效/未填时显式置 undefined，避免下方
-        // {...旧值, ...officialBody} 合并残留上次设置的旧超时
-        //（JSON.stringify 会忽略 undefined 值，落盘时该键自然消失）
+        // 国内慢模型卡顿可调大）；无效/未填时默认 900 秒（15 分钟），
+        // 显式落盘保证默认值生效，也避免下方 {...旧值, ...officialBody}
+        // 合并残留上次设置的旧超时
         const timeoutSeconds = Number(p.timeoutSeconds)
         officialBody.timeoutSeconds =
           Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
             ? Math.min(Math.round(timeoutSeconds), 86400)
-            : undefined
+            : 900
         // 合并用户自定义模型（去重，自定义覆盖同 id 预设）
         if (Array.isArray(p.customModels) && p.customModels.length) {
           const baseModels = Array.isArray(officialBody.models) ? officialBody.models : []

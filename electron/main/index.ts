@@ -695,11 +695,11 @@ function registerIpcHandlers(): void {
           ? customListUrl
           : `${base}${customListUrl.startsWith('/') ? customListUrl : `/${customListUrl}`}`
         : `${base}/models`
-      // 超时：未配置时默认 30s，防止国内网络下 fetch 长时间挂起无响应
+      // 超时：未配置时默认 900 秒（15 分钟），与模型配置的默认超时保持一致
       const rawTimeout = Number(config.timeoutSeconds)
       const timeoutSeconds = Number.isFinite(rawTimeout) && rawTimeout > 0
         ? Math.min(Math.round(rawTimeout), 86400)
-        : 30
+        : 900
       const response = await fetch(listUrl, {
         headers: { Authorization: `Bearer ${config.apiKey}` },
         signal: AbortSignal.timeout(timeoutSeconds * 1000)

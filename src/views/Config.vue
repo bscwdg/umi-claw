@@ -115,7 +115,7 @@
           <div class="form-group">
             <label class="form-label">
               请求超时（秒）
-              <span class="field-hint" title="单次模型请求的超时时间，超时会被中断。国内模型卡顿、响应慢时可调大（如 120～300 秒）">ℹ️</span>
+              <span class="field-hint" title="单次模型请求的超时时间，超时会被中断。默认 900 秒（15 分钟）；模型响应特别慢时可再调大，响应快想快速失败可调小">ℹ️</span>
             </label>
             <input
               class="form-input mono"
@@ -123,7 +123,7 @@
               min="1"
               step="1"
               v-model.number="currentProvider.timeoutSeconds"
-              placeholder="默认 30"
+              placeholder="默认 900"
             />
           </div>
         </div>
