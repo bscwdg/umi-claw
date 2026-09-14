@@ -712,9 +712,10 @@ private _syncOpenClawConfig(): void {
     this._atomicWriteFileSync(this.openClawConfigPath, content)
     console.log('[ConfigManager] openclaw.json 已使用新版预设结构同步完成。')
 
-    // 同步凭证库 auth-profiles.json：把所有已填 API Key 的服务商写一份，
-    // 作为 openclaw.json 之外的双保险，供 OpenClaw 凭证管理读取。
-    this._syncAuthProfiles(allProviders)
+    // 归档 legacy 凭证文件 auth-profiles.json：OpenClaw v2026.9.x 以 SQLite 为凭证规范
+    // 存储，遗留的 auth-profiles.json 会触发 AuthProfileMigrationRequiredError，
+    // 拦截全部模型服务商鉴权（apiKey 已内嵌于 openclaw.json 的 models.providers，此文件多余）。
+    this._archiveLegacyAuthProfiles()
   } catch (err: any) {
     console.error('[ConfigManager] 同步 OpenClaw 配置失败:', err.message)
   }
@@ -742,37 +743,31 @@ private _injectObsidianMcp(existingConfig: any): void {
 }
 
 /**
- * 同步 auth-profiles.json 凭证库（<configDir>/agents/main/agent/auth-profiles.json）。
- * 仅写入已配置 API Key 的服务商；读取失败时从空对象重建，不阻断主流程。
+ * 归档 legacy 凭证文件 auth-profiles.json（<configDir>/agents/main/agent/auth-profiles.json）。
+ *
+ * 背景：OpenClaw v2026.9.x 起以 openclaw-agent.sqlite 为凭证规范存储，启动时若发现
+ * 遗留的 auth-profiles.json 且 SQLite 凭证库为空，会抛 AuthProfileMigrationRequiredError
+ * 并拦截 bailian/custom/deepseek/longcat/volcengine 等全部服务商鉴权。
+ * 此前 _syncAuthProfiles 每次保存配置都以 legacy flat 格式重写该文件，导致反复触发。
+ *
+ * 修复：不再写入该文件（API Key 本就随 models.providers 写入 openclaw.json），
+ * 并将历史残留改名为 OpenClaw 认可的「已迁移」命名（*.migrated-* 前缀，官方迁移
+ * 诊断逻辑会将其视为 retired 文件忽略）。幂等：文件不存在时为空操作。
  */
-private _syncAuthProfiles(allProviders: ModelProvider[]): void {
+private _archiveLegacyAuthProfiles(): void {
   try {
     const agentAuthDir = join(openClawPaths.configDir(this.dataDir), 'agents', 'main', 'agent')
-    mkdirSync(agentAuthDir, { recursive: true })
     const authProfilesPath = join(agentAuthDir, 'auth-profiles.json')
-
-    let authProfiles: Record<string, any> = {}
-    if (existsSync(authProfilesPath)) {
-      try {
-        const authRaw = readFileSync(authProfilesPath, 'utf-8')
-        const parsed = JSON.parse(authRaw)
-        if (parsed && typeof parsed === 'object') authProfiles = parsed
-      } catch {
-        authProfiles = {}
-      }
-    }
-
-    for (const p of allProviders) {
-      if (p.apiKey) {
-        authProfiles[p.id] = {
-          apiKey: p.apiKey,
-          ...(p.baseUrl ? { baseUrl: p.baseUrl } : {})
-        }
-      }
-    }
-    writeFileSync(authProfilesPath, JSON.stringify(authProfiles, null, 2), 'utf-8')
+    if (!existsSync(authProfilesPath)) return
+    const archivedPath = join(
+      agentAuthDir,
+      `auth-profiles.json.migrated-${new Date().toISOString().replace(/[:.]/g, '-')}-umiclaw`
+    )
+    renameSync(authProfilesPath, archivedPath)
+    console.warn('[ConfigManager] 已归档 legacy auth-profiles.json:', archivedPath)
   } catch (err: any) {
-    console.warn('[ConfigManager] 同步 auth-profiles.json 失败:', err.message)
+    // 归档失败不阻断主流程：下次启动/保存配置时会重试
+    console.warn('[ConfigManager] 归档 auth-profiles.json 失败:', err.message)
   }
 }
   getRuntimeDir() {
