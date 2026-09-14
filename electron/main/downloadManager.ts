@@ -70,6 +70,22 @@ const NODE_VERSION = 'v24.21.0'
 const WEIXIN_PLUGIN_PACKAGE = '@tencent-weixin/openclaw-weixin'
 
 /**
+ * OpenClaw 更新前的回滚快照描述：live 为当前路径，backup 为同卷改名后的快照路径。
+ * 同卷 rename 瞬时完成、不复制不额外占空间，更新成功删快照，失败改回来即完成回滚。
+ */
+interface OpenClawUpdateSnapshot {
+  coreModules: string
+  coreModulesBackup: string
+  lockFile: string
+  lockFileBackup: string
+  managedRoot: string
+  managedRootBackup: string
+  hasCoreModules: boolean
+  hasLockFile: boolean
+  hasManagedRoot: boolean
+}
+
+/**
  * 复刻 OpenClaw 内部 `safePathSegmentHashed`，用于计算受管 npm 插件目录名。
  * 逻辑必须与 OpenClaw 保持一致，否则算出的目录名对不上会导致检测失效。
  */
@@ -501,11 +517,23 @@ export class DownloadManager extends EventEmitter {
 
   /**
    * 一键更新 OpenClaw 核心及渠道插件到最新版本。
-   * 通过删除 package-lock.json 强制 npm 重新解析 latest 版本再安装。
+   *
+   * 兜底策略（对齐 OpenClaw v2026.9.1「升级失败自动回滚 npm 候选版本」）：
+   * 1. 更新前把现有核心 node_modules、锁文件、受管插件目录整体改名快照
+   *    （同卷 rename，不复制、不额外占空间）；
+   * 2. 候选版本安装后做可用性冒烟（CLI --version、核心版本可读）；
+   * 3. 安装或冒烟失败 → 自动改名回滚到原版本，回报 rolledBack=true；
+   * 4. 本方法成功时保留快照；由 IPC 层执行 doctor 迁移：迁移失败调
+   *    restoreOpenClawBackup() 回滚候选版本，迁移通过才调
+   *    discardOpenClawBackup() 删除快照。
+   * 用户配置 openclaw.json 与密钥引用不在安装目录内，更新全程不动。
    */
   async updateOpenClaw(options: { useMirror?: boolean } = {}): Promise<{
     success: boolean
     error?: string
+    warning?: string
+    /** 更新失败后是否已自动回滚到原可用版本 */
+    rolledBack?: boolean
     previousVersion?: string
     currentVersion?: string
   }> {
@@ -513,39 +541,48 @@ export class DownloadManager extends EventEmitter {
     this.abortController = new AbortController()
     this._writeDebugLog('--- 开始更新 OpenClaw ---')
 
+    let before: EnvInfo
     try {
-      const before = await this.checkEnvironment()
-      if (!before.nodeInstalled) {
-        throw new Error('Node.js 运行时尚未安装，请先完成环境初始化')
-      }
+      before = await this.checkEnvironment()
+    } catch (err: any) {
+      this._progressError(err.message)
+      return { success: false, error: err.message }
+    }
+    if (!before.nodeInstalled) {
+      return { success: false, error: 'Node.js 运行时尚未安装，请先完成环境初始化' }
+    }
+    const previousVersion = before.openClawVersion
 
-      this._progress('检查更新', '正在准备更新 OpenClaw 核心及渠道插件...', 10)
+    let snapshot: OpenClawUpdateSnapshot | null = null
+    try {
+      this._progress('检查更新', '正在为当前可用版本创建回滚快照...', 8)
+      snapshot = await this._snapshotOpenClawForUpdate()
 
-      // 删除锁文件与已装模块，强制 npm 联网重新解析并拉取 latest（否则会沿用旧版本）
-      const openClawDir = join(this.configManager.getDataDir(), 'openclaw')
-      const cleanupTargets = [
-        join(openClawDir, 'package-lock.json'),
-        join(openClawDir, 'node_modules', 'openclaw'),
-        join(openClawDir, 'node_modules', '@tencent-weixin'),
-      ]
-      for (const target of cleanupTargets) {
-        try {
-          if (existsSync(target)) rmSync(target, { recursive: true, force: true })
-        } catch (e: any) {
-          this._writeDebugLog(`[UpdateOpenClaw] 清理 ${target} 失败: ${e.message}`)
-        }
-      }
-
+      // 快照已把旧 node_modules 整体挪走，候选版本直接安装到原路径，
+      // forceOnline 强制 npm 联网重新解析并拉取 latest（否则会沿用旧版本）。
       await this._installOpenClaw(useMirror, 0, true)
+
+      // 候选版本冒烟：核心版本可读，且 CLI 能正常启动（防止装出残缺包）。
+      const candidate = await this.checkEnvironment()
+      if (!candidate.openClawInstalled || !candidate.openClawVersion) {
+        throw new Error('候选版本安装不完整：未找到 OpenClaw 核心文件')
+      }
+      await this._smokeTestOpenClaw(candidate.openClawVersion)
+
       // 更新核心后同步刷新受管微信插件，保证渠道登录持续可用。
-      await this._installWeixinChannelPlugin(useMirror, true)
+      const pluginReady = await this._installWeixinChannelPlugin(useMirror, true)
       await this._installBuiltinSkills()
 
-      const after = await this.checkEnvironment()
-      const previousVersion = before.openClawVersion
-      const currentVersion = after.openClawVersion
+      // 冒烟与插件装配均通过，候选版本可用；快照暂不删除——
+      // IPC 层还要执行 doctor 迁移，迁移失败需据此回滚（见 restoreOpenClawBackup）。
+
+      const currentVersion = candidate.openClawVersion
       const upToDate = previousVersion && currentVersion === previousVersion
 
+      const warnings: string[] = []
+      if (!pluginReady) {
+        warnings.push('微信渠道插件刷新未完成，将在首次扫码登录时自动补装')
+      }
       this._progress(
         '完成',
         upToDate
@@ -554,11 +591,220 @@ export class DownloadManager extends EventEmitter {
         100,
         true
       )
-      return { success: true, previousVersion, currentVersion }
+      return {
+        success: true,
+        previousVersion,
+        currentVersion,
+        warning: warnings.length ? warnings.join('；') : undefined
+      }
     } catch (err: any) {
       this._writeDebugLog(`[UpdateOpenClaw Error] 异常中断: ${err.message}`)
-      this._progressError(err.message)
-      return { success: false, error: err.message }
+      const restore = await this._restoreOpenClawSnapshot(snapshot)
+      if (restore.restored) {
+        const rolledBackVersion = restore.version ?? previousVersion
+        const msg =
+          `更新失败：${err.message}。已自动回滚到原版本 v${rolledBackVersion ?? '未知'}，` +
+          '当前环境可继续使用，可稍后重试更新'
+        this._writeDebugLog(`[UpdateOpenClaw] 已自动回滚: ${msg}`)
+        this._progressError(msg)
+        return {
+          success: false,
+          error: msg,
+          rolledBack: true,
+          previousVersion,
+          currentVersion: rolledBackVersion
+        }
+      }
+      const error = restore.error
+        ? `更新失败：${err.message}；且自动回滚失败：${restore.error}，请检查日志后重试`
+        : err.message
+      this._progressError(error)
+      return { success: false, error, previousVersion }
+    }
+  }
+
+  /**
+   * 更新前快照：把核心 node_modules、package-lock.json 与受管插件根目录
+   * 整体 rename 到 *.update-backup（同卷改名瞬时完成）。
+   * 若上次更新异常中断残留了备份而 live 缺失，则直接复用该备份作为回滚点。
+   */
+  private async _snapshotOpenClawForUpdate(): Promise<OpenClawUpdateSnapshot> {
+    const dataDir = this.configManager.getDataDir()
+    const openClawDir = join(dataDir, 'openclaw')
+    const coreModules = join(openClawDir, 'node_modules')
+    const coreModulesBackup = join(openClawDir, 'node_modules.update-backup')
+    const lockFile = join(openClawDir, 'package-lock.json')
+    const lockFileBackup = join(openClawDir, 'package-lock.update-backup.json')
+    const managedRoot = join(openClawPaths.configDir(dataDir), 'npm')
+    const managedRootBackup = join(openClawPaths.configDir(dataDir), 'npm.update-backup')
+
+    // 大目录改名走带重试的版本：Windows 杀软实时扫描可能造成瞬时 EPERM/EBUSY。
+    const moveDirToBackup = async (live: string, backup: string): Promise<boolean> => {
+      try {
+        if (existsSync(live)) {
+          if (existsSync(backup)) rmSync(backup, { recursive: true, force: true })
+          await this._renameWithRetry(live, backup, 'snapshot')
+          return true
+        }
+        // live 缺失但备份存在（上次更新崩溃残留）：保留备份作为回滚点
+        return existsSync(backup)
+      } catch (e: any) {
+        this._writeDebugLog(`[UpdateSnapshot] 快照失败 ${live} -> ${backup}: ${e.message}`)
+        return false
+      }
+    }
+
+    const moveFileToBackup = (live: string, backup: string): boolean => {
+      try {
+        if (existsSync(live)) {
+          if (existsSync(backup)) rmSync(backup, { force: true })
+          renameSync(live, backup)
+          return true
+        }
+        return existsSync(backup)
+      } catch (e: any) {
+        this._writeDebugLog(`[UpdateSnapshot] 快照失败 ${live} -> ${backup}: ${e.message}`)
+        return false
+      }
+    }
+
+    const snapshot: OpenClawUpdateSnapshot = {
+      coreModules,
+      coreModulesBackup,
+      lockFile,
+      lockFileBackup,
+      managedRoot,
+      managedRootBackup,
+      hasCoreModules: await moveDirToBackup(coreModules, coreModulesBackup),
+      hasLockFile: moveFileToBackup(lockFile, lockFileBackup),
+      hasManagedRoot: await moveDirToBackup(managedRoot, managedRootBackup)
+    }
+    this._writeDebugLog(
+      `[UpdateSnapshot] core=${snapshot.hasCoreModules}, lock=${snapshot.hasLockFile}, ` +
+        `managed=${snapshot.hasManagedRoot}`
+    )
+    return snapshot
+  }
+
+  /**
+   * 丢弃回滚快照。snapshot 为 null 时按固定备份路径自动发现
+   * （供 IPC 层 doctor 迁移通过后调用）。快照残留不影响新版本运行。
+   */
+  private _discardOpenClawSnapshot(snapshot: OpenClawUpdateSnapshot | null): void {
+    const dataDir = this.configManager.getDataDir()
+    const openClawDir = join(dataDir, 'openclaw')
+    const backups = [
+      snapshot?.coreModulesBackup ?? join(openClawDir, 'node_modules.update-backup'),
+      snapshot?.lockFileBackup ?? join(openClawDir, 'package-lock.update-backup.json'),
+      snapshot?.managedRootBackup ??
+        join(openClawPaths.configDir(dataDir), 'npm.update-backup')
+    ]
+    for (const backup of backups) {
+      try {
+        if (existsSync(backup)) rmSync(backup, { recursive: true, force: true })
+      } catch (e: any) {
+        // 快照残留不影响新版本运行，下次更新会自动清理
+        this._writeDebugLog(`[UpdateSnapshot] 清理快照失败 ${backup}: ${e.message}`)
+      }
+    }
+  }
+
+  /** IPC 层在更新后 doctor 迁移通过时调用：候选版本正式生效，删除回滚快照。 */
+  discardOpenClawBackup(): { success: boolean; error?: string } {
+    try {
+      this._discardOpenClawSnapshot(null)
+      return { success: true }
+    } catch (e: any) {
+      this._writeDebugLog(`[UpdateSnapshot] doctor 通过后清理快照失败: ${e.message}`)
+      return { success: false, error: e.message }
+    }
+  }
+
+  /**
+   * 回滚：把 *.update-backup 快照改回原路径，丢弃残缺的候选版本。
+   * 回滚前结束占用便携 Node 的进程，避免 Windows 文件锁导致改名失败。
+   * snapshot 为 null 时按固定备份路径自动发现（供 IPC 层 doctor 失败后调用）。
+   */
+  private async _restoreOpenClawSnapshot(
+    snapshot: OpenClawUpdateSnapshot | null
+  ): Promise<{ restored: boolean; version?: string; error?: string }> {
+    const dataDir = this.configManager.getDataDir()
+    const openClawDir = join(dataDir, 'openclaw')
+    const coreModules = snapshot?.coreModules ?? join(openClawDir, 'node_modules')
+    const coreModulesBackup =
+      snapshot?.coreModulesBackup ?? join(openClawDir, 'node_modules.update-backup')
+    const lockFile = snapshot?.lockFile ?? join(openClawDir, 'package-lock.json')
+    const lockFileBackup =
+      snapshot?.lockFileBackup ?? join(openClawDir, 'package-lock.update-backup.json')
+    const managedRoot =
+      snapshot?.managedRoot ?? join(openClawPaths.configDir(dataDir), 'npm')
+    const managedRootBackup =
+      snapshot?.managedRootBackup ?? join(openClawPaths.configDir(dataDir), 'npm.update-backup')
+
+    if (![coreModulesBackup, lockFileBackup, managedRootBackup].some(existsSync)) {
+      return { restored: false, error: '未找到更新前的版本快照' }
+    }
+
+    this._progress('回滚', '更新未完成，正在恢复到原有可用版本...', 96)
+    try {
+      await this._stopRuntimeProcesses()
+
+      const restoreOne = async (live: string, backup: string, label: string): Promise<void> => {
+        if (!existsSync(backup)) return
+        if (existsSync(live)) rmSync(live, { recursive: true, force: true })
+        await this._renameWithRetry(backup, live, label)
+      }
+      await restoreOne(coreModules, coreModulesBackup, 'rollback-core')
+      await restoreOne(lockFile, lockFileBackup, 'rollback-lock')
+      await restoreOne(managedRoot, managedRootBackup, 'rollback-managed')
+
+      const info = await this.checkEnvironment()
+      if (!info.openClawVersion) {
+        return { restored: false, error: '快照已恢复但 OpenClaw 核心版本仍无法读取' }
+      }
+      this._writeDebugLog(`[UpdateRollback] 回滚完成，版本 v${info.openClawVersion}`)
+      return { restored: true, version: info.openClawVersion }
+    } catch (e: any) {
+      this._writeDebugLog(`[UpdateRollback] 回滚失败: ${e.message}`)
+      return { restored: false, error: e.message }
+    }
+  }
+
+  /** IPC 层在更新成功但 doctor 迁移失败时调用：回滚候选 npm 版本。 */
+  async restoreOpenClawBackup(): Promise<{
+    restored: boolean
+    version?: string
+    error?: string
+  }> {
+    return this._restoreOpenClawSnapshot(null)
+  }
+
+  /**
+   * 候选版本冒烟：以便携 Node 执行 openclaw --version。
+   * 仅能读到 package.json 不代表 dist 完整可运行，CLI 能启动才算候选可用，
+   * 冒烟失败会抛出异常，由调用方触发自动回滚。
+   */
+  private async _smokeTestOpenClaw(version: string): Promise<void> {
+    const dataDir = this.configManager.getDataDir()
+    const nodePath = this.configManager.getNodePath()
+    const clawJsPath = openClawPaths.clawJs(dataDir)
+    const nodeBinDir = dirname(nodePath)
+    this._progress('部署核心', `正在校验新版本 v${version} 可运行...`, 86)
+    try {
+      const { stdout } = await execFileAsync(nodePath, [clawJsPath, '--version'], {
+        cwd: openClawPaths.installDir(dataDir),
+        env: {
+          ...process.env,
+          PATH: `${nodeBinDir}${pathDelimiter}${process.env.PATH || ''}`,
+          NODE_ENV: 'production'
+        },
+        timeout: 30000,
+        maxBuffer: 1024 * 1024
+      })
+      this._writeDebugLog(`[UpdateSmokeTest] openclaw --version => ${stdout.trim()}`)
+    } catch (e: any) {
+      const reason = String(e?.message || e).split('\n')[0]
+      throw new Error(`候选版本冒烟运行失败（openclaw --version）：${reason}`)
     }
   }
 

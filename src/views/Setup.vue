@@ -36,7 +36,7 @@
             </div>
           </div>
           <div
-            v-if="envInfo?.nodeInstalled && !initializing"
+            v-if="envInfo?.nodeInstalled && !taskRunning"
             class="flex gap-2"
             style="margin-left: auto"
           >
@@ -83,7 +83,7 @@
             </div>
           </div>
           <div
-            v-if="envInfo?.openClawInstalled && !initializing"
+            v-if="envInfo?.openClawInstalled && !taskRunning"
             class="flex gap-2"
             style="margin-left: auto"
           >
@@ -137,7 +137,7 @@
       </div>
     </div>
 
-    <div v-if="showNodePanel && !initializing" class="card node-update-card">
+    <div v-if="showNodePanel && !taskRunning" class="card node-update-card">
       <h3 style="margin-bottom: 8px">更新 Node.js 运行时</h3>
       <p class="text-muted text-sm">
         更新前会自动停止 OpenClaw 服务，完成后自动重启。当前版本：{{
@@ -193,7 +193,7 @@
         envInfo?.nodeInstalled &&
         envInfo?.openClawInstalled &&
         envInfo?.channelsInstalled &&
-        !initializing
+        !taskRunning
       "
       class="card success-card"
     >
@@ -207,7 +207,7 @@
       </button>
     </div>
 
-    <div v-if="!initializing" class="card init-form">
+    <div v-if="!taskRunning" class="card init-form">
       <h3 style="margin-bottom: 16px">
         {{
           envInfo?.nodeInstalled &&
@@ -340,7 +340,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import ConfirmDialog from "@/views/components/ConfirmDialog.vue";
 
@@ -352,6 +352,9 @@ const useMirror = ref(true);
 const progress = ref<any>(null);
 const stepLog = ref<string[]>([]);
 let offProgress: (() => void) | null = null;
+// 任务进行中（进度进入完成态即为 false）：任务结束后 initializing 不会自动复位，
+// 状态区按钮若绑定 !initializing 就只能靠切换路由重挂载来恢复，故用此计算属性。
+const taskRunning = computed(() => initializing.value && !progress.value?.done);
 const checkingUpdate = ref(false);
 const showUpdateDialog = ref(false);
 const updateInfo = ref<{
@@ -363,10 +366,13 @@ const updateInfo = ref<{
 
 async function checkEnv() {
   envLoading.value = true;
-  // 此时 window.api.env.check() 在主进程返回时，需额外带上 channelsInstalled 字段
-  envInfo.value = await window.api.env.check();
-  console.log("envInfo updated:", envInfo.value);
-  envLoading.value = false;
+  try {
+    // 此时 window.api.env.check() 在主进程返回时，需额外带上 channelsInstalled 字段
+    envInfo.value = await window.api.env.check();
+    console.log("envInfo updated:", envInfo.value);
+  } finally {
+    envLoading.value = false;
+  }
 }
 
 async function startInit() {
@@ -409,7 +415,11 @@ async function startInit() {
       error: res.error,
     };
   }
-  await checkEnv();
+  try {
+    await checkEnv();
+  } catch (e) {
+    console.error("刷新环境状态失败：", e);
+  }
 }
 
 async function startUpdate() {
@@ -457,11 +467,32 @@ async function startUpdate() {
       error: res.error,
     };
   }
-  await checkEnv();
-  updateInfo.value = null;
+  try {
+    await checkEnv();
+  } catch (e) {
+    console.error("刷新环境状态失败：", e);
+  }
+  if (res?.success) {
+    // 以更新回执为准即时同步版本与更新状态，避免界面仍提示“有可用更新”、显示旧版本
+    if (envInfo.value && res.currentVersion) {
+      envInfo.value = {
+        ...envInfo.value,
+        openClawInstalled: true,
+        openClawVersion: res.currentVersion,
+      };
+    }
+    updateInfo.value = {
+      currentVersion: res.currentVersion,
+      latestVersion: updateInfo.value?.latestVersion ?? res.currentVersion,
+      hasUpdate: false,
+    };
+  }
+  // 更新失败时保留原有 updateInfo（“有新版本”提示不消失），便于用户重新触发更新
 }
 
 async function checkUpdate() {
+  // 上一任务刚结束时进度卡片可能停在完成态，先关闭，避免遮挡状态区操作
+  initializing.value = false;
   checkingUpdate.value = true;
   updateInfo.value = null;
   try {
@@ -609,7 +640,11 @@ async function startNodeUpdate() {
 
   nodeUpdating.value = false;
   showNodePanel.value = false;
-  await checkEnv();
+  try {
+    await checkEnv();
+  } catch (e) {
+    console.error("刷新环境状态失败：", e);
+  }
 }
 
 onMounted(checkEnv);

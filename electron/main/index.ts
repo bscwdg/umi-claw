@@ -432,19 +432,40 @@ function registerIpcHandlers(): void {
     if (result.success) {
       const doctor = await clawManager.runDoctorFix()
       if (!doctor.success) {
-        ;(result as any).warning =
-          'OpenClaw 已更新，但数据库迁移未成功：' + (doctor.error || '未知错误') +
-          '。下次启动网关时应用会自动重试迁移。'
+        // 对齐 OpenClaw v2026.9.1：更新后 Doctor 失败 → 自动回滚 npm 候选版本，
+        // 不把迁移不过去的新版本留在用户环境里；快照缺失（回滚不可用）才降级为警告。
+        const rollback = await downloadManager.restoreOpenClawBackup()
+        if (rollback.restored) {
+          result.success = false
+          result.rolledBack = true
+          result.currentVersion = rollback.version
+          result.error =
+            `新版本数据库迁移（doctor --fix）失败，已自动回滚到 v${rollback.version ?? '原版本'}，` +
+            `旧环境可继续使用，可稍后重试更新。失败原因：${doctor.error || '未知错误'}`
+        } else {
+          result.warning =
+            'OpenClaw 已更新，但数据库迁移未成功：' + (doctor.error || '未知错误') +
+            '。下次启动网关时应用会自动重试迁移；如异常持续可重新执行更新。'
+        }
+      } else {
+        // 迁移通过：候选版本正式生效，此前保留的回滚快照可以删除
+        // （清理失败仅留调试日志，残留快照不影响运行，下次更新会自动清理）。
+        downloadManager.discardOpenClawBackup()
       }
     }
-    if (result.success && wasRunning) {
+    // 更新成功或失败后已回滚，都恢复网关运行（旧版本回滚后重启可做到更新不中断工作）；
+    // 回滚也失败时环境不确定，不贸然重启。
+    if (wasRunning && (result.success || result.rolledBack)) {
       try {
         await clawManager.start()
       } catch (e: any) {
         // 网关重启失败不改变更新结果本身，附加警告由 UI 展示
-        ;(result as any).warning = [result.warning, `网关重启失败：${e.message}`]
-          .filter(Boolean)
-          .join('；')
+        const restartWarning = `网关重启失败：${e.message}`
+        if (result.success) {
+          result.warning = [result.warning, restartWarning].filter(Boolean).join('；')
+        } else {
+          result.error = `${result.error}；${restartWarning}，请稍后在控制台手动启动`
+        }
       }
     }
     return result
