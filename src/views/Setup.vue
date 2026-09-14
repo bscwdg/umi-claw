@@ -27,6 +27,22 @@
                 (envInfo?.nodeInstalled === false ? "未安装" : "检测中...")
               }}
             </div>
+            <div
+              v-if="envInfo?.nodeVersion && !isNodeCompatible(envInfo.nodeVersion)"
+              class="text-sm"
+              style="margin-top: 2px; color: var(--red)"
+            >
+              ⚠️ 版本过低，OpenClaw 2026.9+ 需要 Node v24.16+ / v26.1+，请更新
+            </div>
+          </div>
+          <div
+            v-if="envInfo?.nodeInstalled && !initializing"
+            class="flex gap-2"
+            style="margin-left: auto"
+          >
+            <button class="btn btn-sm" @click="toggleNodePanel">
+              {{ showNodePanel ? "收起" : "🆙 更新 Node" }}
+            </button>
           </div>
         </div>
         <div class="env-item">
@@ -118,6 +134,57 @@
       <div class="flex gap-2" style="margin-top: 16px">
         <button class="btn" @click="checkEnv">🔄 重新检测</button>
         <button class="btn" @click="openDataDir">📁 打开数据目录</button>
+      </div>
+    </div>
+
+    <div v-if="showNodePanel && !initializing" class="card node-update-card">
+      <h3 style="margin-bottom: 8px">更新 Node.js 运行时</h3>
+      <p class="text-muted text-sm">
+        更新前会自动停止 OpenClaw 服务，完成后自动重启。当前版本：{{
+          envInfo?.nodeVersion || "未知"
+        }}
+      </p>
+      <div
+        class="flex gap-2"
+        style="margin-top: 12px; align-items: center; flex-wrap: wrap"
+      >
+        <select
+          v-model="selectedNodeVersion"
+          class="form-input"
+          style="width: 320px"
+          :disabled="loadingNodeVersions"
+        >
+          <option v-for="item in nodeVersions" :key="item.version" :value="item.version">
+            {{
+              item.version +
+              (item.lts ? "（LTS " + item.lts + "）" : "（当前版本线）") +
+              (item.recommended ? " ✅ 推荐稳定版" : "") +
+              (item.compatible ? "" : " · 不满足 OpenClaw 要求")
+            }}
+          </option>
+          <option value="__custom__">自定义版本…</option>
+        </select>
+        <input
+          v-if="selectedNodeVersion === '__custom__'"
+          v-model="customNodeVersion"
+          class="form-input"
+          style="width: 160px"
+          placeholder="如 v24.21.0"
+        />
+        <button
+          class="btn btn-primary btn-sm"
+          :disabled="nodeUpdating"
+          @click="startNodeUpdate"
+        >
+          {{ nodeUpdating ? "更新中..." : "确认更新" }}
+        </button>
+      </div>
+      <div
+        v-if="nodeVersionsError"
+        class="text-sm"
+        style="margin-top: 8px; color: var(--red)"
+      >
+        {{ nodeVersionsError }}，可选择「自定义版本」直接填写，例如 v24.21.0。
       </div>
     </div>
 
@@ -362,7 +429,10 @@ async function startUpdate() {
     if (last !== msg) stepLog.value.push(msg);
   });
 
-  const res = await window.api.env.update({ useMirror: useMirror.value });
+  const res = await window.api.env.update({ useMirror: useMirror.value }).catch((e: any) => ({
+    success: false,
+    error: e?.message || "更新请求失败",
+  }));
   offProgress?.();
   // 同 startInit：以 invoke 回执为准兜底刷新完成态，避免最终通知丢失卡在 98%。
   if (res?.success) {
@@ -370,9 +440,11 @@ async function startUpdate() {
       res.previousVersion && res.currentVersion === res.previousVersion;
     progress.value = {
       stage: "完成",
-      step: upToDate
-        ? `已是最新版本 v${res.currentVersion}`
-        : `更新成功：v${res.previousVersion ?? "未知"} → v${res.currentVersion ?? "未知"}`,
+      step:
+        (upToDate
+          ? `已是最新版本 v${res.currentVersion}`
+          : `更新成功：v${res.previousVersion ?? "未知"} → v${res.currentVersion ?? "未知"}`) +
+        (res.warning ? `（${res.warning}）` : ""),
       percent: 100,
       done: true,
     };
@@ -424,6 +496,122 @@ function goToDashboard() {
   router.push("/dashboard");
 }
 
+// ---- Node 运行时更新 ----
+const showNodePanel = ref(false);
+const nodeUpdating = ref(false);
+const loadingNodeVersions = ref(false);
+const nodeVersions = ref<
+  Array<{
+    version: string;
+    lts: string | false;
+    compatible: boolean;
+    recommended: boolean;
+  }>
+>([]);
+const selectedNodeVersion = ref("");
+const customNodeVersion = ref("");
+const nodeVersionsError = ref("");
+
+function isNodeCompatible(v: string): boolean {
+  const m = v.replace(/^v/, "").match(/^(\d+)\.(\d+)\./);
+  if (!m) return true;
+  const maj = Number(m[1]);
+  const min = Number(m[2]);
+  if (maj === 24) return min >= 16;
+  if (maj === 25) return false;
+  if (maj === 26) return min >= 1;
+  return maj > 26;
+}
+
+async function toggleNodePanel() {
+  showNodePanel.value = !showNodePanel.value;
+  if (showNodePanel.value && nodeVersions.value.length === 0) {
+    loadingNodeVersions.value = true;
+    nodeVersionsError.value = "";
+    try {
+      const res = await window.api.env.getNodeVersions({
+        useMirror: useMirror.value,
+      });
+      if (res?.success) {
+        nodeVersions.value = res.versions;
+        const recommended =
+          res.versions.find((x: any) => x.recommended) ||
+          res.versions.find((x: any) => x.compatible) ||
+          res.versions[0];
+        selectedNodeVersion.value = recommended
+          ? recommended.version
+          : "__custom__";
+        if (!recommended) customNodeVersion.value = "v24.21.0";
+      } else {
+        nodeVersionsError.value = res?.error || "获取推荐版本失败";
+        selectedNodeVersion.value = "__custom__";
+        customNodeVersion.value = "v24.21.0";
+      }
+    } catch (e: any) {
+      nodeVersionsError.value = e?.message || "获取推荐版本失败";
+      selectedNodeVersion.value = "__custom__";
+      customNodeVersion.value = "v24.21.0";
+    } finally {
+      loadingNodeVersions.value = false;
+    }
+  }
+}
+
+async function startNodeUpdate() {
+  const version =
+    selectedNodeVersion.value === "__custom__"
+      ? customNodeVersion.value.trim()
+      : selectedNodeVersion.value;
+  if (!version) return;
+
+  nodeUpdating.value = true;
+  initializing.value = true;
+  stepLog.value = [];
+  progress.value = {
+    stage: "Node.js",
+    step: `准备更新 Node 到 ${version}...`,
+    percent: 0,
+    done: false,
+  };
+
+  offProgress = window.api.env.onProgress((p) => {
+    progress.value = p;
+    const msg = `[${p.stage}] ${p.step}`;
+    const last = stepLog.value[stepLog.value.length - 1];
+    if (last !== msg) stepLog.value.push(msg);
+  });
+
+  const res = await window.api.env.updateNode({
+    version,
+    useMirror: useMirror.value,
+  }).catch((e: any) => ({
+    success: false,
+    error: e?.message || "更新请求失败",
+  }));
+  offProgress?.();
+
+  if (res?.success) {
+    progress.value = {
+      stage: "完成",
+      step: `Node.js 更新成功：${res.previousVersion ?? "旧版"} → ${res.currentVersion}${res.warning ? `（${res.warning}）` : ""}`,
+      percent: 100,
+      done: true,
+    };
+  } else if (res?.error && !progress.value?.error) {
+    progress.value = {
+      stage: "错误",
+      step: res.error,
+      percent: 0,
+      done: true,
+      error: res.error,
+    };
+  }
+
+  nodeUpdating.value = false;
+  showNodePanel.value = false;
+  await checkEnv();
+}
+
 onMounted(checkEnv);
 onUnmounted(() => offProgress?.());
 </script>
@@ -435,6 +623,9 @@ onUnmounted(() => offProgress?.());
   flex-direction: column;
   gap: 20px;
   width: 100%;
+}
+.node-update-card {
+  margin-top: -8px;
 }
 .page-header {
   display: flex;

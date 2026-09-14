@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events'
 import { join, dirname, delimiter as pathDelimiter } from 'path'
 import { existsSync, mkdirSync, createWriteStream, rmSync, writeFileSync, readFileSync, readdirSync, statSync, copyFileSync, renameSync, appendFileSync, cpSync, symlinkSync, realpathSync } from 'fs'
-import { exec } from 'child_process'
+import { exec, execFile } from 'child_process'
 import { promisify } from 'util'
 import { createHash } from 'crypto'
 import { Readable, Transform } from 'stream'
@@ -10,6 +10,7 @@ import { ConfigManager } from './configManager'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
 
 const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 
 export interface DownloadProgress {
   stage: string
@@ -61,7 +62,9 @@ const clawVersion = {
   },
 }
 
-const NODE_VERSION = 'v22.22.3'
+// 新装环境内置的默认 Node 版本：必须满足 OpenClaw 2026.9.4+ 的引擎要求
+// (>=24.16.0 <25 || >=26.1.0)，OpenClaw 安装前会执行 preinstall 引擎检查。
+const NODE_VERSION = 'v24.21.0'
 
 // OpenClaw 微信渠道插件的 npm 包名，也是 openclaw plugins install 的目标 spec。
 const WEIXIN_PLUGIN_PACKAGE = '@tencent-weixin/openclaw-weixin'
@@ -133,17 +136,38 @@ function copyDir(src: string, dest: string) {
   }
 }
 
-function getNodeDownloadUrl(useMirror: boolean): string {
+/** 归一化版本号：允许用户输入 24.21.0，统一补成 v24.21.0 */
+function normalizeNodeVersion(input: string): string {
+  const t = input.trim()
+  return /^\d+\.\d+\.\d+/.test(t) ? `v${t}` : t
+}
+
+/**
+ * 判断版本是否满足 OpenClaw 2026.9.4 起的 Node 引擎要求：
+ * >=24.16.0 <25 || >=26.1.0（25.x 不在受支持区间）。
+ */
+function satisfiesOpenClawNodeRange(version: string): boolean {
+  const m = version.replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)/)
+  if (!m) return false
+  const maj = parseInt(m[1], 10)
+  const min = parseInt(m[2], 10)
+  if (maj === 24) return min >= 16
+  if (maj === 25) return false
+  if (maj === 26) return min >= 1
+  return maj > 26
+}
+
+function getNodeDownloadUrl(useMirror: boolean, version: string = NODE_VERSION): string {
   const platform = process.platform
   const arch = process.arch
   const base = useMirror ? MIRRORS.nodeBase[0] : MIRRORS.nodeBase[1]
 
   if (platform === 'win32') {
-    return `${base}/${NODE_VERSION}/node-${NODE_VERSION}-win-${arch === 'arm64' ? 'arm64' : 'x64'}.zip`
+    return `${base}/${version}/node-${version}-win-${arch === 'arm64' ? 'arm64' : 'x64'}.zip`
   } else if (platform === 'darwin') {
-    return `${base}/${NODE_VERSION}/node-${NODE_VERSION}-darwin-${arch}.tar.gz`
+    return `${base}/${version}/node-${version}-darwin-${arch}.tar.gz`
   } else {
-    return `${base}/${NODE_VERSION}/node-${NODE_VERSION}-linux-${arch === 'arm64' ? 'arm64' : 'x64'}.tar.xz`
+    return `${base}/${version}/node-${version}-linux-${arch === 'arm64' ? 'arm64' : 'x64'}.tar.xz`
   }
 }
 
@@ -442,6 +466,12 @@ export class DownloadManager extends EventEmitter {
 
       if (!info.nodeInstalled) {
         await this._downloadNode(useMirror)
+      } else if (info.nodeVersion && !satisfiesOpenClawNodeRange(info.nodeVersion)) {
+        // 已装 Node 不满足新版 OpenClaw 引擎要求（如 v22）：先自动升级内置 Node，避免 preinstall 失败
+        const upgraded = await this.updateNodeRuntime({ version: NODE_VERSION, useMirror })
+        if (!upgraded.success) {
+          throw new Error(upgraded.error || 'Node.js 运行时升级失败')
+        }
       } else {
         this._progress('运行环境', 'Node.js 运行时已就绪', 20)
       }
@@ -580,7 +610,416 @@ export class DownloadManager extends EventEmitter {
     }
   }
 
-  private async _downloadNode(useMirror: boolean): Promise<void> {
+  /**
+   * 查询可安装的 Node 版本：每个大版本仅取最新一个；LTS 优先，
+   * 另补一个最新的非 LTS 当前版本；并标记是否满足 OpenClaw 引擎要求。
+   */
+  async getNodeVersions(options: { useMirror?: boolean } = {}): Promise<{
+    success: boolean
+    error?: string
+    /** 推荐稳定版：满足 OpenClaw 要求的最新 LTS 版本号 */
+    recommended?: string
+    versions?: {
+      version: string
+      lts: string | false
+      compatible: boolean
+      recommended: boolean
+    }[]
+  }> {
+    const useMirror = options.useMirror ?? true
+    const bases = useMirror ? MIRRORS.nodeBase : [MIRRORS.nodeBase[1]]
+    let lastErr = ''
+
+    for (const base of bases) {
+      try {
+        const resp = await fetch(`${base}/index.json`)
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        const list = (await resp.json()) as Array<{
+          version: string
+          lts?: string | false
+        }>
+
+        const newestLtsByMajor = new Map<number, { version: string; lts: string | false }>()
+        let newestCurrent: { version: string; lts: string | false } | null = null
+
+        for (const item of list) {
+          if (!/^v\d+\.\d+\.\d+$/.test(item.version)) continue
+          const major = parseInt(item.version.slice(1).split('.')[0], 10)
+          if (major < 22) continue
+          if (item.lts) {
+            if (!newestLtsByMajor.has(major)) {
+              newestLtsByMajor.set(major, { version: item.version, lts: item.lts })
+            }
+          } else if (
+            !newestCurrent ||
+            compareVersions(item.version, newestCurrent.version) > 0
+          ) {
+            newestCurrent = { version: item.version, lts: false }
+          }
+        }
+
+        const picked = [...newestLtsByMajor.values()]
+        if (
+          newestCurrent &&
+          !newestLtsByMajor.has(
+            parseInt(newestCurrent.version.slice(1).split('.')[0], 10)
+          )
+        ) {
+          picked.push(newestCurrent)
+        }
+        picked.sort((a, b) => compareVersions(b.version, a.version))
+
+        const versions = picked.slice(0, 8).map((item) => ({
+          version: item.version,
+          lts: item.lts,
+          compatible: satisfiesOpenClawNodeRange(item.version),
+          recommended: false
+        }))
+        // 推荐稳定版：优先「满足 OpenClaw 要求的最新 LTS」，
+        // 没有兼容 LTS 时才退而求其次选最新兼容版本。
+        const recommended =
+          versions.find((item) => item.lts && item.compatible) ||
+          versions.find((item) => item.compatible)
+        if (recommended) recommended.recommended = true
+
+        return { success: true, recommended: recommended?.version, versions }
+      } catch (e: any) {
+        lastErr = e.message
+        this._writeDebugLog(`[NodeVersions] ${base} 获取失败: ${lastErr}`)
+      }
+    }
+
+    return { success: false, error: `获取 Node 版本列表失败：${lastErr}` }
+  }
+
+  /**
+   * 将内置便携 Node 更新/切换到指定版本。
+   * 流程：校验版本 → 结束占用便携 Node 的进程 → 下载（镜像→官方兜底）→
+   * 解压到暂存目录并校验版本 → 备份旧目录后切换 → 失败自动回滚。
+   * 调用方（IPC 层）需先停止 OpenClaw 网关，成功后按需重启。
+   */
+  async updateNodeRuntime(options: { version?: string; useMirror?: boolean } = {}): Promise<{
+    success: boolean
+    error?: string
+    /** 非致命问题（如更新成功但网关重启失败），由 UI 附加展示 */
+    warning?: string
+    previousVersion?: string
+    currentVersion?: string
+  }> {
+    const target = normalizeNodeVersion(options.version || NODE_VERSION)
+    if (!/^v\d+\.\d+\.\d+(-[\w.]+)?$/.test(target)) {
+      return { success: false, error: `版本号格式不正确：${options.version}（示例：v24.21.0）` }
+    }
+    const useMirror = options.useMirror ?? true
+    this.abortController = new AbortController()
+    this._writeDebugLog(`--- 开始更新 Node: ${target} ---`)
+
+    const dataDir = this.configManager.getDataDir()
+    const platform = process.platform
+    const arch = process.arch
+    const runtimeRoot = join(dataDir, 'runtime')
+    const runtimeDir = join(runtimeRoot, `node-${platform}-${arch}`)
+    const nodeExeRelPath = platform === 'win32' ? 'node.exe' : join('bin', 'node')
+    const currentNodePath = join(runtimeDir, nodeExeRelPath)
+    const stagingDir = join(runtimeRoot, `node-${platform}-${arch}.new`)
+    const backupDir = join(runtimeRoot, `node-${platform}-${arch}.bak`)
+    const archiveSuffix =
+      platform === 'win32' ? '.zip' : platform === 'darwin' ? '.tar.gz' : '.tar.xz'
+    const archiveName = `node-${target}-${platform}-${arch}${archiveSuffix}`
+    const destFile = join(runtimeRoot, archiveName)
+
+    try {
+      let previousVersion: string | undefined
+      if (existsSync(currentNodePath)) {
+        const { stdout } = await execAsync(`"${currentNodePath}" --version`)
+        previousVersion = stdout.trim()
+        if (previousVersion === target) {
+          this._progress('Node.js', `当前已是 Node ${target}，无需更新`, 100, true)
+          return { success: true, previousVersion, currentVersion: target }
+        }
+      }
+
+      this._progress('Node.js', '正在停止占用 Node 运行时的进程...', 5)
+      await this._stopRuntimeProcesses()
+
+      // 下载：国内镜像失败自动回落官方源
+      const urls = useMirror
+        ? [getNodeDownloadUrl(true, target), getNodeDownloadUrl(false, target)]
+        : [getNodeDownloadUrl(false, target)]
+      let downloaded = false
+      let lastErr = ''
+      for (const url of urls) {
+        try {
+          this._progress('Node.js', `正在下载 Node.js ${target}...`, 10)
+          await this._downloadFile(url, destFile, (pct, speed) => {
+            this._progress(
+              'Node.js',
+              `下载 Node.js ${target} ... ${speed}`,
+              10 + Math.floor(pct * 50)
+            )
+          })
+          downloaded = true
+          break
+        } catch (e: any) {
+          lastErr = e.message
+          this._writeDebugLog(`[UpdateNode] 下载失败 ${url}: ${lastErr}`)
+        }
+      }
+      if (!downloaded) throw new Error(`Node ${target} 下载失败：${lastErr}`)
+
+      this._progress('Node.js', '正在解压新版本运行时...', 65)
+      // 清理上一次失败留下的暂存目录与 node-vX 解压残留
+      for (const stale of [
+        stagingDir,
+        join(runtimeRoot, `node-${target}-${platform}-${arch}`)
+      ]) {
+        try {
+          if (existsSync(stale)) rmSync(stale, { recursive: true, force: true })
+        } catch (e: any) {
+          this._writeDebugLog(`[UpdateNode] 清理残留 ${stale} 失败: ${e.message}`)
+        }
+      }
+      this._writeDebugLog(`[UpdateNode] 解压前 runtime 目录内容: ${readdirSync(runtimeRoot).join(', ')}`)
+      await this._extractNodeArchive(destFile, stagingDir, target)
+      try { rmSync(destFile, { force: true }) } catch { /* 安装包清理失败可忽略 */ }
+
+      const stagingNodePath = join(stagingDir, nodeExeRelPath)
+      const { stdout: verifyOut } = await execAsync(`"${stagingNodePath}" --version`)
+      if (verifyOut.trim() !== target) {
+        throw new Error(`版本校验失败：期望 ${target}，实际 ${verifyOut.trim()}`)
+      }
+      this._writeDebugLog(`[UpdateNode] 暂存版本校验通过 ${verifyOut.trim()}`)
+
+      // 切换：旧目录改名备份 → 暂存目录就位；任一步失败都尝试回滚。
+      this._progress('Node.js', '正在切换运行时版本...', 85)
+      await this._stopRuntimeProcesses()
+      try {
+        if (existsSync(backupDir)) rmSync(backupDir, { recursive: true, force: true })
+      } catch (e: any) {
+        this._writeDebugLog(`[UpdateNode] 清理历史备份失败: ${e.message}`)
+      }
+
+      const hadOldRuntime = existsSync(runtimeDir)
+      let movedOld = false
+      try {
+        if (hadOldRuntime) {
+          await this._renameWithRetry(runtimeDir, backupDir, 'old-to-bak')
+          movedOld = true
+        }
+        await this._renameWithRetry(stagingDir, runtimeDir, 'staging-to-live')
+
+        const { stdout: after } = await execAsync(`"${currentNodePath}" --version`)
+        if (after.trim() !== target) throw new Error(`切换后版本异常：${after.trim()}`)
+      } catch (e: any) {
+        // 回滚：恢复旧目录，丢弃未完成的新目录
+        try {
+          if (existsSync(runtimeDir)) rmSync(runtimeDir, { recursive: true, force: true })
+          if (movedOld && existsSync(backupDir)) {
+            await this._renameWithRetry(backupDir, runtimeDir, 'rollback')
+          }
+        } catch (rollbackErr: any) {
+          this._writeDebugLog(`[UpdateNode] 回滚失败: ${rollbackErr.message}`)
+        }
+        throw new Error(`运行时切换失败，已恢复旧版本：${e.message}`)
+      }
+
+      // 切换成功后清理旧版本（失败仅记录，.bak 不影响程序运行）
+      try {
+        if (existsSync(backupDir)) rmSync(backupDir, { recursive: true, force: true })
+      } catch (e: any) {
+        this._writeDebugLog(`[UpdateNode] 旧版本备份清理失败（不影响使用）: ${e.message}`)
+      }
+
+      this._writeDebugLog(`[UpdateNode Success] ${previousVersion ?? '未安装'} -> ${target}`)
+      this._progress(
+        'Node.js',
+        `Node.js 更新成功：${previousVersion ?? '未安装'} → ${target}`,
+        100,
+        true
+      )
+      return { success: true, previousVersion, currentVersion: target }
+    } catch (err: any) {
+      this._writeDebugLog(`[UpdateNode Error] ${err.message}`)
+      try {
+        if (existsSync(stagingDir)) rmSync(stagingDir, { recursive: true, force: true })
+      } catch { /* ignore */ }
+      this._progressError(err.message)
+      return { success: false, error: err.message }
+    }
+  }
+
+  /**
+   * 结束所有正在运行「便携 Node 目录内 node」的进程（OpenClaw 网关、
+   * Obsidian 索引器等）。按可执行文件全路径精确匹配，避免误杀系统 Node。
+   */
+  private async _stopRuntimeProcesses(): Promise<void> {
+    const nodePath = this.configManager.getNodePath()
+    if (!existsSync(nodePath)) return
+    try {
+      if (process.platform === 'win32') {
+        // PowerShell 单引号字符串中用 '' 转义单引号
+        const escapedPath = nodePath.replace(/'/g, "''")
+        const psScript =
+          `(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | ` +
+          `Where-Object { $_.ExecutablePath -ieq '${escapedPath}' } | ` +
+          `Select-Object -ExpandProperty ProcessId) -join ','`
+        const { stdout } = await execFileAsync(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-Command', psScript],
+          { windowsHide: true, maxBuffer: 1024 * 1024 }
+        )
+        const pids = stdout
+          .trim()
+          .split(/[,\s]+/)
+          .filter(Boolean)
+          .map((n) => parseInt(n, 10))
+          .filter((n) => n > 0)
+        for (const pid of pids) {
+          try {
+            await execFileAsync('taskkill.exe', ['/pid', String(pid), '/t', '/f'], {
+              windowsHide: true
+            })
+          } catch { /* 进程可能已退出 */ }
+        }
+        if (pids.length) {
+          this._writeDebugLog(`[UpdateNode] 已结束占用便携 Node 的进程 PID: ${pids.join(', ')}`)
+        }
+      } else {
+        // macOS / Linux：按可执行文件完整路径匹配命令行
+        try {
+          await execAsync(`pkill -f "${nodePath.replace(/"/g, '\\"')}"`)
+        } catch { /* 无匹配进程时 pkill 返回非零，忽略 */ }
+      }
+    } catch (e: any) {
+      this._writeDebugLog(`[UpdateNode] 检查占用进程时出错（可忽略）: ${e.message}`)
+    }
+  }
+  /**
+   * 专用解压：把 Node 压缩包解压到 stagingDir 并校验 node 可执行文件存在。
+   * 相比通用 _extractArchive：先解压到唯一临时目录，再带重试地 rename 到
+   * stagingDir（Defender/安全软件扫描会瞬时锁定新解压的 node.exe，导致
+   * EPERM/EBUSY，重试可绕过），全过程写调试日志，失败时附带目录清单。
+   */
+  private async _extractNodeArchive(
+    archivePath: string,
+    stagingDir: string,
+    expectedVersion: string
+  ): Promise<void> {
+    const platform = process.platform
+    const parent = dirname(stagingDir)
+    const nodeRelPath = platform === 'win32' ? 'node.exe' : join('bin', 'node')
+    const tmpExtract = join(parent, `.extract-${Date.now()}`)
+
+    try {
+      if (existsSync(stagingDir)) rmSync(stagingDir, { recursive: true, force: true })
+      mkdirSync(tmpExtract, { recursive: true })
+
+      if (platform === 'win32') {
+        const { default: AdmZip } = await import('adm-zip')
+        const zip = new AdmZip(archivePath)
+        const entries = zip.getEntries()
+        const nodeEntry = entries.find((e) =>
+          e.entryName.replace(/\\/g, '/').endsWith(`/${nodeRelPath}`)
+        )
+        this._writeDebugLog(
+          `[ExtractNode] zip 条目数 ${entries.length}，node 条目: ${nodeEntry?.entryName ?? '未找到'}`
+        )
+        if (!nodeEntry) {
+          throw new Error('压缩包中未找到 node.exe 条目，下载可能已损坏或被安全软件拦截')
+        }
+        zip.extractAllTo(tmpExtract, true)
+      } else {
+        const flag = archivePath.endsWith('.xz') ? 'J' : 'z'
+        await execAsync(`tar -x${flag}f "${archivePath}" -C "${tmpExtract}"`)
+      }
+
+      // 压缩包内通常有一层 node-vX-platform-arch 顶层目录；定位真正的内容根
+      const tops = readdirSync(tmpExtract)
+      this._writeDebugLog(`[ExtractNode] 临时解压目录顶层内容: ${tops.join(', ') || '(空)'}`)
+      let contentRoot = tmpExtract
+      if (tops.length === 1 && statSync(join(tmpExtract, tops[0])).isDirectory()) {
+        contentRoot = join(tmpExtract, tops[0])
+      }
+
+      const contentNodePath = join(contentRoot, nodeRelPath)
+      if (!existsSync(contentNodePath)) {
+        // 兜底：深度 3 层内搜索 node 可执行文件，记录其真实位置
+        const found = this._findFile(contentRoot, platform === 'win32' ? 'node.exe' : 'node', 3)
+        this._writeDebugLog(`[ExtractNode] 预期路径无 node，深度搜索结果: ${found ?? '无'}`)
+        throw new Error(
+          `解压后未找到 ${nodeRelPath}（临时目录顶层: ${tops.join(', ') || '空'}），可能被安全软件拦截`
+        )
+      }
+
+      // 带重试地移动到 stagingDir（安全软件扫描会造成瞬时占用）
+      await this._renameWithRetry(contentRoot, stagingDir, 'staging')
+      if (contentRoot !== tmpExtract) {
+        try { rmSync(tmpExtract, { recursive: true, force: true }) } catch { /* ignore */ }
+      }
+
+      if (!existsSync(join(stagingDir, nodeRelPath))) {
+        throw new Error(
+          `移动到暂存目录后 ${nodeRelPath} 丢失，暂存目录内容: ${readdirSync(stagingDir).join(', ')}`
+        )
+      }
+      this._writeDebugLog(`[ExtractNode] 解压校验通过: ${stagingDir} (${expectedVersion})`)
+    } catch (e: any) {
+      this._writeDebugLog(`[ExtractNode Error] ${e.message}`)
+      throw e
+    } finally {
+      try { if (existsSync(tmpExtract)) rmSync(tmpExtract, { recursive: true, force: true }) } catch { /* ignore */ }
+    }
+  }
+
+  /** 在 root 下最多 maxDepth 层内按文件名查找（不走软链），找到返回绝对路径。 */
+  private _findFile(root: string, targetName: string, maxDepth: number): string | null {
+    if (maxDepth < 0 || !existsSync(root)) return null
+    for (const name of readdirSync(root)) {
+      const full = join(root, name)
+      let st
+      try { st = statSync(full) } catch { continue }
+      if (st.isFile() && name === targetName) return full
+      if (st.isDirectory()) {
+        const hit = this._findFile(full, targetName, maxDepth - 1)
+        if (hit) return hit
+      }
+    }
+    return null
+  }
+
+  /**
+   * rename 带重试：Windows 上安全软件实时扫描新文件会导致 EPERM/EBUSY/EACCES，
+   * 等待锁释放后重试；全部失败则降级为复制。每一步都写日志。
+   */
+  private async _renameWithRetry(src: string, dest: string, label: string): Promise<void> {
+    const transient = new Set(['EPERM', 'EBUSY', 'EACCES', 'ENOTEMPTY'])
+    for (let attempt = 1; attempt <= 8; attempt++) {
+      try {
+        if (existsSync(dest)) rmSync(dest, { recursive: true, force: true })
+        renameSync(src, dest)
+        this._writeDebugLog(`[Rename ${label}] 成功: ${src} -> ${dest}`)
+        return
+      } catch (e: any) {
+        this._writeDebugLog(`[Rename ${label}] 第 ${attempt} 次失败 (${e.code || 'UNKNOWN'}): ${e.message}`)
+        if (!transient.has(e.code) || attempt === 8) break
+        await new Promise((r) => setTimeout(r, 500 * attempt))
+      }
+    }
+    // 降级：复制（同样可能遇到占用，给 3 轮）
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        copyDir(src, dest)
+        this._writeDebugLog(`[Rename ${label}] rename 不可用，复制成功: ${src} -> ${dest}`)
+        return
+      } catch (e: any) {
+        this._writeDebugLog(`[Rename ${label}] 复制第 ${attempt} 次失败: ${e.message}`)
+        if (attempt === 3) throw e
+        await new Promise((r) => setTimeout(r, 1000 * attempt))
+      }
+    }
+  }
+
+  private async _downloadNode(useMirror: boolean, version: string = NODE_VERSION): Promise<void> {
     const dataDir = this.configManager.getDataDir()
     const platform = process.platform
     const arch = process.arch
@@ -588,13 +1027,13 @@ export class DownloadManager extends EventEmitter {
 
     mkdirSync(runtimeDir, { recursive: true })
 
-    const url = getNodeDownloadUrl(useMirror)
+    const url = getNodeDownloadUrl(useMirror, version)
     const fileName = url.split('/').pop()!
     const destFile = join(dataDir, 'runtime', fileName)
 
     this._writeDebugLog(`[DownloadNode] 开始下载 Node, URL: ${url}, Dest: ${destFile}`);
 
-    this._progress('Node.js', `正在下载内置 Node.js ${NODE_VERSION}...`, 5)
+    this._progress('Node.js', `正在下载内置 Node.js ${version}...`, 5)
 
     await this._downloadFile(url, destFile, (pct, speed) => {
       this._progress('Node.js', `下载中... 速度: ${speed}`, Math.floor(pct * 15))

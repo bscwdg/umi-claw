@@ -423,12 +423,57 @@ function registerIpcHandlers(): void {
     return downloadManager.initEnvironment(options)
   })
   ipcMain.handle('env:update', async (_e, options) => {
-    return downloadManager.updateOpenClaw(options)
+    // 更新期间状态库不能被占用：先停网关，更新完执行 schema 迁移，再按需重启
+    const wasRunning = clawManager.getStatus().running
+    if (wasRunning) {
+      await clawManager.stop()
+    }
+    const result = await downloadManager.updateOpenClaw(options)
+    if (result.success) {
+      const doctor = await clawManager.runDoctorFix()
+      if (!doctor.success) {
+        ;(result as any).warning =
+          'OpenClaw 已更新，但数据库迁移未成功：' + (doctor.error || '未知错误') +
+          '。下次启动网关时应用会自动重试迁移。'
+      }
+    }
+    if (result.success && wasRunning) {
+      try {
+        await clawManager.start()
+      } catch (e: any) {
+        // 网关重启失败不改变更新结果本身，附加警告由 UI 展示
+        ;(result as any).warning = [result.warning, `网关重启失败：${e.message}`]
+          .filter(Boolean)
+          .join('；')
+      }
+    }
+    return result
   })
   ipcMain.handle('env:checkLatest', async (_e, options) => {
     return downloadManager.checkLatestVersion(options)
   })
   ipcMain.handle('env:getInfo', () => downloadManager.getEnvInfo())
+  // 查询可安装的 Node 版本列表（LTS + 当前版本，标记 OpenClaw 兼容性）
+  ipcMain.handle('env:nodeVersions', async (_e, options) => {
+    return downloadManager.getNodeVersions(options)
+  })
+  // 更新内置便携 Node 到指定版本：先停网关释放文件锁，结束后（无论成败）恢复原运行状态
+  ipcMain.handle('env:updateNode', async (_e, options) => {
+    const wasRunning = clawManager.getStatus().running
+    if (wasRunning) {
+      await clawManager.stop()
+    }
+    let result = await downloadManager.updateNodeRuntime(options)
+    if (wasRunning) {
+      try {
+        await clawManager.start()
+      } catch (e: any) {
+        // 网关重启失败不改变更新结果本身，附加警告由 UI 展示
+        result = { ...result, warning: `网关重启失败：${e.message}` }
+      }
+    }
+    return result
+  })
 
   // 日志
   ipcMain.handle('log:getLogs', () => clawManager.getLogs())

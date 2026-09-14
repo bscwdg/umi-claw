@@ -61,6 +61,11 @@ export class ClawManager extends EventEmitter {
   private port = 3213
   private configManager: ConfigManager
   private isStopping = false
+  // 网关退出码 78（状态库需要 schema 迁移）时的自动修复状态
+  private maintenanceAutoFixInFlight = false
+  private maintenanceAutoFixUsed = false
+  private maintenanceMarkerSeen = false
+  private healthyResetTimer?: ReturnType<typeof setTimeout>
 
   constructor(configManager: ConfigManager) {
     super()
@@ -96,6 +101,7 @@ export class ClawManager extends EventEmitter {
       return { success: false, error: 'OpenClaw 已在运行中' }
     }
 
+    this.maintenanceMarkerSeen = false
     await this._killGhostProcesses()
 
     const currentConfig = this.configManager.getConfig()
@@ -191,6 +197,11 @@ export class ClawManager extends EventEmitter {
       this.startedAt = Date.now()
       this._setupProcessEvents()
       this.emit('statusChange', true, this.port)
+      if (this.healthyResetTimer) clearTimeout(this.healthyResetTimer)
+      this.healthyResetTimer = setTimeout(() => {
+        // 持续健康运行 30s 后允许下一次退出码 78 再触发自愈
+        if (this.process) this.maintenanceAutoFixUsed = false
+      }, 30000)
       return { success: true, warning: peerLinkWarning || undefined }
     } catch (err: any) {
       this.process = null
@@ -199,6 +210,10 @@ export class ClawManager extends EventEmitter {
   }
 
   async stop(): Promise<{ success: boolean }> {
+    if (this.healthyResetTimer) {
+      clearTimeout(this.healthyResetTimer)
+      this.healthyResetTimer = undefined
+    }
     if (!this.process) return { success: true }
     if (this.isStopping) return { success: true }
 
@@ -321,6 +336,110 @@ export class ClawManager extends EventEmitter {
     }
   }
 
+  /**
+   * 网关因状态库 schema 过旧拒绝启动（退出码 78 / maintenance_required）时的自愈：
+   * 结束残留进程 -> 独立进程执行 doctor --fix（非交互）-> 自动重启。
+   * 每次启动生命周期最多自愈一次，避免迁移失败时无限重启。
+   */
+  private async _autoFixMaintenance(): Promise<void> {
+    if (this.maintenanceAutoFixInFlight || this.maintenanceAutoFixUsed) return
+    this.maintenanceAutoFixInFlight = true
+    try {
+      this._addLog('检测到 OpenClaw 状态库需要升级迁移（退出码 78），正在自动修复...', 'system')
+      await this._killGhostProcesses()
+      const result = await this.runDoctorFix()
+      if (!result.success) {
+        this._addLog(
+          `自动迁移失败：${result.error || '未知错误'}。请在「环境初始化」页重试更新，或手动运行 openclaw doctor --fix`,
+          'stderr'
+        )
+        return
+      }
+      this.maintenanceAutoFixUsed = true
+      this._addLog('状态库迁移完成，正在自动重启 OpenClaw...', 'system')
+      await this.start()
+    } catch (e: any) {
+      this._addLog(`自动迁移异常：${e?.message || e}`, 'stderr')
+    } finally {
+      this.maintenanceAutoFixInFlight = false
+    }
+  }
+
+  /**
+   * 以独立子进程执行 `openclaw doctor --fix --non-interactive --yes`。
+   * 便携数据目录下 `gateway stop` 不可用，调用方必须保证没有其他 openclaw
+   * 进程占用状态库（否则 doctor 报 StateDatabaseCoordinatorContentionError）。
+   * --non-interactive 只执行安全迁移，--yes 跳过所有确认提示，避免管道内挂死。
+   */
+  async runDoctorFix(
+    timeoutMs = 180000
+  ): Promise<{ success: boolean; output?: string; error?: string }> {
+    const dataDir = this.configManager.getDataDir()
+    const nodePath = this.configManager.getNodePath()
+    const clawJsPath = openClawPaths.clawJs(dataDir)
+    if (!existsSync(nodePath)) return { success: false, error: '未找到 Node.js 运行时' }
+    if (!existsSync(clawJsPath)) return { success: false, error: '未找到 OpenClaw 核心库' }
+
+    const env = buildOpenClawEnv(dataDir, nodePath, {
+      OPENCLAW_DISABLE_BONJOUR: '1',
+      BONJOUR_DISABLE: '1'
+    })
+
+    this._addLog('正在执行 openclaw doctor --fix（非交互模式）...', 'system')
+
+    return new Promise((resolve) => {
+      let output = ''
+      let settled = false
+      const finish = (result: { success: boolean; output?: string; error?: string }) => {
+        if (settled) return
+        settled = true
+        resolve(result)
+      }
+      try {
+        const child = execFile(
+          nodePath,
+          [clawJsPath, 'doctor', '--fix', '--non-interactive', '--yes'],
+          {
+            cwd: openClawPaths.installDir(dataDir),
+            env,
+            windowsHide: true,
+            timeout: timeoutMs,
+            maxBuffer: 16 * 1024 * 1024
+          }
+        )
+        child.stdout?.on('data', (data: Buffer) => {
+          const text = data.toString()
+          output += text
+          text
+            .split('\n')
+            .map((l) => l.trim())
+            .filter(Boolean)
+            .forEach((l) => this._addLog(`[doctor] ${l}`, 'stdout'))
+        })
+        child.stderr?.on('data', (data: Buffer) => {
+          const text = data.toString()
+          output += text
+          text
+            .split('\n')
+            .map((l) => l.trim())
+            .filter(Boolean)
+            .forEach((l) => this._addLog(`[doctor] ${l}`, 'stderr'))
+        })
+        child.on('error', (err) => finish({ success: false, output, error: err.message }))
+        child.on('exit', (code) => {
+          if (code === 0) {
+            this._addLog('[doctor] 修复执行完成', 'system')
+            finish({ success: true, output })
+          } else {
+            finish({ success: false, output, error: `doctor 退出码 ${code}` })
+          }
+        })
+      } catch (e: any) {
+        finish({ success: false, output, error: e.message })
+      }
+    })
+  }
+
   private _setupProcessEvents(): void {
     if (!this.process) return
 
@@ -339,6 +458,9 @@ export class ClawManager extends EventEmitter {
       lines.forEach((line) => {
         this._addLog(line, 'stderr')
         this.emit('log', line, 'stderr')
+        if (/schema migration required|maintenance_required|run openclaw doctor --fix/i.test(line)) {
+          this.maintenanceMarkerSeen = true
+        }
       })
     })
 
@@ -348,6 +470,12 @@ export class ClawManager extends EventEmitter {
         this.process = null
         this.startedAt = undefined
         this.emit('statusChange', false)
+      }
+      // 退出码 78（EX_CONFIG）或本生命周期内出现过迁移提示：自动 doctor --fix 后重启，每次启动最多一次
+      const needsMaintenance =
+        code === 78 || (typeof code === 'number' && code !== 0 && this.maintenanceMarkerSeen)
+      if (needsMaintenance) {
+        void this._autoFixMaintenance()
       }
     })
 

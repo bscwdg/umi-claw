@@ -63,6 +63,8 @@ const api = {
     update: (options?: any) => ipcRenderer.invoke('env:update', options),
     checkLatest: (options?: any) => ipcRenderer.invoke('env:checkLatest', options),
     getInfo: () => ipcRenderer.invoke('env:getInfo'),
+    getNodeVersions: (options?: any) => ipcRenderer.invoke('env:nodeVersions', options),
+    updateNode: (options?: any) => ipcRenderer.invoke('env:updateNode', options),
     onProgress: (cb: (progress: any) => void) => {
       const handler = (_: unknown, data: any) => cb(data)
       ipcRenderer.on('env:progress', handler)
