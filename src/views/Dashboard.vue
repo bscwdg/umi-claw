@@ -60,6 +60,45 @@
       ⚠️ {{ errorMsg }}
     </div>
 
+    <!-- 2.0 营销卡（Commit 01 占位，数据接入见 Commit 03/04） -->
+    <div class="marketing-grid">
+      <div class="card marketing-card">
+        <div class="marketing-head">
+          <span class="marketing-icon">🏪</span>
+          <div>
+            <div class="marketing-title">当前商家</div>
+            <div class="text-sm text-muted">Business Brain</div>
+          </div>
+        </div>
+        <div class="marketing-body text-sm text-muted">
+          尚未接入商家数据。选择或创建 Project、填写商家基本盘后，这里会显示当前商家与资料完整度。
+        </div>
+        <div class="marketing-actions">
+          <button class="btn btn-sm" @click="router.push('/marketing/business')">
+            打开商家大脑
+          </button>
+        </div>
+      </div>
+
+      <div class="card marketing-card">
+        <div class="marketing-head">
+          <span class="marketing-icon">✨</span>
+          <div>
+            <div class="marketing-title">AI 营销</div>
+            <div class="text-sm text-muted">Advisor / Content / 🔥 热点雷达</div>
+          </div>
+        </div>
+        <div class="marketing-body text-sm text-muted">
+          营销能力将在后续版本逐步上线：AI 问答、内容生成、热点跟踪。
+        </div>
+        <div class="marketing-actions">
+          <button class="btn btn-sm" @click="router.push('/marketing/advisor')">AI Advisor</button>
+          <button class="btn btn-sm" @click="router.push('/marketing/content')">Content Center</button>
+          <button class="btn btn-sm" @click="router.push('/marketing/hot')">🔥 热点雷达</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Stats Grid -->
     <div class="stats-grid">
       <div class="stat-card card">
@@ -281,6 +320,23 @@ window.api.skills.getInstalledSkills().then((s) => (skillCount.value = s.length)
 }
 
 /* Stats */
+.marketing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+.marketing-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+}
+.marketing-head { display: flex; align-items: center; gap: 10px; }
+.marketing-icon { font-size: 22px; }
+.marketing-title { font-size: 15px; font-weight: 600; }
+.marketing-body { line-height: 1.6; flex: 1; }
+.marketing-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

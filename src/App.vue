@@ -29,12 +29,20 @@
           {{ clawStore.running ? 'OpenClaw 运行中' : 'OpenClaw 已停止' }}
         </div>
 
-        <!-- 导航 -->
+        <!-- 导航（分组） -->
         <nav class="nav">
-          <router-link v-for="item in navItems" :key="item.to" :to="item.to" class="nav-item">
-            <span class="nav-icon">{{ item.icon }}</span>
-            <span class="nav-label">{{ item.label }}</span>
-          </router-link>
+          <template v-for="group in navGroups" :key="group.title">
+            <div class="nav-group-title">{{ group.title }}</div>
+            <router-link
+              v-for="item in group.items"
+              :key="item.to"
+              :to="item.to"
+              class="nav-item"
+            >
+              <span class="nav-icon">{{ item.icon }}</span>
+              <span class="nav-label">{{ item.label }}</span>
+            </router-link>
+          </template>
         </nav>
 
         <!-- 底部信息 -->
@@ -87,16 +95,40 @@ const clawStore = useClawStore()
 const configStore = useConfigStore()
 const version = ref('')
 
-const navItems = [
-  { to: '/dashboard', icon: '🏠', label: '控制台' },
-  { to: '/config',    icon: '⚙️', label: '模型配置' },
-  { to: '/skills',    icon: '🧩', label: '技能管理' },
-  { to: '/logs',      icon: '📋', label: '运行日志' },
-  { to: '/setup',     icon: '🔧', label: '环境初始化' },
-  { to: '/channelsPage',     icon: '📩', label: '渠道接入' },
-  { to: '/terminal',     icon: '💻', label: 'OpenClaw终端' },
-  { to: '/obsidian',     icon: '📚', label: '知识库' },
-  { to: '/about',     icon: 'ℹ️', label: '关于' }
+// 分组导航：to 值与 1.0 完全一致（只动 label 与分组），营销组 5 条为 2.0 新增占位路由
+const navGroups = [
+  {
+    title: '工作台',
+    items: [{ to: '/dashboard', icon: '🏠', label: '工作台' }]
+  },
+  {
+    title: '营销',
+    items: [
+      { to: '/marketing/business', icon: '🏪', label: '商家大脑' },
+      { to: '/marketing/knowledge', icon: '📚', label: '知识库' },
+      { to: '/marketing/advisor', icon: '💬', label: 'AI Advisor' },
+      { to: '/marketing/content', icon: '✍️', label: 'Content Center' },
+      { to: '/marketing/hot', icon: '🔥', label: '热点雷达' }
+    ]
+  },
+  {
+    title: 'OpenClaw',
+    items: [
+      { to: '/config', icon: '⚙️', label: '模型配置' },
+      { to: '/skills', icon: '🧩', label: '能力中心' },
+      { to: '/channelsPage', icon: '📩', label: '渠道' },
+      { to: '/terminal', icon: '💻', label: 'OpenClaw终端' },
+      { to: '/obsidian', icon: '📖', label: 'Obsidian 知识库' },
+      { to: '/setup', icon: '🔧', label: '环境初始化' }
+    ]
+  },
+  {
+    title: '系统',
+    items: [
+      { to: '/logs', icon: '📋', label: '运行日志' },
+      { to: '/about', icon: 'ℹ️', label: '关于' }
+    ]
+  }
 ]
 
 let cleanup: (() => void) | null = null
@@ -219,7 +251,16 @@ onUnmounted(() => {
 }
 
 /* Nav */
-.nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.nav { display: flex; flex-direction: column; gap: 2px; flex: 1; overflow-y: auto; }
+.nav-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  padding: 12px 12px 4px;
+}
+.nav-group-title:first-child { padding-top: 2px; }
 .nav-item {
   display: flex;
   align-items: center;

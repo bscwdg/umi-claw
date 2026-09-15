@@ -1,0 +1,65 @@
+{
+  "base": "http://127.0.0.1:3214",
+  "startedAt": "2026-09-15T08:38:03.646Z",
+  "node": "v24.21.0",
+  "scenarios": {
+    "S0_health": {
+      "ms": 97,
+      "status": 200,
+      "body": "{\"ok\":true,\"status\":\"live\"}"
+    },
+    "S1_models": {
+      "ms": 18,
+      "status": 200,
+      "body": "{\"object\":\"list\",\"data\":[{\"id\":\"openclaw\",\"object\":\"model\",\"created\":0,\"owned_by\":\"openclaw\",\"permission\":[]},{\"id\":\"openclaw/default\",\"object\":\"model\",\"created\":0,\"owned_by\":\"openclaw\",\"permission\":[]},{\"id\":\"openclaw/main\",\"object\":\"model\",\"created\":0,\"owned_by\":\"openclaw\",\"permission\":[]}]}"
+    },
+    "S2_nonstream": {
+      "ms": 80304,
+      "status": 200,
+      "body": "{\"id\":\"chatcmpl_df53b5da-543e-434e-a670-5e2d7a599421\",\"object\":\"chat.completion\",\"created\":1789461484,\"model\":\"openclaw\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"收到\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0,\"total_tokens\":0}}"
+    },
+    "S3_sse": {
+      "status": 200,
+      "ms": 13632,
+      "ttfbMs": 1268,
+      "sseChunks": 3,
+      "textLen": 54,
+      "text": "我是你刚启动的 OpenClaw 个人助手，能读写文件、查资料、操作工具并帮你处理实际任务；你想怎么称呼我？"
+    },
+    "S4_abort": {
+      "ms": 20067,
+      "chunksBeforeAbort": 4,
+      "abortedByClient": true
+    },
+    "S5_error_bad_token": {
+      "ms": 298,
+      "status": 401,
+      "body": "{\"error\":{\"message\":\"Unauthorized\",\"type\":\"unauthorized\"}}"
+    },
+    "S6_error_bad_model": {
+      "ms": 23,
+      "status": 400,
+      "body": "{\"error\":{\"message\":\"Invalid `model`. Use `openclaw` or `openclaw/<agentId>`.\",\"type\":\"invalid_request_error\"}}"
+    },
+    "S8_history_replay": {
+      "write": {
+        "status": 200
+      },
+      "recallSameUser": {
+        "status": 200,
+        "body": "{\"id\":\"chatcmpl_722f6999-853a-4d8e-bdbe-4aa8be5e3b9b\",\"object\":\"chat.completion\",\"created\":1789461618,\"model\":\"openclaw\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"UMI-ZEBRA-42\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0,\"total_tokens\":0}}"
+      },
+      "recalled": true,
+      "userKey": "conv:spike:1789461598097-a"
+    },
+    "S9_isolation": {
+      "recallOtherUser": {
+        "status": 200,
+        "body": "{\"id\":\"chatcmpl_4a44896b-3f7c-4cec-a689-f1913bfa4cb4\",\"object\":\"chat.completion\",\"created\":1789461623,\"model\":\"openclaw\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"无（本次对话里你没有给过我暗号）。\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0,\"total_tokens\":0}}"
+      },
+      "leaked": false,
+      "userKey": "conv:spike:1789461598097-b"
+    }
+  },
+  "finishedAt": "2026-09-15T08:40:56.819Z"
+}

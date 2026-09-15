@@ -192,7 +192,6 @@
       v-if="
         envInfo?.nodeInstalled &&
         envInfo?.openClawInstalled &&
-        envInfo?.channelsInstalled &&
         !taskRunning
       "
       class="card success-card"
@@ -525,6 +524,9 @@ function openDataDir() {
 
 function goToDashboard() {
   router.push("/dashboard");
+  // Commit 01：首启 Setup 守卫在模块级缓存了 env.check() 结果。整页 reload 是
+  // hash 路由下代价最低的缓存清理方式，保证刚完成初始化的用户不被守卫弹回 /setup。
+  location.reload();
 }
 
 // ---- Node 运行时更新 ----
