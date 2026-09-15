@@ -18,6 +18,9 @@ import { ChannelManager } from './channelManager'
 import { ObsidianManager } from './obsidian/obsidianManager'
 import { EMBEDDING_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv } from './openClawPaths'
+import { DatabaseClient } from './database/database'
+import { subprocessRegistry } from './subprocessRegistry'
+import { registerMarketingIpc } from './ipc'
 import { readFileSync, existsSync } from 'fs'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import type { TerminalRuntime } from '../../src/types/terminal'
@@ -35,6 +38,9 @@ let configManager: ConfigManager
 let downloadManager: DownloadManager
 let channelManager: ChannelManager
 let obsidianManager: ObsidianManager
+// marketing DB Worker 客户端（Commit 02）。构造是廉价的：惰性初始化，
+// 应用启动不建库、不拉 Worker，首次 marketing IPC 才 spawn。
+let marketingDatabase: DatabaseClient | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -345,6 +351,30 @@ function createTray(): void {
 
   // 监听状态变化更新托盘
   clawManager.on('statusChange', (running: boolean) => updateMenu(running))
+}
+
+// ─── marketing DB Worker wiring（Electron 相关路径解析集中在这里） ───────────────
+
+/**
+ * 构造 DB Worker 客户端：把 Electron 专属的路径解析（dev / 安装包 resources、
+ * 便携 Node、数据目录）注入 database.ts，后者保持纯 Node 可测。
+ */
+function createMarketingDatabase(): DatabaseClient {
+  const dataDir = configManager.getDataDir()
+  const isDev = !app.isPackaged
+  const resRoot = isDev
+    ? join(app.getAppPath(), 'resources')
+    : join(process.resourcesPath, 'resources')
+  return new DatabaseClient({
+    dbPath: join(dataDir, 'umi-claw.db'),
+    backupDir: join(dataDir, 'backup'),
+    workerScriptPath: join(resRoot, 'database', 'db-worker.mjs'),
+    nodePath: configManager.getNodePath(),
+    subprocessName: 'marketing-db-worker',
+    // 启动即注册（§四 子进程注册表）：_stopRuntimeProcesses / 退出清理先优雅停
+    onSpawn: (info) => subprocessRegistry.register(info),
+    logger: (message) => console.log(message)
+  })
 }
 
 // ─── IPC 处理器 ───────────────────────────────────────────────────────────────
@@ -808,6 +838,9 @@ function registerIpcHandlers(): void {
   // 检索测试：失败时抛出，由渲染进程统一捕获展示
   ipcMain.handle('obsidian:testSearch', async (_e, arg) => obsidianManager.testSearch(arg))
 
+  // ── marketing（Commit 02：仅 system 面；CRUD 归 03/04） ──
+  registerMarketingIpc(marketingDatabase!)
+
 }
 
 // ─── 推送日志到渲染进程 ────────────────────────────────────────────────────────
@@ -937,6 +970,8 @@ app.whenReady().then(() => {
       configManager
     )
   obsidianManager = new ObsidianManager(configManager)
+  // marketing DB Worker 客户端（惰性：构造时不建库、不 spawn）
+  marketingDatabase = createMarketingDatabase()
   // 注入 Obsidian MCP 配置生成器：_syncOpenClawConfig 写回 openclaw.json 时调用
   configManager.setObsidianMcpInjector(() => obsidianManager.buildMcpServerConfig())
 
@@ -977,6 +1012,16 @@ app.on('before-quit', async () => {
   ; (app as any).isQuiting = true
   // 确保在退出前杀死所有子进程，防止孤儿进程
   killAllTerminalSessions()
+  // 注册表内的常驻子进程（marketing DB Worker）先优雅停：
+  // wal_checkpoint(TRUNCATE) → close → exit(0)，避免留下 -wal/-shm 残骸
+  try {
+    const stops = await subprocessRegistry.stopAll(3000)
+    for (const s of stops) {
+      if (!s.ok) console.warn(`[Main] 优雅停止 ${s.name}(pid=${s.pid}) 未成功: ${s.error}`)
+    }
+  } catch (e) {
+    console.error('[Main] 停止注册表子进程失败:', e)
+  }
   await clawManager.stop()
 })
 

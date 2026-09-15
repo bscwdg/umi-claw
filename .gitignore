@@ -18,3 +18,6 @@ config
 electron.vite.config.*.mjs
 CLAUDE.md
 .claude/
+
+# Commit 02 验收脚本的临时产物（esbuild bundle / 临时库）
+test/.tmp/

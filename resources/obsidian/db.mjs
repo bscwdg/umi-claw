@@ -12,6 +12,55 @@
 
 import { DatabaseSync } from 'node:sqlite'
 
+// ── 优雅退出（PLAN-2.0.md §四；硬规则 3 的明确例外：纯增量、不改检索逻辑） ──
+//
+// Umi Claw 的「便携 Node 子进程注册表」在强杀之前会先请子进程优雅退出。
+// 本模块补齐两个入口：
+//   1. SIGTERM / SIGINT → wal_checkpoint(TRUNCATE) → close → exit(0)
+//   2. stdin 收到独立成行的 `shutdown`（或 {"method":"shutdown"}）→ 同上
+//
+// 注意：stdin 一旦被监听就会 ref 事件循环，而 indexer.mjs 依赖「事件循环自然排空即退出」。
+// 因此监听后立即 unref()：短命子进程照旧自然退出，长驻进程（mcp-server，靠 fs.watch 存活）
+// 仍能收到 shutdown 指令。
+const _openDbs = new Set()
+let _shutdownHooksInstalled = false
+
+function _closeAllDbs() {
+  for (const db of _openDbs) {
+    try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)') } catch { /* 已关闭/不支持 */ }
+    try { db.close() } catch { /* 已关闭 */ }
+  }
+  _openDbs.clear()
+}
+
+function _bye(reason) {
+  _closeAllDbs()
+  try { process.stderr.write('[db] 优雅退出: ' + reason + '\n') } catch { /* 忽略 */ }
+  process.exit(0)
+}
+
+function _installGracefulShutdown() {
+  if (_shutdownHooksInstalled) return
+  _shutdownHooksInstalled = true
+  process.on('SIGTERM', () => _bye('SIGTERM'))
+  process.on('SIGINT', () => _bye('SIGINT'))
+  try {
+    let buf = ''
+    process.stdin.setEncoding('utf-8')
+    process.stdin.on('data', (chunk) => {
+      buf += chunk
+      let nl
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim()
+        buf = buf.slice(nl + 1)
+        if (line === 'shutdown' || line === '{"method":"shutdown"}') _bye('stdin')
+      }
+    })
+    // 不要把 stdin 变成 keep-alive 句柄，否则 indexer.mjs 不再自然退出
+    if (typeof process.stdin.unref === 'function') process.stdin.unref()
+  } catch { /* 无 stdin（非 stdio 场景）时忽略 */ }
+}
+
 const SCHEMA_STATEMENTS = [
   'CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)',
   'CREATE TABLE IF NOT EXISTS files (path TEXT PRIMARY KEY, mtime INTEGER, size INTEGER, hash TEXT, indexed_at INTEGER)',
@@ -42,6 +91,10 @@ export function openDb(dbPath) {
 
   // 一次性预热：把已有 chunk 的 norm 算出来（indexer 之后也会写，幂等）
   _prewarmNorms(db)
+
+  // 注册到优雅退出表（纯增量，不影响既有调用方）
+  _openDbs.add(db)
+  _installGracefulShutdown()
 
   return db
 }

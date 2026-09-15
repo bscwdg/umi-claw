@@ -8,6 +8,7 @@ import { Readable, Transform } from 'stream'
 import { pipeline } from 'stream/promises'
 import { ConfigManager } from './configManager'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
+import { subprocessRegistry } from './subprocessRegistry'
 
 const execAsync = promisify(exec)
 const execFileAsync = promisify(execFile)
@@ -1100,6 +1101,21 @@ export class DownloadManager extends EventEmitter {
    */
   private async _stopRuntimeProcesses(): Promise<void> {
     const nodePath = this.configManager.getNodePath()
+    // 先逐个优雅停止注册表内的常驻子进程（marketing DB Worker 需要
+    // wal_checkpoint(TRUNCATE) + close，硬杀会留下 -wal/-shm 残骸）。
+    // 顺序：注册表 gracefulStop（上限 3s）→ 再按 ExecutablePath 精确 taskkill 兜底。
+    try {
+      const stops = await subprocessRegistry.stopAll(3000)
+      for (const s of stops) {
+        if (!s.ok) {
+          this._writeDebugLog(`[UpdateNode] ${s.name}(pid=${s.pid}) 优雅停止未成功: ${s.error}`)
+        } else {
+          this._writeDebugLog(`[UpdateNode] ${s.name}(pid=${s.pid}) 已优雅停止`)
+        }
+      }
+    } catch (e: any) {
+      this._writeDebugLog(`[UpdateNode] 注册表优雅停止出错（可忽略）: ${e.message}`)
+    }
     if (!existsSync(nodePath)) return
     try {
       if (process.platform === 'win32') {

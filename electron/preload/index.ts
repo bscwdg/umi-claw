@@ -127,6 +127,19 @@ const api = {
     }
   },
 
+  // marketing（Commit 02：仅 system 面；CRUD 归 03/04）
+  // 统一返回信封：{ ok: true, data } | { ok: false, error: { code, message, details? } }
+  marketing: {
+    system: {
+      dbStatus: (options?: { initialize?: boolean }) =>
+        ipcRenderer.invoke('marketing:system:dbStatus', options),
+      ping: () => ipcRenderer.invoke('marketing:system:ping'),
+      metaGet: (key: string) => ipcRenderer.invoke('marketing:system:metaGet', key),
+      metaSet: (key: string, value: string | null) =>
+        ipcRenderer.invoke('marketing:system:metaSet', key, value)
+    }
+  },
+
   // Obsidian 知识库
   obsidian: {
     getConfig: () => ipcRenderer.invoke('obsidian:getConfig'),

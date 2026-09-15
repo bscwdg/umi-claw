@@ -1,0 +1,8 @@
+// electron/main/ipc/index.ts —— IPC 注册聚合入口
+//
+// 现有 IPC 处理器仍平铺在 electron/main/index.ts 的 registerIpcHandlers() 里
+// （§三：第一阶段不搬任何现有文件）；新代码从这里聚合注册。
+// Commit 02 只接 marketing.system；03/04 的 project/business/knowledge/content/hot 在此追加。
+
+export { registerMarketingIpc, MARKETING_SYSTEM_CHANNELS, withMarketingBackup } from './marketing'
+export type { IpcResult } from './marketing'
