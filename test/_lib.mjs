@@ -39,14 +39,22 @@ export function assertDeepEq(actual, expected, message) {
   if (a !== b) throw new Error(`断言失败: ${message} — 期望 ${b}，实际 ${a}`)
 }
 
-/** esbuild bundle 一个 TS 入口 → test/.tmp/<outName> 的 ESM，返回可 import 的绝对路径 */
-export function bundleEntry(entryRelPath, outName) {
+/**
+ * esbuild bundle 一个 TS 入口 → test/.tmp/<outName> 的 ESM，返回可 import 的绝对路径
+ *
+ * `options.externals`：需要**运行时**从 node_modules 解析的包（不 bundle）。
+ * 适用场景：包里有「动态 require 内置模块」的写法（如 mammoth 的 `require('fs')`），
+ * 被打进 ESM bundle 后会变成 `Dynamic require of "fs" is not supported`；
+ * 把它们标成 external 后，由 Node 自己按 CJS 加载（生产构建是 CJS，不受影响）。
+ */
+export function bundleEntry(entryRelPath, outName, options = {}) {
   mkdirSync(tmpDir, { recursive: true })
   const outfile = join(tmpDir, outName)
   const bin = join(repoRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'esbuild.cmd' : 'esbuild')
   if (!existsSync(bin)) {
     throw new Error(`未找到 esbuild CLI: ${bin}（应由 vite 依赖提供）`)
   }
+  const externals = Array.isArray(options.externals) ? options.externals : []
   const res = spawnSync(
     bin,
     [
@@ -56,6 +64,7 @@ export function bundleEntry(entryRelPath, outName) {
       '--format=esm',
       '--target=node20',
       '--external:electron',
+      ...externals.map((name) => `--external:${name}`),
       '--log-level=warning',
       `--outfile=${outfile}`
     ],

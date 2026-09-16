@@ -518,10 +518,11 @@ try {
     assert(/createBusinessManager/.test(mainSrc), 'main/index.ts 应创建 businessManager')
     assert(/createWatchlistManager/.test(mainSrc), 'main/index.ts 应创建 watchlistManager')
     assert(
-      /registerMarketingIpc\(\s*marketingDatabase!,\s*marketingProjectManager!,\s*marketingBusinessManager!,\s*marketingWatchlistManager!\s*\)/.test(
+      // Commit 05a 起多了第 5 个依赖（knowledgeManager）；前 4 个的顺序与名字仍被逐字锁定
+      /registerMarketingIpc\(\s*marketingDatabase!,\s*marketingProjectManager!,\s*marketingBusinessManager!,\s*marketingWatchlistManager!(?:\s*,\s*marketingKnowledgeManager!)?\s*\)/.test(
         mainSrc
       ),
-      'main/index.ts 应把 4 个依赖都传给 registerMarketingIpc'
+      'main/index.ts 应把 4 个（Commit 05a 起为 5 个）依赖都传给 registerMarketingIpc'
     )
     // store 契约（主会话 UI 直接依赖这些名字）
     for (const name of [

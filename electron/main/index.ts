@@ -28,6 +28,11 @@ import {
   type BusinessManager,
   type WatchlistManager
 } from './marketing/businessManager'
+import {
+  createKnowledgeManager,
+  type KnowledgeManager
+} from './marketing/knowledgeManager'
+import { resolvePdfjsAssets } from './marketing/parsers/pdfjsAssets'
 import { readFileSync, existsSync } from 'fs'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import type { TerminalRuntime } from '../../src/types/terminal'
@@ -53,6 +58,8 @@ let marketingProjectManager: ProjectManager | null = null
 // marketing Business / Watchlist 层（Commit 04）：只依赖 DatabaseClient，构造零 IO 副作用。
 let marketingBusinessManager: BusinessManager | null = null
 let marketingWatchlistManager: WatchlistManager | null = null
+// marketing Knowledge 层（Commit 05a）：依赖 DatabaseClient + dataDir + pdfjs 资产路径，构造零 IO 副作用。
+let marketingKnowledgeManager: KnowledgeManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -415,6 +422,29 @@ function createMarketingBusinessManagers(database: DatabaseClient): {
     businessManager: createBusinessManager({ database, logger }),
     watchlistManager: createWatchlistManager({ database, logger })
   }
+}
+
+/**
+ * 构造 Knowledge 管理器（Commit 05a）：知识库导入需要三个 Electron 侧事实——
+ * dataDir（原文落 `data/projects/<id>/`）、pdfjs 运行时资产路径、以及默认的 url 抓取器。
+ * 路径解析沿用 `createMarketingDatabase()` / obsidianManager.getScriptPath() 的 dev/打包双路径口径，
+ * 避免出现「dev 能抽中文、安装包里抽不出」这种只在打包态暴露的错位。
+ */
+function createMarketingKnowledgeManager(database: DatabaseClient): KnowledgeManager {
+  const isDev = !app.isPackaged
+  const pdfjsAssets = resolvePdfjsAssets({
+    isPackaged: !isDev,
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath
+  })
+  const manager = createKnowledgeManager({
+    database,
+    dataDir: configManager.getDataDir(),
+    pdfjsAssets,
+    logger: (message: string) => console.log(message)
+  })
+  console.log(`[knowledge] pdfjs 资产目录: ${pdfjsAssets.root}`)
+  return manager
 }
 
 // ─── IPC 处理器 ───────────────────────────────────────────────────────────────
@@ -878,12 +908,14 @@ function registerIpcHandlers(): void {
   // 检索测试：失败时抛出，由渲染进程统一捕获展示
   ipcMain.handle('obsidian:testSearch', async (_e, arg) => obsidianManager.testSearch(arg))
 
-  // ── marketing（Commit 02：system 面；Commit 03：project / context 面；Commit 04：business / watchlist 面） ──
+  // ── marketing（Commit 02：system 面；Commit 03：project / context 面；Commit 04：business / watchlist 面；
+  //               Commit 05a：knowledge 面） ──
   registerMarketingIpc(
     marketingDatabase!,
     marketingProjectManager!,
     marketingBusinessManager!,
-    marketingWatchlistManager!
+    marketingWatchlistManager!,
+    marketingKnowledgeManager!
   )
 
 }
@@ -1023,6 +1055,8 @@ app.whenReady().then(() => {
   const businessManagers = createMarketingBusinessManagers(marketingDatabase)
   marketingBusinessManager = businessManagers.businessManager
   marketingWatchlistManager = businessManagers.watchlistManager
+  // marketing Knowledge 管理器（无 IO 副作用；pdfjs 资产路径此刻只做字符串拼接）
+  marketingKnowledgeManager = createMarketingKnowledgeManager(marketingDatabase)
   // 注入 Obsidian MCP 配置生成器：_syncOpenClawConfig 写回 openclaw.json 时调用
   configManager.setObsidianMcpInjector(() => obsidianManager.buildMcpServerConfig())
 

@@ -170,6 +170,28 @@ const api = {
         ipcRenderer.invoke('marketing:watchlist:remove', projectId, keyword),
       setEnabled: (projectId: string, keyword: string, enabled: boolean) =>
         ipcRenderer.invoke('marketing:watchlist:setEnabled', projectId, keyword, enabled)
+    },
+    // Commit 05a：知识库（导入时本地解析一次 → 文本入库、原文留 data/projects/<id>/）
+    knowledge: {
+      list: (projectId: string, options?: { limit?: number }) =>
+        ipcRenderer.invoke('marketing:knowledge:list', projectId, options),
+      get: (projectId: string, id: string) =>
+        ipcRenderer.invoke('marketing:knowledge:get', projectId, id),
+      create: (projectId: string, data: { title: string; type: string; content: string }) =>
+        ipcRenderer.invoke('marketing:knowledge:create', projectId, data),
+      update: (projectId: string, id: string, patch: { title?: string; content?: string }) =>
+        ipcRenderer.invoke('marketing:knowledge:update', projectId, id, patch),
+      delete: (projectId: string, id: string) =>
+        ipcRenderer.invoke('marketing:knowledge:delete', projectId, id),
+      search: (projectId: string, query: string, limit?: number) =>
+        ipcRenderer.invoke('marketing:knowledge:search', projectId, query, limit),
+      import: (
+        projectId: string,
+        input: { type: string; title?: string; text?: string; url?: string; filePath?: string }
+      ) => ipcRenderer.invoke('marketing:knowledge:import', projectId, input),
+      // 本地文件选择器（dialog 在主进程）；用户取消 → data.filePath = null，不是错误
+      pickFile: (): Promise<{ ok: true; data: { filePath: string | null } } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:knowledge:pickFile')
     }
   },
 

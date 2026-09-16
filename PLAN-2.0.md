@@ -1,12 +1,13 @@
 # Umi Claw 2.0 施工基线（持续记录）
 
 > 本文档是 2.0 的唯一规划基线，随开发进度持续更新。
-> 基线版本：v1.18 ｜ 更新日期：2026-09-16 ｜ 状态：**Commit 00/01/02/03/04 均已通过验收，可开工 05**
+> 基线版本：v1.19 ｜ 更新日期：2026-09-16 ｜ 状态：**Commit 00/01/02/03/04/05a 均已通过验收，可开工 06（05b 待 07 后）**
 
 ## 修订记录
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| v1.19 | 2026-09-16 | **Commit 05a 完成**（Knowledge 知识库）：`knowledgeManager` + `parsers/`（docx/xlsx/pdf/url）+ `KnowledgeBase.vue` + `marketing:knowledge:*` 8 通道 + pdfjs 运行时资产入包；验收 **21/21**，回归 31/31 · 18/18 · 16/16，**打包态端到端**通过（安装包内导入真中文 PDF → `ready`、正文 7030 字、中文关键词命中）。**依赖三坑已写死**：① `mammoth` 需要 `@xmldom/xmldom@0.8.x`（仓库顶层是 `docx` 要的 0.9.10，0.9 强制 mimeType → 必须嵌套副本）；② `pdfjs-dist` 必须 **v3**（v4+ ESM-only，主进程 CJS 打不进去）；③ pdfjs 必须带 `cMapUrl`/`cMapPacked`/`standardFontDataUrl`，否则中文抽出 0 字 |
 | v1.18 | 2026-09-16 | **Commit 04 完成**（Business 1:1 + 资料完整度 + Watchlist）：`marketing/businessManager.ts`（BusinessManager + WatchlistManager）+ `marketing:business:*` / `marketing:watchlist:*` + `BusinessBrain.vue`（完整度卡 + 基本盘表单 + 关注词区）+ 摄影行业预设；验收 **16/16**，**打包态端到端**通过（存资料 → Watchlist 满 10 后第 11 个被拒 → 重启资料与关注词全在 → 删 Project 级联清空，并用直读库核对 `businesses=0 / project_watchlist=0 / current=null / integrity=ok`）；回归 `accept:db` 31/31、`accept:project` 18/18 不受影响。**口径拍板**：完整度 = `name/brand/city/positioning/target_customer/tone` 六项等权（**排除 address/phone**，联系方式不属于「AI 认识你」的语义信息） |
 | v1.17 | 2026-09-16 | **Commit 03 完成**（Project CRUD + conversation_key 生成 + 切换持久化 app_meta）：`marketing/projectManager.ts` + `marketing:project:*` / `marketing:context:*` 七条通道 + Pinia store + 侧边栏切换器；验收 **18/18** 且**打包态端到端**通过（新建 → 设为当前 → 优雅退出 → **重启后仍是当前商家** → 改名时 key/created_at 不变 → 删除后目录/行/current 三者全清）。**新发现回填**：`isAppError()` 的 `instanceof` 在**模块实例不唯一**时假阴性（测试各模块各自 bundle；生产里 rollup 可能把 `errors.ts` 拆进不同 chunk），会把 SETUP_REQUIRED / NOT_FOUND 静默降级成 DB_ERROR，而渲染端按 code 分支 —— 已把 `errorCodeOf()` 上提到 `errors.ts` 供所有 Manager 复用，并修掉 `toErrorEnvelope()` 同类假阴性 |
 | v1.16 | 2026-09-16 | **外部复审 3 项逐条核实**：①**P2 真缺陷已修** —— Worker 初始化失败（ping 超时 / 迁移抛错）时只置标志位、**未回收刚 spawn 的子进程**，会留下游离 Worker，且下次 `ensureReady()` 再拉一个 → 双 Worker 同库，违反硬规则 8；修法 `reapFailedChild()`（kill + 反注册 + 清 child），并补回归用例 **C13**（负向验证：还原旧代码时 C13 必红）；②**P1 测试脆弱已修** —— `countWorkerProcesses()` 在拿不到 WMI 权限的环境返回 0，导致 C4/C5 **假阴性**；改为查询不可靠时返回 `null`（不可知）并降级 `process.kill(pid, 0)` 判活；③**P3 不成立** —— `electron/preload/index.d.ts` 无需补 `api.marketing`（`Api = typeof api` 从实现推导），探针文件实测 `typecheck:web` 0 错；④`setupGuard.ts` 注释笔误（`channelsInstalled` 指个人微信插件，非企微）。验收脚本现为 **31/31** |
@@ -451,7 +452,7 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 | 02 | DB Worker + 构建 —— **✅ 2026-09-15 完成** | schema/migration + `db-worker.mjs` 单例（零依赖 JSONL，84 白名单方法）+ `database.ts` 客户端（惰性初始化/队列/30s 超时/断线重启/读重试写不重试）+ 子进程注册表接入（`_stopRuntimeProcesses` 前置优雅停止）；**`build:win` 出包（81.8MB）+ 打包态端到端冒烟通过（验收见下）** | 2d | —（与 01 并行） | | ✅ |
 | 03 | Project —— **✅ 2026-09-16 完成** | projectManager + store + CRUD + conversation_key 生成 + 切换持久化 app_meta（落点与验收见下） | 1d | 02 | | ✅ |
 | 04 | Business —— **✅ 2026-09-16 完成** | businessManager + BusinessBrain.vue + 摄影行业首套字段 + upsert/级联删除验收 + 资料完整度卡片（Business 维度）+ Watchlist（手工增删 / 行业预设词 / 上限 10 词 / 不采集）；落点与验收见下 | 2.5d | 02、03 | | ✅ |
-| 05 | Knowledge（仅 05a） | knowledgeManager + KnowledgeBase.vue + 文字层文档解析（docx/xlsx/pdf）+ 导入/重导入 + LIKE 检索（边界见下）；**05b 已拆出，排到 07 之后**；**接入资料完整度卡片的 Knowledge 维度（v1.13）** | 2.5d | 02、03 | | ⬜ |
+| 05 | Knowledge（仅 05a） —— **✅ 2026-09-16 完成** | knowledgeManager + KnowledgeBase.vue + 文字层文档解析（docx/xlsx/pdf/url/faq）+ 导入/重导入 + LIKE 检索 + Knowledge 维度完整度；落点与验收见下 | 2.5d | 02、03 | | ✅ |
 | 06 | Context Engine | Business + Knowledge + **Watchlist** + Platform → Context Pack | 1d | 00、04、05 | | ⬜ |
 | 07 | Gateway Client | 端点开关默认化 + 老用户迁移、探活、自动拉起（**复用 clawManager 启停，不另起炉灶**）、就绪轮询、SSE→IPC 透传、会话隔离、多模态模型选择 | 2d | 00 | | ⬜ |
 | 05b | 扫描件 AI 识别兜底 | 复用 07：扫描 PDF/带文字资料图的「用 AI 识别」显式触发 + 识别结果人工确认后入库；00⑦ 结论为不支持则只做提示 | 1.5d | 05a、07（可与 08 并行） | | ⬜ |
@@ -527,6 +528,39 @@ test/business.accept.mjs + `npm run accept:business`   16 项验收（打真 bus
 - **不采集**：Watchlist 只作 AI 上下文，B15 对模块源码做静态扫描（7 类网络特征 0 命中）。
 
 ⏳ **未覆盖**：①UI 点击流本机无桌面通道未做（IPC 面已由打包端到端覆盖）；②完整度常量跨 tsconfig 双份（有 B16 静态核对兜底，但仍是两份）；③Watchlist 无批量导入/导出（不在基线范围）。
+
+### Commit 05a 落点与验收（✅ 2026-09-16）
+
+```text
+electron/main/marketing/knowledgeManager.ts        新增：list/get/create/update/delete/search + import（本地解析一次入库）
+electron/main/marketing/parsers/documentParsers.ts 新增：docx(mammoth) / xlsx(exceljs) / pdf(pdfjs) / text / markdown / faq
+electron/main/marketing/parsers/urlParser.ts       新增：HTML→文本（去 script/style、实体解码、块级转行）
+electron/main/marketing/parsers/pdfjsAssets.ts     新增：pdfjs 资产 dev/安装包双路径解析
+electron/main/ipc/marketing.ts + preload + index.ts  marketing:knowledge:{list,get,create,update,delete,search,import,pickFile}
+src/stores/marketing.ts                            +knowledge 九件套 + knowledgeCompleteness + overallCompleteness
+src/views/marketing/KnowledgeBase.vue              新增：四路导入（文件/文本/网址/FAQ）+ 拖拽 + LIKE 检索 + 列表预览 + 删除
+src/renderer/main.ts                               /marketing/knowledge 由占位页换真页
+resources/pdfjs/                                   4.54 MB：cmaps 1.11MB(169 个 .bcmap) + standard_fonts 0.74MB + build/pdf.worker.js(2.01MB) + build/pdf.js(0.68MB)
+test/knowledge.accept.mjs + `accept:knowledge`     21 项验收（打真 knowledgeManager.ts）
+test/fixtures/{make-minimal-pdf.mjs,min-text-layer.pdf}  提交级最小 PDF fixture（710 字节）
+```
+
+**验收（独立复跑，非自述）**：`accept:knowledge` **21/21**；`typecheck:node` / `typecheck:web` 0 错；
+回归 `accept:db` **31/31**、`accept:project` **18/18**、`accept:business` **16/16**；
+**K8 用真中文文字层 PDF 跑实** → 一份 8 页国标 PDF 抽出 **3015 个汉字**，关键词「国卫生部」命中。
+
+**打包态端到端（真安装包 + CDP 驱动真渲染进程调真 IPC）**：安装包内导入真中文 PDF →
+`status=ready`、正文 **7030 字**、`source_name` 正确、列表 1 条、中文关键词「值域代码」检索命中（snippet 为真实中文）。
+→ 满足 05a 验收补充项「**安装包环境（非 dev）pdfjs 可用**」。
+
+**关键设计决策**
+
+- **重导入 upsert 键与路径**：键 = `UNIQUE(project_id, source_path)`；worker 的 upsert 冲突目标是主键 `id`、打不到该唯一键 → 先按键查既有行、用它的 `id` 走 `INSERT … ON CONFLICT(id) DO UPDATE`，并发撞键回落重试一次（与 businessManager 同构）；**`created_at` 必须显式带回**，否则每次重导入都刷掉首次导入时间。`source_path` 存**相对 dataDir 的正斜杠路径**（`projects/<id>/<净化文件名>`），URL 类存原始 URL，text/markdown/faq 存 `NULL`。
+- **扫描件检测**：抽样页面文字量≈0 → `FILE_PARSE_ERROR` + `reason=scanned-pdf`，**不落行、不落文件**（K9 断言库里 0 空内容行、0 孤儿文件）；`doc/xls` 老格式 → `VALIDATION_ERROR` + 提示另存为新格式。
+- **parser 与 electron 解耦**：manager/parsers 不 import electron，pdfjs 资产路径由 `pdfjsAssets.ts` 注入解析（dev 用 `app.getAppPath()/resources`，打包用 `process.resourcesPath/resources`），因此纯 Node 可测（K20 断言 dev/pack 两条路径 + bundle 内无 pdfjs 静态引入）。
+- **url 类口径**：只做 http(s) 单次 GET + 本地 HTML→文本，**不跟 Cookie、不调第三方 API、不做站点特化**（K21 静态扫描 5 类网络特征 0 命中）。
+
+⏳ **未覆盖**：①K8 默认 SKIPPED（需 `KNW_PDF_SAMPLE` 指真中文 PDF，本机已跑实并把结果记在此处）；②UI 点击流本机无桌面通道未做（IPC 面已由打包端到端覆盖）；③**仓库 `package-lock.json` 与 `node_modules` 存在既存漂移** —— 本次依赖（mammoth/exceljs/pdfjs-dist）是「隔离安装 + 只补不覆盖」补入的（新增 34 包、0 覆盖），**未执行 `npm install`**（dry-run 显示它会删掉 471 个包，含 electron-builder 的依赖）；锁漂移修复留作独立动作。
 
 ### Commit 11 数据源 SPIKE（v1.12 新增）
 
@@ -658,6 +692,7 @@ test/business.accept.mjs + `npm run accept:business`   16 项验收（打真 bus
 | 16 | **根 `npm run typecheck` 空转**（tsconfig 为 `files:[] + references`，什么都没检查） | ✅ v1.15 已补 `typecheck:node` / `typecheck:web`（逐项目检查暴露 6 个被掩盖的真错并修复）；后续提交一律走逐项目检查 |
 | 17 | Commit 03 三条未覆盖项（删行失败分支 / store 降级语义无单测 / UI 点击流） | ⬜ 见「Commit 03 落点与验收」；均已在代码层说明，未做执行证据 |
 | 18 | Commit 04 三条未覆盖项（UI 点击流 / 完整度常量双份 / Watchlist 无批量导入） | ⬜ 见「Commit 04 落点与验收」 |
+| 19 | Commit 05a 三条未覆盖项（K8 需真样本 / UI 点击流 / **lock 与 node_modules 漂移**） | ⬜ 见「Commit 05a 落点与验收」；漂移修复建议独立做 |
 | 15 | 应用写 `meta.lastTouchedAt` / `lastTouchedVersion:'latest'` 被 schema 拒绝 | ⬜ 待 07 顺带修（`configManager.ts:703-707`、`downloadManager.ts:1451-1452`）；实测 OpenClaw 启动时会自愈，后果较轻 |
 
 ## 十、概念备忘

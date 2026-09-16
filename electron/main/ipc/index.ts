@@ -3,7 +3,8 @@
 // 现有 IPC 处理器仍平铺在 electron/main/index.ts 的 registerIpcHandlers() 里
 // （§三：第一阶段不搬任何现有文件）；新代码从这里聚合注册。
 // Commit 02 接 marketing.system；Commit 03 追加 marketing.project / marketing.context；
-// 04 追加 marketing.business / marketing.watchlist；05+ 的 knowledge/content/hot 在此继续追加。
+// 04 追加 marketing.business / marketing.watchlist；05a 追加 marketing.knowledge；
+// 09+/11+ 的 content/hot 在此继续追加。
 
 export {
   registerMarketingIpc,
@@ -12,6 +13,7 @@ export {
   MARKETING_CONTEXT_CHANNELS,
   MARKETING_BUSINESS_CHANNELS,
   MARKETING_WATCHLIST_CHANNELS,
+  MARKETING_KNOWLEDGE_CHANNELS,
   withMarketingBackup
 } from './marketing'
 export type { IpcResult } from './marketing'

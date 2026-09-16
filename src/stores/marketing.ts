@@ -222,6 +222,66 @@ function sortProjects(list: Project[]): Project[] {
   return [...list].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
 }
 
+// ── Commit 05a：Knowledge（知识库）────────────────────────────────────────────
+
+/**
+ * `knowledge_items` 表一行。
+ * `type`：text / markdown / url / faq / docx / xlsx / pdf（§四 type 已放开，read 侧按字符串收）。
+ * `source_path`：文件类为相对 dataDir 的路径（`projects/<id>/<文件名>`）、url 类为原始 URL、
+ * 手输 text/faq 为 `null`；`content` 为**导入时解析一次**落库的文本（运行时不再解析）。
+ */
+export interface KnowledgeItem {
+  id: string
+  project_id: string
+  title: string
+  type: string
+  source_path: string | null
+  source_name: string | null
+  content: string | null
+  status: string
+  created_at: number
+  updated_at: number
+}
+
+/** 检索命中（只带 UI 要展示的三列） */
+export interface KnowledgeHit {
+  id: string
+  title: string
+  snippet: string
+}
+
+/** 导入入参（与主进程 `ImportKnowledgeInput` 一致；UI 只发这些字段） */
+export interface ImportKnowledgePayload {
+  type: string
+  title?: string
+  text?: string
+  url?: string
+  filePath?: string
+}
+
+/** `status='ready'` 才计入「已建知识库」，也才是 AI 能吃的资料（与后端检索口径一致） */
+export const KNOWLEDGE_READY_STATUS = 'ready'
+
+function toKnowledgeItem(row: any): KnowledgeItem {
+  return {
+    id: String(row?.id ?? ''),
+    project_id: String(row?.project_id ?? ''),
+    title: String(row?.title ?? ''),
+    type: String(row?.type ?? ''),
+    source_path: row?.source_path ?? null,
+    source_name: row?.source_name ?? null,
+    content: row?.content ?? null,
+    status: String(row?.status ?? KNOWLEDGE_READY_STATUS),
+    created_at: Number(row?.created_at ?? 0),
+    updated_at: Number(row?.updated_at ?? 0)
+  }
+}
+
+/** 新导入的排前面（同级按 id 收敛，避免渲染顺序抖动；与后端 listKnowledge 同序） */
+function sortKnowledge(list: KnowledgeItem[]): KnowledgeItem[] {
+  return [...list].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
+}
+
 export const useMarketingStore = defineStore('marketing', () => {
   const projects = ref<Project[]>([]) as Ref<Project[]>
   const currentProjectId = ref<string | null>(null)
@@ -524,6 +584,114 @@ export const useMarketingStore = defineStore('marketing', () => {
     }
   }
 
+  // ── Knowledge（知识库；Commit 05a） ────────────────────────────────
+
+  const knowledge = ref<KnowledgeItem[]>([]) as Ref<KnowledgeItem[]>
+  const knowledgeLoading = ref<boolean>(false)
+
+  /**
+   * 知识库完整度（Knowledge 维度，§七 v1.13 接入完整度卡片）：
+   * `ready` = `status='ready'` 的条目数；**≥ 1 条即视为「已建」**（percent 0/100）。
+   * 与 Business 维度的六项等权合看 `overallCompleteness`。
+   */
+  const knowledgeCompleteness: ComputedRef<{ ready: number; total: number; percent: number }> = computed(() => {
+    const total = knowledge.value.length
+    const ready = knowledge.value.filter((item) => item.status === KNOWLEDGE_READY_STATUS).length
+    return { ready, total, percent: ready > 0 ? 100 : 0 }
+  })
+
+  /**
+   * 总完整度：**Business 六项 + Knowledge 一项，七项等权**。
+   * Knowledge 项用「已建（ready ≥ 1）」而不是条目数：
+   * 老板补了 1 份套系单与补了 20 份，在「AI 是否认识这个商家」上没有质的差别。
+   */
+  const overallCompleteness: ComputedRef<{ filled: number; total: number; percent: number }> = computed(() => {
+    const total = BUSINESS_COMPLETENESS_FIELDS.length + 1
+    const filled = completeness.value.filled + (knowledgeCompleteness.value.ready > 0 ? 1 : 0)
+    return { filled, total, percent: total ? Math.round((filled / total) * 100) : 0 }
+  })
+
+  /** 读知识库列表；失败只置 `error`、**不抛出**（与 load() / loadBusiness() 同约定） */
+  async function loadKnowledge(projectId: string): Promise<void> {
+    knowledgeLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.knowledge.list(projectId)) as IpcEnvelope<any[]>
+      if (!res?.ok) {
+        knowledge.value = []
+        error.value = envelopeToError(res, '加载知识库失败').message
+        return
+      }
+      const rows = Array.isArray(res.data) ? res.data : []
+      knowledge.value = sortKnowledge(rows.map(toKnowledgeItem))
+    } catch (e) {
+      knowledge.value = []
+      error.value = messageOf(e, '加载知识库失败')
+    } finally {
+      knowledgeLoading.value = false
+    }
+  }
+
+  /**
+   * 导入一条知识（文件 / URL / 文本）。成功后**刷新列表**（upsert 会覆盖既有条目，
+   * 本地列表靠重拉保证与库一致）。失败抛出，`code` 供 UI 分支：
+   *   - `FILE_PARSE_ERROR`（含 `details.reason='scanned-pdf'`）→ 条目标红 + 「重新导入」
+   *   - `VALIDATION_ERROR`（老格式 .doc/.xls）/ `FILE_NOT_FOUND` → 就地提示
+   */
+  async function importKnowledge(
+    projectId: string,
+    input: ImportKnowledgePayload
+  ): Promise<KnowledgeItem> {
+    knowledgeLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.knowledge.import(projectId, input)) as IpcEnvelope<any>
+      if (!res?.ok) throw envelopeToError(res, '导入资料失败')
+      const item = toKnowledgeItem(res.data)
+      const rest = knowledge.value.filter((k) => k.id !== item.id)
+      knowledge.value = sortKnowledge([...rest, item])
+      // 重导入会覆盖同一条（id 不变）但也可能改标题/内容，重拉一次确保列表与库一致
+      await loadKnowledge(projectId)
+      return item
+    } catch (e) {
+      error.value = messageOf(e, '导入资料失败')
+      throw e instanceof Error ? e : new MarketingIpcError('DB_ERROR', error.value)
+    } finally {
+      knowledgeLoading.value = false
+    }
+  }
+
+  /** 删除知识条目（服务端幂等；本地列表同步移除） */
+  async function removeKnowledge(projectId: string, id: string): Promise<void> {
+    knowledgeLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.knowledge.delete(projectId, id)) as IpcEnvelope<any>
+      if (!res?.ok) throw envelopeToError(res, '删除资料失败')
+      knowledge.value = knowledge.value.filter((item) => item.id !== id)
+    } catch (e) {
+      error.value = messageOf(e, '删除资料失败')
+      throw e instanceof Error ? e : new MarketingIpcError('DB_ERROR', error.value)
+    } finally {
+      knowledgeLoading.value = false
+    }
+  }
+
+  /**
+   * 关键词检索（LIKE，中文友好）。**只读**：失败抛出（UI 要能区分「搜不到」与「搜失败」）。
+   * 返回命中片段，不把结果缓存进列表（搜到的不一定是当前 project 的全部资料）。
+   */
+  async function searchKnowledge(projectId: string, query: string, limit?: number): Promise<KnowledgeHit[]> {
+    const res = (await window.api.marketing.knowledge.search(projectId, query, limit)) as IpcEnvelope<any[]>
+    if (!res?.ok) throw envelopeToError(res, '检索资料失败')
+    const rows = Array.isArray(res.data) ? res.data : []
+    return rows.map((row) => ({
+      id: String(row?.id ?? ''),
+      title: String(row?.title ?? ''),
+      snippet: String(row?.snippet ?? '')
+    }))
+  }
+
   return {
     projects,
     currentProjectId,
@@ -545,6 +713,14 @@ export const useMarketingStore = defineStore('marketing', () => {
     loadWatchlist,
     addWatch,
     removeWatch,
-    setWatchEnabled
+    setWatchEnabled,
+    knowledge,
+    knowledgeLoading,
+    knowledgeCompleteness,
+    overallCompleteness,
+    loadKnowledge,
+    importKnowledge,
+    removeKnowledge,
+    searchKnowledge
   }
 })

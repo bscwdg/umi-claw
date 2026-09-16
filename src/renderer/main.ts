@@ -27,8 +27,8 @@ const router = createRouter({
     },
     {
       path: '/marketing/knowledge',
-      component: () => import('../views/marketing/Placeholder.vue'),
-      meta: { title: '知识库', icon: '📚', desc: '商家事实知识：套系、价目、FAQ 等资料入库与检索', commit: 'Commit 05' }
+      component: () => import('../views/marketing/KnowledgeBase.vue'),
+      meta: { title: '知识库', icon: '📚' }
     },
     {
       path: '/marketing/advisor',
