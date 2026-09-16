@@ -281,14 +281,40 @@ export class DatabaseClient {
       await this.sendRaw('ping', {}, 15_000)
       await this.runMigrations()
     } catch (e) {
-      this.ready = false
-      this.readyPromise = null
+      // 初始化失败也必须回收刚 spawn 的 Worker（2026-09-16 复审 P2）：
+      // 不回收的话它会继续持有同一个库文件，下次 ensureReady() 再拉一个 →
+      // 双 Worker 同库，违反单例（硬规则 8），旧进程只能等运行时更新才被清掉。
+      this.reapFailedChild(child)
       throw e instanceof AppError
         ? e
         : new AppError(ERROR_CODES.DB_ERROR, `DB Worker 初始化失败: ${errorText(e)}`)
     }
     this.ready = true
     this.log(`[db] ready pid=${child.pid} db=${dbPath}`)
+  }
+
+  /**
+   * 回收初始化失败的 Worker（2026-09-16 复审 P2 修复）
+   *
+   * 此时 Worker 可能已卡死（ping 超时 / 迁移抛错），发 shutdown 未必有响应，故直接 kill；
+   * 库是 WAL，崩溃安全（验收 W14 已验强杀后 integrity_check=ok）。同时反注册，
+   * 避免注册表里留一个已死条目。
+   */
+  private reapFailedChild(child: ChildProcess): void {
+    if (this.child === child) this.child = null
+    this.ready = false
+    this.readyPromise = null
+    try {
+      this.unregisterSubprocess?.()
+    } catch {
+      /* 反注册失败不影响回收 */
+    }
+    this.unregisterSubprocess = null
+    try {
+      if (child.exitCode === null && child.signalCode === null) child.kill()
+    } catch {
+      /* 可能已退出 */
+    }
   }
 
   /** 启动时把 user_version 推到 TARGET_USER_VERSION（DDL 来自 schema.ts） */

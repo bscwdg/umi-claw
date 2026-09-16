@@ -1,12 +1,13 @@
 # Umi Claw 2.0 施工基线（持续记录）
 
 > 本文档是 2.0 的唯一规划基线，随开发进度持续更新。
-> 基线版本：v1.15 ｜ 更新日期：2026-09-15 ｜ 状态：**Commit 00/01/02 均已通过验收，可开工 03/04**
+> 基线版本：v1.16 ｜ 更新日期：2026-09-16 ｜ 状态：**Commit 00/01/02 均已通过验收（含复审补修），可开工 03/04**
 
 ## 修订记录
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| v1.16 | 2026-09-16 | **外部复审 3 项逐条核实**：①**P2 真缺陷已修** —— Worker 初始化失败（ping 超时 / 迁移抛错）时只置标志位、**未回收刚 spawn 的子进程**，会留下游离 Worker，且下次 `ensureReady()` 再拉一个 → 双 Worker 同库，违反硬规则 8；修法 `reapFailedChild()`（kill + 反注册 + 清 child），并补回归用例 **C13**（负向验证：还原旧代码时 C13 必红）；②**P1 测试脆弱已修** —— `countWorkerProcesses()` 在拿不到 WMI 权限的环境返回 0，导致 C4/C5 **假阴性**；改为查询不可靠时返回 `null`（不可知）并降级 `process.kill(pid, 0)` 判活；③**P3 不成立** —— `electron/preload/index.d.ts` 无需补 `api.marketing`（`Api = typeof api` 从实现推导），探针文件实测 `typecheck:web` 0 错；④`setupGuard.ts` 注释笔误（`channelsInstalled` 指个人微信插件，非企微）。验收脚本现为 **31/31** |
 | v1.15 | 2026-09-15 | **Commit 01/02 完成并过验收**（01 守卫 12/12、02 验收 30/30、`build:win` 出包 + 打包态端到端冒烟），4 项回填：①**发现根 `npm run typecheck` 是空转**（tsconfig 为 `files:[] + references`）→ 新增 `typecheck:node`/`typecheck:web` 逐项目检查后才暴露 6 个被掩盖的真错（已修），后续提交一律走逐项目检查；②IPC 返回信封定为 `{ok:true,data}` / `{ok:false,error:{code,message,details?}}`（§五 信封的超集）；③02 实际落点补记：新增 `database/errors.ts`（§五 错误码表）+ `ipc/` 目录 + `marketing.system` 最小面（dbStatus/ping/metaGet/metaSet，业务 CRUD 仍归 03/04）+ `test/` 验收脚本入仓；④01 守卫抽成独立模块 `src/renderer/setupGuard.ts`（便于自动化验收）。另：打包态实测事实已补入 §六 |
 | v1.14 | 2026-09-15 | **Commit 00 SPIKE 通过（VALIDATED）**，5 项实测结论回填：①⑥=**A 可回放** → **`project_messages` 表作废**、不需回灌，Commit 02 业务表回到 10 张；②`usage` 恒为 0 → Commit 06 上下文预算改用**本地估算**（不能依赖 Gateway token 统计）；③`model` 取值是 `openclaw` / `openclaw/<agentId>`（非 provider 模型 id）+ **端点开关 hot reload 已验**，均写入 Commit 07；④首次非流式 **80.3s 冷启动**、SSE 首字 1.27s → 必须流式 + 07 加预热；⑤新增两条待办：客户端 abort 后服务端是否停止生成、应用 `meta.lastTouchedAt` 被 schema 拒绝（07 顺带修）。另：只读探测确认 Gateway 仅绑 `127.0.0.1` |
 | v1.13 | 2026-09-15 | 第五份评审 5 项全部核实属实并修复：①**依赖倒置**——Watchlist 的 AI 扩词依赖 Gateway（07），原写在 04（依赖 02/03）不成立，改为 04 只做手工增删 + 行业预设词 + 上限 10 词（3d→2.5d），AI 扩词移到 08（1.5d→2d），总盘不变；②**发布标记落字段**——`contents` 增 `published_at` + `effect_note`（不新增布尔列，复用 `status='published'`，避免两个真相来源）；③**Context Pack 补 `watchlist[]`**，06 行同步；④`origin` 标注 `watch` 为 2.1 预留（一期不产生）；⑤**完整度卡片范围**——04 只统计 Business 维度，Knowledge 维度随 05 接入 |
@@ -486,7 +487,7 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 [—] CLI / 直连对比：主路线已判定 Primary，未单独测（直连保留 Fallback）
 ```
 
-### Commit 02 验收（✅ 2026-09-15 全部通过；`npm run accept:db` 一键重跑）
+### Commit 02 验收（✅ 2026-09-15 通过，2026-09-16 复审补 C13 后 **31/31**；`npm run accept:db` 一键重跑）
 
 ```text
 [x] 惰性初始化：首次 marketing IPC 才拉 Worker 建库 —— C2 dbExists=false / C3 tables=11 + uv=1 + wal；应用启动不建库、不阻塞
@@ -501,6 +502,8 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
     —— 复现脚本 `test/packaged-smoke.mjs`
 [x] VACUUM INTO 备份链路可用、保留最近 5 份 —— W13 / C9
 [x] data/openclaw、data/runtime 零影响；既有安装实例全程不受影响 —— 仓库 data/ 无改动
+
+[x] 初始化失败回收 Worker：不留游离进程、可安全重试 —— C13（v1.16 复审 P2 修复的回归用例；负向验证：还原旧代码时 C13 判红）
 
 ⏳ 未覆盖（北已拍板不单独补，v1.15）：
 [—] 真 NSIS 安装 + GUI 点击流：跑的是等价 win-unpacked 产物；03 完成后一次性人工过

@@ -20,7 +20,7 @@ export interface SetupGuardDeps {
  * 约定（PLAN-2.0.md 第八节）：
  * - **模块级缓存**：env.check() 每个守卫实例只调一次，避免每次导航都走 IPC；
  * - 未完成判定 = `nodeInstalled && openClawInstalled`，**不含 channelsInstalled**
- *   （其语义是企微插件是否存在，与「能不能跑起来」无关）；
+ *   （其语义是个人微信插件 @tencent-weixin/openclaw-weixin 是否就位，与「能不能跑起来」无关）；
  * - 目标已是 `/setup` 直接放行；
  * - env.check 异常**放行**（绝不因探测失败把用户锁死）；
  * - 重定向用 `replace`，避免用户按返回键来回弹；

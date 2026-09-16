@@ -66,7 +66,13 @@ function killPid(pid) {
   }
 }
 
-/** 数一数真实存在的 worker 进程数（Windows 用 CIM 按命令行精确匹配本次 db 路径） */
+/**
+ * 数一数真实存在的 worker 进程数（Windows 用 CIM 按命令行精确匹配本次 db 路径）
+ *
+ * ⚠️ 2026-09-16 复审 P1：受限环境（拿不到 WMI 权限、沙箱）下 CIM 会「拒绝访问」，
+ * stdout 为空、计数恒为 0 —— 那是环境问题，不能当成「多起了一个 Worker」的功能回归。
+ * 所以查询不可靠时一律返回 null（不可知），由调用方降级成 PID 判活。
+ */
 function countWorkerProcesses() {
   if (process.platform !== 'win32') return null
   const needle = dbPath.replace(/'/g, "''")
@@ -77,8 +83,31 @@ function countWorkerProcesses() {
     encoding: 'utf-8',
     windowsHide: true
   })
-  const n = parseInt(String(out.stdout || '').trim(), 10)
-  return Number.isFinite(n) ? n : null
+  const text = String(out.stdout || '').trim()
+  const n = parseInt(text, 10)
+  if (out.error || out.status !== 0 || text === '' || !Number.isFinite(n)) return null
+  return n
+}
+
+/** 进程判活：不依赖 WMI，权限无关（ESRCH=不存在；EPERM=存在但无权限） */
+function isPidAlive(pid) {
+  if (typeof pid !== 'number' || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e) {
+    return !!(e && e.code === 'EPERM')
+  }
+}
+
+/** 等 pid 真的消失（给 OS 回收时间），返回是否已消失 */
+async function waitPidGone(pid, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return true
+    await sleep(100)
+  }
+  return !isPidAlive(pid)
 }
 
 function direct(dbFile, fn) {
@@ -148,6 +177,10 @@ try {
     assertEq(cnt.count, 1, '写入应落库')
     assertEq(main.workerPid, pid0, 'worker pid 应保持不变（没有反复 spawn）')
     const live = countWorkerProcesses()
+    if (live === null) {
+      assert(isPidAlive(pid0), 'CIM 不可用，降级 PID 判活：worker 应仍活着')
+      return `pid=${pid0} 20 次调用后 pid 未变；OS 进程数不可知（本环境 CIM 不可用，已降级 PID 判活）`
+    }
     assertEq(live, 1, `OS 层应只有 1 个 worker 进程（实际 ${live}）`)
     return `pid=${pid0} 20 次调用后 OS 进程数=${live}`
   })
@@ -199,7 +232,11 @@ try {
     assert(pidAfter !== null && pidAfter !== pidBefore, '应已自动重启（pid 变化）')
     assertEq(main.lastExitInfo !== null, true, '应记录到 worker 异常退出')
     const live = countWorkerProcesses()
-    assertEq(live, 1, `重启后仍应只有 1 个 worker 进程（实际 ${live}）`)
+    if (live === null) {
+      assert(isPidAlive(pidAfter), 'CIM 不可用，降级 PID 判活：重启后的 worker 应活着')
+    } else {
+      assertEq(live, 1, `重启后仍应只有 1 个 worker 进程（实际 ${live}）`)
+    }
     return `pid ${pidBefore} → ${pidAfter}；写=${writeOutcome.code}(reason=${writeOutcome.reason})，读重试成功(${readOutcome.n} 行)`
   })
 
@@ -380,6 +417,59 @@ try {
     await wired.dispose()
     clients.delete(wired)
     return `注册/优雅停止/反注册/重新注册 全链路通过（pid=${list[0].pid}）`
+  })
+
+  // ── C13 初始化失败不得留下游离 Worker（2026-09-16 复审 P2 回归） ──
+  await r.check('C13', '初始化失败回收 Worker：不留游离进程、可安全重试', async () => {
+    const badDir = join(altDir, 'badver')
+    mkdirSync(badDir, { recursive: true })
+    const badDb = join(badDir, 'umi-claw.db')
+    // 造一个 user_version 高于应用支持值的库：ping 会成功，迁移前置校验抛错 →
+    // 精确覆盖「spawn 成功但初始化失败」这条路径
+    direct(badDb, (db) => db.exec('PRAGMA user_version = 99'))
+
+    const spawned = []
+    let unregistered = 0
+    const client = new DatabaseClient({
+      dbPath: badDb,
+      backupDir: join(badDir, 'backup'),
+      workerScriptPath,
+      nodePath,
+      subprocessName: 'marketing-db-worker-badver',
+      onSpawn: (info) => {
+        spawned.push(info.pid)
+        return () => {
+          unregistered += 1
+        }
+      }
+    })
+    clients.add(client)
+
+    const outcome = await client.dbStatus({ initialize: true }).then(
+      () => ({ ok: true }),
+      (e) => ({ ok: false, code: e.code })
+    )
+    assertEq(outcome.ok, false, 'user_version 过高应导致初始化失败')
+    assertEq(outcome.code, 'DB_ERROR', '错误码应为 DB_ERROR')
+    assertEq(spawned.length, 1, '应 spawn 过 1 个 Worker')
+    assertEq(client.workerPid, null, '失败后客户端不应再持有 child')
+    assertEq(client.isReady, false, '失败后不应 ready')
+    assertEq(unregistered, 1, '应反注册（注册表不留死条目）')
+    assertEq(await waitPidGone(spawned[0]), true, `失败后不得留下游离 Worker（pid=${spawned[0]}）`)
+
+    // 可重试：再次请求仍是同一个错误码，且每次失败都要回收
+    const again = await client.ping().then(
+      () => ({ ok: true }),
+      (e) => ({ ok: false, code: e.code })
+    )
+    assertEq(again.ok, false, '重试仍应失败')
+    for (const pid of spawned) {
+      assertEq(await waitPidGone(pid), true, `每次失败都应回收（pid=${pid} 仍活着）`)
+    }
+    assertEq(client.workerPid, null, '重试失败后同样不应持有 child')
+    clients.delete(client)
+    await client.dispose().catch(() => {})
+    return `spawned=${spawned.length} 全部已回收；code=${outcome.code} unregistered=${unregistered}`
   })
 } catch (e) {
   console.error('验收脚本自身异常:', e)
