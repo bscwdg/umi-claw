@@ -127,8 +127,9 @@ const api = {
     }
   },
 
-  // marketing（Commit 02：仅 system 面；CRUD 归 03/04）
+  // marketing（Commit 02：system 面；Commit 03：project CRUD + context 切换）
   // 统一返回信封：{ ok: true, data } | { ok: false, error: { code, message, details? } }
+  // 渲染端按 error.code 分支，禁止用 error.message.includes() 判断
   marketing: {
     system: {
       dbStatus: (options?: { initialize?: boolean }) =>
@@ -137,6 +138,22 @@ const api = {
       metaGet: (key: string) => ipcRenderer.invoke('marketing:system:metaGet', key),
       metaSet: (key: string, value: string | null) =>
         ipcRenderer.invoke('marketing:system:metaSet', key, value)
+    },
+    project: {
+      list: () => ipcRenderer.invoke('marketing:project:list'),
+      get: (projectId: string) => ipcRenderer.invoke('marketing:project:get', projectId),
+      create: (input: { name: string; industry?: string | null; description?: string | null }) =>
+        ipcRenderer.invoke('marketing:project:create', input),
+      update: (
+        projectId: string,
+        patch: { name?: string; industry?: string | null; description?: string | null }
+      ) => ipcRenderer.invoke('marketing:project:update', projectId, patch),
+      delete: (projectId: string) => ipcRenderer.invoke('marketing:project:delete', projectId)
+    },
+    context: {
+      getCurrentProject: () => ipcRenderer.invoke('marketing:context:getCurrentProject'),
+      setCurrentProject: (projectId: string | null) =>
+        ipcRenderer.invoke('marketing:context:setCurrentProject', projectId)
     }
   },
 

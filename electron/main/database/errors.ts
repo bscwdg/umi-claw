@@ -56,11 +56,35 @@ export function isAppError(e: unknown): e is AppError {
   return e instanceof AppError
 }
 
+/**
+ * 提取 §五 错误码，**不依赖 `instanceof`**。
+ *
+ * `AppError` 的类身份取决于模块实例：生产构建里 rollup 可能把 `errors.ts` 拆进不同 chunk，
+ * 测试里各模块也各自 bundle —— 那些情况下 `instanceof` 会**假阴性**，把上游的
+ * SETUP_REQUIRED / NOT_FOUND 静默降级成 DB_ERROR；而渲染端是**按 code 分支**的（§五），
+ * 前端会因此丢掉「去环境初始化」「该商家不存在」这些分支。
+ *
+ * 因此以「§五 合法码」作为判据，`instanceof` 只作为第一优先。
+ */
+export function errorCodeOf(e: unknown): ErrorCode | null {
+  if (isAppError(e)) return e.code
+  const code = (e as { code?: unknown } | null | undefined)?.code
+  if (typeof code === 'string' && Object.prototype.hasOwnProperty.call(ERROR_CODES, code)) {
+    return code as ErrorCode
+  }
+  return null
+}
+
 /** 任意异常 → 统一信封（未知异常兜底 DB_ERROR，不把原始堆栈泄漏给渲染端） */
 export function toErrorEnvelope(e: unknown): ErrorEnvelope {
-  if (isAppError(e)) {
-    const env: ErrorEnvelope = { code: e.code, message: e.message }
-    if (e.details !== undefined) env.details = e.details
+  const code = errorCodeOf(e)
+  if (code) {
+    const env: ErrorEnvelope = {
+      code,
+      message: e instanceof Error && e.message ? e.message : String(e)
+    }
+    const details = (e as { details?: unknown } | null | undefined)?.details
+    if (details !== undefined) env.details = details
     return env
   }
   const message = e instanceof Error ? e.message : String(e)

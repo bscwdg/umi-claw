@@ -69,12 +69,36 @@
             <div class="marketing-title">当前商家</div>
             <div class="text-sm text-muted">Business Brain</div>
           </div>
+          <span v-if="marketing.currentProject" class="badge badge-green">进行中</span>
         </div>
-        <div class="marketing-body text-sm text-muted">
-          尚未接入商家数据。选择或创建 Project、填写商家基本盘后，这里会显示当前商家与资料完整度。
+
+        <div v-if="marketing.currentProject" class="marketing-body">
+          <div class="biz-name">
+            {{ marketing.currentProject.name }}
+            <span v-if="marketing.currentProject.industry" class="badge">
+              {{ marketing.currentProject.industry }}
+            </span>
+          </div>
+          <div class="text-sm text-muted">
+            {{ marketing.currentProject.description || '还没有描述 —— 去商家大脑补充定位与客群，AI 才会更懂你' }}
+          </div>
+          <div class="text-sm text-muted" style="margin-top:6px">
+            共 {{ marketing.projects.length }} 个商家 · 创建于 {{ formatDate(marketing.currentProject.created_at) }}
+          </div>
         </div>
+        <div v-else class="marketing-body text-sm text-muted">
+          还没有选择商家。每个商家 = 一个独立工作空间（资料 / 知识库 / 内容互相隔离）。
+        </div>
+
         <div class="marketing-actions">
-          <button class="btn btn-sm" @click="router.push('/marketing/business')">
+          <button class="btn btn-sm btn-primary" @click="switcher.show()">
+            {{ marketing.currentProject ? '切换 / 新建商家' : '＋ 新建商家' }}
+          </button>
+          <button
+            class="btn btn-sm"
+            :disabled="!marketing.currentProject"
+            @click="router.push('/marketing/business')"
+          >
             打开商家大脑
           </button>
         </div>
@@ -168,15 +192,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useClawStore } from '@/stores/claw'
 import { useConfigStore } from '@/stores/config'
+import { useMarketingStore } from '@/stores/marketing'
+import { useProjectSwitcher } from '@/composables/useProjectSwitcher'
 import { useToast } from '@/composables/useToast'
 
 const router = useRouter()
 const clawStore = useClawStore()
 const configStore = useConfigStore()
+const marketing = useMarketingStore()
+const switcher = useProjectSwitcher()
 const api = window.api
 const shell = window.api.shell
 const loading = ref(false)
@@ -277,6 +305,16 @@ function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false })
 }
 
+function formatDate(ts: number) {
+  if (!ts) return '--'
+  return new Date(ts).toLocaleDateString('zh-CN')
+}
+
+// Commit 03：当前商家卡片读真实数据（侧边栏切关器挂载时也会 load，这里只补空数据兜底）
+onMounted(() => {
+  if (!marketing.projects.length) marketing.load()
+})
+
 // 加载技能数量：与「技能管理」页同源，统计便携式 skills 目录下扫描到的技能总数
 window.api.skills.getInstalledSkills().then((s) => (skillCount.value = s.length))
 </script>
@@ -335,6 +373,15 @@ window.api.skills.getInstalledSkills().then((s) => (skillCount.value = s.length)
 .marketing-icon { font-size: 22px; }
 .marketing-title { font-size: 15px; font-weight: 600; }
 .marketing-body { line-height: 1.6; flex: 1; }
+.biz-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
 .marketing-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 .stats-grid {

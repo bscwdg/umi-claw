@@ -1,12 +1,13 @@
 # Umi Claw 2.0 施工基线（持续记录）
 
 > 本文档是 2.0 的唯一规划基线，随开发进度持续更新。
-> 基线版本：v1.16 ｜ 更新日期：2026-09-16 ｜ 状态：**Commit 00/01/02 均已通过验收（含复审补修），可开工 03/04**
+> 基线版本：v1.17 ｜ 更新日期：2026-09-16 ｜ 状态：**Commit 00/01/02/03 均已通过验收，可开工 04**
 
 ## 修订记录
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| v1.17 | 2026-09-16 | **Commit 03 完成**（Project CRUD + conversation_key 生成 + 切换持久化 app_meta）：`marketing/projectManager.ts` + `marketing:project:*` / `marketing:context:*` 七条通道 + Pinia store + 侧边栏切关器；验收 **18/18** 且**打包态端到端**通过（新建 → 设为当前 → 优雅退出 → **重启后仍是当前商家** → 改名时 key/created_at 不变 → 删除后目录/行/current 三者全清）。**新发现回填**：`isAppError()` 的 `instanceof` 在**模块实例不唯一**时假阴性（测试各模块各自 bundle；生产里 rollup 可能把 `errors.ts` 拆进不同 chunk），会把 SETUP_REQUIRED / NOT_FOUND 静默降级成 DB_ERROR，而渲染端按 code 分支 —— 已把 `errorCodeOf()` 上提到 `errors.ts` 供所有 Manager 复用，并修掉 `toErrorEnvelope()` 同类假阴性 |
 | v1.16 | 2026-09-16 | **外部复审 3 项逐条核实**：①**P2 真缺陷已修** —— Worker 初始化失败（ping 超时 / 迁移抛错）时只置标志位、**未回收刚 spawn 的子进程**，会留下游离 Worker，且下次 `ensureReady()` 再拉一个 → 双 Worker 同库，违反硬规则 8；修法 `reapFailedChild()`（kill + 反注册 + 清 child），并补回归用例 **C13**（负向验证：还原旧代码时 C13 必红）；②**P1 测试脆弱已修** —— `countWorkerProcesses()` 在拿不到 WMI 权限的环境返回 0，导致 C4/C5 **假阴性**；改为查询不可靠时返回 `null`（不可知）并降级 `process.kill(pid, 0)` 判活；③**P3 不成立** —— `electron/preload/index.d.ts` 无需补 `api.marketing`（`Api = typeof api` 从实现推导），探针文件实测 `typecheck:web` 0 错；④`setupGuard.ts` 注释笔误（`channelsInstalled` 指个人微信插件，非企微）。验收脚本现为 **31/31** |
 | v1.15 | 2026-09-15 | **Commit 01/02 完成并过验收**（01 守卫 12/12、02 验收 30/30、`build:win` 出包 + 打包态端到端冒烟），4 项回填：①**发现根 `npm run typecheck` 是空转**（tsconfig 为 `files:[] + references`）→ 新增 `typecheck:node`/`typecheck:web` 逐项目检查后才暴露 6 个被掩盖的真错（已修），后续提交一律走逐项目检查；②IPC 返回信封定为 `{ok:true,data}` / `{ok:false,error:{code,message,details?}}`（§五 信封的超集）；③02 实际落点补记：新增 `database/errors.ts`（§五 错误码表）+ `ipc/` 目录 + `marketing.system` 最小面（dbStatus/ping/metaGet/metaSet，业务 CRUD 仍归 03/04）+ `test/` 验收脚本入仓；④01 守卫抽成独立模块 `src/renderer/setupGuard.ts`（便于自动化验收）。另：打包态实测事实已补入 §六 |
 | v1.14 | 2026-09-15 | **Commit 00 SPIKE 通过（VALIDATED）**，5 项实测结论回填：①⑥=**A 可回放** → **`project_messages` 表作废**、不需回灌，Commit 02 业务表回到 10 张；②`usage` 恒为 0 → Commit 06 上下文预算改用**本地估算**（不能依赖 Gateway token 统计）；③`model` 取值是 `openclaw` / `openclaw/<agentId>`（非 provider 模型 id）+ **端点开关 hot reload 已验**，均写入 Commit 07；④首次非流式 **80.3s 冷启动**、SSE 首字 1.27s → 必须流式 + 07 加预热；⑤新增两条待办：客户端 abort 后服务端是否停止生成、应用 `meta.lastTouchedAt` 被 schema 拒绝（07 顺带修）。另：只读探测确认 Gateway 仅绑 `127.0.0.1` |
@@ -447,7 +448,7 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 | 00 | SPIKE：Gateway Client 原型 —— **✅ 2026-09-15 通过（VALIDATED / Primary）** | 开 chatCompletions → 完整链路 5 场景 + 多模态/模型选择 + CLI/直连快速对比 → **结论：Primary = Gateway HTTP；直连保留 Fallback；⑥=A 不建 project_messages；`usage` 恒 0（06 改本地估算）；`model`=`openclaw`/`openclaw/<agentId>`；SSE 首字 1.27s / 冷启动 80s（07 加预热）** | 0.5d | — | | ⬜ |
 | 01 | UI / 导航骨架 —— **✅ 2026-09-15 完成** | Sidebar 4 组（工作台/营销5/OpenClaw6/系统2，to 值不变）、Dashboard 三卡（状态卡 + 当前商家 + AI 营销）、`/marketing/*` 5 条占位路由（共用 `Placeholder.vue`）、**首启 Setup 守卫**（独立模块 `setupGuard.ts`，判定 `nodeInstalled && openClawInstalled`）+ Setup 完成后 reload、10 条旧路由保留 | 1.5d | —（与 02 并行） | | ✅ |
 | 02 | DB Worker + 构建 —— **✅ 2026-09-15 完成** | schema/migration + `db-worker.mjs` 单例（零依赖 JSONL，84 白名单方法）+ `database.ts` 客户端（惰性初始化/队列/30s 超时/断线重启/读重试写不重试）+ 子进程注册表接入（`_stopRuntimeProcesses` 前置优雅停止）；**`build:win` 出包（81.8MB）+ 打包态端到端冒烟通过（验收见下）** | 2d | —（与 01 并行） | | ✅ |
-| 03 | Project | projectManager + store + CRUD + conversation_key 生成 + 切换持久化 app_meta | 1d | 02 | | ⬜ |
+| 03 | Project —— **✅ 2026-09-16 完成** | projectManager + store + CRUD + conversation_key 生成 + 切换持久化 app_meta（落点与验收见下） | 1d | 02 | | ✅ |
 | 04 | Business | businessManager + BusinessBrain.vue + 摄影行业首套字段 + upsert/级联删除验收 + **资料完整度卡片（Business 维度，v1.12）** + **Watchlist：手工增删 / 行业预设词 / 上限 10 词 / 不采集（v1.12；AI 扩词 v1.13 移出至 08）** | 2.5d | 02、03 | | ⬜ |
 | 05 | Knowledge（仅 05a） | knowledgeManager + KnowledgeBase.vue + 文字层文档解析（docx/xlsx/pdf）+ 导入/重导入 + LIKE 检索（边界见下）；**05b 已拆出，排到 07 之后**；**接入资料完整度卡片的 Knowledge 维度（v1.13）** | 2.5d | 02、03 | | ⬜ |
 | 06 | Context Engine | Business + Knowledge + **Watchlist** + Platform → Context Pack | 1d | 00、04、05 | | ⬜ |
@@ -460,6 +461,37 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 | 12 | AI 商家匹配 | 当前 project × 平台懒评分（≤30 条/次、近 7 天在榜、24h TTL；**待评超 30 条按 heat 取前 30，每次打开雷达续评一批直到评完**）+ JSON 落库 + 部分失败容错 + 整体失败降级裸榜 + 分组（🔥/👀/❌ + **⏳ 待分析**）+ 手动重新分析 + 事实护栏；**雷达顶部「今日建议」摘要（1 条主推 + 理由 + 时机）（v1.12）** | 2d | 06、07、11 | | ⬜ |
 
 顺序备注：00 必须第一；**01 与 02 互不依赖、可并行**；03/04/05 依赖 02；06 必须在 00 结论之后；07 之后插入 05b（可与 08 并行），08/09/10 顺序推进；**11 是纯工程，02 完成后即可与 03-06 并行（跳转按钮占位到 09）；12 必须在 06/07/11 之后**。一期做完再整体测试，后续迭代优化。
+
+### Commit 03 落点与验收（✅ 2026-09-16）
+
+```text
+electron/main/marketing/projectManager.ts    新增（注入式依赖，不 import electron，纯 Node 可 bundle 测试）
+electron/main/ipc/{marketing,index}.ts       新增 marketing:project:* / marketing:context:* 通道
+electron/preload/index.ts                    api.marketing.project.{list,get,create,update,delete}
+                                             api.marketing.context.{getCurrentProject,setCurrentProject}
+electron/main/index.ts                       工厂 + wiring（dataDir / DatabaseClient / logger）
+src/stores/marketing.ts                      新增 Pinia store
+src/views/components/ProjectSwitcher.vue     新增：侧边栏切关器（切换 / 新建 / 重命名 / 删除 + 危险确认弹窗）
+src/composables/useProjectSwitcher.ts        新增：切关器开关单例（工作台卡片可复用同一面板）
+src/App.vue / src/views/Dashboard.vue        挂载切关器；「当前商家」卡接真实数据
+test/project.accept.mjs + `npm run accept:project`   18 项验收（打真 projectManager.ts）
+```
+
+**验收（独立复跑）**：`accept:project` **18/18**；`typecheck:node` / `typecheck:web` 0 错；Commit 02 回归 `accept:db` **31/31** 不受影响。
+
+**打包态端到端（真安装包产物 + CDP 驱动真渲染进程调真 IPC，非替身）**：
+新建 `E2E 摄影工作室`（id / conversation_key 均为 uuid，`data/projects/<id>/` 已建）→ 设为当前 →
+**优雅退出**（WAL 截断）→ **重启后当前商家仍是它** → 改名（`conversation_key` / `created_at` 不变，current 仍指同一 id）→
+删除（`dirRemoved` / `rowDeleted` / `currentCleared` 全 true，列表清空、目录消失）。复现脚本 `test/packaged-smoke.mjs`。
+
+**关键设计决策**
+
+- 删除顺序逐字按 §十：**目录删不掉时行必然还在**（P12 实测：占用期回 `DB_ERROR(project-dir-remove-failed)` + 行与子数据保留 + 释放句柄后重试成功）；顺序反了行就没了。
+- `currentBefore` 必须在删行**之前**取，否则拿不到「原本指向谁」这个事实；清空失败不反转已成功的删除，残留悬空指针由读路径自愈兜底。
+- `conversation_key` 创建即定、`update` 白名单外一律 VALIDATION_ERROR（静默丢弃会变成「改了但没生效」的幽灵 bug）；删除后同名重建拿**新键**，绝不复活旧键。
+- `Project` 契约**不含 conversation_key** —— §六 的 `user=conv:<projectId>:<key>` 拼装在主进程（硬规则 13），渲染端拿不到也不需要。
+
+⏳ **未覆盖**：①「删行失败」分支需在 DELETE 执行中途让 Worker 崩溃（竞态不可靠），仅代码审阅；②store 的三条降级语义（load 部分降级 / create 后 select 失败仍返回 project / remove 同步本地 current）无单测（仓库无 vitest）；③UI 点击流本机无桌面通道未做（IPC 面已由打包端到端覆盖）。
 
 ### Commit 11 数据源 SPIKE（v1.12 新增）
 
@@ -589,6 +621,7 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 | 13 | v1.13 依赖/字段/上下文补齐 5 项 | ✅ 2026-09-15 全部并入：①AI 扩词 04→08（依赖倒置）②contents 补 `published_at`/`effect_note` ③Context Pack 加 `watchlist[]` ④`origin=watch` 标 2.1 预留 ⑤完整度卡片 Knowledge 维度随 05 接入 |
 | 14 | 客户端 abort 后**服务端是否停止生成** | ⬜ 待 07 验证（关系到 08/09 停止生成是否真的省 token）|
 | 16 | **根 `npm run typecheck` 空转**（tsconfig 为 `files:[] + references`，什么都没检查） | ✅ v1.15 已补 `typecheck:node` / `typecheck:web`（逐项目检查暴露 6 个被掩盖的真错并修复）；后续提交一律走逐项目检查 |
+| 17 | Commit 03 三条未覆盖项（删行失败分支 / store 降级语义无单测 / UI 点击流） | ⬜ 见「Commit 03 落点与验收」；均已在代码层说明，未做执行证据 |
 | 15 | 应用写 `meta.lastTouchedAt` / `lastTouchedVersion:'latest'` 被 schema 拒绝 | ⬜ 待 07 顺带修（`configManager.ts:703-707`、`downloadManager.ts:1451-1452`）；实测 OpenClaw 启动时会自愈，后果较轻 |
 
 ## 十、概念备忘

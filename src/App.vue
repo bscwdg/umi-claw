@@ -29,6 +29,9 @@
           {{ clawStore.running ? 'OpenClaw 运行中' : 'OpenClaw 已停止' }}
         </div>
 
+        <!-- 当前商家（Commit 03：Project 切换/新建/重命名/删除） -->
+        <ProjectSwitcher />
+
         <!-- 导航（分组） -->
         <nav class="nav">
           <template v-for="group in navGroups" :key="group.title">
@@ -89,6 +92,7 @@ import { onMounted, onUnmounted, ref } from 'vue'
 import { useClawStore } from '@/stores/claw'
 import { useConfigStore } from '@/stores/config'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
+import ProjectSwitcher from '@/views/components/ProjectSwitcher.vue'
 
 const api = window.api
 const clawStore = useClawStore()

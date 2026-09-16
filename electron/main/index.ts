@@ -21,6 +21,7 @@ import { openClawPaths, buildOpenClawEnv } from './openClawPaths'
 import { DatabaseClient } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
 import { registerMarketingIpc } from './ipc'
+import { createProjectManager, type ProjectManager } from './marketing/projectManager'
 import { readFileSync, existsSync } from 'fs'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import type { TerminalRuntime } from '../../src/types/terminal'
@@ -41,6 +42,8 @@ let obsidianManager: ObsidianManager
 // marketing DB Worker 客户端（Commit 02）。构造是廉价的：惰性初始化，
 // 应用启动不建库、不拉 Worker，首次 marketing IPC 才 spawn。
 let marketingDatabase: DatabaseClient | null = null
+// marketing Project 层（Commit 03）：只依赖 DatabaseClient + dataDir，构造零 IO 副作用。
+let marketingProjectManager: ProjectManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -373,6 +376,18 @@ function createMarketingDatabase(): DatabaseClient {
     subprocessName: 'marketing-db-worker',
     // 启动即注册（§四 子进程注册表）：_stopRuntimeProcesses / 退出清理先优雅停
     onSpawn: (info) => subprocessRegistry.register(info),
+    logger: (message) => console.log(message)
+  })
+}
+
+/**
+ * 构造 Project 管理器（Commit 03）：dataDir 决定 `data/projects/<id>/` 的落点，
+ * 与 DB Worker 共用同一个 DatabaseClient 单例（硬规则 8）。
+ */
+function createMarketingProjectManager(database: DatabaseClient): ProjectManager {
+  return createProjectManager({
+    database,
+    dataDir: configManager.getDataDir(),
     logger: (message) => console.log(message)
   })
 }
@@ -838,8 +853,8 @@ function registerIpcHandlers(): void {
   // 检索测试：失败时抛出，由渲染进程统一捕获展示
   ipcMain.handle('obsidian:testSearch', async (_e, arg) => obsidianManager.testSearch(arg))
 
-  // ── marketing（Commit 02：仅 system 面；CRUD 归 03/04） ──
-  registerMarketingIpc(marketingDatabase!)
+  // ── marketing（Commit 02：system 面；Commit 03：project / context 面） ──
+  registerMarketingIpc(marketingDatabase!, marketingProjectManager!)
 
 }
 
@@ -972,6 +987,8 @@ app.whenReady().then(() => {
   obsidianManager = new ObsidianManager(configManager)
   // marketing DB Worker 客户端（惰性：构造时不建库、不 spawn）
   marketingDatabase = createMarketingDatabase()
+  // marketing Project 管理器（无 IO 副作用；首次 IPC 才触碰文件系统/数据库）
+  marketingProjectManager = createMarketingProjectManager(marketingDatabase)
   // 注入 Obsidian MCP 配置生成器：_syncOpenClawConfig 写回 openclaw.json 时调用
   configManager.setObsidianMcpInjector(() => obsidianManager.buildMcpServerConfig())
 
