@@ -70,15 +70,19 @@ function killPid(pid) {
  * 数一数真实存在的 worker 进程数（Windows 用 CIM 按命令行精确匹配本次 db 路径）
  *
  * ⚠️ 2026-09-16 复审 P1：受限环境（拿不到 WMI 权限、沙箱）下 CIM 会「拒绝访问」，
- * stdout 为空、计数恒为 0 —— 那是环境问题，不能当成「多起了一个 Worker」的功能回归。
- * 所以查询不可靠时一律返回 null（不可知），由调用方降级成 PID 判活。
+ * 那是环境问题，不能当成「多起了一个 Worker」的功能回归。
+ * 坑：Get-CimInstance 的 0x80041003 是**非终止错误**，管道照样吐出 0、exit=0，
+ * 故必须 $ErrorActionPreference='Stop' + try/catch，把失败显式变成空输出；
+ * 查询不可靠时一律返回 null（不可知），由调用方降级成 PID 判活。
  */
 function countWorkerProcesses() {
   if (process.platform !== 'win32') return null
   const needle = dbPath.replace(/'/g, "''")
   const ps =
+    `$ErrorActionPreference='Stop'; try { ` +
     `(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | ` +
-    `Where-Object { $_.CommandLine -like '*${needle}*' } | Measure-Object).Count`
+    `Where-Object { $_.CommandLine -like '*${needle}*' } | Measure-Object).Count ` +
+    `} catch { '' }`
   const out = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], {
     encoding: 'utf-8',
     windowsHide: true

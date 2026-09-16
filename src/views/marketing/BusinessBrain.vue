@@ -28,7 +28,7 @@
         每个商家 = 一个独立工作空间。新建一个（或切换一个）之后，这里会记录它的定位、客群与语气 ——
         这些是 AI 写内容、做问答时最先用到的上下文。
       </p>
-      <button class="btn btn-primary" @click="switcher.show()">打开商家切关器</button>
+      <button class="btn btn-primary" @click="switcher.show()">打开商家切换器</button>
     </div>
 
     <template v-else>

@@ -8,7 +8,7 @@
 | 版本 | 日期 | 要点 |
 |------|------|------|
 | v1.18 | 2026-09-16 | **Commit 04 完成**（Business 1:1 + 资料完整度 + Watchlist）：`marketing/businessManager.ts`（BusinessManager + WatchlistManager）+ `marketing:business:*` / `marketing:watchlist:*` + `BusinessBrain.vue`（完整度卡 + 基本盘表单 + 关注词区）+ 摄影行业预设；验收 **16/16**，**打包态端到端**通过（存资料 → Watchlist 满 10 后第 11 个被拒 → 重启资料与关注词全在 → 删 Project 级联清空，并用直读库核对 `businesses=0 / project_watchlist=0 / current=null / integrity=ok`）；回归 `accept:db` 31/31、`accept:project` 18/18 不受影响。**口径拍板**：完整度 = `name/brand/city/positioning/target_customer/tone` 六项等权（**排除 address/phone**，联系方式不属于「AI 认识你」的语义信息） |
-| v1.17 | 2026-09-16 | **Commit 03 完成**（Project CRUD + conversation_key 生成 + 切换持久化 app_meta）：`marketing/projectManager.ts` + `marketing:project:*` / `marketing:context:*` 七条通道 + Pinia store + 侧边栏切关器；验收 **18/18** 且**打包态端到端**通过（新建 → 设为当前 → 优雅退出 → **重启后仍是当前商家** → 改名时 key/created_at 不变 → 删除后目录/行/current 三者全清）。**新发现回填**：`isAppError()` 的 `instanceof` 在**模块实例不唯一**时假阴性（测试各模块各自 bundle；生产里 rollup 可能把 `errors.ts` 拆进不同 chunk），会把 SETUP_REQUIRED / NOT_FOUND 静默降级成 DB_ERROR，而渲染端按 code 分支 —— 已把 `errorCodeOf()` 上提到 `errors.ts` 供所有 Manager 复用，并修掉 `toErrorEnvelope()` 同类假阴性 |
+| v1.17 | 2026-09-16 | **Commit 03 完成**（Project CRUD + conversation_key 生成 + 切换持久化 app_meta）：`marketing/projectManager.ts` + `marketing:project:*` / `marketing:context:*` 七条通道 + Pinia store + 侧边栏切换器；验收 **18/18** 且**打包态端到端**通过（新建 → 设为当前 → 优雅退出 → **重启后仍是当前商家** → 改名时 key/created_at 不变 → 删除后目录/行/current 三者全清）。**新发现回填**：`isAppError()` 的 `instanceof` 在**模块实例不唯一**时假阴性（测试各模块各自 bundle；生产里 rollup 可能把 `errors.ts` 拆进不同 chunk），会把 SETUP_REQUIRED / NOT_FOUND 静默降级成 DB_ERROR，而渲染端按 code 分支 —— 已把 `errorCodeOf()` 上提到 `errors.ts` 供所有 Manager 复用，并修掉 `toErrorEnvelope()` 同类假阴性 |
 | v1.16 | 2026-09-16 | **外部复审 3 项逐条核实**：①**P2 真缺陷已修** —— Worker 初始化失败（ping 超时 / 迁移抛错）时只置标志位、**未回收刚 spawn 的子进程**，会留下游离 Worker，且下次 `ensureReady()` 再拉一个 → 双 Worker 同库，违反硬规则 8；修法 `reapFailedChild()`（kill + 反注册 + 清 child），并补回归用例 **C13**（负向验证：还原旧代码时 C13 必红）；②**P1 测试脆弱已修** —— `countWorkerProcesses()` 在拿不到 WMI 权限的环境返回 0，导致 C4/C5 **假阴性**；改为查询不可靠时返回 `null`（不可知）并降级 `process.kill(pid, 0)` 判活；③**P3 不成立** —— `electron/preload/index.d.ts` 无需补 `api.marketing`（`Api = typeof api` 从实现推导），探针文件实测 `typecheck:web` 0 错；④`setupGuard.ts` 注释笔误（`channelsInstalled` 指个人微信插件，非企微）。验收脚本现为 **31/31** |
 | v1.15 | 2026-09-15 | **Commit 01/02 完成并过验收**（01 守卫 12/12、02 验收 30/30、`build:win` 出包 + 打包态端到端冒烟），4 项回填：①**发现根 `npm run typecheck` 是空转**（tsconfig 为 `files:[] + references`）→ 新增 `typecheck:node`/`typecheck:web` 逐项目检查后才暴露 6 个被掩盖的真错（已修），后续提交一律走逐项目检查；②IPC 返回信封定为 `{ok:true,data}` / `{ok:false,error:{code,message,details?}}`（§五 信封的超集）；③02 实际落点补记：新增 `database/errors.ts`（§五 错误码表）+ `ipc/` 目录 + `marketing.system` 最小面（dbStatus/ping/metaGet/metaSet，业务 CRUD 仍归 03/04）+ `test/` 验收脚本入仓；④01 守卫抽成独立模块 `src/renderer/setupGuard.ts`（便于自动化验收）。另：打包态实测事实已补入 §六 |
 | v1.14 | 2026-09-15 | **Commit 00 SPIKE 通过（VALIDATED）**，5 项实测结论回填：①⑥=**A 可回放** → **`project_messages` 表作废**、不需回灌，Commit 02 业务表回到 10 张；②`usage` 恒为 0 → Commit 06 上下文预算改用**本地估算**（不能依赖 Gateway token 统计）；③`model` 取值是 `openclaw` / `openclaw/<agentId>`（非 provider 模型 id）+ **端点开关 hot reload 已验**，均写入 Commit 07；④首次非流式 **80.3s 冷启动**、SSE 首字 1.27s → 必须流式 + 07 加预热；⑤新增两条待办：客户端 abort 后服务端是否停止生成、应用 `meta.lastTouchedAt` 被 schema 拒绝（07 顺带修）。另：只读探测确认 Gateway 仅绑 `127.0.0.1` |
@@ -472,9 +472,9 @@ electron/preload/index.ts                    api.marketing.project.{list,get,cre
                                              api.marketing.context.{getCurrentProject,setCurrentProject}
 electron/main/index.ts                       工厂 + wiring（dataDir / DatabaseClient / logger）
 src/stores/marketing.ts                      新增 Pinia store
-src/views/components/ProjectSwitcher.vue     新增：侧边栏切关器（切换 / 新建 / 重命名 / 删除 + 危险确认弹窗）
-src/composables/useProjectSwitcher.ts        新增：切关器开关单例（工作台卡片可复用同一面板）
-src/App.vue / src/views/Dashboard.vue        挂载切关器；「当前商家」卡接真实数据
+src/views/components/ProjectSwitcher.vue     新增：侧边栏切换器（切换 / 新建 / 重命名 / 删除 + 危险确认弹窗）
+src/composables/useProjectSwitcher.ts        新增：切换器开关单例（工作台卡片可复用同一面板）
+src/App.vue / src/views/Dashboard.vue        挂载切换器；「当前商家」卡接真实数据
 test/project.accept.mjs + `npm run accept:project`   18 项验收（打真 projectManager.ts）
 ```
 

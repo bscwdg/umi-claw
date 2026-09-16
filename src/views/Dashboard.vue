@@ -310,7 +310,7 @@ function formatDate(ts: number) {
   return new Date(ts).toLocaleDateString('zh-CN')
 }
 
-// Commit 03：当前商家卡片读真实数据（侧边栏切关器挂载时也会 load，这里只补空数据兜底）
+// Commit 03：当前商家卡片读真实数据（侧边栏切换器挂载时也会 load，这里只补空数据兜底）
 onMounted(() => {
   if (!marketing.projects.length) marketing.load()
 })
