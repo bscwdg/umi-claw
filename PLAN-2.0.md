@@ -1,12 +1,13 @@
 # Umi Claw 2.0 施工基线（持续记录）
 
 > 本文档是 2.0 的唯一规划基线，随开发进度持续更新。
-> 基线版本：v1.17 ｜ 更新日期：2026-09-16 ｜ 状态：**Commit 00/01/02/03 均已通过验收，可开工 04**
+> 基线版本：v1.18 ｜ 更新日期：2026-09-16 ｜ 状态：**Commit 00/01/02/03/04 均已通过验收，可开工 05**
 
 ## 修订记录
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| v1.18 | 2026-09-16 | **Commit 04 完成**（Business 1:1 + 资料完整度 + Watchlist）：`marketing/businessManager.ts`（BusinessManager + WatchlistManager）+ `marketing:business:*` / `marketing:watchlist:*` + `BusinessBrain.vue`（完整度卡 + 基本盘表单 + 关注词区）+ 摄影行业预设；验收 **16/16**，**打包态端到端**通过（存资料 → Watchlist 满 10 后第 11 个被拒 → 重启资料与关注词全在 → 删 Project 级联清空，并用直读库核对 `businesses=0 / project_watchlist=0 / current=null / integrity=ok`）；回归 `accept:db` 31/31、`accept:project` 18/18 不受影响。**口径拍板**：完整度 = `name/brand/city/positioning/target_customer/tone` 六项等权（**排除 address/phone**，联系方式不属于「AI 认识你」的语义信息） |
 | v1.17 | 2026-09-16 | **Commit 03 完成**（Project CRUD + conversation_key 生成 + 切换持久化 app_meta）：`marketing/projectManager.ts` + `marketing:project:*` / `marketing:context:*` 七条通道 + Pinia store + 侧边栏切关器；验收 **18/18** 且**打包态端到端**通过（新建 → 设为当前 → 优雅退出 → **重启后仍是当前商家** → 改名时 key/created_at 不变 → 删除后目录/行/current 三者全清）。**新发现回填**：`isAppError()` 的 `instanceof` 在**模块实例不唯一**时假阴性（测试各模块各自 bundle；生产里 rollup 可能把 `errors.ts` 拆进不同 chunk），会把 SETUP_REQUIRED / NOT_FOUND 静默降级成 DB_ERROR，而渲染端按 code 分支 —— 已把 `errorCodeOf()` 上提到 `errors.ts` 供所有 Manager 复用，并修掉 `toErrorEnvelope()` 同类假阴性 |
 | v1.16 | 2026-09-16 | **外部复审 3 项逐条核实**：①**P2 真缺陷已修** —— Worker 初始化失败（ping 超时 / 迁移抛错）时只置标志位、**未回收刚 spawn 的子进程**，会留下游离 Worker，且下次 `ensureReady()` 再拉一个 → 双 Worker 同库，违反硬规则 8；修法 `reapFailedChild()`（kill + 反注册 + 清 child），并补回归用例 **C13**（负向验证：还原旧代码时 C13 必红）；②**P1 测试脆弱已修** —— `countWorkerProcesses()` 在拿不到 WMI 权限的环境返回 0，导致 C4/C5 **假阴性**；改为查询不可靠时返回 `null`（不可知）并降级 `process.kill(pid, 0)` 判活；③**P3 不成立** —— `electron/preload/index.d.ts` 无需补 `api.marketing`（`Api = typeof api` 从实现推导），探针文件实测 `typecheck:web` 0 错；④`setupGuard.ts` 注释笔误（`channelsInstalled` 指个人微信插件，非企微）。验收脚本现为 **31/31** |
 | v1.15 | 2026-09-15 | **Commit 01/02 完成并过验收**（01 守卫 12/12、02 验收 30/30、`build:win` 出包 + 打包态端到端冒烟），4 项回填：①**发现根 `npm run typecheck` 是空转**（tsconfig 为 `files:[] + references`）→ 新增 `typecheck:node`/`typecheck:web` 逐项目检查后才暴露 6 个被掩盖的真错（已修），后续提交一律走逐项目检查；②IPC 返回信封定为 `{ok:true,data}` / `{ok:false,error:{code,message,details?}}`（§五 信封的超集）；③02 实际落点补记：新增 `database/errors.ts`（§五 错误码表）+ `ipc/` 目录 + `marketing.system` 最小面（dbStatus/ping/metaGet/metaSet，业务 CRUD 仍归 03/04）+ `test/` 验收脚本入仓；④01 守卫抽成独立模块 `src/renderer/setupGuard.ts`（便于自动化验收）。另：打包态实测事实已补入 §六 |
@@ -449,7 +450,7 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 | 01 | UI / 导航骨架 —— **✅ 2026-09-15 完成** | Sidebar 4 组（工作台/营销5/OpenClaw6/系统2，to 值不变）、Dashboard 三卡（状态卡 + 当前商家 + AI 营销）、`/marketing/*` 5 条占位路由（共用 `Placeholder.vue`）、**首启 Setup 守卫**（独立模块 `setupGuard.ts`，判定 `nodeInstalled && openClawInstalled`）+ Setup 完成后 reload、10 条旧路由保留 | 1.5d | —（与 02 并行） | | ✅ |
 | 02 | DB Worker + 构建 —— **✅ 2026-09-15 完成** | schema/migration + `db-worker.mjs` 单例（零依赖 JSONL，84 白名单方法）+ `database.ts` 客户端（惰性初始化/队列/30s 超时/断线重启/读重试写不重试）+ 子进程注册表接入（`_stopRuntimeProcesses` 前置优雅停止）；**`build:win` 出包（81.8MB）+ 打包态端到端冒烟通过（验收见下）** | 2d | —（与 01 并行） | | ✅ |
 | 03 | Project —— **✅ 2026-09-16 完成** | projectManager + store + CRUD + conversation_key 生成 + 切换持久化 app_meta（落点与验收见下） | 1d | 02 | | ✅ |
-| 04 | Business | businessManager + BusinessBrain.vue + 摄影行业首套字段 + upsert/级联删除验收 + **资料完整度卡片（Business 维度，v1.12）** + **Watchlist：手工增删 / 行业预设词 / 上限 10 词 / 不采集（v1.12；AI 扩词 v1.13 移出至 08）** | 2.5d | 02、03 | | ⬜ |
+| 04 | Business —— **✅ 2026-09-16 完成** | businessManager + BusinessBrain.vue + 摄影行业首套字段 + upsert/级联删除验收 + 资料完整度卡片（Business 维度）+ Watchlist（手工增删 / 行业预设词 / 上限 10 词 / 不采集）；落点与验收见下 | 2.5d | 02、03 | | ✅ |
 | 05 | Knowledge（仅 05a） | knowledgeManager + KnowledgeBase.vue + 文字层文档解析（docx/xlsx/pdf）+ 导入/重导入 + LIKE 检索（边界见下）；**05b 已拆出，排到 07 之后**；**接入资料完整度卡片的 Knowledge 维度（v1.13）** | 2.5d | 02、03 | | ⬜ |
 | 06 | Context Engine | Business + Knowledge + **Watchlist** + Platform → Context Pack | 1d | 00、04、05 | | ⬜ |
 | 07 | Gateway Client | 端点开关默认化 + 老用户迁移、探活、自动拉起（**复用 clawManager 启停，不另起炉灶**）、就绪轮询、SSE→IPC 透传、会话隔离、多模态模型选择 | 2d | 00 | | ⬜ |
@@ -492,6 +493,40 @@ test/project.accept.mjs + `npm run accept:project`   18 项验收（打真 proje
 - `Project` 契约**不含 conversation_key** —— §六 的 `user=conv:<projectId>:<key>` 拼装在主进程（硬规则 13），渲染端拿不到也不需要。
 
 ⏳ **未覆盖**：①「删行失败」分支需在 DELETE 执行中途让 Worker 崩溃（竞态不可靠），仅代码审阅；②store 的三条降级语义（load 部分降级 / create 后 select 失败仍返回 project / remove 同步本地 current）无单测（仓库无 vitest）；③UI 点击流本机无桌面通道未做（IPC 面已由打包端到端覆盖）。
+
+### Commit 04 落点与验收（✅ 2026-09-16）
+
+```text
+electron/main/marketing/businessManager.ts   新增：BusinessManager（get / upsert / delete）+ WatchlistManager（list / add / remove / setEnabled）
+electron/main/ipc/marketing.ts               +marketing:business:{get,upsert,delete} · marketing:watchlist:{list,add,remove,setEnabled}
+electron/preload/index.ts                    api.marketing.business.* / api.marketing.watchlist.*
+electron/main/index.ts                       工厂 + wiring
+src/stores/marketing.ts                      +business / completeness / watchlist 三切片
+src/constants/photographyPresets.ts          新增：摄影行业预设（定位 6 / 客群 6 / 语气 5 / 关注词 10）
+src/views/marketing/BusinessBrain.vue        新增：完整度卡 + 基本盘表单（预设筹码可点选）+ Watchlist 区
+src/renderer/main.ts                         /marketing/business 由占位页换真页
+test/business.accept.mjs + `npm run accept:business`   16 项验收（打真 businessManager.ts）
+```
+
+**验收（独立复跑）**：`accept:business` **16/16**；`typecheck:node` / `typecheck:web` 0 错；
+回归 `accept:db` **31/31**、`accept:project` **18/18** 均不受影响。
+
+**打包态端到端（真安装包 + CDP 驱动真渲染进程调真 IPC）**：
+新建商家 → `business.upsert` 存 4 字段 → 读回一致且 `created_at` 稳定 → Watchlist 加满 **10 个** →
+第 11 个 **VALIDATION_ERROR(max:10)** → 重复词 **CONFLICT** → 删一个后第 11 个加入成功 →
+**优雅退出 → 重启后资料与 10 个词全在** → 删 Project → `business.get` 回 `null`、关注词清空、
+`dirRemoved` / `rowDeleted` / `currentCleared` 全 true；**直读库复核** `projects=0 / businesses=0 / project_watchlist=0 / current_project_id=null / integrity_check=ok`。
+
+**关键设计决策**
+
+- **upsert 的 ON CONFLICT 目标**：worker 的 `businesses.upsert` 冲突目标是主键 `id`，**打不到 `project_id UNIQUE`**。故先按 project_id 读既有行 → 用它的 `id` 走 upsert（真正的单语句 `INSERT … ON CONFLICT(id) DO UPDATE`）；首插走 create，并发撞 `UNIQUE(project_id)`（worker 把 UNIQUE 映射为 CONFLICT）→ 回落更新路径重试一次。**「同 project 反复 upsert 只有一行」由 `UNIQUE(project_id)` 兜底**（B4/B5 两路都验证），**没有为此改 worker**。
+- **`created_at` 必须显式回传**：`ON CONFLICT DO UPDATE` 会把未提供的列一并写成 excluded 值，漏掉它等于每次保存都把「创建时间」刷成现在。
+- **未传字段 = PATCH 保留旧值**；显式 `null` / 空串才清空（PUT 式「未传即清空」会让部分调用者误删数据）。
+- **完整度口径**：`name / brand / city / positioning / target_customer / tone` 六项**等权**，**排除 address / phone**（联系方式不属于「AI 认识你」的语义信息）；Knowledge 维度归 05。跨 tsconfig 无法共享常量 → store 与 manager 各留一份，由 B16 做**静态一致性核对**防漂移；`missing` 返回字段名，卡片渲染用 `BUSINESS_FIELD_LABELS`。
+- **错误语义分开**：读无行 → `null`；写目标不存在 → `NOT_FOUND`（防「点了没反应还说成功」）；`remove` / `deleteBusiness` **幂等**（`removed:false` / `deleted:false`，重复点删不弹错）；`type` 非法 → VALIDATION_ERROR（不静默归一，避免污染喂给 AI 的分类）。
+- **不采集**：Watchlist 只作 AI 上下文，B15 对模块源码做静态扫描（7 类网络特征 0 命中）。
+
+⏳ **未覆盖**：①UI 点击流本机无桌面通道未做（IPC 面已由打包端到端覆盖）；②完整度常量跨 tsconfig 双份（有 B16 静态核对兜底，但仍是两份）；③Watchlist 无批量导入/导出（不在基线范围）。
 
 ### Commit 11 数据源 SPIKE（v1.12 新增）
 
@@ -622,6 +657,7 @@ test/project.accept.mjs + `npm run accept:project`   18 项验收（打真 proje
 | 14 | 客户端 abort 后**服务端是否停止生成** | ⬜ 待 07 验证（关系到 08/09 停止生成是否真的省 token）|
 | 16 | **根 `npm run typecheck` 空转**（tsconfig 为 `files:[] + references`，什么都没检查） | ✅ v1.15 已补 `typecheck:node` / `typecheck:web`（逐项目检查暴露 6 个被掩盖的真错并修复）；后续提交一律走逐项目检查 |
 | 17 | Commit 03 三条未覆盖项（删行失败分支 / store 降级语义无单测 / UI 点击流） | ⬜ 见「Commit 03 落点与验收」；均已在代码层说明，未做执行证据 |
+| 18 | Commit 04 三条未覆盖项（UI 点击流 / 完整度常量双份 / Watchlist 无批量导入） | ⬜ 见「Commit 04 落点与验收」 |
 | 15 | 应用写 `meta.lastTouchedAt` / `lastTouchedVersion:'latest'` 被 schema 拒绝 | ⬜ 待 07 顺带修（`configManager.ts:703-707`、`downloadManager.ts:1451-1452`）；实测 OpenClaw 启动时会自愈，后果较轻 |
 
 ## 十、概念备忘

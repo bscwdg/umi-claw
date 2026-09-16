@@ -22,6 +22,12 @@ import { DatabaseClient } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
 import { registerMarketingIpc } from './ipc'
 import { createProjectManager, type ProjectManager } from './marketing/projectManager'
+import {
+  createBusinessManager,
+  createWatchlistManager,
+  type BusinessManager,
+  type WatchlistManager
+} from './marketing/businessManager'
 import { readFileSync, existsSync } from 'fs'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import type { TerminalRuntime } from '../../src/types/terminal'
@@ -44,6 +50,9 @@ let obsidianManager: ObsidianManager
 let marketingDatabase: DatabaseClient | null = null
 // marketing Project 层（Commit 03）：只依赖 DatabaseClient + dataDir，构造零 IO 副作用。
 let marketingProjectManager: ProjectManager | null = null
+// marketing Business / Watchlist 层（Commit 04）：只依赖 DatabaseClient，构造零 IO 副作用。
+let marketingBusinessManager: BusinessManager | null = null
+let marketingWatchlistManager: WatchlistManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -390,6 +399,22 @@ function createMarketingProjectManager(database: DatabaseClient): ProjectManager
     dataDir: configManager.getDataDir(),
     logger: (message) => console.log(message)
   })
+}
+
+/**
+ * 构造 Business / Watchlist 管理器（Commit 04）。
+ * 只依赖 DatabaseClient（硬规则 8：唯一数据通道）；Watchlist 是本地的「关注点记录」，
+ * **不联网、不采集**（采集只属于 Commit 11 的 collector adapter）。
+ */
+function createMarketingBusinessManagers(database: DatabaseClient): {
+  businessManager: BusinessManager
+  watchlistManager: WatchlistManager
+} {
+  const logger = (message: string) => console.log(message)
+  return {
+    businessManager: createBusinessManager({ database, logger }),
+    watchlistManager: createWatchlistManager({ database, logger })
+  }
 }
 
 // ─── IPC 处理器 ───────────────────────────────────────────────────────────────
@@ -853,8 +878,13 @@ function registerIpcHandlers(): void {
   // 检索测试：失败时抛出，由渲染进程统一捕获展示
   ipcMain.handle('obsidian:testSearch', async (_e, arg) => obsidianManager.testSearch(arg))
 
-  // ── marketing（Commit 02：system 面；Commit 03：project / context 面） ──
-  registerMarketingIpc(marketingDatabase!, marketingProjectManager!)
+  // ── marketing（Commit 02：system 面；Commit 03：project / context 面；Commit 04：business / watchlist 面） ──
+  registerMarketingIpc(
+    marketingDatabase!,
+    marketingProjectManager!,
+    marketingBusinessManager!,
+    marketingWatchlistManager!
+  )
 
 }
 
@@ -989,6 +1019,10 @@ app.whenReady().then(() => {
   marketingDatabase = createMarketingDatabase()
   // marketing Project 管理器（无 IO 副作用；首次 IPC 才触碰文件系统/数据库）
   marketingProjectManager = createMarketingProjectManager(marketingDatabase)
+  // marketing Business / Watchlist 管理器（无 IO 副作用；同样惰性）
+  const businessManagers = createMarketingBusinessManagers(marketingDatabase)
+  marketingBusinessManager = businessManagers.businessManager
+  marketingWatchlistManager = businessManagers.watchlistManager
   // 注入 Obsidian MCP 配置生成器：_syncOpenClawConfig 写回 openclaw.json 时调用
   configManager.setObsidianMcpInjector(() => obsidianManager.buildMcpServerConfig())
 

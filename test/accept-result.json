@@ -1,7 +1,7 @@
 {
   "commit": "Commit 02 —— DB Worker + 首版 Schema + 安装包前置",
   "plan": "PLAN-2.0.md v1.14（§三 目录策略 / §四 数据层 / §五 IPC 与错误规范 / §七 Commit 02 验收）",
-  "ranAt": "2026-09-16T02:26:32.535Z",
+  "ranAt": "2026-09-16T03:10:55.211Z",
   "node": "v24.21.0",
   "runtimeNode": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe",
   "totals": {
@@ -12,9 +12,9 @@
   "suites": [
     {
       "suite": "db-worker（Worker 半边）",
-      "startedAt": "2026-09-16T02:26:26.941Z",
-      "finishedAt": "2026-09-16T02:26:28.423Z",
-      "durationMs": 1482,
+      "startedAt": "2026-09-16T03:10:48.753Z",
+      "finishedAt": "2026-09-16T03:10:50.151Z",
+      "durationMs": 1398,
       "total": 18,
       "passed": 18,
       "failed": 0,
@@ -31,15 +31,15 @@
           "id": "W1",
           "name": "worker 启动即建库（spawn 前不存在）",
           "ok": true,
-          "detail": "db=D:\\work2026\\umi-claw\\test\\.tmp\\worker-1789525586658\\umi-claw.db pid=32400",
-          "ms": 419
+          "detail": "db=D:\\work2026\\umi-claw\\test\\.tmp\\worker-1789528248384\\umi-claw.db pid=34424",
+          "ms": 431
         },
         {
           "id": "W2",
           "name": "migrate 0 → 1，user_version=1",
           "ok": true,
           "detail": "applied=v1",
-          "ms": 11
+          "ms": 8
         },
         {
           "id": "W3",
@@ -60,21 +60,21 @@
           "name": "10 个索引齐备",
           "ok": true,
           "detail": "idx_businesses_project, idx_chunks_knowledge, idx_contents_project, idx_contents_topic, idx_hot_topics_seen, idx_knowledge_project, idx_project_hot_score, idx_samples_topic_time, idx_versions_content, idx_watchlist_project",
-          "ms": 1
+          "ms": 0
         },
         {
           "id": "W6",
           "name": "WAL 生效（journal_mode=wal + -wal 文件出现）",
           "ok": true,
           "detail": "journal_mode=wal wal=168952B",
-          "ms": 3
+          "ms": 2
         },
         {
           "id": "W7",
           "name": "foreign_keys=ON：删 project 级联清业务数据",
           "ok": true,
           "detail": "businesses/knowledge/chunks/contents/versions/watchlist/scores 全部级联清空",
-          "ms": 14
+          "ms": 15
         },
         {
           "id": "W8",
@@ -109,57 +109,57 @@
           "name": "脏请求行（非 JSON / 缺 method）不自杀",
           "ok": true,
           "detail": "stderr 片段=[db-worker] 无法解析的请求行: 这不是 JSON；{\"id\":\"w12-no-method\"}",
-          "ms": 257
+          "ms": 263
         },
         {
           "id": "W13",
           "name": "VACUUM INTO 备份链路可用（含目标已存在 → CONFLICT）",
           "ok": true,
           "detail": "size=159744B tables=11",
-          "ms": 7
+          "ms": 9
         },
         {
           "id": "W14",
           "name": "强杀（SIGKILL）后库不损坏，数据仍在",
           "ok": true,
           "detail": "integrity_check=ok projects=2 user_version=1",
-          "ms": 254
+          "ms": 243
         },
         {
           "id": "W15",
           "name": "强杀后重启：数据仍在、migrate 幂等",
           "ok": true,
           "detail": "projects=p2,p3",
-          "ms": 121
+          "ms": 54
         },
         {
           "id": "W16",
           "name": "shutdown 指令优雅退出（exit 0 + WAL 截断）",
           "ok": true,
           "detail": "exitCode=0 wal=0B",
-          "ms": 16
+          "ms": 9
         },
         {
           "id": "W17",
           "name": "stdin 关闭（EOF）也优雅退出",
           "ok": true,
           "detail": "exitCode=0",
-          "ms": 66
+          "ms": 60
         },
         {
           "id": "W18",
           "name": "SIGTERM 触发优雅退出",
           "ok": true,
           "detail": "exitCode=null integrity_check=ok（Windows 无信号语义，POSIX 下为 0）",
-          "ms": 100
+          "ms": 84
         }
       ]
     },
     {
       "suite": "db-client（客户端半边，打真 database.ts）",
-      "startedAt": "2026-09-16T02:26:28.740Z",
-      "finishedAt": "2026-09-16T02:26:32.499Z",
-      "durationMs": 3759,
+      "startedAt": "2026-09-16T03:10:50.771Z",
+      "finishedAt": "2026-09-16T03:10:55.166Z",
+      "durationMs": 4395,
       "total": 13,
       "passed": 13,
       "failed": 0,
@@ -178,49 +178,49 @@
           "name": "database.ts 可纯 Node import（依赖注入，无 electron 顶层引用）",
           "ok": true,
           "detail": "bundle=database.mjs size=30751B",
-          "ms": 1
+          "ms": 2
         },
         {
           "id": "C2",
           "name": "惰性初始化：构造不建库、不拉 Worker",
           "ok": true,
           "detail": "dbExists=false",
-          "ms": 0
+          "ms": 2
         },
         {
           "id": "C3",
           "name": "首次请求拉起 worker → 建库 + user_version=1 + 11 表",
           "ok": true,
-          "detail": "pid=10500 tables=11 uv=1 wal=wal",
-          "ms": 77
+          "detail": "pid=22492 tables=11 uv=1 wal=wal",
+          "ms": 152
         },
         {
           "id": "C4",
           "name": "单例（硬规则 8）：连续 20 次调用只存在一个 node 子进程",
           "ok": true,
-          "detail": "pid=10500 20 次调用后 OS 进程数=1",
-          "ms": 663
+          "detail": "pid=22492 20 次调用后 OS 进程数=1",
+          "ms": 1219
         },
         {
           "id": "C5",
           "name": "断线自动重启一次：读自动重试成功，写不自动重试（DB_ERROR）",
           "ok": true,
-          "detail": "pid 10500 → 32844；写=DB_ERROR(reason=worker-exit-no-retry)，读重试成功(1 行)",
-          "ms": 1144
+          "detail": "pid 22492 → 33968；写=DB_ERROR(reason=worker-exit-no-retry)，读重试成功(1 行)",
+          "ms": 1125
         },
         {
           "id": "C6",
           "name": "例外：预生成主键的 upsert（metaSet）崩溃后可安全重试",
           "ok": true,
-          "detail": "retry_probe=ok pid=33272",
-          "ms": 343
+          "detail": "retry_probe=ok pid=32696",
+          "ms": 344
         },
         {
           "id": "C7",
           "name": "请求超时语义（默认 30s，注入 600ms 验证）→ DB_ERROR/reason=timeout",
           "ok": true,
           "detail": "DB 请求超时（600ms）: app_meta.upsert",
-          "ms": 748
+          "ms": 764
         },
         {
           "id": "C8",
@@ -233,15 +233,15 @@
           "id": "C9",
           "name": "backup() VACUUM INTO + 保留最近 5 份（超出删最旧）",
           "ok": true,
-          "detail": "保留 5 份，最新=umi-claw-20260916-102631810.db",
-          "ms": 110
+          "detail": "保留 5 份，最新=umi-claw-20260916-111054459.db",
+          "ms": 96
         },
         {
           "id": "C10",
           "name": "shutdown 优雅退出；再次请求自动拉起且数据仍在",
           "ok": true,
-          "detail": "pid 33272 → 3148，persist_probe=v1",
-          "ms": 73
+          "detail": "pid 32696 → 34692，persist_probe=v1",
+          "ms": 69
         },
         {
           "id": "C11",
@@ -254,8 +254,8 @@
           "id": "C12",
           "name": "子进程注册表接入：启动即注册，gracefulStop 走优雅退出",
           "ok": true,
-          "detail": "注册/优雅停止/反注册/重新注册 全链路通过（pid=6360）",
-          "ms": 136
+          "detail": "注册/优雅停止/反注册/重新注册 全链路通过（pid=33448）",
+          "ms": 153
         },
         {
           "id": "C13",

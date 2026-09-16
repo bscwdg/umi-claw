@@ -15,7 +15,8 @@
     "typecheck:node": "tsc -p tsconfig.node.json --noEmit --composite false",
     "typecheck:web": "tsc -p tsconfig.web.json --noEmit --composite false",
     "accept:db": "node test/db-worker.accept.mjs",
-    "accept:project": "node test/project.accept.mjs"
+    "accept:project": "node test/project.accept.mjs",
+    "accept:business": "node test/business.accept.mjs"
   },
   "dependencies": {
     "@vueuse/core": "^10.9.0",

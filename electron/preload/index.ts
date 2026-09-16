@@ -154,6 +154,22 @@ const api = {
       getCurrentProject: () => ipcRenderer.invoke('marketing:context:getCurrentProject'),
       setCurrentProject: (projectId: string | null) =>
         ipcRenderer.invoke('marketing:context:setCurrentProject', projectId)
+    },
+    // Commit 04：Business 与 Project 1:1（无 list/create）；Watchlist 只做手工增删（**不采集**）
+    business: {
+      get: (projectId: string) => ipcRenderer.invoke('marketing:business:get', projectId),
+      upsert: (projectId: string, data: Record<string, string | null>) =>
+        ipcRenderer.invoke('marketing:business:upsert', projectId, data),
+      delete: (projectId: string) => ipcRenderer.invoke('marketing:business:delete', projectId)
+    },
+    watchlist: {
+      list: (projectId: string) => ipcRenderer.invoke('marketing:watchlist:list', projectId),
+      add: (projectId: string, keyword: string, type?: string | null) =>
+        ipcRenderer.invoke('marketing:watchlist:add', projectId, keyword, type),
+      remove: (projectId: string, keyword: string) =>
+        ipcRenderer.invoke('marketing:watchlist:remove', projectId, keyword),
+      setEnabled: (projectId: string, keyword: string, enabled: boolean) =>
+        ipcRenderer.invoke('marketing:watchlist:setEnabled', projectId, keyword, enabled)
     }
   },
 

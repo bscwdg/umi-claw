@@ -1,8 +1,8 @@
 {
   "suite": "db-client（客户端半边，打真 database.ts）",
-  "startedAt": "2026-09-16T02:26:28.740Z",
-  "finishedAt": "2026-09-16T02:26:32.499Z",
-  "durationMs": 3759,
+  "startedAt": "2026-09-16T03:10:50.771Z",
+  "finishedAt": "2026-09-16T03:10:55.166Z",
+  "durationMs": 4395,
   "total": 13,
   "passed": 13,
   "failed": 0,
@@ -21,49 +21,49 @@
       "name": "database.ts 可纯 Node import（依赖注入，无 electron 顶层引用）",
       "ok": true,
       "detail": "bundle=database.mjs size=30751B",
-      "ms": 1
+      "ms": 2
     },
     {
       "id": "C2",
       "name": "惰性初始化：构造不建库、不拉 Worker",
       "ok": true,
       "detail": "dbExists=false",
-      "ms": 0
+      "ms": 2
     },
     {
       "id": "C3",
       "name": "首次请求拉起 worker → 建库 + user_version=1 + 11 表",
       "ok": true,
-      "detail": "pid=10500 tables=11 uv=1 wal=wal",
-      "ms": 77
+      "detail": "pid=22492 tables=11 uv=1 wal=wal",
+      "ms": 152
     },
     {
       "id": "C4",
       "name": "单例（硬规则 8）：连续 20 次调用只存在一个 node 子进程",
       "ok": true,
-      "detail": "pid=10500 20 次调用后 OS 进程数=1",
-      "ms": 663
+      "detail": "pid=22492 20 次调用后 OS 进程数=1",
+      "ms": 1219
     },
     {
       "id": "C5",
       "name": "断线自动重启一次：读自动重试成功，写不自动重试（DB_ERROR）",
       "ok": true,
-      "detail": "pid 10500 → 32844；写=DB_ERROR(reason=worker-exit-no-retry)，读重试成功(1 行)",
-      "ms": 1144
+      "detail": "pid 22492 → 33968；写=DB_ERROR(reason=worker-exit-no-retry)，读重试成功(1 行)",
+      "ms": 1125
     },
     {
       "id": "C6",
       "name": "例外：预生成主键的 upsert（metaSet）崩溃后可安全重试",
       "ok": true,
-      "detail": "retry_probe=ok pid=33272",
-      "ms": 343
+      "detail": "retry_probe=ok pid=32696",
+      "ms": 344
     },
     {
       "id": "C7",
       "name": "请求超时语义（默认 30s，注入 600ms 验证）→ DB_ERROR/reason=timeout",
       "ok": true,
       "detail": "DB 请求超时（600ms）: app_meta.upsert",
-      "ms": 748
+      "ms": 764
     },
     {
       "id": "C8",
@@ -76,15 +76,15 @@
       "id": "C9",
       "name": "backup() VACUUM INTO + 保留最近 5 份（超出删最旧）",
       "ok": true,
-      "detail": "保留 5 份，最新=umi-claw-20260916-102631810.db",
-      "ms": 110
+      "detail": "保留 5 份，最新=umi-claw-20260916-111054459.db",
+      "ms": 96
     },
     {
       "id": "C10",
       "name": "shutdown 优雅退出；再次请求自动拉起且数据仍在",
       "ok": true,
-      "detail": "pid 33272 → 3148，persist_probe=v1",
-      "ms": 73
+      "detail": "pid 32696 → 34692，persist_probe=v1",
+      "ms": 69
     },
     {
       "id": "C11",
@@ -97,8 +97,8 @@
       "id": "C12",
       "name": "子进程注册表接入：启动即注册，gracefulStop 走优雅退出",
       "ok": true,
-      "detail": "注册/优雅停止/反注册/重新注册 全链路通过（pid=6360）",
-      "ms": 136
+      "detail": "注册/优雅停止/反注册/重新注册 全链路通过（pid=33448）",
+      "ms": 153
     },
     {
       "id": "C13",

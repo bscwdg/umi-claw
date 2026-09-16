@@ -22,8 +22,8 @@ const router = createRouter({
     // 2.0 营销模块（Commit 01 全占位，后续提交逐页替换；内部路由/表名/文件名一律维持 hot*）
     {
       path: '/marketing/business',
-      component: () => import('../views/marketing/Placeholder.vue'),
-      meta: { title: '商家大脑', icon: '🏪', desc: '商家基本盘：定位、客群、语气与行业字段', commit: 'Commit 04' }
+      component: () => import('../views/marketing/BusinessBrain.vue'),
+      meta: { title: '商家大脑', icon: '🏪' }
     },
     {
       path: '/marketing/knowledge',

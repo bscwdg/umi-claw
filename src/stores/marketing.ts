@@ -38,6 +38,77 @@ export type UpdateProjectPayload = Partial<{
   description: string | null
 }>
 
+// ── Commit 04：Business（商家大脑，与 Project 1:1）+ Watchlist（关注词，手工增删） ──
+
+/** `businesses` 表一行（1:1；`get` 无行时 `business` 为 null，不是错误） */
+export interface Business {
+  id: string
+  project_id: string
+  name: string | null
+  brand: string | null
+  city: string | null
+  address: string | null
+  phone: string | null
+  positioning: string | null
+  target_customer: string | null
+  tone: string | null
+  created_at: number
+  updated_at: number
+}
+
+/** `project_watchlist` 表一行 */
+export interface WatchItem {
+  project_id: string
+  keyword: string
+  type: string | null
+  enabled: number
+  created_at: number
+}
+
+/**
+ * 资料完整度（**Business 维度**，§七 Commit 04）计分字段：六个等权。
+ * 与 `electron/main/marketing/businessManager.ts` 的 `BUSINESS_COMPLETENESS_FIELDS` 必须一致
+ * （跨 tsconfig 无法共享常量，由 test/business.accept.mjs 做静态一致性核对）。
+ */
+export const BUSINESS_COMPLETENESS_FIELDS: string[] = [
+  'name',
+  'brand',
+  'city',
+  'positioning',
+  'target_customer',
+  'tone'
+]
+
+/** 完整度字段 → 人话（卡片展示「还缺：品牌、定位」用；字段名本身是稳定标识） */
+export const BUSINESS_FIELD_LABELS: Record<string, string> = {
+  name: '商家名称',
+  brand: '品牌名',
+  city: '城市',
+  address: '地址',
+  phone: '电话',
+  positioning: '定位',
+  target_customer: '目标客户',
+  tone: '语气风格'
+}
+
+/** 关注词上限（与 WatchlistManager 的 WATCHLIST_MAX 一致） */
+export const WATCHLIST_MAX = 10
+
+/** 行业预设类型（UI 的预设词挂靠用） */
+export const WATCHLIST_PRESET_TYPES: string[] = ['industry', 'product', 'audience', 'region']
+
+/** 可写入 business 的字段（与后端白名单一致；其余字段在 saveBusiness 里被剔除再发 IPC） */
+const BUSINESS_WRITABLE_FIELDS: string[] = [
+  'name',
+  'brand',
+  'city',
+  'address',
+  'phone',
+  'positioning',
+  'target_customer',
+  'tone'
+]
+
 /** IPC 统一信封（与 preload / ipc/marketing.ts 的 IpcResult 对应） */
 type IpcEnvelope<T> =
   | { ok: true; data: T }
@@ -93,6 +164,57 @@ function toProject(row: any): Project {
     created_at: Number(row?.created_at ?? 0),
     updated_at: Number(row?.updated_at ?? 0)
   }
+}
+
+function toBusiness(row: any): Business {
+  return {
+    id: String(row?.id ?? ''),
+    project_id: String(row?.project_id ?? ''),
+    name: row?.name ?? null,
+    brand: row?.brand ?? null,
+    city: row?.city ?? null,
+    address: row?.address ?? null,
+    phone: row?.phone ?? null,
+    positioning: row?.positioning ?? null,
+    target_customer: row?.target_customer ?? null,
+    tone: row?.tone ?? null,
+    created_at: Number(row?.created_at ?? 0),
+    updated_at: Number(row?.updated_at ?? 0)
+  }
+}
+
+function toWatchItem(row: any): WatchItem {
+  return {
+    project_id: String(row?.project_id ?? ''),
+    keyword: String(row?.keyword ?? ''),
+    type: row?.type ?? null,
+    enabled: Number(row?.enabled ?? 0),
+    created_at: Number(row?.created_at ?? 0)
+  }
+}
+
+/** 只发白名单字段（后端对未知字段是硬拒绝的；这里兜住 UI 直接传 `{...business}` 的常见写法） */
+function pickBusinessPayload(data: Partial<Business> | null | undefined): Record<string, string | null> {
+  const out: Record<string, string | null> = {}
+  if (!data) return out
+  for (const field of BUSINESS_WRITABLE_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(data, field)) continue
+    const value = (data as unknown as Record<string, unknown>)[field]
+    if (value === undefined || value === null) {
+      out[field] = null
+      continue
+    }
+    if (typeof value !== 'string') continue
+    out[field] = value
+  }
+  return out
+}
+
+/** 关注词排序：created_at 升序，同刻按 keyword（与后端 listWatchlist 一致，避免渲染抖动） */
+function sortWatchlist(list: WatchItem[]): WatchItem[] {
+  return [...list].sort(
+    (a, b) => a.created_at - b.created_at || a.keyword.localeCompare(b.keyword)
+  )
 }
 
 /** 新建的排前面（同级按 id 收敛，避免渲染顺序抖动） */
@@ -236,6 +358,172 @@ export const useMarketingStore = defineStore('marketing', () => {
     }
   }
 
+  // ── Business（商家大脑，与 Project 1:1；Commit 04） ────────────────────────
+
+  const business = ref<Business | null>(null) as Ref<Business | null>
+  const businessLoading = ref<boolean>(false)
+
+  /**
+   * 资料完整度（**Business 维度**）：六个等权字段里填了几个。
+   * `missing` 返回字段名（稳定标识），中文展示用 `BUSINESS_FIELD_LABELS`。
+   */
+  const completeness: ComputedRef<{
+    filled: number
+    total: number
+    percent: number
+    missing: string[]
+  }> = computed(() => {
+    const row = business.value as unknown as Record<string, unknown> | null
+    const total = BUSINESS_COMPLETENESS_FIELDS.length
+    const missing: string[] = []
+    let filled = 0
+    for (const field of BUSINESS_COMPLETENESS_FIELDS) {
+      const value = row ? row[field] : null
+      if (typeof value === 'string' && value.trim()) filled += 1
+      else missing.push(field)
+    }
+    return { filled, total, percent: total ? Math.round((filled / total) * 100) : 0, missing }
+  })
+
+  /**
+   * 读商家资料。**无行 → `business = null` 且不算错误**（首次填写是正常状态）；
+   * 失败也只置 `error`、**不抛出**（与 `load()` 同约定：onMounted 里直接调）。
+   */
+  async function loadBusiness(projectId: string): Promise<void> {
+    businessLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.business.get(projectId)) as IpcEnvelope<any>
+      if (!res?.ok) {
+        business.value = null
+        error.value = envelopeToError(res, '加载商家资料失败').message
+        return
+      }
+      business.value = res.data ? toBusiness(res.data) : null
+    } catch (e) {
+      business.value = null
+      error.value = messageOf(e, '加载商家资料失败')
+    } finally {
+      businessLoading.value = false
+    }
+  }
+
+  /**
+   * 保存商家资料（服务端 upsert：新建或覆盖）。**失败抛出**（调用方需知道是否真的保存了，
+   * 例如决定要不要关弹窗 / 继续下一步）。未传字段服务端保留旧值；空串 = 清空。
+   */
+  async function saveBusiness(projectId: string, data: Partial<Business>): Promise<Business> {
+    businessLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.business.upsert(
+        projectId,
+        pickBusinessPayload(data)
+      )) as IpcEnvelope<any>
+      if (!res?.ok) throw envelopeToError(res, '保存商家资料失败')
+      const saved = toBusiness(res.data)
+      business.value = saved
+      return saved
+    } catch (e) {
+      error.value = messageOf(e, '保存商家资料失败')
+      throw e instanceof Error ? e : new MarketingIpcError('DB_ERROR', error.value)
+    } finally {
+      businessLoading.value = false
+    }
+  }
+
+  // ── Watchlist（关注词：手工增删，**不采集**；Commit 04） ────────────────────
+
+  const watchlist = ref<WatchItem[]>([]) as Ref<WatchItem[]>
+  const watchlistLoading = ref<boolean>(false)
+
+  function upsertWatchLocal(item: WatchItem): void {
+    const rest = watchlist.value.filter((w) => w.keyword !== item.keyword)
+    watchlist.value = sortWatchlist([...rest, item])
+  }
+
+  /** 读关注词列表；失败只置 `error`，**不抛出** */
+  async function loadWatchlist(projectId: string): Promise<void> {
+    watchlistLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.watchlist.list(projectId)) as IpcEnvelope<any[]>
+      if (!res?.ok) {
+        watchlist.value = []
+        error.value = envelopeToError(res, '加载关注词失败').message
+        return
+      }
+      const rows = Array.isArray(res.data) ? res.data : []
+      watchlist.value = sortWatchlist(rows.map(toWatchItem))
+    } catch (e) {
+      watchlist.value = []
+      error.value = messageOf(e, '加载关注词失败')
+    } finally {
+      watchlistLoading.value = false
+    }
+  }
+
+  /**
+   * 添加关注词。失败抛出，`code` 供 UI 分支：
+   *   - `CONFLICT` → 「这个词已在列表里」
+   *   - `VALIDATION_ERROR` + `details.max` → 「最多 10 个词」
+   */
+  async function addWatch(projectId: string, keyword: string, type?: string): Promise<void> {
+    watchlistLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.watchlist.add(
+        projectId,
+        keyword,
+        type ?? null
+      )) as IpcEnvelope<any>
+      if (!res?.ok) throw envelopeToError(res, '添加关注词失败')
+      upsertWatchLocal(toWatchItem(res.data))
+    } catch (e) {
+      error.value = messageOf(e, '添加关注词失败')
+      throw e instanceof Error ? e : new MarketingIpcError('DB_ERROR', error.value)
+    } finally {
+      watchlistLoading.value = false
+    }
+  }
+
+  /** 删除关注词（服务端幂等，重复删除不会报错） */
+  async function removeWatch(projectId: string, keyword: string): Promise<void> {
+    watchlistLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.watchlist.remove(projectId, keyword)) as IpcEnvelope<any>
+      if (!res?.ok) throw envelopeToError(res, '删除关注词失败')
+      const word = String(res.data?.keyword ?? keyword)
+      watchlist.value = watchlist.value.filter((w) => w.keyword !== word)
+    } catch (e) {
+      error.value = messageOf(e, '删除关注词失败')
+      throw e instanceof Error ? e : new MarketingIpcError('DB_ERROR', error.value)
+    } finally {
+      watchlistLoading.value = false
+    }
+  }
+
+  /** 启停关注词（服务端落 `enabled` 0/1；词不存在 → NOT_FOUND） */
+  async function setWatchEnabled(projectId: string, keyword: string, enabled: boolean): Promise<void> {
+    watchlistLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.watchlist.setEnabled(
+        projectId,
+        keyword,
+        enabled
+      )) as IpcEnvelope<any>
+      if (!res?.ok) throw envelopeToError(res, '更新关注词失败')
+      upsertWatchLocal(toWatchItem(res.data))
+    } catch (e) {
+      error.value = messageOf(e, '更新关注词失败')
+      throw e instanceof Error ? e : new MarketingIpcError('DB_ERROR', error.value)
+    } finally {
+      watchlistLoading.value = false
+    }
+  }
+
   return {
     projects,
     currentProjectId,
@@ -246,6 +534,17 @@ export const useMarketingStore = defineStore('marketing', () => {
     create,
     rename,
     remove,
-    select
+    select,
+    business,
+    businessLoading,
+    completeness,
+    loadBusiness,
+    saveBusiness,
+    watchlist,
+    watchlistLoading,
+    loadWatchlist,
+    addWatch,
+    removeWatch,
+    setWatchEnabled
   }
 })

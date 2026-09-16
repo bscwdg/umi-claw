@@ -3,7 +3,9 @@
 // Commit 02：marketing.system = { dbStatus, ping, metaGet, metaSet }（最小面，保留不动）。
 // Commit 03：追加 marketing.project = { list, get, create, update, delete } 与
 //            marketing.context = { getCurrentProject, setCurrentProject }。
-// business / knowledge / content / hot 的 CRUD 仍归 Commit 04+，此处**不提前实现**。
+// Commit 04：追加 marketing.business = { get, upsert, delete }（1:1，无 list/create）与
+//            marketing.watchlist = { list, add, remove, setEnabled }（手工增删，**不采集**）。
+// knowledge / content / hot 的 CRUD 仍归 Commit 05+，此处**不提前实现**。
 //
 // 每个方法都显式传 projectId（硬规则 9），IPC 层不做任何 currentProject 推断。
 //
@@ -21,6 +23,13 @@ import type {
   ProjectRow,
   UpdateProjectInput
 } from '../marketing/projectManager'
+import type {
+  BusinessInput,
+  BusinessManager,
+  BusinessRow,
+  WatchRow,
+  WatchlistManager
+} from '../marketing/businessManager'
 
 /** IPC 统一返回信封 */
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
@@ -47,6 +56,21 @@ export const MARKETING_CONTEXT_CHANNELS = {
   setCurrentProject: 'marketing:context:setCurrentProject'
 } as const
 
+/** §五 business 面（Commit 04）：与 Project 1:1，故只有 get / upsert（+ 幂等 delete） */
+export const MARKETING_BUSINESS_CHANNELS = {
+  get: 'marketing:business:get',
+  upsert: 'marketing:business:upsert',
+  delete: 'marketing:business:delete'
+} as const
+
+/** §五 watchlist 面（Commit 04）：老板手工增删的关注词；只喂 AI 上下文，**不触发采集** */
+export const MARKETING_WATCHLIST_CHANNELS = {
+  list: 'marketing:watchlist:list',
+  add: 'marketing:watchlist:add',
+  remove: 'marketing:watchlist:remove',
+  setEnabled: 'marketing:watchlist:setEnabled'
+} as const
+
 async function wrap<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
   try {
     return { ok: true, data: await fn() }
@@ -61,7 +85,12 @@ function handle(channel: string, fn: (...args: any[]) => Promise<IpcResult<unkno
   ipcMain.handle(channel, (_e, ...args) => fn(...args))
 }
 
-export function registerMarketingIpc(database: DatabaseClient, projectManager: ProjectManager): void {
+export function registerMarketingIpc(
+  database: DatabaseClient,
+  projectManager: ProjectManager,
+  businessManager: BusinessManager,
+  watchlistManager: WatchlistManager
+): void {
   handle(MARKETING_SYSTEM_CHANNELS.dbStatus, (options?: { initialize?: boolean }) =>
     wrap<DatabaseStatus>(() => database.dbStatus(options ?? {}))
   )
@@ -96,6 +125,35 @@ export function registerMarketingIpc(database: DatabaseClient, projectManager: P
   )
   handle(MARKETING_CONTEXT_CHANNELS.setCurrentProject, (projectId: string | null) =>
     wrap<{ currentProjectId: string | null }>(() => projectManager.setCurrentProject(projectId))
+  )
+
+  // ── business（Commit 04）：1:1，get 无行回 null（UI 首填场景） ─────────────
+  handle(MARKETING_BUSINESS_CHANNELS.get, (projectId: string) =>
+    wrap<BusinessRow | null>(() => businessManager.getBusiness(projectId))
+  )
+  handle(MARKETING_BUSINESS_CHANNELS.upsert, (projectId: string, data: BusinessInput) =>
+    wrap<BusinessRow>(() => businessManager.upsertBusiness(projectId, data))
+  )
+  handle(MARKETING_BUSINESS_CHANNELS.delete, (projectId: string) =>
+    wrap<{ projectId: string; deleted: boolean }>(() => businessManager.deleteBusiness(projectId))
+  )
+
+  // ── watchlist（Commit 04）：手工增删 / 上限 10 词 / 绝不采集 ──────────────
+  handle(MARKETING_WATCHLIST_CHANNELS.list, (projectId: string) =>
+    wrap<WatchRow[]>(() => watchlistManager.listWatchlist(projectId))
+  )
+  handle(MARKETING_WATCHLIST_CHANNELS.add, (projectId: string, keyword: string, type?: string | null) =>
+    wrap<WatchRow>(() => watchlistManager.addWatch(projectId, keyword, type))
+  )
+  handle(MARKETING_WATCHLIST_CHANNELS.remove, (projectId: string, keyword: string) =>
+    wrap<{ projectId: string; keyword: string; removed: boolean }>(() =>
+      watchlistManager.removeWatch(projectId, keyword)
+    )
+  )
+  handle(
+    MARKETING_WATCHLIST_CHANNELS.setEnabled,
+    (projectId: string, keyword: string, enabled: boolean | number) =>
+      wrap<WatchRow>(() => watchlistManager.setWatchEnabled(projectId, keyword, enabled))
   )
 }
 
