@@ -299,10 +299,17 @@ export class KnowledgeManager {
       if (filePathText && (type === 'text' || type === 'markdown')) {
         const parsed = await parseTextFile(type, filePathText)
         content = parsed.content
-        // text/markdown 的 source_path 按契约仍为 NULL（手输/文件同口径）；
-        // source_name 留原文件名做溯源（不参与重导入去重键）
-        sourceName = basename(filePathText)
-        if (!title) title = normalizeTitle(null, nameWithoutExtension(basename(filePathText)))
+        // 来自**文件**的 text/markdown 与 docx/xlsx/pdf 同口径：拷原件进 data/projects/<id>/ 并写 source_path。
+        // 这样同一份文件重导入走 UNIQUE(project_id, source_path) 的 upsert（而不是每次又多一条），原件也可溯源。
+        // （手输 text / faq 仍为 NULL —— NULL 互不冲突，每次是新条目）
+        const copied = this.copySourceFile(pid, filePathText)
+        sourcePath = copied.relPath
+        sourceName = copied.name
+        if (!title) title = normalizeTitle(null, nameWithoutExtension(copied.name))
+        this.log(
+          `[knowledge] ${type} 文件导入成功 ${copied.relPath}（${content.length} 字，` +
+            `${(parsed.meta.bytes / 1024).toFixed(1)}KB → data/projects/${pid}/）`
+        )
       } else {
         const raw = requireContent(input?.text, 'importKnowledge')
         content = type === 'faq' ? normalizeFaqText(raw) : raw

@@ -1,8 +1,8 @@
 {
   "suite": "business（Business 1:1 + Watchlist 手工增删，打真 businessManager.ts）",
-  "startedAt": "2026-09-16T06:34:05.963Z",
-  "finishedAt": "2026-09-16T06:34:06.521Z",
-  "durationMs": 558,
+  "startedAt": "2026-09-16T07:13:57.204Z",
+  "finishedAt": "2026-09-16T07:13:57.753Z",
+  "durationMs": 549,
   "total": 16,
   "passed": 16,
   "failed": 0,
@@ -14,29 +14,29 @@
     "runtimeNode": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe"
   },
   "bundle": "D:\\work2026\\umi-claw\\test\\.tmp\\businessManager.mjs",
-  "dataDir": "D:\\work2026\\umi-claw\\test\\.tmp\\business-1789540445653\\data",
+  "dataDir": "D:\\work2026\\umi-claw\\test\\.tmp\\business-1789542836881\\data",
   "nodePath": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe",
   "logSample": [
-    "[project] 已创建 a9eaf83d-02e7-45fd-9944-5187d35e42b7（拾光摄影），目录=D:\\work2026\\umi-claw\\test\\.tmp\\business-1789540445653\\data\\projects\\a9eaf83d-02e7-45fd-9944-5187d35e42b7",
-    "[project] 已创建 abbed918-3e9b-4466-a1d6-a3c1606cfe60（云朵女装），目录=D:\\work2026\\umi-claw\\test\\.tmp\\business-1789540445653\\data\\projects\\abbed918-3e9b-4466-a1d6-a3c1606cfe60",
-    "[business] 已创建 project_id=a9eaf83d-02e7-45fd-9944-5187d35e42b7",
-    "[business] 已创建 project_id=abbed918-3e9b-4466-a1d6-a3c1606cfe60",
-    "[business] 已更新 project_id=a9eaf83d-02e7-45fd-9944-5187d35e42b7",
-    "[business] 已更新 project_id=a9eaf83d-02e7-45fd-9944-5187d35e42b7",
-    "[business] 已更新 project_id=abbed918-3e9b-4466-a1d6-a3c1606cfe60",
-    "[watchlist] +孕妇照（project_id=a9eaf83d-02e7-45fd-9944-5187d35e42b7，共 1 词）",
-    "[watchlist] +绵阳（project_id=a9eaf83d-02e7-45fd-9944-5187d35e42b7，共 2 词）",
-    "[watchlist] +儿童摄影（project_id=a9eaf83d-02e7-45fd-9944-5187d35e42b7，共 3 词）",
-    "[watchlist] -绵阳（project_id=a9eaf83d-02e7-45fd-9944-5187d35e42b7）",
-    "[watchlist] +连衣裙（project_id=abbed918-3e9b-4466-a1d6-a3c1606cfe60，共 1 词）",
-    "[project] 已创建 10710f8b-313d-4681-9014-bcf7bd4f1bd3（上限测试店），目录=D:\\work2026\\umi-claw\\test\\.tmp\\business-1789540445653\\data\\projects\\10710f8b-313d-4681-9014-bcf7bd4f1bd3",
-    "[watchlist] +词-1（project_id=10710f8b-313d-4681-9014-bcf7bd4f1bd3，共 1 词）",
-    "[watchlist] +词-2（project_id=10710f8b-313d-4681-9014-bcf7bd4f1bd3，共 2 词）",
-    "[watchlist] +词-3（project_id=10710f8b-313d-4681-9014-bcf7bd4f1bd3，共 3 词）",
-    "[watchlist] +词-4（project_id=10710f8b-313d-4681-9014-bcf7bd4f1bd3，共 4 词）",
-    "[watchlist] +词-5（project_id=10710f8b-313d-4681-9014-bcf7bd4f1bd3，共 5 词）",
-    "[watchlist] +词-6（project_id=10710f8b-313d-4681-9014-bcf7bd4f1bd3，共 6 词）",
-    "[watchlist] +词-7（project_id=10710f8b-313d-4681-9014-bcf7bd4f1bd3，共 7 词）"
+    "[project] 已创建 d1393249-2807-4bef-8a3f-f8dd9c2140e9（拾光摄影），目录=D:\\work2026\\umi-claw\\test\\.tmp\\business-1789542836881\\data\\projects\\d1393249-2807-4bef-8a3f-f8dd9c2140e9",
+    "[project] 已创建 5b043f81-937b-4675-9e74-bdbd25c32d33（云朵女装），目录=D:\\work2026\\umi-claw\\test\\.tmp\\business-1789542836881\\data\\projects\\5b043f81-937b-4675-9e74-bdbd25c32d33",
+    "[business] 已创建 project_id=d1393249-2807-4bef-8a3f-f8dd9c2140e9",
+    "[business] 已创建 project_id=5b043f81-937b-4675-9e74-bdbd25c32d33",
+    "[business] 已更新 project_id=d1393249-2807-4bef-8a3f-f8dd9c2140e9",
+    "[business] 已更新 project_id=d1393249-2807-4bef-8a3f-f8dd9c2140e9",
+    "[business] 已更新 project_id=5b043f81-937b-4675-9e74-bdbd25c32d33",
+    "[watchlist] +孕妇照（project_id=d1393249-2807-4bef-8a3f-f8dd9c2140e9，共 1 词）",
+    "[watchlist] +绵阳（project_id=d1393249-2807-4bef-8a3f-f8dd9c2140e9，共 2 词）",
+    "[watchlist] +儿童摄影（project_id=d1393249-2807-4bef-8a3f-f8dd9c2140e9，共 3 词）",
+    "[watchlist] -绵阳（project_id=d1393249-2807-4bef-8a3f-f8dd9c2140e9）",
+    "[watchlist] +连衣裙（project_id=5b043f81-937b-4675-9e74-bdbd25c32d33，共 1 词）",
+    "[project] 已创建 c3e57cde-ae5b-44d7-a42d-c1389d98b1d5（上限测试店），目录=D:\\work2026\\umi-claw\\test\\.tmp\\business-1789542836881\\data\\projects\\c3e57cde-ae5b-44d7-a42d-c1389d98b1d5",
+    "[watchlist] +词-1（project_id=c3e57cde-ae5b-44d7-a42d-c1389d98b1d5，共 1 词）",
+    "[watchlist] +词-2（project_id=c3e57cde-ae5b-44d7-a42d-c1389d98b1d5，共 2 词）",
+    "[watchlist] +词-3（project_id=c3e57cde-ae5b-44d7-a42d-c1389d98b1d5，共 3 词）",
+    "[watchlist] +词-4（project_id=c3e57cde-ae5b-44d7-a42d-c1389d98b1d5，共 4 词）",
+    "[watchlist] +词-5（project_id=c3e57cde-ae5b-44d7-a42d-c1389d98b1d5，共 5 词）",
+    "[watchlist] +词-6（project_id=c3e57cde-ae5b-44d7-a42d-c1389d98b1d5，共 6 词）",
+    "[watchlist] +词-7（project_id=c3e57cde-ae5b-44d7-a42d-c1389d98b1d5，共 7 词）"
   ],
   "checks": [
     {
@@ -44,28 +44,28 @@
       "name": "businessManager.ts 可纯 Node import（依赖注入，无 electron 顶层引用）",
       "ok": true,
       "detail": "bundle=businessManager.mjs；常量/工厂/依赖校验 ✓",
-      "ms": 1
+      "ms": 0
     },
     {
       "id": "B2",
       "name": "getBusiness：无行 → null（不抛 NOT_FOUND）",
       "ok": true,
       "detail": "null 语义正确（首填场景不报错）",
-      "ms": 68
+      "ms": 80
     },
     {
       "id": "B3",
       "name": "upsert 新建：8 字段落库、project_id 正确、空串 → null",
       "ok": true,
-      "detail": "id=5a4f2d76…；8 字段落库，空串→null",
+      "detail": "id=ca7d65d1…；8 字段落库，空串→null",
       "ms": 4
     },
     {
       "id": "B4",
       "name": "upsert 幂等：同 project 两次 → 只有一行、updated_at 变、旧值被覆盖、未传字段保留",
       "ok": true,
-      "detail": "行 id 稳定；updated_at 前进 19ms；未传字段保留",
-      "ms": 19
+      "detail": "行 id 稳定；updated_at 前进 18ms；未传字段保留",
+      "ms": 17
     },
     {
       "id": "B5",
@@ -79,7 +79,7 @@
       "name": "project 不存在 → NOT_FOUND（不靠外键报错糊过去）",
       "ok": true,
       "detail": "3 个入口均 NOT_FOUND，0 孤儿行",
-      "ms": 0
+      "ms": 1
     },
     {
       "id": "B7",
@@ -93,14 +93,14 @@
       "name": "watchlist add/list/remove：列表按 created_at 升序，删除幂等",
       "ok": true,
       "detail": "3 词升序；删除幂等；跨 project 隔离 ✓",
-      "ms": 31
+      "ms": 30
     },
     {
       "id": "B9",
       "name": "上限 10 词：第 11 个 → VALIDATION_ERROR + details.max=10（不是 DB_ERROR）",
       "ok": true,
       "detail": "10 词封顶；第 11 个 code=VALIDATION_ERROR details.max=10",
-      "ms": 18
+      "ms": 16
     },
     {
       "id": "B10",
@@ -114,14 +114,14 @@
       "name": "keyword 空/超长 → VALIDATION_ERROR；type 非法 → VALIDATION_ERROR 且不落库",
       "ok": true,
       "detail": "keyword 6 类非法入参 + type 非法均拒绝；30 字符边界通过",
-      "ms": 3
+      "ms": 2
     },
     {
       "id": "B12",
       "name": "setWatchEnabled：持久化 0/1；词不存在 → NOT_FOUND；非法值 → VALIDATION_ERROR",
       "ok": true,
       "detail": "0/1 往返持久化；重启后 business + watchlist 均可读",
-      "ms": 71
+      "ms": 61
     },
     {
       "id": "B13",
@@ -135,14 +135,14 @@
       "name": "级联：删 Project → businesses + project_watchlist 行一起消失",
       "ok": true,
       "detail": "级联清 2 表；邻店数据完好",
-      "ms": 17
+      "ms": 14
     },
     {
       "id": "B15",
       "name": "不采集：模块源码内无任何网络调用（剥注释后静态扫描）",
       "ok": true,
       "detail": "7 类网络特征 0 命中；无采集依赖；契约注释在位",
-      "ms": 1
+      "ms": 0
     },
     {
       "id": "B16",

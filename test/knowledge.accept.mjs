@@ -479,7 +479,7 @@ try {
   })
 
   // ── K10b txt / md 文本文件导入（picker 过滤器承诺支持这两类） ──
-  await r.check('K10b', 'txt/md 文件按 text/markdown 导入：读出正文（剥 BOM）、source_path=NULL、可检索；伪装与空文件拦截', async () => {
+  await r.check('K10b', 'txt/md 文件按 text/markdown 导入：读出正文（剥 BOM）、写 source_path、重导入去重、可检索；伪装与空文件拦截', async () => {
     const txtPath = join(samplesDir, '门店须知.txt')
     const mdPath = join(samplesDir, '摄影套餐说明.md')
     const emptyPath = join(samplesDir, '空文档.txt')
@@ -492,7 +492,12 @@ try {
 
     const txt = await m.knowledge.importKnowledge(ctx.p1.id, { type: 'text', filePath: txtPath })
     assertEq(txt.type, 'text', 'type=text')
-    assertEq(txt.source_path, null, '文本文件 source_path 仍为 NULL（与手输同口径）')
+    assert(
+      typeof txt.source_path === 'string' &&
+        txt.source_path.startsWith('projects/') &&
+        txt.source_path.endsWith('门店须知.txt'),
+      `文本文件也应写 source_path（相对 dataDir 的正斜杠路径），实际 ${txt.source_path}`
+    )
     assertEq(txt.source_name, '门店须知.txt', 'source_name 记原文件名（可溯源）')
     assertEq(txt.title, '门店须知', '标题默认取文件名去扩展名')
     assert(txt.content.includes('每周二公休') && !txt.content.startsWith('\uFEFF'), '正文应读出且剥掉 BOM')
@@ -501,6 +506,13 @@ try {
     assertEq(md.type, 'markdown', 'type=markdown')
     assertEq(md.title, '摄影套餐说明', 'md 标题取文件名')
     assert(md.content.includes('轻奢写真 1288'), 'md 正文应读出')
+
+    // 同一份文件重导入 → 靠 UNIQUE(project_id, source_path) 覆盖同一条，不是又多一条
+    writeFileSync(txtPath, '门店须知：每周二公休（已更新）。', 'utf8')
+    const txtAgain = await m.knowledge.importKnowledge(ctx.p1.id, { type: 'text', filePath: txtPath })
+    assertEq(txtAgain.id, txt.id, '同文件重导入应覆盖同一行（不再多一条）')
+    assert(txtAgain.content.includes('已更新'), '正文应被覆盖')
+    assertEq(txtAgain.source_path, txt.source_path, 'source_path 应保持不变')
 
     const hits = await m.knowledge.searchKnowledge(ctx.p1.id, '公休')
     assert(hits.some((h) => h.id === txt.id), 'txt 正文应可被 LIKE 检索')
@@ -513,15 +525,16 @@ try {
     const empty = await outcome(m.knowledge.importKnowledge(ctx.p1.id, { type: 'text', filePath: emptyPath }))
     assertEq(empty.code, 'FILE_PARSE_ERROR', '空 txt 应 FILE_PARSE_ERROR（不落空内容行）')
 
-    // 失败路径不落行；成功的两条 source_path=NULL 也不拷原文
+    // 失败路径不落行；成功的 txt/md 两条各自拷了原件（重导入那条是覆盖）
     assertEq(
       await countRows(main, 'knowledge_items', { project_id: ctx.p1.id }),
       beforeCount + 2,
-      '只有 txt/md 两条成功落行（三条失败路径不落行）'
+      '只有 txt/md 两条成功落行（三条失败路径不落行，重导入不新增）'
     )
     const filesAfter = readdirSync(m.knowledge.projectDir(ctx.p1.id))
-    assertEq(filesAfter.length, filesBefore.length, '文本文件不拷原文（source_path=NULL 口径）')
-    return `txt/md 各一条（BOM 已剥、可检索）；伪装 pdf/错类型/空文件 3 条均被拦 ✓`
+    assertEq(filesAfter.length, filesBefore.length + 2, '文本文件也要拷原件进 data/projects/<id>/')
+    assert(filesAfter.includes('门店须知.txt'), '拷贝的文件名应与 source_name 一致')
+    return `txt/md 各一条（BOM 已剥、可检索、写 source_path、重导入覆盖同一条）；伪装 pdf/错类型/空文件 3 条均被拦 ✓`
   })
 
   // ── K11 参数校验矩阵 ──
@@ -724,6 +737,56 @@ try {
     assertEq(urlMod.MAX_FETCH_BYTES, 5 * 1024 * 1024, '抓取体积上限应为 5MB')
     assert(/^https:/.test(urlMod.FETCH_USER_AGENT) === false, 'UA 不应伪装成 https 链接')
     return `正文抽取 + 覆盖 + 失败路径 + 纯函数（URL/实体/块级） ✓`
+  })
+
+  // ── K17b 抓取 Content-Type 守卫 + 总时长总闸（2026-09-16 补强） ──
+  await r.check('K17b', 'url 抓取：非文本 Content-Type 拒收（不把二进制当正文）+ 总时长总闸', async () => {
+    const urlMod = await import(
+      pathToFileURL(bundleEntry('electron/main/marketing/parsers/urlParser.ts', 'url-parser.mjs')).href
+    )
+    // 纯函数：文本类型放行、缺 Content-Type 放行（老站点）、二进制类型拒收
+    urlMod.assertSupportedContentType('text/html; charset=utf-8', 'https://a.com')
+    urlMod.assertSupportedContentType('application/xhtml+xml', 'https://a.com')
+    urlMod.assertSupportedContentType('', 'https://a.com')
+    const pdfGuard = await outcome(
+      Promise.resolve().then(() => urlMod.assertSupportedContentType('application/pdf', 'https://a.com/x.pdf'))
+    )
+    assertEq(pdfGuard.code, 'FILE_PARSE_ERROR', 'application/pdf 应被 Content-Type 守卫拒收')
+    assertEq(
+      pdfGuard.details && pdfGuard.details.reason,
+      'unsupported-content-type',
+      'reason 应为 unsupported-content-type'
+    )
+    const imgGuard = await outcome(
+      Promise.resolve().then(() => urlMod.assertSupportedContentType('image/png', 'https://a.com/x.png'))
+    )
+    assertEq(imgGuard.code, 'FILE_PARSE_ERROR', 'image/png 应被拒收')
+
+    // 真抓取器打本地 http 服务（不出网）：html 放行、pdf 拒收
+    const { createServer } = await import('node:http')
+    const server = createServer((req, res) => {
+      if (req.url === '/doc.pdf') {
+        res.writeHead(200, { 'content-type': 'application/pdf' })
+        res.end('%PDF-1.4 not-really-a-pdf')
+      } else {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        res.end('<html><head><title>本地页</title></head><body><p>本地正文 甲乙</p></body></html>')
+      }
+    })
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = server.address().port
+    try {
+      const page = await urlMod.fetchHtmlPage(`http://127.0.0.1:${port}/page.html`)
+      assertEq(page.status, 200, '本地 html 应抓取成功')
+      assert(urlMod.extractTextFromHtml(page.html).text.includes('本地正文'), '本地正文应可抽取')
+      const bad = await outcome(urlMod.fetchHtmlPage(`http://127.0.0.1:${port}/doc.pdf`))
+      assertEq(bad.code, 'FILE_PARSE_ERROR', 'application/pdf 的真实抓取应被拒收')
+      assertEq(bad.details && bad.details.reason, 'unsupported-content-type', '真实抓取的 reason 应符合')
+    } finally {
+      await new Promise((resolve) => server.close(resolve))
+    }
+    assertEq(urlMod.FETCH_TOTAL_TIMEOUT_MS, 30_000, '应有总时长总闸（防慢滴站）')
+    return '文本放行 / 二进制拒收（纯函数 + 真抓取本地服务）；总时长总闸在位 ✓'
   })
 
   // ── K18 删 Project 级联 ──

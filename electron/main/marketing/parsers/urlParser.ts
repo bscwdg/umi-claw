@@ -22,6 +22,23 @@ export const MAX_FETCH_BYTES = 5 * 1024 * 1024
 export const FETCH_TIMEOUT_MS = 15_000
 /** 重定向跳数上限 */
 export const MAX_REDIRECTS = 5
+
+/** 总时长上限：`req.setTimeout` 只盖住「socket 空闲」，慢滴站能一直拖着不老触发 → 再加一道总闸 */
+export const FETCH_TOTAL_TIMEOUT_MS = 30_000
+
+/**
+ * 允许当正文导入的 Content-Type（2026-09-16 补强）。
+ * 明确声明为非文本类型的（application/pdf、image/*、application/octet-stream…）直接拒，
+ * 否则会把二进制当正文存进知识库（乱码且无法检索）。
+ */
+export const ACCEPTED_CONTENT_TYPES = [
+  'text/html',
+  'application/xhtml+xml',
+  'text/plain',
+  'text/markdown',
+  'text/xml',
+  'application/xml'
+] as const
 /** 请求 UA（诚实标识自己，不做浏览器伪装） */
 export const FETCH_USER_AGENT = 'UmiClaw/2.0 (knowledge-import; +local)'
 
@@ -164,6 +181,25 @@ export function decodeHtmlBuffer(buffer: Buffer, contentType: string): string {
 export type HtmlFetcher = (url: string) => Promise<FetchedHtml>
 
 /**
+ * Content-Type 守卫：
+ * - 缺失 Content-Type → 放行（部分老站不返回；正文抽取的「空正文」兜底会拦住真的空页）
+ * - 明确声明为非文本类型 → `FILE_PARSE_ERROR` + `reason=unsupported-content-type`
+ */
+export function assertSupportedContentType(contentType: string, url: string): void {
+  const mime = String(contentType || '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase()
+  if (!mime) return
+  if ((ACCEPTED_CONTENT_TYPES as readonly string[]).includes(mime)) return
+  throw new AppError(
+    ERROR_CODES.FILE_PARSE_ERROR,
+    `这个链接返回的是 ${mime}，不是网页正文，暂不支持导入: ${url}`,
+    { url, contentType: mime, reason: 'unsupported-content-type', accepted: [...ACCEPTED_CONTENT_TYPES] }
+  )
+}
+
+/**
  * 默认抓取器：`node:http` / `node:https`（**故意不引第三方 HTTP 库**）。
  *
  * 换取的是「用户粘了自家官网/公众号文章链接就能进知识库」这一点可用性；
@@ -232,6 +268,13 @@ export const fetchHtmlPage: HtmlFetcher = async (rawUrl: string) => {
             return
           }
           const contentType = String(res.headers['content-type'] || '')
+          try {
+            assertSupportedContentType(contentType, target)
+          } catch (e) {
+            res.destroy()
+            reject(e)
+            return
+          }
           const chunks: Buffer[] = []
           let total = 0
           res.on('data', (chunk: Buffer) => {
@@ -263,6 +306,15 @@ export const fetchHtmlPage: HtmlFetcher = async (rawUrl: string) => {
       req.setTimeout(FETCH_TIMEOUT_MS, () => {
         req.destroy(new Error(`抓取超时（${FETCH_TIMEOUT_MS}ms）`))
       })
+      // 总时长总闸：慢滴站（每次都有数据、但永远传不完）也会被切断
+      const totalTimer = setTimeout(() => {
+        try {
+          req.destroy(new Error(`抓取总时长超限（${FETCH_TOTAL_TIMEOUT_MS}ms）`))
+        } catch {
+          /* 已结束 */
+        }
+      }, FETCH_TOTAL_TIMEOUT_MS)
+      req.on('close', () => clearTimeout(totalTimer))
       req.on('error', (e) => reject(parseFetchError(target, e)))
       req.end()
     })
