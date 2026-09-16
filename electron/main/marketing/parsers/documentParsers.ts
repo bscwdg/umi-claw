@@ -33,7 +33,7 @@
 //     因此 pdfjs 以**运行时资产**形式随包（`resources/pdfjs/build/pdf.js`），经 `createRequire`
 //     按绝对路径加载 —— 打包器完全看不见它，dev 与安装包走同一份文件（见 `loadPdfjsModule`）。
 
-import { statSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 import mammoth from 'mammoth'
@@ -79,8 +79,8 @@ export interface ParsedDocument {
   content: string
   /** 解析元信息（进日志/details，不进库；用于排障与验收断言） */
   meta: {
-    /** 解析器标识 */
-    parser: ParseableFileType
+    /** 解析器标识：docx/xlsx/pdf（文档解析）或 text/markdown（纯文本文件读取） */
+    parser: ParseableFileType | 'text' | 'markdown'
     /** 原始文件字节数 */
     bytes: number
     /** 文本字符数（trim 后） */
@@ -277,6 +277,56 @@ export async function parseXlsxFile(filePath: string): Promise<ParsedDocument> {
   return {
     content,
     meta: { parser: 'xlsx', bytes, textLength: content.length, units: sheets.length, sheets }
+  }
+}
+
+// ── 纯文本（txt / md） ────────────────────────────────────────────────────────
+
+/** 文本类条目可直接读文件导入的扩展名（type=text/markdown 也接受 filePath） */
+export const TEXT_FILE_EXTENSIONS: Record<'text' | 'markdown', string[]> = {
+  text: ['.txt'],
+  markdown: ['.md']
+}
+
+/**
+ * 读取 txt / md 文件（UTF-8）。
+ *
+ * 扩展名必须与声明类型一致——这条校验同时堵死「把扫描件 .pdf 报成 type=text
+ * 绕过扫描件检测」的路径：类型与扩展名不符直接 VALIDATION_ERROR。
+ * 空文件与 docx 空文本同性质，报 FILE_PARSE_ERROR（不落空内容行）。
+ */
+export async function parseTextFile(
+  declaredType: 'text' | 'markdown',
+  filePath: string
+): Promise<ParsedDocument> {
+  const bytes = assertReadableFile(filePath)
+  const ext = extname(filePath).toLowerCase()
+  const allowed = TEXT_FILE_EXTENSIONS[declaredType]
+  if (!allowed.includes(ext)) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      `文件格式与所选类型不符：类型 ${declaredType} 应为 ${allowed.join('/')}，实际 ${ext || '（无扩展名）'}`,
+      { field: 'filePath', declaredType, extension: ext, allowed }
+    )
+  }
+  let raw = ''
+  try {
+    raw = readFileSync(filePath, 'utf8')
+  } catch (e) {
+    throw parseErrorOf(declaredType, filePath, e)
+  }
+  // 去 UTF-8 BOM（Windows 记事本的 txt 很常见；不去掉会混进正文首行）
+  const content = normalizeBlankLines(raw.replace(/^\uFEFF/, ''))
+  if (!content) {
+    throw new AppError(
+      ERROR_CODES.FILE_PARSE_ERROR,
+      `${declaredType} 文件没有抽取到任何文字: ${basename(filePath)}`,
+      { path: filePath, kind: declaredType, reason: 'empty-text' }
+    )
+  }
+  return {
+    content,
+    meta: { parser: declaredType, bytes, textLength: content.length, units: 1 }
   }
 }
 

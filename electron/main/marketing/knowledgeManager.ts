@@ -46,6 +46,7 @@ import {
   PARSEABLE_FILE_TYPES,
   assertFileTypeMatchesPath,
   parseDocumentFile,
+  parseTextFile,
   type ParseableFileType
 } from './parsers/documentParsers'
 import { assertImportableUrl, extractTextFromHtml, fetchHtmlPage, type HtmlFetcher } from './parsers/urlParser'
@@ -292,9 +293,21 @@ export class KnowledgeManager {
           `${(parsed.meta.bytes / 1024).toFixed(1)}KB → data/projects/${pid}/）`
       )
     } else {
-      const raw = requireContent(input?.text, 'importKnowledge')
-      content = type === 'faq' ? normalizeFaqText(raw) : raw
-      if (!title) title = normalizeTitle(null, firstLine(content))
+      // text / markdown 也接受直接给本地 txt/md 文件（文件选择器过滤器含这两项）；
+      // parseTextFile 内部校验扩展名与声明类型一致，防止把 .pdf 报成 text 绕过扫描件检测。
+      const filePathText = optionalPath(input?.filePath)
+      if (filePathText && (type === 'text' || type === 'markdown')) {
+        const parsed = await parseTextFile(type, filePathText)
+        content = parsed.content
+        // text/markdown 的 source_path 按契约仍为 NULL（手输/文件同口径）；
+        // source_name 留原文件名做溯源（不参与重导入去重键）
+        sourceName = basename(filePathText)
+        if (!title) title = normalizeTitle(null, nameWithoutExtension(basename(filePathText)))
+      } else {
+        const raw = requireContent(input?.text, 'importKnowledge')
+        content = type === 'faq' ? normalizeFaqText(raw) : raw
+        if (!title) title = normalizeTitle(null, firstLine(content))
+      }
     }
 
     return this.upsertRow(pid, {
@@ -527,6 +540,13 @@ function requireText(value: unknown, method: string, field: string): string {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, `${method} 需要 ${field}`, { field })
   }
   return value.trim()
+}
+
+/** 可选路径：非字符串/空白 → null（表示「没给文件，走 text 粘贴路径」） */
+function optionalPath(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const v = value.trim()
+  return v ? v : null
 }
 
 /** 正文（保留原始换行，只判空与长度；trim 掉首尾空白） */

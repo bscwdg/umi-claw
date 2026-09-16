@@ -478,6 +478,52 @@ try {
     return `两条都是 VALIDATION_ERROR + 人话提示 ✓`
   })
 
+  // ── K10b txt / md 文本文件导入（picker 过滤器承诺支持这两类） ──
+  await r.check('K10b', 'txt/md 文件按 text/markdown 导入：读出正文（剥 BOM）、source_path=NULL、可检索；伪装与空文件拦截', async () => {
+    const txtPath = join(samplesDir, '门店须知.txt')
+    const mdPath = join(samplesDir, '摄影套餐说明.md')
+    const emptyPath = join(samplesDir, '空文档.txt')
+    writeFileSync(txtPath, '\uFEFF门店须知：每周二公休。\n欢迎光临拾光摄影。', 'utf8')
+    writeFileSync(mdPath, '# 摄影套餐说明\n\n轻奢写真 1288 元。', 'utf8')
+    writeFileSync(emptyPath, '   \n  \n', 'utf8')
+
+    const beforeCount = await countRows(main, 'knowledge_items', { project_id: ctx.p1.id })
+    const filesBefore = readdirSync(m.knowledge.projectDir(ctx.p1.id))
+
+    const txt = await m.knowledge.importKnowledge(ctx.p1.id, { type: 'text', filePath: txtPath })
+    assertEq(txt.type, 'text', 'type=text')
+    assertEq(txt.source_path, null, '文本文件 source_path 仍为 NULL（与手输同口径）')
+    assertEq(txt.source_name, '门店须知.txt', 'source_name 记原文件名（可溯源）')
+    assertEq(txt.title, '门店须知', '标题默认取文件名去扩展名')
+    assert(txt.content.includes('每周二公休') && !txt.content.startsWith('\uFEFF'), '正文应读出且剥掉 BOM')
+
+    const md = await m.knowledge.importKnowledge(ctx.p1.id, { type: 'markdown', filePath: mdPath })
+    assertEq(md.type, 'markdown', 'type=markdown')
+    assertEq(md.title, '摄影套餐说明', 'md 标题取文件名')
+    assert(md.content.includes('轻奢写真 1288'), 'md 正文应读出')
+
+    const hits = await m.knowledge.searchKnowledge(ctx.p1.id, '公休')
+    assert(hits.some((h) => h.id === txt.id), 'txt 正文应可被 LIKE 检索')
+
+    // 防绕过：扫描件 .pdf 不能报成 text 导入架空扫描件检测；.md 也不能报成 text
+    const fakePdf = await outcome(m.knowledge.importKnowledge(ctx.p1.id, { type: 'text', filePath: MIN_TEXT_LAYER_PDF }))
+    assertEq(fakePdf.code, 'VALIDATION_ERROR', '.pdf + type=text 应被类型-扩展名校验拦下')
+    const mdAsText = await outcome(m.knowledge.importKnowledge(ctx.p1.id, { type: 'text', filePath: mdPath }))
+    assertEq(mdAsText.code, 'VALIDATION_ERROR', '.md 不能报成 text 类型')
+    const empty = await outcome(m.knowledge.importKnowledge(ctx.p1.id, { type: 'text', filePath: emptyPath }))
+    assertEq(empty.code, 'FILE_PARSE_ERROR', '空 txt 应 FILE_PARSE_ERROR（不落空内容行）')
+
+    // 失败路径不落行；成功的两条 source_path=NULL 也不拷原文
+    assertEq(
+      await countRows(main, 'knowledge_items', { project_id: ctx.p1.id }),
+      beforeCount + 2,
+      '只有 txt/md 两条成功落行（三条失败路径不落行）'
+    )
+    const filesAfter = readdirSync(m.knowledge.projectDir(ctx.p1.id))
+    assertEq(filesAfter.length, filesBefore.length, '文本文件不拷原文（source_path=NULL 口径）')
+    return `txt/md 各一条（BOM 已剥、可检索）；伪装 pdf/错类型/空文件 3 条均被拦 ✓`
+  })
+
   // ── K11 参数校验矩阵 ──
   await r.check('K11', '校验矩阵：缺/非法 type、image、类型-扩展名不符、文件不存在、无扩展名、url 非法、跳过长标题', async () => {
     const cases = []

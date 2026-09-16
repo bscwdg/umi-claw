@@ -1,8 +1,8 @@
 {
   "suite": "db-worker（Worker 半边）",
-  "startedAt": "2026-09-16T05:44:46.310Z",
-  "finishedAt": "2026-09-16T05:44:47.715Z",
-  "durationMs": 1405,
+  "startedAt": "2026-09-16T06:33:56.830Z",
+  "finishedAt": "2026-09-16T06:33:58.331Z",
+  "durationMs": 1501,
   "total": 18,
   "passed": 18,
   "failed": 0,
@@ -19,15 +19,15 @@
       "id": "W1",
       "name": "worker 启动即建库（spawn 前不存在）",
       "ok": true,
-      "detail": "db=D:\\work2026\\umi-claw\\test\\.tmp\\worker-1789537486016\\umi-claw.db pid=19624",
-      "ms": 424
+      "detail": "db=D:\\work2026\\umi-claw\\test\\.tmp\\worker-1789540436613\\umi-claw.db pid=34220",
+      "ms": 410
     },
     {
       "id": "W2",
       "name": "migrate 0 → 1，user_version=1",
       "ok": true,
       "detail": "applied=v1",
-      "ms": 5
+      "ms": 8
     },
     {
       "id": "W3",
@@ -62,7 +62,7 @@
       "name": "foreign_keys=ON：删 project 级联清业务数据",
       "ok": true,
       "detail": "businesses/knowledge/chunks/contents/versions/watchlist/scores 全部级联清空",
-      "ms": 12
+      "ms": 14
     },
     {
       "id": "W8",
@@ -97,49 +97,49 @@
       "name": "脏请求行（非 JSON / 缺 method）不自杀",
       "ok": true,
       "detail": "stderr 片段=[db-worker] 无法解析的请求行: 这不是 JSON；{\"id\":\"w12-no-method\"}",
-      "ms": 253
+      "ms": 264
     },
     {
       "id": "W13",
       "name": "VACUUM INTO 备份链路可用（含目标已存在 → CONFLICT）",
       "ok": true,
       "detail": "size=159744B tables=11",
-      "ms": 12
+      "ms": 11
     },
     {
       "id": "W14",
       "name": "强杀（SIGKILL）后库不损坏，数据仍在",
       "ok": true,
       "detail": "integrity_check=ok projects=2 user_version=1",
-      "ms": 285
+      "ms": 247
     },
     {
       "id": "W15",
       "name": "强杀后重启：数据仍在、migrate 幂等",
       "ok": true,
       "detail": "projects=p2,p3",
-      "ms": 57
+      "ms": 97
     },
     {
       "id": "W16",
       "name": "shutdown 指令优雅退出（exit 0 + WAL 截断）",
       "ok": true,
       "detail": "exitCode=0 wal=0B",
-      "ms": 8
+      "ms": 17
     },
     {
       "id": "W17",
       "name": "stdin 关闭（EOF）也优雅退出",
       "ok": true,
       "detail": "exitCode=0",
-      "ms": 60
+      "ms": 108
     },
     {
       "id": "W18",
       "name": "SIGTERM 触发优雅退出",
       "ok": true,
       "detail": "exitCode=null integrity_check=ok（Windows 无信号语义，POSIX 下为 0）",
-      "ms": 64
+      "ms": 110
     }
   ]
 }

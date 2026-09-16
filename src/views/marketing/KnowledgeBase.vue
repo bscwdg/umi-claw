@@ -225,6 +225,15 @@ const canImport = computed(() => {
   return !!text.value.trim()
 })
 
+/** 文件扩展名 → 导入类型（txt/md 走 text/markdown 文本文件路径，不是文档解析链路） */
+const FILE_IMPORT_TYPE_BY_EXT: Record<string, string> = {
+  docx: 'docx',
+  xlsx: 'xlsx',
+  pdf: 'pdf',
+  txt: 'text',
+  md: 'markdown'
+}
+
 function extOf(p: string) {
   const m = /\.([a-z0-9]+)$/i.exec(p.trim())
   return m ? m[1].toLowerCase() : ''
@@ -274,8 +283,13 @@ async function doImport() {
   const t = title.value.trim()
   try {
     if (mode.value === 'file') {
+      const importType = FILE_IMPORT_TYPE_BY_EXT[extOf(filePath.value)]
+      if (!importType) {
+        importError.value = '仅支持 docx / xlsx / pdf / txt / md 文件（doc、xls 旧格式请先另存为新格式）'
+        return
+      }
       await marketing.importKnowledge(projectId, {
-        type: extOf(filePath.value),
+        type: importType,
         title: t || undefined,
         filePath: filePath.value
       })

@@ -1,10 +1,10 @@
 {
   "suite": "knowledge（知识库导入 / 检索 / 重导入，打真 knowledgeManager.ts）",
-  "startedAt": "2026-09-16T05:44:44.748Z",
-  "finishedAt": "2026-09-16T05:44:45.665Z",
-  "durationMs": 917,
-  "total": 21,
-  "passed": 21,
+  "startedAt": "2026-09-16T06:33:55.042Z",
+  "finishedAt": "2026-09-16T06:33:56.225Z",
+  "durationMs": 1183,
+  "total": 22,
+  "passed": 22,
   "failed": 0,
   "env": {
     "node": "v24.21.0",
@@ -14,43 +14,43 @@
     "runtimeNode": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe"
   },
   "bundle": "D:\\work2026\\umi-claw\\test\\.tmp\\knowledge-manager.mjs",
-  "dataDir": "D:\\work2026\\umi-claw\\test\\.tmp\\knowledge-1789537484175\\data",
+  "dataDir": "D:\\work2026\\umi-claw\\test\\.tmp\\knowledge-1789540434469\\data",
   "nodePath": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe",
   "skipped": [
     "K8"
   ],
   "pdfSample": null,
   "logSample": [
-    "[project] 已创建 55c3496d-5e5f-4b36-af32-7361601685e8（拾光摄影），目录=D:\\work2026\\umi-claw\\test\\.tmp\\knowledge-1789537484175\\data\\projects\\55c3496d-5e5f-4b36-af32-7361601685e8",
-    "[project] 已创建 7d04e33b-b8fa-4a45-a172-917f2db92c1e（云朵女装），目录=D:\\work2026\\umi-claw\\test\\.tmp\\knowledge-1789537484175\\data\\projects\\7d04e33b-b8fa-4a45-a172-917f2db92c1e",
-    "[knowledge] docx 导入成功 projects/55c3496d-5e5f-4b36-af32-7361601685e8/套系单.docx（95 字，8.5KB → data/projects/55c3496d-5e5f-4b36-af32-7361601685e8/）",
-    "[knowledge] xlsx 导入成功 projects/55c3496d-5e5f-4b36-af32-7361601685e8/价目表.xlsx（110 字，6.4KB → data/projects/55c3496d-5e5f-4b36-af32-7361601685e8/）",
-    "[knowledge] docx 导入成功 projects/55c3496d-5e5f-4b36-af32-7361601685e8/套系单.docx（105 字，8.5KB → data/projects/55c3496d-5e5f-4b36-af32-7361601685e8/）",
-    "[knowledge] 重导入覆盖 213f69a6-59ce-47c3-930a-00d521833310（source_path=projects/55c3496d-5e5f-4b36-af32-7361601685e8/套系单.docx）",
-    "[knowledge] pdf 导入成功 projects/55c3496d-5e5f-4b36-af32-7361601685e8/min-text-layer.pdf（93 字，0.7KB → data/projects/55c3496d-5e5f-4b36-af32-7361601685e8/）",
-    "[knowledge] 已更新 10536fea-7cce-4de5-b4d0-4c250d840a59（project_id=55c3496d-5e5f-4b36-af32-7361601685e8）",
-    "[knowledge] 已删除 b34ce897-6b0f-4eb8-9284-8fdf776aa61a（project_id=55c3496d-5e5f-4b36-af32-7361601685e8）",
+    "[project] 已创建 5cbf116b-66ab-4fdd-aeeb-da9fae48881b（拾光摄影），目录=D:\\work2026\\umi-claw\\test\\.tmp\\knowledge-1789540434469\\data\\projects\\5cbf116b-66ab-4fdd-aeeb-da9fae48881b",
+    "[project] 已创建 5bd4f24a-df97-417a-bae3-3c76f9b9b65b（云朵女装），目录=D:\\work2026\\umi-claw\\test\\.tmp\\knowledge-1789540434469\\data\\projects\\5bd4f24a-df97-417a-bae3-3c76f9b9b65b",
+    "[knowledge] docx 导入成功 projects/5cbf116b-66ab-4fdd-aeeb-da9fae48881b/套系单.docx（95 字，8.5KB → data/projects/5cbf116b-66ab-4fdd-aeeb-da9fae48881b/）",
+    "[knowledge] xlsx 导入成功 projects/5cbf116b-66ab-4fdd-aeeb-da9fae48881b/价目表.xlsx（110 字，6.4KB → data/projects/5cbf116b-66ab-4fdd-aeeb-da9fae48881b/）",
+    "[knowledge] docx 导入成功 projects/5cbf116b-66ab-4fdd-aeeb-da9fae48881b/套系单.docx（105 字，8.5KB → data/projects/5cbf116b-66ab-4fdd-aeeb-da9fae48881b/）",
+    "[knowledge] 重导入覆盖 234583b1-40d1-42e6-ac80-e2bcaaa5b85e（source_path=projects/5cbf116b-66ab-4fdd-aeeb-da9fae48881b/套系单.docx）",
+    "[knowledge] pdf 导入成功 projects/5cbf116b-66ab-4fdd-aeeb-da9fae48881b/min-text-layer.pdf（93 字，0.7KB → data/projects/5cbf116b-66ab-4fdd-aeeb-da9fae48881b/）",
+    "[knowledge] 已更新 1c2af4c0-9008-4ab2-81ce-928ba759053a（project_id=5cbf116b-66ab-4fdd-aeeb-da9fae48881b）",
+    "[knowledge] 已删除 4ec485f0-f2b4-4a3d-b24e-8bdb13bb9ef6（project_id=5cbf116b-66ab-4fdd-aeeb-da9fae48881b）",
     "[knowledge] url 导入成功 https://example.com/shiguang/price（38 字，HTTP 200）",
     "[knowledge] url 导入成功 https://example.com/shiguang/price（38 字，HTTP 200）",
-    "[knowledge] 重导入覆盖 42ca1611-08e5-4a28-a97d-6dfa59d6e524（source_path=https://example.com/shiguang/price）",
-    "[project] 已创建 dbc44e07-89d2-483b-b442-db9259d9f63b（级联测试商家），目录=D:\\work2026\\umi-claw\\test\\.tmp\\knowledge-1789537484175\\data\\projects\\dbc44e07-89d2-483b-b442-db9259d9f63b",
-    "[knowledge] docx 导入成功 projects/dbc44e07-89d2-483b-b442-db9259d9f63b/套系单.docx（95 字，8.5KB → data/projects/dbc44e07-89d2-483b-b442-db9259d9f63b/）",
-    "[project] 已删除 dbc44e07-89d2-483b-b442-db9259d9f63b（目录=已删）"
+    "[knowledge] 重导入覆盖 c666e2db-f577-4dfd-ac0f-ee796089ccfc（source_path=https://example.com/shiguang/price）",
+    "[project] 已创建 09184eab-11cd-466d-852c-e8d2ff39cabf（级联测试商家），目录=D:\\work2026\\umi-claw\\test\\.tmp\\knowledge-1789540434469\\data\\projects\\09184eab-11cd-466d-852c-e8d2ff39cabf",
+    "[knowledge] docx 导入成功 projects/09184eab-11cd-466d-852c-e8d2ff39cabf/套系单.docx（95 字，8.5KB → data/projects/09184eab-11cd-466d-852c-e8d2ff39cabf/）",
+    "[project] 已删除 09184eab-11cd-466d-852c-e8d2ff39cabf（目录=已删）"
   ],
   "checks": [
     {
       "id": "K1",
       "name": "knowledgeManager.ts 可纯 Node import（依赖注入，无 electron 顶层引用）+ 常量契约",
       "ok": true,
-      "detail": "bundle=knowledge-manager.mjs（42KB）；常量/工厂/依赖校验 ✓",
-      "ms": 1
+      "detail": "bundle=knowledge-manager.mjs（44KB）；常量/工厂/依赖校验 ✓",
+      "ms": 0
     },
     {
       "id": "K2",
       "name": "text/markdown/faq 直存：source_path=null、标题推导、faq 结构化、status=ready",
       "ok": true,
       "detail": "text/markdown/faq 各一条；标题推导 + faq 结构化 + 空内容拦截 ✓",
-      "ms": 93
+      "ms": 77
     },
     {
       "id": "K3",
@@ -63,29 +63,29 @@
       "id": "K4",
       "name": "docx 导入（真生成「套系单」）：中文可检索、价格有序不串行、原文落盘、相对路径",
       "ok": true,
-      "detail": "title=套系单；content 95 字；落盘 projects/55c3496d-5e5f-4b36-af32-7361601685e8/套系单.docx",
-      "ms": 24
+      "detail": "title=套系单；content 95 字；落盘 projects/5cbf116b-66ab-4fdd-aeeb-da9fae48881b/套系单.docx",
+      "ms": 22
     },
     {
       "id": "K5",
       "name": "xlsx 导入（真生成「价目表」）：Markdown 表、同行数字不串行、LIKE 命中",
       "ok": true,
       "detail": "content 110 字；4 行表格对齐、价格可检 ✓",
-      "ms": 21
+      "ms": 23
     },
     {
       "id": "K6",
       "name": "重导入 upsert：同 source_path 只一行、content 被覆盖、created_at 与 id 不变",
       "ok": true,
-      "detail": "id 稳定、created_at=1789537484865 未漂移；content 由 1288 版本覆盖为 1588 版本",
-      "ms": 36
+      "detail": "id 稳定、created_at=1789540435141 未漂移；content 由 1288 版本覆盖为 1588 版本",
+      "ms": 30
     },
     {
       "id": "K7",
       "name": "PDF（提交级最小 fixture）：文字层抽取 + 数字有序 + LIKE 命中",
       "ok": true,
       "detail": "content 93 字；数字顺序 39 < 55 < 71 < 85 ✓",
-      "ms": 115
+      "ms": 169
     },
     {
       "id": "K8",
@@ -100,21 +100,28 @@
       "name": "扫描件检测：无文字层 PDF → FILE_PARSE_ERROR + 库里无空内容行 + 无孤儿文件",
       "ok": true,
       "detail": "FILE_PARSE_ERROR(scanned-pdf)；行数 6 不变、0 空内容、0 孤儿文件 ✓",
-      "ms": 3
+      "ms": 8
     },
     {
       "id": "K10",
       "name": "doc/xls 老格式 → VALIDATION_ERROR +「另存为」人话提示（不落行不落文件）",
       "ok": true,
       "detail": "两条都是 VALIDATION_ERROR + 人话提示 ✓",
-      "ms": 1
+      "ms": 5
+    },
+    {
+      "id": "K10b",
+      "name": "txt/md 文件按 text/markdown 导入：读出正文（剥 BOM）、source_path=NULL、可检索；伪装与空文件拦截",
+      "ok": true,
+      "detail": "txt/md 各一条（BOM 已剥、可检索）；伪装 pdf/错类型/空文件 3 条均被拦 ✓",
+      "ms": 25
     },
     {
       "id": "K11",
       "name": "校验矩阵：缺/非法 type、image、类型-扩展名不符、文件不存在、无扩展名、url 非法、跳过长标题",
       "ok": true,
       "detail": "12 类非法输入全部按 §五 码返回；超长标题截断 ✓",
-      "ms": 2
+      "ms": 5
     },
     {
       "id": "K12",
@@ -128,63 +135,63 @@
       "name": "跨 Project 隔离：拿别家 id 读/改/删 → NOT_FOUND 或 deleted:false，条目仍在",
       "ok": true,
       "detail": "读/改 → NOT_FOUND；删 → deleted:false；原条目完好 ✓",
-      "ms": 1
+      "ms": 5
     },
     {
       "id": "K14",
       "name": "updateKnowledge：白名单字段可改、未知字段 VALIDATION_ERROR、空 patch 不刷 updated_at",
       "ok": true,
       "detail": "白名单/空 patch/不存在 三类语义 ✓",
-      "ms": 22
+      "ms": 13
     },
     {
       "id": "K15",
       "name": "deleteKnowledge：幂等（重复删 deleted:false）；删后检索不到",
       "ok": true,
       "detail": "幂等删除 ✓；检索随删除失效 ✓",
-      "ms": 3
+      "ms": 10
     },
     {
       "id": "K16",
       "name": "检索只返回 status=ready（手插一条其他状态的行不参与检索）",
       "ok": true,
       "detail": "status 过滤生效；list 不受影响 ✓",
-      "ms": 2
+      "ms": 9
     },
     {
       "id": "K17",
       "name": "url 类：注入抓取器 → 正文抽取（去 script/style/实体解码）、重导入覆盖、抓取失败报错",
       "ok": true,
       "detail": "正文抽取 + 覆盖 + 失败路径 + 纯函数（URL/实体/块级） ✓",
-      "ms": 155
+      "ms": 244
     },
     {
       "id": "K18",
       "name": "删 Project → 知识条目级联消失 + data/projects/<id>/ 目录消失",
       "ok": true,
-      "detail": "p3 条目 e7e24ed2-5e4e-4999-bcdb-17b88df68a45 随 Project 级联清除；目录已删 ✓",
-      "ms": 16
+      "detail": "p3 条目 ad6053aa-6140-45e6-8172-c92539dd9321 随 Project 级联清除；目录已删 ✓",
+      "ms": 36
     },
     {
       "id": "K19",
       "name": "IPC 通道 / preload / main wiring / store 契约一致（静态核对，避免漂移）",
       "ok": true,
       "detail": "8 通道三处一致（含 pickFile）；picker 过滤器/标题/取消语义 ✓；wiring + pdfjs 资产双路径；store 14 项（9 新 + 5 旧）契约齐全",
-      "ms": 1
+      "ms": 3
     },
     {
       "id": "K20",
       "name": "pdfjs 运行时资产就位（cmaps/standard_fonts/worker/本体）+ dev|打包双路径解析",
       "ok": true,
-      "detail": "assets 4.54MB（cmaps 169 / fonts 16）；dev+打包双路径 ✓；bundle 42KB 无 pdfjs ✓",
-      "ms": 93
+      "detail": "assets 4.54MB（cmaps 169 / fonts 16）；dev+打包双路径 ✓；bundle 44KB 无 pdfjs ✓",
+      "ms": 163
     },
     {
       "id": "K21",
       "name": "不采集：manager 与文件解析器无网络调用；url 抓取是唯一且显式的例外（无 Cookie/无第三方 API）",
       "ok": true,
       "detail": "5 类网络特征在 manager/解析器 0 命中；urlParser 仅 http(s) GET、无 Cookie/无第三方 API ✓",
-      "ms": 2
+      "ms": 7
     }
   ]
 }
