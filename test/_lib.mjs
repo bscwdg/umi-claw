@@ -46,6 +46,10 @@ export function assertDeepEq(actual, expected, message) {
  * 适用场景：包里有「动态 require 内置模块」的写法（如 mammoth 的 `require('fs')`），
  * 被打进 ESM bundle 后会变成 `Dynamic require of "fs" is not supported`；
  * 把它们标成 external 后，由 Node 自己按 CJS 加载（生产构建是 CJS，不受影响）。
+ * `options.alias`：把某个模块名换成另一个文件（esbuild `--alias:`）。
+ * 适用场景：被测模块**顶层** `import { app } from 'electron'`（如 configManager），
+ * 而纯 Node 解析 'electron' 得到的是「指向 exe 的字符串路径」，named import 会直接炸。
+ * 在 electron 这个边界上打桩，被测逻辑本身仍然是真源码。
  */
 export function bundleEntry(entryRelPath, outName, options = {}) {
   mkdirSync(tmpDir, { recursive: true })
@@ -55,6 +59,7 @@ export function bundleEntry(entryRelPath, outName, options = {}) {
     throw new Error(`未找到 esbuild CLI: ${bin}（应由 vite 依赖提供）`)
   }
   const externals = Array.isArray(options.externals) ? options.externals : []
+  const alias = Array.isArray(options.alias) ? options.alias : []
   const res = spawnSync(
     bin,
     [
@@ -65,6 +70,7 @@ export function bundleEntry(entryRelPath, outName, options = {}) {
       '--target=node20',
       '--external:electron',
       ...externals.map((name) => `--external:${name}`),
+      ...alias.map((entry) => `--alias:${entry}`),
       '--log-level=warning',
       `--outfile=${outfile}`
     ],

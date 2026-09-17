@@ -202,7 +202,7 @@
         所有运行时核心及基础渠道插件包均已内置安装完成
       </p>
       <button class="btn btn-success btn-lg" @click="goToDashboard">
-        前往控制台
+        前往工作台
       </button>
     </div>
 

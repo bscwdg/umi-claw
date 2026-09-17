@@ -1458,14 +1458,15 @@ export class DownloadManager extends EventEmitter {
       if (!existsSync(configDir)) {
         mkdirSync(configDir, { recursive: true })
       }
+      // 刻意**不**写 `meta`（§九 待办 #15 的第二处）：`meta` 在 OpenClaw schema 里是
+      // `additionalProperties: false` —— `lastTouchedAt` 根本不是合法字段，`lastTouchedVersion` 也必须是
+      // 真实安装版本而不是字面量 'latest'（旧代码两者都写，会被 schema 拒绝）。
+      // 这份保底配置只在 openclaw.json **缺失**时写；`meta` 由 configManager._syncOpenClawConfig()
+      // 在应用启动时按真实安装版本补上 —— 同一字段只在那一处写，避开两处各写一份的漂移。
       const fullSecureConfig = {
         "gateway": {
           "mode": "local",
           "auth": { "mode": "token", "token": GATEWAY_TOKEN },
-        },
-        "meta": {
-          "lastTouchedVersion": "latest",
-          "lastTouchedAt": new Date().toISOString(),
         },
         "channels": {
           "openclaw-weixin": {

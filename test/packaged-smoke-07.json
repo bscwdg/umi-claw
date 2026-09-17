@@ -1,0 +1,60 @@
+{
+  "suite": "packaged-06/07（真安装包产物 + CDP 驱真渲染进程）",
+  "finishedAt": "2026-09-17T02:38:28.264Z",
+  "total": 7,
+  "passed": 7,
+  "failed": 0,
+  "exePath": "D:\\work2026\\umi-claw\\release\\win-unpacked\\Umi Claw.exe",
+  "dataDir": "D:\\work2026\\umi-claw\\release\\win-unpacked\\data",
+  "leftoverPackagedProcesses": 0,
+  "stderrSample": [
+    "\r",
+    "DevTools listening on ws://127.0.0.1:9223/devtools/browser/1b10631c-0638-4b24-bb7d-0376f61448c3\r",
+    "[26996:0917/103825.655:ERROR:devtools_http_handler.cc(306)] Error writing DevTools active port to file D:\\work2026\\umi-claw\\release\\win-unpacked\\context-data\\DevToolsActivePort: 系统找不到指定的路径。 (0x3)\r",
+    ""
+  ],
+  "checks": [
+    {
+      "id": "P1",
+      "name": "打包态建库：便携 Node + db-worker.mjs 可用（11 表 / uv=1）",
+      "ok": true,
+      "detail": "11 表 / uv=1 / sqlite 3.53.4"
+    },
+    {
+      "id": "P2",
+      "name": "打包 preload 暴露 marketing.gateway.{status,ensureReady}，且不泄 token",
+      "ok": true,
+      "detail": "两条通道在；面内无 token"
+    },
+    {
+      "id": "P3",
+      "name": "gateway.status 真发 HTTP 且正确判定「未就绪」（零 token、不触发拉起）",
+      "ok": true,
+      "detail": "port=3299 ready=false code=OPENCLAW_NOT_READY/connect-failed"
+    },
+    {
+      "id": "P4",
+      "name": "打包态真 IPC：Project / Knowledge / Watchlist / 当前商家",
+      "ok": true,
+      "detail": "project=bd5b4bd7… 目录已建"
+    },
+    {
+      "id": "P5",
+      "name": "打包态 Knowledge 写入 + LIKE 检索 + Watchlist + 当前商家持久化",
+      "ok": true,
+      "detail": "检索 1 条（snippet 命中 5999）；watchlist 已加；current=bd5b4bd7…"
+    },
+    {
+      "id": "P6",
+      "name": "打包启动即同步：chatCompletions.enabled=true 且 meta 无非法字段（#15）",
+      "ok": true,
+      "detail": "enabled=true；meta=null"
+    },
+    {
+      "id": "P7",
+      "name": "打包 main 里 06/07 两个模块真的被构造（就绪日志）",
+      "ok": true,
+      "detail": "[gateway] Gateway Client 就绪：http://127.0.0.1:3299（model=openclaw，多模态=未配置，每请求重读配置）"
+    }
+  ]
+}

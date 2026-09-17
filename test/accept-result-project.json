@@ -1,8 +1,8 @@
 {
   "suite": "project（Project CRUD + conversation_key + 切换持久化，打真 projectManager.ts）",
-  "startedAt": "2026-09-16T07:13:54.462Z",
-  "finishedAt": "2026-09-16T07:13:56.538Z",
-  "durationMs": 2076,
+  "startedAt": "2026-09-17T02:11:07.662Z",
+  "finishedAt": "2026-09-17T02:11:09.844Z",
+  "durationMs": 2182,
   "total": 18,
   "passed": 18,
   "failed": 0,
@@ -14,21 +14,21 @@
     "runtimeNode": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe"
   },
   "bundle": "D:\\work2026\\umi-claw\\test\\.tmp\\projectManager.mjs",
-  "dataDir": "D:\\work2026\\umi-claw\\test\\.tmp\\project-1789542834216\\data",
+  "dataDir": "D:\\work2026\\umi-claw\\test\\.tmp\\project-1789611067426\\data",
   "nodePath": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe",
   "logSample": [
-    "[project] 已创建 ef67eab1-b7c3-4839-9d7d-28ca9cbfb0c9（拾光摄影），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789542834216\\data\\projects\\ef67eab1-b7c3-4839-9d7d-28ca9cbfb0c9",
-    "[project] 已创建 9eac6086-6646-4f4c-b8a5-1a26eae54621（空可选字段店），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789542834216\\data\\projects\\9eac6086-6646-4f4c-b8a5-1a26eae54621",
-    "[project] 已创建 1a34f02e-d9b6-4a24-b70c-ccd6e8c1d613（多店-0），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789542834216\\data\\projects\\1a34f02e-d9b6-4a24-b70c-ccd6e8c1d613",
-    "[project] 已创建 dbc5cd8a-584d-44e3-8c2e-6acad99e1a1a（多店-1），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789542834216\\data\\projects\\dbc5cd8a-584d-44e3-8c2e-6acad99e1a1a",
-    "[project] 已创建 15f61edf-13df-432a-b18f-d7f45a247cd6（多店-2），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789542834216\\data\\projects\\15f61edf-13df-432a-b18f-d7f45a247cd6",
-    "[project] 已创建 7679f8a0-bb6e-4019-9159-bb6382bde90f（多店-3），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789542834216\\data\\projects\\7679f8a0-bb6e-4019-9159-bb6382bde90f",
-    "[project] 当前 Project = ef67eab1-b7c3-4839-9d7d-28ca9cbfb0c9（拾光摄影·二店）",
+    "[project] 已创建 774103f6-fdc6-4877-b7f7-aae983df3acb（拾光摄影），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789611067426\\data\\projects\\774103f6-fdc6-4877-b7f7-aae983df3acb",
+    "[project] 已创建 bd4ede4f-f65d-4c91-a49a-6eef79850e5d（空可选字段店），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789611067426\\data\\projects\\bd4ede4f-f65d-4c91-a49a-6eef79850e5d",
+    "[project] 已创建 e823d5a8-48d7-44ff-a65d-a24d25dd933e（多店-0），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789611067426\\data\\projects\\e823d5a8-48d7-44ff-a65d-a24d25dd933e",
+    "[project] 已创建 0eb4189d-6fcf-46b6-8850-9f2aa7140eb0（多店-1），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789611067426\\data\\projects\\0eb4189d-6fcf-46b6-8850-9f2aa7140eb0",
+    "[project] 已创建 03566e52-55b3-49fb-a1cd-b3743cc73041（多店-2），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789611067426\\data\\projects\\03566e52-55b3-49fb-a1cd-b3743cc73041",
+    "[project] 已创建 f00a38d2-13ff-43a0-ae20-b6c626de096d（多店-3），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789611067426\\data\\projects\\f00a38d2-13ff-43a0-ae20-b6c626de096d",
+    "[project] 当前 Project = 774103f6-fdc6-4877-b7f7-aae983df3acb（拾光摄影·二店）",
     "[project] 已清空 current_project_id",
-    "[project] 已创建 0c34412f-fbdf-4c67-9ed1-28c76f9de529（待删摄影），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789542834216\\data\\projects\\0c34412f-fbdf-4c67-9ed1-28c76f9de529",
-    "[project] 已创建 a1a6e4e7-2b3f-4da3-8a98-63c89e2328ef（保留女装），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789542834216\\data\\projects\\a1a6e4e7-2b3f-4da3-8a98-63c89e2328ef",
-    "[project] 已删除 0c34412f-fbdf-4c67-9ed1-28c76f9de529（目录=已删）",
-    "[project] 已创建 25d5c0f0-0020-4879-a761-82758da489c8（半删店），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789542834216\\data\\projects\\25d5c0f0-0020-4879-a761-82758da489c8"
+    "[project] 已创建 11545562-eb4f-487a-b741-21de61dc18dd（待删摄影），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789611067426\\data\\projects\\11545562-eb4f-487a-b741-21de61dc18dd",
+    "[project] 已创建 b28abc20-2ec1-4a02-b310-be4a02d1de6a（保留女装），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789611067426\\data\\projects\\b28abc20-2ec1-4a02-b310-be4a02d1de6a",
+    "[project] 已删除 11545562-eb4f-487a-b741-21de61dc18dd（目录=已删）",
+    "[project] 已创建 2db81fe9-7063-45fc-933f-a75807430d17（半删店），目录=D:\\work2026\\umi-claw\\test\\.tmp\\project-1789611067426\\data\\projects\\2db81fe9-7063-45fc-933f-a75807430d17"
   ],
   "checks": [
     {
@@ -36,21 +36,21 @@
       "name": "projectManager.ts 可纯 Node import（依赖注入，无 electron 顶层引用）",
       "ok": true,
       "detail": "bundle=projectManager.mjs",
-      "ms": 0
+      "ms": 1
     },
     {
       "id": "P2",
       "name": "create：id/conversation_key 为 uuid、status=active、时间戳齐全、目录已建",
       "ok": true,
-      "detail": "id=ef67eab1… key=59c0742f… dir=data/projects/<id>",
-      "ms": 70
+      "detail": "id=774103f6… key=3fb1630e… dir=data/projects/<id>",
+      "ms": 83
     },
     {
       "id": "P3",
       "name": "create：空名/空白名 → VALIDATION_ERROR；可选字段空白归一为 null",
       "ok": true,
       "detail": "5 次非法入参全部 VALIDATION_ERROR；空白可选字段 → null",
-      "ms": 2
+      "ms": 3
     },
     {
       "id": "P4",
@@ -63,29 +63,29 @@
       "id": "P5",
       "name": "update：只改白名单字段、刷新 updated_at、conversation_key/id/created_at 不变",
       "ok": true,
-      "detail": "updated_at 1789542834531 → 1789542834556；4 个身份字段全部拒绝",
-      "ms": 23
+      "detail": "updated_at 1789611067742 → 1789611067759；4 个身份字段全部拒绝",
+      "ms": 11
     },
     {
       "id": "P6",
       "name": "多 Project 的 conversation_key 互不相同（会话隔离前提，§六）",
       "ok": true,
       "detail": "6 个 project，conversation_key 唯一且全为 uuid",
-      "ms": 4
+      "ms": 5
     },
     {
       "id": "P7",
       "name": "setCurrent/getCurrent：落 app_meta 且跨 DatabaseClient 实例（重启）仍在",
       "ok": true,
-      "detail": "pid 已重启；current_project_id=ef67eab1… 仍可读",
-      "ms": 65
+      "detail": "pid 已重启；current_project_id=774103f6… 仍可读",
+      "ms": 66
     },
     {
       "id": "P8",
       "name": "setCurrentProject(null) 清空；指向不存在 → NOT_FOUND（不制造悬空指针）",
       "ok": true,
       "detail": "NOT_FOUND 拒绝 + 清空生效",
-      "ms": 3
+      "ms": 2
     },
     {
       "id": "P9",
@@ -99,63 +99,63 @@
       "name": "delete 幂等：目录已不存在（上次删到一半）时直接删行",
       "ok": true,
       "detail": "目录缺失不阻塞删行（幂等）",
-      "ms": 5
+      "ms": 3
     },
     {
       "id": "P11",
       "name": "删除当前 Project → 清空 current_project_id；删非当前则不动",
       "ok": true,
       "detail": "currentCleared 语义正确：非当前=false，当前=true 且元数据已清空",
-      "ms": 11
+      "ms": 7
     },
     {
       "id": "P12",
       "name": "目录被占用 → 不删行、报 DB_ERROR(project-dir-remove-failed)、释放后重试成功",
       "ok": true,
       "detail": "占用期：code=DB_ERROR reason=project-dir-remove-failed 行保留；重试日志 3 条；释放后删除成功",
-      "ms": 1478
+      "ms": 1486
     },
     {
       "id": "P13",
       "name": "delete 不存在 → NOT_FOUND（不无声成功）",
       "ok": true,
       "detail": "code=NOT_FOUND",
-      "ms": 0
+      "ms": 3
     },
     {
       "id": "P14",
       "name": "conversation_key 生命周期：删除后同名重建 → 新键，绝不复活旧键",
       "ok": true,
-      "detail": "旧键已随物理删除消失；新键 50f71270…",
-      "ms": 6
+      "detail": "旧键已随物理删除消失；新键 9f6c8dec…",
+      "ms": 21
     },
     {
       "id": "P15",
       "name": "悬空 current_project_id（指向已删行）→ 读取时自愈清空，不报错",
       "ok": true,
       "detail": "读取即自愈：返回 null 且元数据已清",
-      "ms": 2
+      "ms": 10
     },
     {
       "id": "P16",
       "name": "create 失败（SETUP_REQUIRED）→ 回滚目录，不留孤儿目录",
       "ok": true,
       "detail": "code=SETUP_REQUIRED；目录数 0 → 0",
-      "ms": 1
+      "ms": 4
     },
     {
       "id": "P17",
       "name": "全新 dataDir：create 按需创建 data/projects/<id>/（§三 目录策略）",
       "ok": true,
-      "detail": "data/projects\\95550776-d6ae-4ec6-b09d-587855b30d48",
-      "ms": 76
+      "detail": "data/projects\\9d54dbdd-e1b4-4f3a-937f-742552e9cdc8",
+      "ms": 132
     },
     {
       "id": "P18",
       "name": "IPC / preload / store 通道名与契约一致（静态核对，避免漂移）",
       "ok": true,
       "detail": "7 个通道名三处一致；store 契约 10 项齐全且未用 message.includes",
-      "ms": 1
+      "ms": 2
     }
   ]
 }

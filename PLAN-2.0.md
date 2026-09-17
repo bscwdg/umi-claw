@@ -1,13 +1,19 @@
 # Umi Claw 2.0 施工基线（持续记录）
 
 > 本文档是 2.0 的唯一规划基线，随开发进度持续更新。
-> 基线版本：v1.19 ｜ 更新日期：2026-09-16 ｜ 状态：**Commit 00/01/02/03/04/05a 均已通过验收，可开工 06（05b 待 07 后）**
+> 基线版本：v1.21 ｜ 更新日期：2026-09-16 ｜ 状态：**Commit 00/01/02/03/04/05a/06/07 均已通过验收，可开工 05b 或 08（05b 需 07，已满足）**
 
 ## 修订记录
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
-| v1.19 | 2026-09-16 | **Commit 05a 完成**（Knowledge 知识库）：`knowledgeManager` + `parsers/`（docx/xlsx/pdf/url）+ `KnowledgeBase.vue` + `marketing:knowledge:*` 8 通道 + pdfjs 运行时资产入包；验收 **21/21**，回归 31/31 · 18/18 · 16/16，**打包态端到端**通过（安装包内导入真中文 PDF → `ready`、正文 7030 字、中文关键词命中）。**依赖三坑已写死**：① `mammoth` 需要 `@xmldom/xmldom@0.8.x`（仓库顶层是 `docx` 要的 0.9.10，0.9 强制 mimeType → 必须嵌套副本）；② `pdfjs-dist` 必须 **v3**（v4+ ESM-only，主进程 CJS 打不进去）；③ pdfjs 必须带 `cMapUrl`/`cMapPacked`/`standardFontDataUrl`，否则中文抽出 0 字 |
+| v1.25 | 2026-09-17 | **#25 打包态端到端补做完成（7/7）**：真产物 `release/win-unpacked` + CDP 驱真渲染进程 + 便携数据目录（预置便携 Node、预写 `autoStart:false` 且端口改 3299 避开真机）——P1 建库 11 表/uv=1、P2 打包 preload 真暴露 `marketing.gateway.{status,ensureReady}` 且面内无 token、P3 `status` 真发 HTTP 并正确判非就绪（connect-failed）、P4/P5 打包态 Project/Knowledge/LIKE 检索/Watchlist/当前商家、**P6 打包启动即同步（chatCompletions.enabled=true 且 meta 无非法字段）**、P7 打包 main 里 06/07 两模块真被构造；残留打包进程 0。**新增安全阀（已写进脚本与基线）**：`clawManager.start()` 内含 `_killGhostProcesses()`（`taskkill /f /im openclaw.exe`）会误杀本机在跑的 OpenClaw → 冒烟预写 `autoStart:false`、绝不调 `claw:*`/`ensureReady`、收尾只按 PID 结束 |
+| v1.24 | 2026-09-17 | **#22 / #25 / #27 拍板与落地**：①**#22 路径 A** —— `marketing:gateway:{status,ensureReady}` **纳入 §五 契约**（§五 补 `gateway:` 一行 + 写明「Context Pack 不上面」「SSE 增量不注册业务通道」两条边界）；②**#27** —— `Setup.vue` 按钮文案「前往控制台」→「前往工作台」（与 #2 口径一致）；③**#25** —— 打包态端到端补做（`build:win` 产物 + CDP 驱真渲染进程 + 便携数据目录，结果见「Commit 07 落点与验收」的打包态一节） |
+| v1.23 | 2026-09-17 | **#15 补完第二处 + 陈年口子盘点**：①**#15 第二处修复** —— `downloadManager._ensureOpenClawConfig()` 的**安装期保底配置**仍在写 `lastTouchedVersion:'latest'` + `lastTouchedAt`（v1.21 只修了 configManager，属**半修**），现改为**不写 `meta`**（`meta` 由 configManager 启动同步时按真实安装版本补，同一字段只在那一处写）；真跑 `downloadManager` 的 G28 固定（保底配置无非法 meta + 已存在配置不被覆盖）；`accept:gateway` 26 → **27/27**。②陈年口子核对：#2（label 改名）**已落地**（`App.vue:105-123`）、#5（放宽 Setup 完成判定）**已落地**（`Setup.vue:193-194` 只看 node+openClaw，`channelsInstalled` 仅决定按钮文案）；仅剩 `Setup.vue` 的「前往控制台」文案与 #2 不一致（待拍板）。③新增待拍板项 #24/#25/#26（提交策略 / 补打包态端到端时机 / 05b 与 08 的先后） |
+| v1.22 | 2026-09-17 | **Commit 07 外部复审 10 条逐条核实**：**6 条属实已修**（①**中** 模型能力启动快照 → `modelsResolver` 按次重读配置，Setup/换 provider 后无需重启主进程；②**中** abort 在响应头前后语义不一 → 统一 resolve `{aborted:true}`；③**低** 就绪缓存永不过期 → 任何「没成」的调用作废缓存（不自动重试 POST，避免白花 token）；④**低** `once('destroyed')` 只声明未接线 → 真接线，冷启动静默期关窗也能中止上游；⑤**小** temperature 超范围被静默丢弃 → `VALIDATION_ERROR`；⑥**小** `/v1/models` 200 非 JSON 被当开启 → 结构不符即 `enabled:false`）。**4 条判定为可接受/无影响，记录在待办 #23**（429 码语义、非流式读体不在超时内、SSE 不拼多行 data、用例跳号）。验收 `accept:gateway` 20 → **26/26**（新增 G22-G27 把上述行为固定住），回归 db 31/31 · project 18/18 · business 16/16 · knowledge 23/23 · context 22/22，两端 typecheck 0 错 |
+| v1.21 | 2026-09-16 | **Commit 07 完成**（Gateway Client）：`gatewayClient.ts`（探活/端点开关判据/自动拉起单飞/就绪轮询/SSE 流式/中止/会话隔离/多模态模型选择）+ `ipc/gateway.ts`（**只两条只读通道** status / ensureReady）+ 透传助手 `forwardGatewayStream` + **端点开关默认化与老用户迁移**（`configManager` 唯一入口，幂等、只动一个叶子键）+ **待办 #15 修复**（`meta.lastTouchedAt` 删除、`lastTouchedVersion` 写真实安装版本）；`accept:gateway` 新增 **20/20**；回归 db 31/31 · project 18/18 · business 16/16 · knowledge 23/23 · context 22/22。**两处写进基线的修正**：① 流式响应体已开始后的传输中断 → `stream-truncated`（而不是 `connect-failed`，后者会把「网关在跑但流断了」误导成「去环境初始化」）；② 确认 abort 会真断上游（假服务端观测到 close 事件，已发 2/80 帧），#14 由「⬜ 待验」降为「🟡 半验」 |
+| v1.20 | 2026-09-16 | **Commit 06 完成**（Context Engine）：`marketing/contextEngine.ts` + 主进程 wiring + `accept:context` **22/22**；§六「**预算内全量打包、超预算退化为 LIKE 裁剪**」落地，本地 token 估算器替代 Gateway 的 `usage`（恒 0）；**账本 = 实际渲染文本**（首版按逐条估算写，验收 C9/C10 立刻抓到「账面 2400 刚好、渲染后 2454 超了」——区块头/条数行/未注入清单本身都占预算，故改为每次候选组合真渲染 `probePack/measure` + 尾部让位保险丝）；**本提交不新增 IPC 通道**（§五 无 context pack 面，消费方是主进程 07/08/09，主进程留 `getMarketingContextEngine()` 唯一取用点）；回归 db 31/31 · project 18/18 · business 16/16 · knowledge 23/23 |
+| v1.19 | 2026-09-16 | **Commit 05a 完成**（Knowledge 知识库）：`knowledgeManager` + `parsers/`（docx/xlsx/pdf/url）+ `KnowledgeBase.vue` + `marketing:knowledge:*` 8 通道 + pdfjs 运行时资产入包；验收 **21/21**（该提交之后的两笔 05a 修复又补了 2 项用例，现为 **23/23**），**打包态端到端**通过（安装包内导入真中文 PDF → `ready`、正文 7030 字、中文关键词命中）。**依赖三坑已写死**：① `mammoth` 需要 `@xmldom/xmldom@0.8.x`（仓库顶层是 `docx` 要的 0.9.10，0.9 强制 mimeType → 必须嵌套副本）；② `pdfjs-dist` 必须 **v3**（v4+ ESM-only，主进程 CJS 打不进去）；③ pdfjs 必须带 `cMapUrl`/`cMapPacked`/`standardFontDataUrl`，否则中文抽出 0 字 |
 | v1.18 | 2026-09-16 | **Commit 04 完成**（Business 1:1 + 资料完整度 + Watchlist）：`marketing/businessManager.ts`（BusinessManager + WatchlistManager）+ `marketing:business:*` / `marketing:watchlist:*` + `BusinessBrain.vue`（完整度卡 + 基本盘表单 + 关注词区）+ 摄影行业预设；验收 **16/16**，**打包态端到端**通过（存资料 → Watchlist 满 10 后第 11 个被拒 → 重启资料与关注词全在 → 删 Project 级联清空，并用直读库核对 `businesses=0 / project_watchlist=0 / current=null / integrity=ok`）；回归 `accept:db` 31/31、`accept:project` 18/18 不受影响。**口径拍板**：完整度 = `name/brand/city/positioning/target_customer/tone` 六项等权（**排除 address/phone**，联系方式不属于「AI 认识你」的语义信息） |
 | v1.17 | 2026-09-16 | **Commit 03 完成**（Project CRUD + conversation_key 生成 + 切换持久化 app_meta）：`marketing/projectManager.ts` + `marketing:project:*` / `marketing:context:*` 七条通道 + Pinia store + 侧边栏切换器；验收 **18/18** 且**打包态端到端**通过（新建 → 设为当前 → 优雅退出 → **重启后仍是当前商家** → 改名时 key/created_at 不变 → 删除后目录/行/current 三者全清）。**新发现回填**：`isAppError()` 的 `instanceof` 在**模块实例不唯一**时假阴性（测试各模块各自 bundle；生产里 rollup 可能把 `errors.ts` 拆进不同 chunk），会把 SETUP_REQUIRED / NOT_FOUND 静默降级成 DB_ERROR，而渲染端按 code 分支 —— 已把 `errorCodeOf()` 上提到 `errors.ts` 供所有 Manager 复用，并修掉 `toErrorEnvelope()` 同类假阴性 |
 | v1.16 | 2026-09-16 | **外部复审 3 项逐条核实**：①**P2 真缺陷已修** —— Worker 初始化失败（ping 超时 / 迁移抛错）时只置标志位、**未回收刚 spawn 的子进程**，会留下游离 Worker，且下次 `ensureReady()` 再拉一个 → 双 Worker 同库，违反硬规则 8；修法 `reapFailedChild()`（kill + 反注册 + 清 child），并补回归用例 **C13**（负向验证：还原旧代码时 C13 必红）；②**P1 测试脆弱已修** —— `countWorkerProcesses()` 在拿不到 WMI 权限的环境返回 0，导致 C4/C5 **假阴性**；改为查询不可靠时返回 `null`（不可知）并降级 `process.kill(pid, 0)` 判活；③**P3 不成立** —— `electron/preload/index.d.ts` 无需补 `api.marketing`（`Api = typeof api` 从实现推导），探针文件实测 `typecheck:web` 0 错；④`setupGuard.ts` 注释笔误（`channelsInstalled` 指个人微信插件，非企微）。验收脚本现为 **31/31** |
@@ -322,10 +328,16 @@ window.api = {
     knowledge:{ list(projectId), get, create(projectId, data), update, delete(projectId, id), search(projectId, query) },
     content:  { list(projectId), get, create(projectId, data), update, generate(projectId, spec), saveVersion },
     hot:      { list(projectId, {platform, force?}), get(topicId), refresh(), score(projectId, platform) },  // platform=发布平台(xiaohongshu/douyin)；list 返回热点+当前 project/该平台缓存评分；refresh=立即采集；score=懒评分
+    gateway:  { status, ensureReady },   // Commit 07（v1.24 拍板纳入）：只读就绪面（零 token：只发 GET /health + GET /v1/models）+ 幂等拉起（探活→按需调 clawManager→就绪轮询）；baseUrl/token 只在主进程（硬规则 13）
   }
 }
 // Manager 层签名全部显式 projectId（硬规则 9）；二期再扩 assets/strategy/calendar/analytics/learning
 ```
+
+**两条「刻意不设渲染端通道」的边界（v1.20 / v1.24 拍板）**：
+
+- **Context Pack（06）不上面**：它是主进程内部数据结构，消费方是 07/08/09 的主进程代码（主进程留 `getMarketingContextEngine()` 作唯一取用点）；将来若要「AI 看见什么」预览页，先改本节再动 IPC。
+- **SSE 增量不注册业务通道（07）**：07 只定事件名（`marketing:gateway:chunk` / `done` / `error`）并导出 `forwardGatewayStream(webContents, streamId, iterator)` 助手，**注册归 08/09 自己的业务通道**（advisor / content）。
 
 **统一错误码**（Manager 抛出 → IPC 透传 → 渲染端按 code 分支，禁止 `error.message.includes()` 判断）：
 
@@ -453,8 +465,8 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 | 03 | Project —— **✅ 2026-09-16 完成** | projectManager + store + CRUD + conversation_key 生成 + 切换持久化 app_meta（落点与验收见下） | 1d | 02 | | ✅ |
 | 04 | Business —— **✅ 2026-09-16 完成** | businessManager + BusinessBrain.vue + 摄影行业首套字段 + upsert/级联删除验收 + 资料完整度卡片（Business 维度）+ Watchlist（手工增删 / 行业预设词 / 上限 10 词 / 不采集）；落点与验收见下 | 2.5d | 02、03 | | ✅ |
 | 05 | Knowledge（仅 05a） —— **✅ 2026-09-16 完成** | knowledgeManager + KnowledgeBase.vue + 文字层文档解析（docx/xlsx/pdf/url/faq）+ 导入/重导入 + LIKE 检索 + Knowledge 维度完整度；落点与验收见下 | 2.5d | 02、03 | | ✅ |
-| 06 | Context Engine | Business + Knowledge + **Watchlist** + Platform → Context Pack | 1d | 00、04、05 | | ⬜ |
-| 07 | Gateway Client | 端点开关默认化 + 老用户迁移、探活、自动拉起（**复用 clawManager 启停，不另起炉灶**）、就绪轮询、SSE→IPC 透传、会话隔离、多模态模型选择 | 2d | 00 | | ⬜ |
+| 06 | Context Engine —— **✅ 2026-09-16 完成** | Business + Knowledge + **Watchlist** + Platform → Context Pack（落点与验收见下） | 1d | 00、04、05 | | ✅ |
+| 07 | Gateway Client —— **✅ 2026-09-16 完成** | 端点开关默认化 + 老用户迁移、探活、自动拉起（**复用 clawManager 启停，不另起炉灶**）、就绪轮询、SSE→IPC 透传、会话隔离、多模态模型选择（落点与验收见下；顺带修待办 #15） | 2d | 00 | | ✅ |
 | 05b | 扫描件 AI 识别兜底 | 复用 07：扫描 PDF/带文字资料图的「用 AI 识别」显式触发 + 识别结果人工确认后入库；00⑦ 结论为不支持则只做提示 | 1.5d | 05a、07（可与 08 并行） | | ⬜ |
 | 08 | AI Advisor | Grounded 营销问答面板（边界见第六节）：Context Pack + SSE + 停止生成 + 事实护栏；对话历史按 00⑥ 结论；**+ Watchlist AI 扩词推荐（候选词生成 + 用户勾选，v1.13 由 04 移入）** | 2d | 06、07 | | ⬜ |
 | 09 | Content Center | AI 生成（SSE 流式 + **AbortController「停止生成」**，规格同 08：组件卸载/切换必须中止上游）→ 编辑 → 版本（prompt 快照）→ 人工审核；**接收热点雷达结构化 payload 预填充（v1.9），source_topic_id 溯源（v1.10）**；**一次生成 3 个版本供选 + 极简发布标记（v1.12）** | 3d | 06、07、08 | | ⬜ |
@@ -541,11 +553,11 @@ src/stores/marketing.ts                            +knowledge 九件套 + knowle
 src/views/marketing/KnowledgeBase.vue              新增：四路导入（文件/文本/网址/FAQ）+ 拖拽 + LIKE 检索 + 列表预览 + 删除
 src/renderer/main.ts                               /marketing/knowledge 由占位页换真页
 resources/pdfjs/                                   4.54 MB：cmaps 1.11MB(169 个 .bcmap) + standard_fonts 0.74MB + build/pdf.worker.js(2.01MB) + build/pdf.js(0.68MB)
-test/knowledge.accept.mjs + `accept:knowledge`     21 项验收（打真 knowledgeManager.ts）
+test/knowledge.accept.mjs + `accept:knowledge`     23 项验收（打真 knowledgeManager.ts；v1.19 记录为 21 项，后续两笔 05a 修复补了 2 项）
 test/fixtures/{make-minimal-pdf.mjs,min-text-layer.pdf}  提交级最小 PDF fixture（710 字节）
 ```
 
-**验收（独立复跑，非自述）**：`accept:knowledge` **21/21**；`typecheck:node` / `typecheck:web` 0 错；
+**验收（独立复跑，非自述）**：`accept:knowledge` **23/23**（v1.19 时的 21/21 是当时实际值，之后两笔 05a 修复补了 2 项用例；套件当前规模以 23 为准）；`typecheck:node` / `typecheck:web` 0 错；
 回归 `accept:db` **31/31**、`accept:project` **18/18**、`accept:business` **16/16**；
 **K8 用真中文文字层 PDF 跑实** → 一份 8 页国标 PDF 抽出 **3015 个汉字**，关键词「国卫生部」命中。
 
@@ -561,6 +573,126 @@ test/fixtures/{make-minimal-pdf.mjs,min-text-layer.pdf}  提交级最小 PDF fix
 - **url 类口径**：只做 http(s) 单次 GET + 本地 HTML→文本，**不跟 Cookie、不调第三方 API、不做站点特化**（K21 静态扫描 5 类网络特征 0 命中）。
 
 ⏳ **未覆盖**：①K8 默认 SKIPPED（需 `KNW_PDF_SAMPLE` 指真中文 PDF，本机已跑实并把结果记在此处）；②UI 点击流本机无桌面通道未做（IPC 面已由打包端到端覆盖）；③**仓库 `package-lock.json` 与 `node_modules` 存在既存漂移** —— 本次依赖（mammoth/exceljs/pdfjs-dist）是「隔离安装 + 只补不覆盖」补入的（新增 34 包、0 覆盖），**未执行 `npm install`**（dry-run 显示它会删掉 471 个包，含 electron-builder 的依赖）；锁漂移修复留作独立动作。
+
+### Commit 07 落点与验收（✅ 2026-09-16）
+
+```text
+electron/main/gatewayClient.ts        新增：GatewayClient（probe / listModels / getStatus / ensureReady / chat / createChatStream / cancel）
+                                      + 模型选择纯函数（selectGatewayModel / normalizeGatewayModel / detectMultimodalCapability）
+                                      + 图片部件（imageDataPart / imageUrlPart）+ buildConversationUser + forwardGatewayStream 透传助手
+electron/main/ipc/gateway.ts          新增：marketing:gateway:{status,ensureReady}（**只两条只读/幂等通道**）
+electron/main/ipc/index.ts            + registerGatewayIpc / MARKETING_GATEWAY_CHANNELS 转出
+electron/preload/index.ts             + api.marketing.gateway.{status,ensureReady}（只拿快照，拿不到 token）
+electron/main/index.ts                + wiring：createMarketingGatewayClient（token 注入 / starter 复用 clawManager.start /
+                                        conversationKeyResolver 走 projectManager 取 conversation_key）
+electron/main/configManager.ts        + 端点开关默认化与老用户迁移；#15：删 meta.lastTouchedAt、lastTouchedVersion 写真实安装版本
+test/gateway.accept.mjs + `npm run accept:gateway`   20 项验收（真 http 服务端 + 真 configManager + 真 ProjectManager）
+test/fixtures/electron-stub.mjs       新增：只在 'electron' 宿主边界打桩（configManager 顶层 import { app, dialog }）
+test/_lib.mjs                         + bundleEntry 的 `alias` 能力（把某模块名换成桩文件）
+```
+
+**验收（独立复跑，非自述）**：`accept:gateway` **26/26**（含外部复审响应新增的 6 项）；`typecheck:node` / `typecheck:web` 0 错；
+回归 `accept:db` **31/31**、`accept:project` **18/18**、`accept:business` **16/16**、`accept:knowledge` **23/23**、
+`accept:context` **22/22** 均不受影响。
+
+**关键设计决策**
+
+- **真 HTTP 服务端，不注入假 fetch**：验收用 Node http 起真服务端（真 socket、真 SSE 帧、真断连），
+  因此测到的是真实 fetch/undici 行为——G7 才证得了「cancel 会真的销毁上游 socket」（服务端观测到 close，且只发出 2/80 帧）。
+- **流式响应体已开始后的传输中断 = `stream-truncated`，不是 `connect-failed`**（本提交修正）：
+  网关明明在跑、流到一半断掉，若报 `connect-failed`，前端按 §五 会引导去「环境初始化」——既误导，
+  也丢掉「已收到一部分内容」这个事实。超时与主动中止仍按各自语义优先。
+- **端点开关写在 `_syncOpenClawConfig`（配置生成与同步的唯一入口）**：新装与老用户同一条路径，
+  只写 `gateway.http.endpoints.chatCompletions.enabled` 这一个叶子键，展开已有子对象 → **幂等且不毁其它字段**
+  （验收 G17/G18 断言了自定义 gateway 字段、chatCompletions 子键、channels、agents、顶层字段全保留，且两次同步字节一致）。
+  实测确认 `reloadKind = hot`（§六），故不需要重启网关。
+- **#15 修法**：`meta.lastTouchedAt` 根本不是 schema 字段（`meta` 是 `additionalProperties: false`），直接删；
+  `lastTouchedVersion` 语义是「最后写这份配置的 OpenClaw 版本」，改为读 `data/openclaw/node_modules/openclaw/package.json`
+  写真实版本，**读不到就整键省去**——宁可没有该字段，也不写非法值。
+- **会话隔离键只在主进程拼**：`conversationKeyResolver` 由主进程用 `projectManager` 读 `projects.conversation_key`，
+  渲染端拿不到也传不了；`buildConversationUser` 拒收含 `':'` 的字段（能伪造别人的会话边界 → 跨 Project 串 Memory）。
+- **07 只交付透传层，不注册业务流通道**：`forwardGatewayStream(webContents, streamId, iterator)` + 事件名常量
+  （chunk/done/error）给 08/09 用；IPC 只开 `marketing:gateway:{status,ensureReady}`（理由是 §五 错误码
+  `OPENCLAW_NOT_READY` 的前端处理必须有一个只读就绪面）。**待拍板**：这两条是否该等 08 一起开。
+- **多模态选择是「宁可报错也不假装看得见」**：`models.multimodal` 未配置时，含图请求直接
+  `VALIDATION_ERROR` + `details.reason='multimodal-model-not-configured'`，不降级成纯文本发出去。
+
+**外部复审响应（2026-09-17，10 条逐条核实 → 6 修 4 存）**
+
+- **中①「配置快照在启动时固化」属实**：客户端在 `app.whenReady` 构造时把 `models.multimodal` 算死，
+  而 Setup 完成只走渲染端 `location.reload()`（主进程不重启，PLAN v1.4 已定的做法）→ 05b 的扫描件识别会被
+  `multimodal-model-not-configured` 拒到用户完全重启 App。**修法**：新增 `modelsResolver`，**每次组请求时重读配置**
+  （`index.ts` 的 `resolveGatewayModels()`）；G22 固定（同一个 client，配置一变即生效）。
+- **中②「abort 两种时序语义不一」属实**：响应头之前 `cancel()` 会 reject（`OPENCLAW_TIMEOUT/aborted`），
+  之后才 resolve `{aborted:true}`，与 `GatewayStreamHandle` 的注释契约相矛盾。**修法**：catch 里识别 `scope.cancelled`
+  统一 resolve；G23 固定（响应头前中止 → `aborted:true`、text 空、迭代器干净收尾）。
+- **低①「就绪缓存永久有效」属实**：缓存只在 ready 时写入、从不过期，网关中途崩掉后 `ensureReady()` 会直接回陈旧快照
+  （连 starter 都不调）。**修法**：任何「没成」的调用都作废缓存（connect-failed / timeout / 401/403/404/429/5xx）；
+  **刻意不自动重试**——重试 POST 会再生成一次、白花 token，由 08 的「重试」按钮走 `ensureReady` 重新探活/拉起。G24 固定。
+- **低②「destroyed 自动中止没接线」属实**：`once` 只在接口里声明、实现只靠每个 chunk 查 `isDestroyed()`，
+  而冷启动静默期（实测最长 80.3s）根本没有 chunk 到达。**修法**：真注册 `webContents.once('destroyed', cancel)`；G25 固定。
+- **小 temperature 静默丢弃**（超范围不报错）→ 改为 `VALIDATION_ERROR`（与 businessManager「不静默丢」同口径）；G26 固定。
+- **小 `/v1/models` 200 但非 JSON 被判 `enabled:true`** → 结构不符即 `enabled:false` + `reason='unexpected-response'`；G27 固定。
+- **不修的 4 条**（见待办 #23）：429 码语义（§五 码表无「限流」码，已带 `details.reason='rate-limited'` 供前端分支）、
+  非流式读体不在超时保护内（主路径是 SSE，逐帧重新计时）、SSE 不拼多行 `data:`（OpenClaw 单帧单行 JSON）、用例跳号（仅观感）。
+
+**打包态端到端（#25，2026-09-17 补做 → 7/7）**
+
+```text
+test/packaged-gateway.smoke.mjs   新增：真产物 release/win-unpacked + CDP 驱真渲染进程 + 便携数据目录
+test/packaged-smoke-07.json       结果落盘（7 项）
+```
+
+- P1 建库 **11 表 / uv=1**（打包态便携 Node + `db-worker.mjs`）· P2 打包 preload 真暴露 `marketing.gateway.{status,ensureReady}` 且面内无 token ·
+  P3 `status` **真发 HTTP** 并正确判「未就绪」（`OPENCLAW_NOT_READY/connect-failed`，零 token、不触发拉起）·
+  P4/P5 打包态 Project / Knowledge / LIKE 检索 / Watchlist / 当前商家全通 ·
+  P6 **打包启动即同步**：`openclaw.json` 里 `chatCompletions.enabled=true` 且 `meta` 无非法字段（= #17 + #15 在真产物里落地）·
+  P7 打包 main 里 06/07 两模块真被构造（`[context] Context Engine 就绪` / `[gateway] Gateway Client 就绪`）· 残留打包进程 **0**。
+- ⚠️ **安全阀（必须保留）**：`clawManager.start()` 内含 `_killGhostProcesses()` → `taskkill /f /im openclaw.exe`，在开发机上会误杀**正在运行**的 OpenClaw（含托管会话的实例）。故冒烟脚本：预写便携 `app.json`（`autoStart:false` + `port:3299` 避开真机 3213）、**绝不调** `claw:*` / `marketing:gateway:ensureReady`、收尾只按 **PID** 结束本进程。以后跑同类冒烟沿用这三条。
+
+⏳ **未覆盖 / 已知风险**：①主进程/preload/IPC 面已由打包态冒烟覆盖（7/7）；**真界面点击流**留给 08；
+②「客户端 abort 后**服务端是否停止生成**」只验到「上游连接真断」（假服务端），真 Gateway + 真模型调用未验（§九 #14）；
+③G21 真机探活实测本机 3213 有 Gateway 在跑（探活 200），但**兼容面 enabled=false**——真机上 `chatCompletions` 仍是关的
+  （老配置迁移要等应用真正跑一次 `_syncOpenClawConfig`，它不在本验收的临时目录里）。
+
+### Commit 06 落点与验收（✅ 2026-09-16）
+
+```text
+electron/main/marketing/contextEngine.ts   新增：ContextEngine（buildContextPack）+ renderContextPackText
+                                           + 本地 token 估算（estimateTokens / sliceToTokenBudget）
+                                           + summarizeBusiness / computeBusinessCompleteness（复用 04 的六项常量）
+electron/main/index.ts                     工厂 + wiring（createMarketingContextEngine + getMarketingContextEngine 取用点）
+test/context.accept.mjs + `npm run accept:context`   22 项验收（打真 contextEngine.ts + 真四 Manager + 真 DB Worker）
+```
+
+**验收（独立复跑，非自述）**：`accept:context` **22/22**；`typecheck:node` / `typecheck:web` 0 错；
+回归 `accept:db` **31/31**、`accept:project` **18/18**、`accept:business` **16/16**、`accept:knowledge` **23/23** 均不受影响。
+
+**关键设计决策**
+
+- **账本 = 实际渲染文本**：预算判定不是「固定开销 + 逐条估算」硬凑，而是每个候选组合都真渲染一次
+  `renderContextPackText` 再估算（`probePack` / `measure`），末尾还有一道保险丝循环从尾部让位。
+  理由：首版按逐条估算写，C9/C10 立刻抓到「账面 2400 刚好、渲染后 2454 超了」——
+  区块头、条数行、「未注入清单」**本身都占预算**，靠估算猜必然在边界上错。
+- **超预算条目不静默丢**：未入选的 ready 条目全部落 `dropped[]`（`reason='budget'`），
+  渲染文本里也有「【本次未注入的资料】」一段（最多 3 个标题 + 「等 N 条」——这段文字本身占预算，
+  所以显示有界，避开「被裁的越多、剩余空间越少」的自我强化）；空内容条目 `reason='empty-content'`。
+- **不裁剪 business**：预算只作用于 knowledge。business 自身超预算时记日志并让 knowledge 空载
+  （`budget.businessOverBudget=true`），而不是把商家资料砍一半 —— business 是「AI 认识你」的核心（§一）。
+- **本地 token 估算口径**（§六：Gateway 的 `usage` 恒 0）：中日韩/全角 1 token/字、ASCII 1/4 字符、
+  换行 1、其余 1.5，向上取整。**保守侧是刻意选的**（高估只少塞资料，低估会真超窗）；
+  窗口由调用方传（`contextWindowTokens`），默认 128k——因为 §六 实测 `model` 取值是 `openclaw` / `openclaw/<agentId>`，
+  **映射不到 provider 模型 id**，引擎不假装知道真实窗口。
+- **只打包 `status='ready'`**；`enabled=0` 的关注词不进包；`businessCompleteness.missing` 直接供 08/09
+  「生成前主动追问缺口」用；完整度常量**复用** `businessManager.BUSINESS_COMPLETENESS_FIELDS`（不留第二份真相）。
+- **不新增 IPC 通道**：§五 的 `marketing.context` 是 current-project 切换（03 已交付），Context Pack 是主进程内部结构，
+  消费方是 07/08/09。主进程留 `getMarketingContextEngine()` 作为唯一取用点，防止各处自建第二个引擎（账本/日志会分家）。
+- **错误码透传**：引擎只经四个 Manager 读数据，`NOT_FOUND`（project 不存在）/ `SETUP_REQUIRED`（便携 Node 缺失）
+  原样上抛，不被包装成 `DB_ERROR`（C15/C16 在 **bundle 后的模块** 上断言，防跨 bundle 身份假阴性）。
+
+⏳ **未覆盖 / 已知风险**：①**打包态端到端未做** —— 本提交没有渲染端面，CDP 冒烟无从驱动（03/04/05a 的 e2e 靠 IPC 面）；
+②token 估算器是启发式，与真实分词器有偏差（未引入 tiktoken 类依赖，见待办 #21）；
+③`listLimited` 只在单次读入触到 worker 上限 5000 时标记，未做分页读全（α 阶段商家资料量远小于此）。
 
 ### Commit 11 数据源 SPIKE（v1.12 新增）
 
@@ -676,10 +808,10 @@ test/fixtures/{make-minimal-pdf.mjs,min-text-layer.pdf}  提交级最小 PDF fix
 | # | 事项 | 状态 |
 |---|------|------|
 | 1 | 「环境初始化」入口分组 | ✅ 已落地：随 01 进 OpenClaw 组 |
-| 2 | label 改名（控制台→工作台、技能管理→能力中心、渠道接入→渠道） | 🟡 建议执行：to 值不变，随 01 上线 |
+| 2 | label 改名（控制台→工作台、技能管理→能力中心、渠道接入→渠道） | ✅ 已落地（2026-09-17 核实）：`src/App.vue:105/122/123` 已是「工作台 / 能力中心 / 渠道」；剩 `Setup.vue` 的「前往控制台」按钮文案未同步（一行文案，见 #24） |
 | 3 | 分支策略 | ✅ 已落地：当前 `release/2.0`，master / release/1.0 并存 |
 | 4 | PLAN-2.0.md 入库 | ✅ 2026-09-15 随 Commit 01 提交入库（含 `spikes/`） |
-| 5 | 放宽 Setup.vue 完成按钮的 channels 要求 | 🟡 与 01 的 reload 改动同期处理（最小改动） |
+| 5 | 放宽 Setup.vue 完成按钮的 channels 要求 | ✅ 已落地（2026-09-17 核实）：`Setup.vue:193-194` 的「环境已就绪 / 前往控制台」只要求 `nodeInstalled && openClawInstalled`，不含 channels；`channelsInstalled` 仅用于按钮文案（「重新安装环境 / 开始完整初始化」） |
 | 6 | SQLite 选型 | ✅ v1.4 定稿：方案 B |
 | 7 | DB 滚动快照 | ✅ v1.4 定稿：VACUUM INTO，保留 5 份，02 落地 |
 | 8 | Commit 负责人 | ⬜ 多人协作时在第七节表中填名 |
@@ -688,12 +820,20 @@ test/fixtures/{make-minimal-pdf.mjs,min-text-layer.pdf}  提交级最小 PDF fix
 | 11 | v1.10 第五轮评审 9 项 | ✅ 2026-09-15 全部并入；#1-4、#6-7 为 user_version=1 建表前必须项（Commit 02 前有效），#5 立即生效，#8-9 已进 09/11/12 验收 |
 | 12 | v1.12 产品智能 + 数据源定稿 | ✅ 2026-09-15 全部并入（见 v1.12 修订记录）；数据源三线与小红书降级口径由 Commit 11 SPIKE 实测确认 |
 | 13 | v1.13 依赖/字段/上下文补齐 5 项 | ✅ 2026-09-15 全部并入：①AI 扩词 04→08（依赖倒置）②contents 补 `published_at`/`effect_note` ③Context Pack 加 `watchlist[]` ④`origin=watch` 标 2.1 预留 ⑤完整度卡片 Knowledge 维度随 05 接入 |
-| 14 | 客户端 abort 后**服务端是否停止生成** | ⬜ 待 07 验证（关系到 08/09 停止生成是否真的省 token）|
+| 14 | 客户端 abort 后**服务端是否停止生成** | 🟡 半验（2026-09-16）：07 已证客户端 `cancel()` 会让上游连接真断（假服务端观测到 close、只发出 2/80 帧），因此**不会再继续收 token**；服务端是否随即停止模型生成需真 Gateway + 真调用才验得了 |
+| 22 | Commit 07 开了 `marketing:gateway:{status,ensureReady}` 两条通道（§五 未列举） | ✅ 2026-09-17 已拍板（路径 A）：**接受并写进 §五** 的 `window.api.marketing` 契约（见本节 `gateway:` 一行）；理由：§五 错误码 `OPENCLAW_NOT_READY` 的前端处理就是「显示启动引导」，无只读面则该分支无路可走；两条通道均幂等、零 token、不泄 token |
+| 23 | Commit 07 复审里**判定为可接受/不修**的 4 条 | 🟡 记录在案（2026-09-17）：①429 → `OPENCLAW_NOT_READY`（已带 `reason='rate-limited'`；加专用码需先改 §五）；②非流式响应体读取不在超时内（主路径 SSE）；③SSE 不拼多行 `data:`（OpenClaw 单行 JSON，无影响）；④`accept:gateway` 用例跳号 G15（仅观感）。若 08/09 真碰到 ①/② 再加码 |
 | 16 | **根 `npm run typecheck` 空转**（tsconfig 为 `files:[] + references`，什么都没检查） | ✅ v1.15 已补 `typecheck:node` / `typecheck:web`（逐项目检查暴露 6 个被掩盖的真错并修复）；后续提交一律走逐项目检查 |
 | 17 | Commit 03 三条未覆盖项（删行失败分支 / store 降级语义无单测 / UI 点击流） | ⬜ 见「Commit 03 落点与验收」；均已在代码层说明，未做执行证据 |
 | 18 | Commit 04 三条未覆盖项（UI 点击流 / 完整度常量双份 / Watchlist 无批量导入） | ⬜ 见「Commit 04 落点与验收」 |
 | 19 | Commit 05a 三条未覆盖项（K8 需真样本 / UI 点击流 / **lock 与 node_modules 漂移**） | ⬜ 见「Commit 05a 落点与验收」；漂移修复建议独立做 |
-| 15 | 应用写 `meta.lastTouchedAt` / `lastTouchedVersion:'latest'` 被 schema 拒绝 | ⬜ 待 07 顺带修（`configManager.ts:703-707`、`downloadManager.ts:1451-1452`）；实测 OpenClaw 启动时会自愈，后果较轻 |
+| 15 | 应用写 `meta.lastTouchedAt` / `lastTouchedVersion:'latest'` 被 schema 拒绝 | ✅ 已修（2026-09-16/17）：**两处都改了** —— `configManager._syncOpenClawConfig()`（删 `lastTouchedAt`；`lastTouchedVersion` 读真实安装版本，读不到则省略；G19 固定）与 `downloadManager._ensureOpenClawConfig()` 的安装期保底配置（**不写 `meta`**，留给 configManager 单点写；G28 真跑固定） |
+| 20 | Commit 06 是否要给 Context Pack 加渲染端通道（「AI 看见什么」预览） | ✅ 2026-09-16 已拍板：**本期不加**（§五 只列 `marketing.context`=切换，Context Pack 消费方是主进程 07/08/09）；将来要预览页需先改 §五 再动 IPC |
+| 21 | 本地 token 估算器与真实分词器的偏差 | 🟡 已定动作（2026-09-16）：07 落地后用真实 usage 标定一次估算器（Gateway 的 `usage` 恒 0，需 provider 侧或本地分词器） |
+| 24 | 提交策略：06/07（含两轮复审修复）目前全在工作区未提交 | ⬜ 待拍板：是否提交、拆几个提交（建议：06 一个、07 一个，07 带上复审修复）、是否 push |
+| 25 | 打包态端到端（`build:win` + 安装包冒烟）在 06/07 未做 | ✅ 2026-09-17 已补（**7/7**）：`npm run build:win` 产物 + `node test/packaged-gateway.smoke.mjs`（真渲染进程调真 IPC、便携数据目录），结果落 `test/packaged-smoke-07.json`；真界面点击流留给 08 |
+| 26 | 下一步顺序：05b（扫描件 AI 识别）与 08（AI Advisor）依赖都已满足 | ⬜ 待拍板：建议先 08（一期主线第一屏、也是 06/07 的首个真实消费者），05b 随后 |
+| 27 | `Setup.vue` 按钮文案仍为「前往控制台」，与 #2 的「工作台」口径不一致 | ⬜ 待拍板：一行文案，改不一致？ |
 
 ## 十、概念备忘
 

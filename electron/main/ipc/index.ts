@@ -4,6 +4,7 @@
 // （§三：第一阶段不搬任何现有文件）；新代码从这里聚合注册。
 // Commit 02 接 marketing.system；Commit 03 追加 marketing.project / marketing.context；
 // 04 追加 marketing.business / marketing.watchlist；05a 追加 marketing.knowledge；
+// 07 追加 marketing.gateway（status / ensureReady 两条只读面，见 ipc/gateway.ts）；
 // 09+/11+ 的 content/hot 在此继续追加。
 
 export {
@@ -16,4 +17,6 @@ export {
   MARKETING_KNOWLEDGE_CHANNELS,
   withMarketingBackup
 } from './marketing'
+export { registerGatewayIpc, MARKETING_GATEWAY_CHANNELS } from './gateway'
+export type { GatewayIpcResult } from './gateway'
 export type { IpcResult } from './marketing'

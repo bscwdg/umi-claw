@@ -16,11 +16,11 @@ import { ConfigManager } from './configManager'
 import { DownloadManager, type DownloadProgress } from './downloadManager'
 import { ChannelManager } from './channelManager'
 import { ObsidianManager } from './obsidian/obsidianManager'
-import { EMBEDDING_PRESETS } from './modelConfig'
-import { openClawPaths, buildOpenClawEnv } from './openClawPaths'
+import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
+import { openClawPaths, buildOpenClawEnv, GATEWAY_TOKEN } from './openClawPaths'
 import { DatabaseClient } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
-import { registerMarketingIpc } from './ipc'
+import { registerMarketingIpc, registerGatewayIpc } from './ipc'
 import { createProjectManager, type ProjectManager } from './marketing/projectManager'
 import {
   createBusinessManager,
@@ -32,6 +32,16 @@ import {
   createKnowledgeManager,
   type KnowledgeManager
 } from './marketing/knowledgeManager'
+import { createContextEngine, type ContextEngine } from './marketing/contextEngine'
+import {
+  createGatewayClient,
+  detectMultimodalCapability,
+  GATEWAY_MODEL_DEFAULT,
+  type GatewayClient,
+  type GatewayModels,
+  type GatewayStarterResult
+} from './gatewayClient'
+import { AppError, ERROR_CODES } from './database/errors'
 import { resolvePdfjsAssets } from './marketing/parsers/pdfjsAssets'
 import { readFileSync, existsSync } from 'fs'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
@@ -60,6 +70,42 @@ let marketingBusinessManager: BusinessManager | null = null
 let marketingWatchlistManager: WatchlistManager | null = null
 // marketing Knowledge 层（Commit 05a）：依赖 DatabaseClient + dataDir + pdfjs 资产路径，构造零 IO 副作用。
 let marketingKnowledgeManager: KnowledgeManager | null = null
+// marketing Context Engine（Commit 06）：纯组装层，依赖四个 Manager（硬规则 9：全部显式 projectId）。
+// 07（Gateway Client）/ 08（Advisor）/ 09（Content Center）是它的消费者；
+// 它的产出是主进程内部数据结构，§五 没有渲染端通道，故此处不注册 IPC。
+let marketingContextEngine: ContextEngine | null = null
+// marketing Gateway Client（Commit 07）：主进程里**唯一**持有 GATEWAY_TOKEN 并发 Gateway
+// HTTP 请求的对象（硬规则 13）。渲染端只能经 `marketing:gateway:status` / `ensureReady`
+// 拿到只读快照；SSE 增量由 08/09 用 `forwardGatewayStream` 推。
+let marketingGatewayClient: GatewayClient | null = null
+
+/**
+ * 取 Context Engine 单例（Commit 06）。
+ *
+ * 存在的意义：07/08/09 在主进程里取引擎的统一入口（它们此刻尚未落地，所以这里没有调用点）。
+ * §五 没有 context pack 的渲染端通道，所以**不要**在 IPC 层暴露它——
+ * 引用端一律走这里，避免各自去 `createContextEngine` 造第二个实例（账本/日志会分家）。
+ */
+export function getMarketingContextEngine(): ContextEngine {
+  if (!marketingContextEngine) {
+    throw new Error('Context Engine 尚未初始化（应在 app.whenReady 之后取用）')
+  }
+  return marketingContextEngine
+}
+
+/**
+ * 取 Gateway Client 单例（Commit 07）。
+ *
+ * 08（Advisor）/ 09（Content Center）/ 05b（扫描件识别）是它的消费者：
+ * 调 `createChatStream()` 拿 SSE 增量，再交给 `forwardGatewayStream(webContents, streamId, handle)`
+ * 推给渲染进程。**不要**在别处 `new GatewayClient(...)`——token 与超时参数必须来自同一处配置。
+ */
+export function getMarketingGatewayClient(): GatewayClient {
+  if (!marketingGatewayClient) {
+    throw new Error('Gateway Client 尚未初始化（应在 app.whenReady 之后取用）')
+  }
+  return marketingGatewayClient
+}
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -445,6 +491,111 @@ function createMarketingKnowledgeManager(database: DatabaseClient): KnowledgeMan
   })
   console.log(`[knowledge] pdfjs 资产目录: ${pdfjsAssets.root}`)
   return manager
+}
+
+// ─── marketing Context Engine wiring（Commit 06） ──────────────────────────────
+
+/**
+ * 构造 Context Engine（Commit 06）：把 Business + Knowledge + Watchlist + Platform
+ * 组装成 §六 的 Context Pack，并在本地预算内决定「全量注入 or LIKE 裁剪」。
+ *
+ * 依赖注入四个 Manager（而不是直接拿 DatabaseClient）：引擎只走既有管理层，
+ * 因此 project 不存在时拿到的就是 `NOT_FOUND`、便携 Node 缺失时拿到的就是 `SETUP_REQUIRED`，
+ * 错误码不需要在引擎里二次翻译（§五 要求渲染端按 code 分支）。
+ * 本函数零 IO 副作用；真正的数据库触碰发生在第一次 buildContextPack。
+ */
+function createMarketingContextEngine(
+  projectManager: ProjectManager,
+  businessManager: BusinessManager,
+  knowledgeManager: KnowledgeManager,
+  watchlistManager: WatchlistManager
+): ContextEngine {
+  const engine = createContextEngine({
+    projectManager,
+    businessManager,
+    knowledgeManager,
+    watchlistManager,
+    logger: (message: string) => console.log(message)
+  })
+  console.log('[context] Context Engine 就绪（§六：预算内全量打包 / 超预算 LIKE 裁剪）')
+  return engine
+}
+
+// ─── marketing Gateway Client wiring（Commit 07） ─────────────────────────────
+
+/**
+ * 构造 Gateway Client（Commit 07）：探活 / 自动拉起 / 就绪轮询 / SSE 的**唯一**实现。
+ *
+ * 依赖注入（不 import electron 的模块才好测）：
+ *   - `baseUrl` / `port`：来自 `configManager.getConfig().port`（§六 实测只绑 127.0.0.1）
+ *   - `token`：`openClawPaths.GATEWAY_TOKEN`（**硬规则 13：只留在主进程**）
+ *   - `models`：`text` = `openclaw`；`multimodal` = 当前 activeProvider 的预设模型声明了
+ *     `input: ['text','image']` 时才是 `openclaw`，否则为 null（含图请求会得到明确错误码，
+ *     不静默降级。见 gatewayClient.detectMultimodalCapability）
+ *   - `starter`：**复用 clawManager 的启停**（§七 原文「不另起炉灶」）；已在跑就不重复 start，
+ *     start 失败则抛错（客户端映射为 OPENCLAW_NOT_READY + details.reason='start-failed'）
+ *   - `conversationKeyResolver`：从 projects 表取 `conversation_key`，拼 `conv:<projectId>:<key>`
+ *     —— 会话隔离键绝不让渲染端传（硬规则 13，同时防伪造跨 Project 会话）
+ * 本函数零 IO 副作用；真正的 HTTP 请求发生在 probe / ensureReady / chat。
+ */
+/**
+ * 解析当前配置下的 Gateway 模型选择。**每次调用都重读配置**（不做启动快照）：
+ * 全新安装时客户端先于 Setup 构造（providers 为空），用户在 Setup 里选了支持图片的模型后
+ * 只走渲染端 reload（主进程不重启，PLAN v1.4 定的做法）；启动快照会让 `multimodal` 一直停在
+ * null，05b 的扫描件识别会被 multimodal-model-not-configured 直接拒掉，直到用户完全重启 App。
+ * 运行中切 provider / 换模型同理。
+ */
+function resolveGatewayModels(): Partial<GatewayModels> {
+  const config = configManager.getConfig()
+  const activeProvider = (config.providers || []).find((p) => p.id === config.activeProvider) ?? null
+  const preset = activeProvider ? OFFICIAL_MODEL_PRESETS[activeProvider.configName] : null
+  const presetModel = Array.isArray(preset?.models)
+    ? preset.models.find((m: any) => m?.id === activeProvider?.model) ?? null
+    : null
+  return {
+    text: GATEWAY_MODEL_DEFAULT,
+    multimodal: detectMultimodalCapability(presetModel) ? GATEWAY_MODEL_DEFAULT : null
+  }
+}
+
+function createMarketingGatewayClient(projectManager: ProjectManager): GatewayClient {
+  const config = configManager.getConfig()
+  const port = Number(config.port) > 0 ? Number(config.port) : 3213
+
+  const starter = async (): Promise<GatewayStarterResult> => {
+    const status = clawManager.getStatus()
+    if (status.running) {
+      // 进程已在跑（可能还在冷启动）：不要重复 start，直接交给就绪轮询
+      return { started: false, reason: 'already-running' }
+    }
+    const result = await clawManager.start()
+    if (!result.success) {
+      throw new AppError(ERROR_CODES.OPENCLAW_NOT_READY, `自动拉起 OpenClaw 失败：${result.error || '未知错误'}`, {
+        reason: 'start-failed'
+      })
+    }
+    // 拉起成功≠就绪：clawManager.start() 返回时进程往往还在冷启动（§六 实测首次非流式 80.3s），
+    // 所以这里只回「我拉过了」，就绪判定交给客户端的轮询
+    return { started: true, reason: 'started' }
+  }
+
+  const client = createGatewayClient({
+    baseUrl: `http://127.0.0.1:${port}`,
+    port,
+    token: GATEWAY_TOKEN,
+    // 模型选择**按次解析**（不做启动快照）：Setup 完成 / 换 provider 后无需重启主进程即生效
+    modelsResolver: resolveGatewayModels,
+    starter,
+    conversationKeyResolver: async (projectId: string) => {
+      const project = await projectManager.getProject(projectId)
+      return project.conversation_key
+    },
+    logger: (message: string) => console.log(message)
+  })
+  console.log(
+    `[gateway] Gateway Client 就绪：${client.baseUrl}（model=${GATEWAY_MODEL_DEFAULT}，多模态=${resolveGatewayModels().multimodal ?? '未配置'}，每请求重读配置）`
+  )
+  return client
 }
 
 // ─── IPC 处理器 ───────────────────────────────────────────────────────────────
@@ -918,6 +1069,9 @@ function registerIpcHandlers(): void {
     marketingKnowledgeManager!
   )
 
+  // ── marketing gateway（Commit 07：只读快照 + 探活/自动拉起/就绪轮询） ──
+  // 只注册两条通道；业务流（advisor/content 的 SSE 增量）归 08/09
+  registerGatewayIpc(marketingGatewayClient!)
 }
 
 // ─── 推送日志到渲染进程 ────────────────────────────────────────────────────────
@@ -1057,6 +1211,15 @@ app.whenReady().then(() => {
   marketingWatchlistManager = businessManagers.watchlistManager
   // marketing Knowledge 管理器（无 IO 副作用；pdfjs 资产路径此刻只做字符串拼接）
   marketingKnowledgeManager = createMarketingKnowledgeManager(marketingDatabase)
+  // marketing Context Engine（Commit 06）：同样无 IO 副作用，首次 buildContextPack 才读库
+  marketingContextEngine = createMarketingContextEngine(
+    marketingProjectManager!,
+    marketingBusinessManager!,
+    marketingKnowledgeManager!,
+    marketingWatchlistManager!
+  )
+  // marketing Gateway Client（Commit 07）：无 IO 副作用；starter 复用 clawManager 的启停
+  marketingGatewayClient = createMarketingGatewayClient(marketingProjectManager!)
   // 注入 Obsidian MCP 配置生成器：_syncOpenClawConfig 写回 openclaw.json 时调用
   configManager.setObsidianMcpInjector(() => obsidianManager.buildMcpServerConfig())
 

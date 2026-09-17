@@ -192,6 +192,33 @@ const api = {
       // 本地文件选择器（dialog 在主进程）；用户取消 → data.filePath = null，不是错误
       pickFile: (): Promise<{ ok: true; data: { filePath: string | null } } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
         ipcRenderer.invoke('marketing:knowledge:pickFile')
+    },
+    // Commit 07：Gateway 只读面（硬规则 13：token 与 HTTP 调用只留主进程，渲染端只拿快照）
+    // status      = 只读就绪快照（零 token；只发 GET /health + GET /v1/models）
+    // ensureReady = 探活 → 按需自动拉起（复用 clawManager）→ 就绪轮询 → 同一快照
+    gateway: {
+      status: (): Promise<{
+        ok: true
+        data: {
+          ready: boolean
+          port: number
+          baseUrl: string
+          endpointsEnabled: boolean
+          lastError: { code: string; message: string; details?: unknown } | null
+        }
+      } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:gateway:status'),
+      ensureReady: (): Promise<{
+        ok: true
+        data: {
+          ready: boolean
+          port: number
+          baseUrl: string
+          endpointsEnabled: boolean
+          lastError: { code: string; message: string; details?: unknown } | null
+        }
+      } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:gateway:ensureReady')
     }
   },
 
