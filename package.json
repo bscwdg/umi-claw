@@ -20,6 +20,7 @@
     "accept:knowledge": "node test/knowledge.accept.mjs",
     "accept:context": "node test/context.accept.mjs",
     "accept:gateway": "node test/gateway.accept.mjs",
+    "accept:advisor": "node test/advisor.accept.mjs",
     "smoke:packaged": "node test/packaged-gateway.smoke.mjs"
   },
   "dependencies": {

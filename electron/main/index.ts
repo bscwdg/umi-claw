@@ -20,7 +20,7 @@ import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv, GATEWAY_TOKEN } from './openClawPaths'
 import { DatabaseClient } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
-import { registerMarketingIpc, registerGatewayIpc } from './ipc'
+import { registerMarketingIpc, registerGatewayIpc, registerAdvisorIpc, abortAllAdvisorStreams } from './ipc'
 import { createProjectManager, type ProjectManager } from './marketing/projectManager'
 import {
   createBusinessManager,
@@ -33,6 +33,7 @@ import {
   type KnowledgeManager
 } from './marketing/knowledgeManager'
 import { createContextEngine, type ContextEngine } from './marketing/contextEngine'
+import { createAdvisorManager, type AdvisorManager } from './marketing/advisorManager'
 import {
   createGatewayClient,
   detectMultimodalCapability,
@@ -78,6 +79,8 @@ let marketingContextEngine: ContextEngine | null = null
 // HTTP 请求的对象（硬规则 13）。渲染端只能经 `marketing:gateway:status` / `ensureReady`
 // 拿到只读快照；SSE 增量由 08/09 用 `forwardGatewayStream` 推。
 let marketingGatewayClient: GatewayClient | null = null
+// marketing AI Advisor（Commit 08）：只依赖 06 引擎 + 07 客户端 + 04 Watchlist，构造零 IO 副作用。
+let marketingAdvisorManager: AdvisorManager | null = null
 
 /**
  * 取 Context Engine 单例（Commit 06）。
@@ -105,6 +108,20 @@ export function getMarketingGatewayClient(): GatewayClient {
     throw new Error('Gateway Client 尚未初始化（应在 app.whenReady 之后取用）')
   }
   return marketingGatewayClient
+}
+
+/**
+ * 取 AI Advisor 单例（Commit 08）。
+ *
+ * 主进程里的唯一入口：面板经 `marketing:advisor:*` IPC 调到它（渲染端拿不到 Manager 本身）。
+ * 09（Content Center）会复用同一个 Context Engine 与 Gateway Client，但**不复用 Advisor**
+ * （生成走 content 面，两者的 prompt 与产物形态不同）。
+ */
+export function getMarketingAdvisorManager(): AdvisorManager {
+  if (!marketingAdvisorManager) {
+    throw new Error('AI Advisor 尚未初始化（应在 app.whenReady 之后取用）')
+  }
+  return marketingAdvisorManager
 }
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
@@ -598,6 +615,26 @@ function createMarketingGatewayClient(projectManager: ProjectManager): GatewayCl
   return client
 }
 
+// ─── marketing Advisor wiring（Commit 08） ─────────────────────────────────────
+
+/**
+ * 构造 AI Advisor（Commit 08）：06 的 Context Engine（唯一上下文来源）+ 07 的 Gateway Client
+ * （唯一出站通道；token 在它手里）+ 04 的 Watchlist（扩词候选要去重既有词）。
+ *
+ * 三者都是**注入**而不是自己 new：Advisor 不持有 token、不直连 HTTP、不自己读配置（硬规则 13/8）。
+ * 本函数零 IO 副作用；真正的读库/HTTP 发生在 ask / suggestWatchlist。
+ */
+function createMarketingAdvisorManager(): AdvisorManager {
+  const advisor = createAdvisorManager({
+    contextEngine: getMarketingContextEngine(),
+    gateway: getMarketingGatewayClient(),
+    watchlistManager: marketingWatchlistManager!,
+    logger: (message: string) => console.log(message)
+  })
+  console.log('[advisor] AI Advisor 就绪（Context Pack + SSE 流式 + 停止生成 + 事实护栏）')
+  return advisor
+}
+
 // ─── IPC 处理器 ───────────────────────────────────────────────────────────────
 
 function registerIpcHandlers(): void {
@@ -1072,6 +1109,9 @@ function registerIpcHandlers(): void {
   // ── marketing gateway（Commit 07：只读快照 + 探活/自动拉起/就绪轮询） ──
   // 只注册两条通道；业务流（advisor/content 的 SSE 增量）归 08/09
   registerGatewayIpc(marketingGatewayClient!)
+
+  // ── marketing advisor（Commit 08：grounded 问答 + 停止生成 + 扩词候选） ──
+  registerAdvisorIpc(marketingAdvisorManager!)
 }
 
 // ─── 推送日志到渲染进程 ────────────────────────────────────────────────────────
@@ -1220,6 +1260,8 @@ app.whenReady().then(() => {
   )
   // marketing Gateway Client（Commit 07）：无 IO 副作用；starter 复用 clawManager 的启停
   marketingGatewayClient = createMarketingGatewayClient(marketingProjectManager!)
+  // marketing AI Advisor（Commit 08）：用上面两个单例拼装（注入式，零 IO 副作用）
+  marketingAdvisorManager = createMarketingAdvisorManager()
   // 注入 Obsidian MCP 配置生成器：_syncOpenClawConfig 写回 openclaw.json 时调用
   configManager.setObsidianMcpInjector(() => obsidianManager.buildMcpServerConfig())
 
@@ -1260,6 +1302,13 @@ app.on('before-quit', async () => {
   ; (app as any).isQuiting = true
   // 确保在退出前杀死所有子进程，防止孤儿进程
   killAllTerminalSessions()
+  // 在途的 Advisor 流先中止：否则应用退出时上游可能还在生成（白烧 token）
+  try {
+    const aborted = abortAllAdvisorStreams()
+    if (aborted > 0) console.log(`[Main] 已中止 ${aborted} 条在途 Advisor 流`)
+  } catch (e) {
+    console.error('[Main] 中止 Advisor 流失败:', e)
+  }
   // 注册表内的常驻子进程（marketing DB Worker）先优雅停：
   // wal_checkpoint(TRUNCATE) → close → exit(0)，避免留下 -wal/-shm 残骸
   try {

@@ -32,8 +32,8 @@ const router = createRouter({
     },
     {
       path: '/marketing/advisor',
-      component: () => import('../views/marketing/Placeholder.vue'),
-      meta: { title: 'AI Advisor', icon: '💬', desc: '基于 Context Pack 的营销问答', commit: 'Commit 08' }
+      component: () => import('../views/marketing/AdvisorPanel.vue'),
+      meta: { title: 'AI Advisor', icon: '💬' }
     },
     {
       path: '/marketing/content',

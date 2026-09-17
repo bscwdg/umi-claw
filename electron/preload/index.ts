@@ -219,6 +219,34 @@ const api = {
         }
       } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
         ipcRenderer.invoke('marketing:gateway:ensureReady')
+    },
+    // Commit 08：AI Advisor（grounded 问答 + 扩词候选）
+    // 流式增量走 07 定死的事件名（marketing:gateway:chunk / done / error，payload 带 streamId），
+    // 面板按 streamId 归并自己的流；abort 会真断上游（07 已验证）
+    advisor: {
+      ask: (input: { projectId: string; question: string; platform?: string | null; model?: string | null }) =>
+        ipcRenderer.invoke('marketing:advisor:ask', input),
+      // 停止生成；幂等（流已结束时返回 aborted:false，不报错）
+      abort: (streamId: string) => ipcRenderer.invoke('marketing:advisor:abort', streamId),
+      watchCandidates: (projectId: string, options?: { count?: number }) =>
+        ipcRenderer.invoke('marketing:advisor:watchCandidates', projectId, options),
+      onChunk: (cb: (payload: { streamId: string; index: number; delta: string }) => void) => {
+        const handler = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('marketing:gateway:chunk', handler)
+        return () => ipcRenderer.off('marketing:gateway:chunk', handler)
+      },
+      onDone: (
+        cb: (payload: { streamId: string; chunks: number; text: string | null; aborted: boolean }) => void
+      ) => {
+        const handler = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('marketing:gateway:done', handler)
+        return () => ipcRenderer.off('marketing:gateway:done', handler)
+      },
+      onError: (cb: (payload: { streamId: string; error: { code: string; message: string; details?: unknown } }) => void) => {
+        const handler = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('marketing:gateway:error', handler)
+        return () => ipcRenderer.off('marketing:gateway:error', handler)
+      }
     }
   },
 

@@ -128,7 +128,7 @@ export class MarketingIpcError extends Error {
 }
 
 /** code → 人话（只此一处；未知 code 退化到服务端 message） */
-const ERROR_TEXT: Record<string, string> = {
+export const ERROR_TEXT: Record<string, string> = {
   VALIDATION_ERROR: '填写内容不合法，请检查后重试',
   NOT_FOUND: '该商家不存在，可能已被删除',
   CONFLICT: '与已有数据冲突，请检查后重试',
@@ -261,6 +261,48 @@ export interface ImportKnowledgePayload {
 
 /** `status='ready'` 才计入「已建知识库」，也才是 AI 能吃的资料（与后端检索口径一致） */
 export const KNOWLEDGE_READY_STATUS = 'ready'
+
+// ── AI Advisor（Commit 08）：类型 ───────────────────────────────────────────────
+
+/** 面板要展示的「AI 看见了什么」摘要（主进程 `marketing:advisor:ask` 返回） */
+export interface AdvisorPackSummary {
+  knowledgeIncluded: number
+  knowledgeTotal: number
+  knowledgeDropped: number
+  mode: 'full' | 'truncated'
+  retrievalMode: string
+  usedTokens: number
+  budgetTokens: number
+  contextWindowTokens: number
+  businessCompleteness: { percent: number; missing: string[] }
+  watchlistCount: number
+}
+
+export interface AdvisorMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  /** 流式中（面板据此显示光标与「停止生成」） */
+  streaming: boolean
+  /** 被用户中止（上游真断连） */
+  aborted: boolean
+  /** 失败时的错误码（§五；面板按 code 分支，不解析 message） */
+  errorCode: string | null
+}
+
+export interface WatchCandidate {
+  keyword: string
+  type: string | null
+  reason: string | null
+  /** 已在关注词列表里（面板置灰不可勾选） */
+  existing: boolean
+}
+
+/** 发布平台选项（§四 contents.platform；Advisor 里可选） */
+export const ADVISOR_PLATFORMS: Array<{ key: string; label: string }> = [
+  { key: 'xiaohongshu', label: '小红书' },
+  { key: 'douyin', label: '抖音' }
+]
 
 function toKnowledgeItem(row: any): KnowledgeItem {
   return {
@@ -692,6 +734,189 @@ export const useMarketingStore = defineStore('marketing', () => {
     }))
   }
 
+  // ── AI Advisor（Commit 08） ──────────────────────────────────────────────
+  //
+  // 设计要点（与主进程契约对齐）：
+  //   - `onChunk/onDone/onError` 是**全局**订阅（主进程事件名是 07 定死的），
+  //     因此这里只订一次、并按**当前 streamId** 过滤——别的面板/别的流不会串台。
+  //   - `stopAdvisor()` 既断上游（`abort`）也立刻收尾本地 UI：不等事件回来，避免按钮卡住。
+  //   - 扩词候选**不写库**：勾选后走已有的 `addWatch`（04 的上限/去重/CONFLICT 语义全部复用）。
+  const advisorMessages = ref<AdvisorMessage[]>([]) as Ref<AdvisorMessage[]>
+  const advisorStreaming = ref(false)
+  const advisorPack = ref<AdvisorPackSummary | null>(null) as Ref<AdvisorPackSummary | null>
+  const advisorError = ref<string | null>(null)
+  const advisorPlatform = ref<string | null>(null)
+  const advisorCandidates = ref<WatchCandidate[]>([]) as Ref<WatchCandidate[]>
+  const advisorCandidatesLoading = ref(false)
+  let advisorStreamId: string | null = null
+  let advisorOff: Array<() => void> = []
+  let advisorSeq = 0
+
+  function advisorNextId(): string {
+    advisorSeq += 1
+    return `advisor-${advisorSeq}-${Date.now().toString(36)}`
+  }
+
+  function advisorLastAssistant(): AdvisorMessage | null {
+    for (let i = advisorMessages.value.length - 1; i >= 0; i -= 1) {
+      const m = advisorMessages.value[i]
+      if (m.role === 'assistant') return m
+    }
+    return null
+  }
+
+  /** 订阅流事件（只订一次）；返回的取消函数在 store 销毁时由调用方调用 */
+  function ensureAdvisorSubscription(): void {
+    if (advisorOff.length) return
+    advisorOff = [
+      window.api.marketing.advisor.onChunk((payload) => {
+        if (!advisorStreamId || payload?.streamId !== advisorStreamId) return
+        const last = advisorLastAssistant()
+        if (last?.streaming) last.content += String(payload?.delta ?? '')
+      }),
+      window.api.marketing.advisor.onDone((payload) => {
+        if (!advisorStreamId || payload?.streamId !== advisorStreamId) return
+        const last = advisorLastAssistant()
+        if (last) {
+          last.streaming = false
+          last.aborted = payload?.aborted === true
+          // 主进程带回了完整文本（含被 abort 时已收到的部分），以它为准
+          if (typeof payload?.text === 'string' && payload.text) last.content = payload.text
+        }
+        advisorStreaming.value = false
+        advisorStreamId = null
+      }),
+      window.api.marketing.advisor.onError((payload) => {
+        if (!advisorStreamId || payload?.streamId !== advisorStreamId) return
+        const code = String(payload?.error?.code ?? 'DB_ERROR')
+        const last = advisorLastAssistant()
+        if (last) {
+          last.streaming = false
+          last.errorCode = code
+          if (!last.content) last.content = ERROR_TEXT[code] || String(payload?.error?.message ?? '生成失败')
+        }
+        advisorError.value = ERROR_TEXT[code] || String(payload?.error?.message ?? '生成失败')
+        advisorStreaming.value = false
+        advisorStreamId = null
+      })
+    ]
+  }
+
+  /** 释放订阅（页面卸载时调用，避免监听器泄漏） */
+  function disposeAdvisor(): void {
+    for (const off of advisorOff) {
+      try {
+        off()
+      } catch {
+        /* 忽略 */
+      }
+    }
+    advisorOff = []
+  }
+
+  /** 问一轮（流式）：本地先插 user/assistant 两条，增量由订阅追加 */
+  async function askAdvisor(projectId: string, question: string, platform?: string | null): Promise<void> {
+    const q = String(question ?? '').trim()
+    if (!q) return
+    if (!projectId) throw new MarketingIpcError('VALIDATION_ERROR', '请先选择一个商家')
+    advisorError.value = null
+    ensureAdvisorSubscription()
+    advisorMessages.value.push({
+      id: advisorNextId(),
+      role: 'user',
+      content: q,
+      streaming: false,
+      aborted: false,
+      errorCode: null
+    })
+    advisorMessages.value.push({
+      id: advisorNextId(),
+      role: 'assistant',
+      content: '',
+      streaming: true,
+      aborted: false,
+      errorCode: null
+    })
+    advisorStreaming.value = true
+    try {
+      const res = (await window.api.marketing.advisor.ask({
+        projectId,
+        question: q,
+        platform: platform ?? null
+      })) as IpcEnvelope<any>
+      if (!res?.ok) throw envelopeToError(res, '提问失败')
+      advisorStreamId = String(res.data?.streamId ?? '') || null
+      advisorPack.value = (res.data?.pack ?? null) as AdvisorPackSummary | null
+    } catch (e) {
+      const err = e instanceof MarketingIpcError ? e : envelopeToError(null, '提问失败')
+      const code = err.code || 'DB_ERROR'
+      const last = advisorLastAssistant()
+      if (last) {
+        last.streaming = false
+        last.errorCode = code
+        last.content = last.content || ERROR_TEXT[code] || err.message
+      }
+      advisorError.value = ERROR_TEXT[code] || err.message
+      advisorStreaming.value = false
+      advisorStreamId = null
+      throw e instanceof Error ? e : new MarketingIpcError(code, advisorError.value)
+    }
+  }
+
+  /** 停止生成：先断上游，再立刻收尾 UI（幂等；没有在途流时静默返回） */
+  async function stopAdvisor(): Promise<void> {
+    const id = advisorStreamId
+    advisorStreamId = null
+    advisorStreaming.value = false
+    const last = advisorLastAssistant()
+    if (last?.streaming) {
+      last.streaming = false
+      last.aborted = true
+    }
+    if (!id) return
+    try {
+      await window.api.marketing.advisor.abort(id)
+    } catch {
+      /* 中止失败不弹错：上游最迟会因空闲超时结束，不值得打扰老板 */
+    }
+  }
+
+  /** 清空对话（切商家时调用；历史由 OpenClaw sticky 会话承载，本地清空不影响服务端隔离） */
+  function clearAdvisor(): void {
+    advisorMessages.value = []
+    advisorPack.value = null
+    advisorError.value = null
+  }
+
+  /** 扩词候选（不写库；写库走 addWatch） */
+  async function loadWatchCandidates(projectId: string, count?: number): Promise<void> {
+    advisorCandidatesLoading.value = true
+    advisorError.value = null
+    try {
+      const res = (await window.api.marketing.advisor.watchCandidates(
+        projectId,
+        count ? { count } : undefined
+      )) as IpcEnvelope<any>
+      if (!res?.ok) throw envelopeToError(res, '生成候选词失败')
+      const rows = Array.isArray(res.data?.candidates) ? res.data.candidates : []
+      advisorCandidates.value = rows.map((row: any) => ({
+        keyword: String(row?.keyword ?? ''),
+        type: row?.type ?? null,
+        reason: row?.reason ?? null,
+        existing: row?.existing === true
+      }))
+    } catch (e) {
+      advisorError.value = messageOf(e, '生成候选词失败')
+      throw e instanceof Error ? e : new MarketingIpcError('DB_ERROR', advisorError.value)
+    } finally {
+      advisorCandidatesLoading.value = false
+    }
+  }
+
+  function clearWatchCandidates(): void {
+    advisorCandidates.value = []
+  }
+
   return {
     projects,
     currentProjectId,
@@ -721,6 +946,20 @@ export const useMarketingStore = defineStore('marketing', () => {
     loadKnowledge,
     importKnowledge,
     removeKnowledge,
-    searchKnowledge
+    searchKnowledge,
+    // AI Advisor（Commit 08）
+    advisorMessages,
+    advisorStreaming,
+    advisorPack,
+    advisorError,
+    advisorPlatform,
+    advisorCandidates,
+    advisorCandidatesLoading,
+    askAdvisor,
+    stopAdvisor,
+    clearAdvisor,
+    loadWatchCandidates,
+    clearWatchCandidates,
+    disposeAdvisor
   }
 })

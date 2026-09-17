@@ -5,6 +5,7 @@
 // Commit 02 接 marketing.system；Commit 03 追加 marketing.project / marketing.context；
 // 04 追加 marketing.business / marketing.watchlist；05a 追加 marketing.knowledge；
 // 07 追加 marketing.gateway（status / ensureReady 两条只读面，见 ipc/gateway.ts）；
+// 08 追加 marketing.advisor（ask / abort / watchCandidates，流式增量走 07 的事件名）；
 // 09+/11+ 的 content/hot 在此继续追加。
 
 export {
@@ -19,4 +20,16 @@ export {
 } from './marketing'
 export { registerGatewayIpc, MARKETING_GATEWAY_CHANNELS } from './gateway'
 export type { GatewayIpcResult } from './gateway'
+export {
+  registerAdvisorIpc,
+  abortAllAdvisorStreams,
+  summarizePack,
+  MARKETING_ADVISOR_CHANNELS
+} from './advisor'
+export type {
+  AdvisorIpcResult,
+  AdvisorAskResult,
+  AdvisorPackSummary,
+  AdvisorWatchCandidatesResult
+} from './advisor'
 export type { IpcResult } from './marketing'

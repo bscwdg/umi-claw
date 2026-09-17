@@ -7,6 +7,8 @@
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| v1.27 | 2026-09-17 | **Commit 08 完成**（AI Advisor，主进程 + 渲染端）：`marketing/advisorManager.ts` + `ipc/advisor.ts` + preload `marketing.advisor` 面 + `AdvisorPanel.vue` + store advisor 切片 + 路由换真页；`accept:advisor` **10/10**，`typecheck:node`/`web` 0 错，回归 gateway 27/27 · context 22/22 · db 31/31 · project 18/18 · business 16/16 · knowledge 23/23。**本提交的 3 条口径**：①每轮只发 system+user（不回灌历史，§六 结论 A）；②扩词候选**不写库**，勾选后走 04 的 `addWatch`；③停止生成/切商家/卸载/退出**四路都中止上游**（`before-quit` 里 `abortAllAdvisorStreams`）。⏳ 真界面点击流未做（本机无桌面通道） |
+| v1.26 | 2026-09-17 | **Commit 08 主进程半边完成**（渲染端进行中）：`marketing/advisorManager.ts`（`ask` 组装 Context Pack→SSE / 事实护栏 system prompt / 资料缺口入 prompt / `suggestWatchlist` 扩词候选 + 本地清洗）+ `ipc/advisor.ts`（`marketing:advisor:{ask,abort,watchCandidates}`，流式增量走 07 事件名，`abort` 真断上游）+ preload `marketing.advisor` 面 + main wiring（含退出时 `abortAllAdvisorStreams()`）；`accept:advisor` **10/10**（真库 + 真 SSE 服务端 + 真 ContextEngine/GatewayClient），typecheck:node 0 错。两个自查修正留痕：测试脚手架漏注入 `conversationKeyResolver` 导致 5 项假红；A7 样本只有 28 字而误判「超长被丢」（期望应为 4 个可用）。渲染端（store 切片 / `AdvisorPanel.vue` / 路由）在子会话 `commit08-advisor-ui`，完成后再回填 08 的完整落点与验收。 |
 | v1.25 | 2026-09-17 | **#25 打包态端到端补做完成（7/7）**：真产物 `release/win-unpacked` + CDP 驱真渲染进程 + 便携数据目录（预置便携 Node、预写 `autoStart:false` 且端口改 3299 避开真机）——P1 建库 11 表/uv=1、P2 打包 preload 真暴露 `marketing.gateway.{status,ensureReady}` 且面内无 token、P3 `status` 真发 HTTP 并正确判非就绪（connect-failed）、P4/P5 打包态 Project/Knowledge/LIKE 检索/Watchlist/当前商家、**P6 打包启动即同步（chatCompletions.enabled=true 且 meta 无非法字段）**、P7 打包 main 里 06/07 两模块真被构造；残留打包进程 0。**新增安全阀（已写进脚本与基线）**：`clawManager.start()` 内含 `_killGhostProcesses()`（`taskkill /f /im openclaw.exe`）会误杀本机在跑的 OpenClaw → 冒烟预写 `autoStart:false`、绝不调 `claw:*`/`ensureReady`、收尾只按 PID 结束 |
 | v1.24 | 2026-09-17 | **#22 / #25 / #27 拍板与落地**：①**#22 路径 A** —— `marketing:gateway:{status,ensureReady}` **纳入 §五 契约**（§五 补 `gateway:` 一行 + 写明「Context Pack 不上面」「SSE 增量不注册业务通道」两条边界）；②**#27** —— `Setup.vue` 按钮文案「前往控制台」→「前往工作台」（与 #2 口径一致）；③**#25** —— 打包态端到端补做（`build:win` 产物 + CDP 驱真渲染进程 + 便携数据目录，结果见「Commit 07 落点与验收」的打包态一节） |
 | v1.23 | 2026-09-17 | **#15 补完第二处 + 陈年口子盘点**：①**#15 第二处修复** —— `downloadManager._ensureOpenClawConfig()` 的**安装期保底配置**仍在写 `lastTouchedVersion:'latest'` + `lastTouchedAt`（v1.21 只修了 configManager，属**半修**），现改为**不写 `meta`**（`meta` 由 configManager 启动同步时按真实安装版本补，同一字段只在那一处写）；真跑 `downloadManager` 的 G28 固定（保底配置无非法 meta + 已存在配置不被覆盖）；`accept:gateway` 26 → **27/27**。②陈年口子核对：#2（label 改名）**已落地**（`App.vue:105-123`）、#5（放宽 Setup 完成判定）**已落地**（`Setup.vue:193-194` 只看 node+openClaw，`channelsInstalled` 仅决定按钮文案）；仅剩 `Setup.vue` 的「前往控制台」文案与 #2 不一致（待拍板）。③新增待拍板项 #24/#25/#26（提交策略 / 补打包态端到端时机 / 05b 与 08 的先后） |
@@ -468,7 +470,7 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 | 06 | Context Engine —— **✅ 2026-09-16 完成** | Business + Knowledge + **Watchlist** + Platform → Context Pack（落点与验收见下） | 1d | 00、04、05 | | ✅ |
 | 07 | Gateway Client —— **✅ 2026-09-16 完成** | 端点开关默认化 + 老用户迁移、探活、自动拉起（**复用 clawManager 启停，不另起炉灶**）、就绪轮询、SSE→IPC 透传、会话隔离、多模态模型选择（落点与验收见下；顺带修待办 #15） | 2d | 00 | | ✅ |
 | 05b | 扫描件 AI 识别兜底 | 复用 07：扫描 PDF/带文字资料图的「用 AI 识别」显式触发 + 识别结果人工确认后入库；00⑦ 结论为不支持则只做提示 | 1.5d | 05a、07（可与 08 并行） | | ⬜ |
-| 08 | AI Advisor | Grounded 营销问答面板（边界见第六节）：Context Pack + SSE + 停止生成 + 事实护栏；对话历史按 00⑥ 结论；**+ Watchlist AI 扩词推荐（候选词生成 + 用户勾选，v1.13 由 04 移入）** | 2d | 06、07 | | ⬜ |
+| 08 | AI Advisor —— **✅ 2026-09-17 完成**（主进程 + 渲染端） | Grounded 营销问答面板（边界见第六节）：Context Pack + SSE + 停止生成 + 事实护栏；对话历史按 00⑥ 结论；**+ Watchlist AI 扩词推荐（候选词生成 + 用户勾选，v1.13 由 04 移入）**（落点与验收见下） | 2d | 06、07 | | ✅ |
 | 09 | Content Center | AI 生成（SSE 流式 + **AbortController「停止生成」**，规格同 08：组件卸载/切换必须中止上游）→ 编辑 → 版本（prompt 快照）→ 人工审核；**接收热点雷达结构化 payload 预填充（v1.9），source_topic_id 溯源（v1.10）**；**一次生成 3 个版本供选 + 极简发布标记（v1.12）** | 3d | 06、07、08 | | ⬜ |
 | 10 | 双平台工作流 | **小红书 + 抖音**平台适配（两套平台规则模板注入 Context Pack）；抖音一期只做口播脚本/标题/话题标签文案层，不做视频；均人工复制发布 | 2d | 09 | | ⬜ |
 | 11 | 热点采集与浏览（🔥 热点雷达） | 数据源 SPIKE（公开聚合源，双平台发布视角）+ collector adapters（只抓取 stdout JSON，硬规则 12）+ hotManager 经 Worker 落库 + 时间差定时/唤醒补检/打开即刷 + 三表 + **同源内**去重 + 生命周期 + 采样保留(24 条)/落榜清理(7 天) + 数据源状态条 + 雷达页（近 24h/Top20/平台筛选；「带去 Content Center」09 前占位）；**安装包内 collector 冒烟：复用 obsidianManager.getScriptPath 的 dev/安装包（process.resourcesPath）路径解析，不改打包配置**；**节点日历自建 adapter（origin=calendar）（v1.12）**；不依赖 Gateway | 3d | 02（可与 03-06 并行） | | ⬜ |
@@ -650,7 +652,48 @@ test/packaged-smoke-07.json       结果落盘（7 项）
   P7 打包 main 里 06/07 两模块真被构造（`[context] Context Engine 就绪` / `[gateway] Gateway Client 就绪`）· 残留打包进程 **0**。
 - ⚠️ **安全阀（必须保留）**：`clawManager.start()` 内含 `_killGhostProcesses()` → `taskkill /f /im openclaw.exe`，在开发机上会误杀**正在运行**的 OpenClaw（含托管会话的实例）。故冒烟脚本：预写便携 `app.json`（`autoStart:false` + `port:3299` 避开真机 3213）、**绝不调** `claw:*` / `marketing:gateway:ensureReady`、收尾只按 **PID** 结束本进程。以后跑同类冒烟沿用这三条。
 
-⏳ **未覆盖 / 已知风险**：①主进程/preload/IPC 面已由打包态冒烟覆盖（7/7）；**真界面点击流**留给 08；
+### Commit 08 落点与验收（✅ 2026-09-17）
+
+```text
+electron/main/marketing/advisorManager.ts   新增：AdvisorManager（ask / buildSystemPrompt / suggestWatchlist）+ parseWatchCandidates（脏输出容忍）
+electron/main/ipc/advisor.ts                新增：marketing:advisor:{ask,abort,watchCandidates} + summarizePack + abortAllAdvisorStreams
+electron/main/ipc/index.ts                  + 转出 advisor 面
+electron/preload/index.ts                   + api.marketing.advisor.{ask,abort,watchCandidates,onChunk,onDone,onError}
+electron/main/index.ts                      + 工厂/单例/wiring（注入 06 引擎 + 07 客户端 + 04 Watchlist）+ before-quit 中止在途流
+src/stores/marketing.ts                     + advisor 切片（消息流/发送/停止/扩词候选/按 streamId 归并订阅/dispose）；ERROR_TEXT 改为导出
+src/views/marketing/AdvisorPanel.vue        新增：聊天面板（流式渲染 + 停止生成 + 「AI 看见了什么」摘要 + 缺口提示 + 扩词候选勾选）
+src/renderer/main.ts                        /marketing/advisor 由占位页换真页
+test/advisor.accept.mjs + `npm run accept:advisor`   10 项验收（打真 advisorManager.ts + 真 Node SSE 服务端）
+```
+
+**验收（独立复跑，非自述）**：`accept:advisor` **10/10**；`typecheck:node` / `typecheck:web` 0 错；
+回归 `accept:gateway` **27/27**、`accept:context` **22/22**、`accept:db` **31/31**、`accept:project` **18/18**、
+`accept:business` **16/16**、`accept:knowledge` **23/23** 均不受影响。
+
+**关键设计决策**
+
+- **每轮只发 system + user 两条**：历史由 OpenClaw 的 sticky `user=conv:<projectId>:<conversation_key>` 承载
+  （§六 结论 A），本地**不建消息表、不回灌**。A2 直接断言 `messages.length === 2`。
+- **事实护栏写在 system prompt**（§一「不硬编」）：只能引用资料；资料里没有就直说「资料里没有，建议补充」；
+  不编造；内容一律人工确认后手动发布。**资料缺口（`businessCompleteness.missing`）也入 prompt**，
+  这样「生成前主动追问缺口」不靠模型自觉。
+- **扩词候选不写库**：`suggestWatchlist` 只产出候选（含 `existing` 标记），勾选后走 04 的 `addWatch`
+  （上限 10 / 去重 / CONFLICT 语义全部复用，不在 08 里另造一套规则）；模型脏输出（围栏/夹解释/重复/非法 type/超长）
+  在本地清洗，**解析不出数组就抛 `VALIDATION_ERROR` + `reason='candidates-unparsable'`**——
+  静默给空列表会把「模型抽风」伪装成「真没什么可关注」。
+- **停止生成是真断上游**：`abort(streamId)` 使上游 socket 断开（07 已验），因此「不再白烧 token」有据；
+  **四路都中止**：用户点停止、切换商家（面板 watch）、组件卸载（`onBeforeUnmount`）、应用退出
+  （`before-quit` → `abortAllAdvisorStreams()`）。
+- **流订阅按 streamId 归并**：`onChunk/onDone/onError` 是全局订阅（事件名由 07 定死），store 只订一次并按当前
+  streamId 过滤，多面板/多流不会串台；`disposeAdvisor()` 在卸载时注销。
+- **错误按 code 分支**（§五）：`OPENCLAW_NOT_READY` / `SETUP_REQUIRED` 时面板给「去启动 OpenClaw」按钮，
+  它调 07 的 `marketing:gateway:ensureReady`（探活→按需拉起→就绪轮询）——这也是 07 只读面在 UI 上的第一个真实用途。
+- **界面边界**：面板只做展示与交互；Context Pack 组装、护栏、模型调用全在主进程（硬规则 13），
+  渲染端拿不到 token、也拿不到资料正文（只拿 `summarizePack` 的数量/模式/预算摘要）。
+
+⏳ **未覆盖 / 已知风险**：①**真界面点击流未做**（本机无桌面通道）——打包态端到端（真产物 + CDP 驱真面板）留待补；
+②模型是否真遵守事实护栏只能人工试用 + 后续 Learning 反馈，自动化只验到「护栏与缺口确实进了 prompt」；
+③扩词候选的 `reason` 仅透传展示，未参与排序或去重权重。
 ②「客户端 abort 后**服务端是否停止生成**」只验到「上游连接真断」（假服务端），真 Gateway + 真模型调用未验（§九 #14）；
 ③G21 真机探活实测本机 3213 有 Gateway 在跑（探活 200），但**兼容面 enabled=false**——真机上 `chatCompletions` 仍是关的
   （老配置迁移要等应用真正跑一次 `_syncOpenClawConfig`，它不在本验收的临时目录里）。
