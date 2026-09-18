@@ -1,8 +1,8 @@
 {
   "suite": "scan（Commit 05b：扫描件/图片 AI 识别兜底，打真 scanRecognizer.ts + 真 SSE 服务端 + 真库）",
-  "startedAt": "2026-09-18T02:57:34.165Z",
-  "finishedAt": "2026-09-18T02:57:36.159Z",
-  "durationMs": 1994,
+  "startedAt": "2026-09-18T04:18:05.257Z",
+  "finishedAt": "2026-09-18T04:18:07.346Z",
+  "durationMs": 2089,
   "total": 18,
   "passed": 18,
   "failed": 0,
@@ -14,20 +14,20 @@
     "runtimeNode": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe"
   },
   "bundle": "D:\\work2026\\umi-claw\\test\\.tmp\\scan-manager.mjs",
-  "dataDir": "D:\\work2026\\umi-claw\\test\\.tmp\\scan-1789700253378\\data",
+  "dataDir": "D:\\work2026\\umi-claw\\test\\.tmp\\scan-1789705084457\\data",
   "nodePath": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe",
   "fixture": "D:\\work2026\\umi-claw\\test\\fixtures\\min-scanned.pdf",
   "logSample": [
-    "[project] 已创建 8e647f54-4eb4-4b9c-93d9-001a29c3d20c（05b 拾光摄影），目录=D:\\work2026\\umi-claw\\test\\.tmp\\scan-1789700253378\\data\\projects\\8e647f54-4eb4-4b9c-93d9-001a29c3d20c",
-    "[scan] scan-1-mu6dbm8o 完成：3/3 图，chunks=9 price=未见价格",
-    "[scan] scan-2-mu6dbmen 完成：1/1 图，chunks=3 price=未见价格",
-    "[scan] scan-3-mu6dbmfi 完成：1/1 图，chunks=3 price=未见价格",
-    "[scan] scan-8-mu6dbmhd 已中止：1/3 图，chunks=5 price=未见价格",
-    "[scan] scan-9-mu6dbmoz 完成：1/1 图，chunks=3 price=未见价格",
-    "[scan] scan-10-mu6dbmpu 第 2 页失败重试：OPENCLAW_NOT_READY Gateway 上游错误（HTTP 500）",
-    "[scan] scan-10-mu6dbmpu 完成：3/3 图，chunks=10 price=未见价格",
-    "[scan] scan-12-mu6dbmsy 完成：3/3 图，chunks=9 price=未见价格",
-    "[knowledge] 05b 确认入库 projects/8e647f54-4eb4-4b9c-93d9-001a29c3d20c/min-scanned.pdf（type=pdf，51 字，人工已确认）"
+    "[project] 已创建 2352edd2-b141-4f79-927e-daeb724bfe09（05b 拾光摄影），目录=D:\\work2026\\umi-claw\\test\\.tmp\\scan-1789705084457\\data\\projects\\2352edd2-b141-4f79-927e-daeb724bfe09",
+    "[scan] scan-1-mu6g75xz 完成：3/3 图，chunks=9 price=未见价格",
+    "[scan] scan-2-mu6g764d 完成：1/1 图，chunks=3 price=未见价格",
+    "[scan] scan-3-mu6g7659 完成：1/1 图，chunks=3 price=未见价格",
+    "[scan] scan-8-mu6g767f 已中止：1/3 图，chunks=5 price=未见价格",
+    "[scan] scan-9-mu6g76f6 完成：1/1 图，chunks=3 price=未见价格",
+    "[scan] scan-10-mu6g76fm 第 2 页失败重试：OPENCLAW_NOT_READY Gateway 上游错误（HTTP 500）",
+    "[scan] scan-10-mu6g76fm 完成：3/3 图，chunks=10 price=未见价格",
+    "[scan] scan-12-mu6g76ip 完成：3/3 图，chunks=9 price=未见价格",
+    "[knowledge] 05b 确认入库 projects/2352edd2-b141-4f79-927e-daeb724bfe09/min-scanned.pdf（type=pdf，51 字，人工已确认）"
   ],
   "checks": [
     {
@@ -42,7 +42,7 @@
       "name": "扫描 PDF（真 fixture）→ 逐页含图请求：model=multimodal、image_url data URI、system 护栏、会话隔离键",
       "ok": true,
       "detail": "3 页 × (model=openclaw/mm-ocr, png dataURI, conv:…:scan-1-mu6…)；文本 52 字",
-      "ms": 216
+      "ms": 230
     },
     {
       "id": "S3",
@@ -56,14 +56,14 @@
       "name": "资料图识别：单请求、MIME 按魔数不信任扩展名、伪装图/不支持扩展名被拒",
       "ok": true,
       "detail": "png ✓ / 魔数优先 ✓ / 伪装图与 gif 被拒 ✓",
-      "ms": 64
+      "ms": 66
     },
     {
       "id": "S5",
       "name": "上限三闸（整档 file-too-large / 页数 too-many-pages / 单图 image-too-large）都在发请求前拒",
       "ok": true,
       "detail": "三闸 + FILE_NOT_FOUND 均发送前拒（零请求外泄）✓",
-      "ms": 18
+      "ms": 29
     },
     {
       "id": "S6",
@@ -77,14 +77,14 @@
       "name": "中止（AbortController）真断上游：服务端观测 close；已完成页保留、aborted:true、不再产出",
       "ok": true,
       "detail": "第 1 页保留、第 2 页丢弃；服务端断连 1 次",
-      "ms": 275
+      "ms": 278
     },
     {
       "id": "S8",
       "name": "流式增量走 07 事件名与 forwardGatewayStream：chunk/done 按 streamId=taskId 归并，载荷形状一致",
       "ok": true,
-      "detail": "3 chunk + done（streamId=scan-9-mu6dbmo…）✓",
-      "ms": 31
+      "detail": "3 chunk + done（streamId=scan-9-mu6g76f…）✓",
+      "ms": 17
     },
     {
       "id": "S9",
@@ -105,7 +105,7 @@
       "name": "识别全程不落库（直读行数不变）；确认后才入库（type/status/原文拷贝）；同文件重复确认走 upsert 覆盖",
       "ok": true,
       "detail": "识别 0 行 → 确认 1 行 → 重复确认覆盖（id/created_at 不变）；5 个校验分支全拒 ✓",
-      "ms": 119
+      "ms": 127
     },
     {
       "id": "S12",
@@ -116,45 +116,45 @@
     },
     {
       "id": "S13",
-      "name": "探针（真扫描 fixture → getOperatorList → objs → 手写 PNG）复跑通过，证据落 .tmp",
+      "name": "探针（真扫描 fixture → getOperatorList → objs → 手写 PNG）复跑通过，证据回写跟踪文件",
       "ok": true,
       "detail": "P1-P4 PASS（P2: p1:18811B,p2:21179B,p3:17432B, 逐字节往返一致 ✓…）",
-      "ms": 566
+      "ms": 590
     },
     {
       "id": "S14",
       "name": "三条新通道三处一致 + picker 含资料图 + abort 两路 + 预检 wiring + UI 确认弹窗/四路中止/干净文本",
       "ok": true,
       "detail": "3 通道三处一致；两路 abort；预检 wiring；picker 资料图；store 14 项；UI 触发/人话/价格/确认/干净文本/四路 ✓",
-      "ms": 3
+      "ms": 5
     },
     {
       "id": "S15",
       "name": "栅格化还没结束就切商家/按停止：cancelByProject 即时命中，PDF 解码后不发任何模型请求，任务以「已中止」收场并注销",
       "ok": true,
       "detail": "解码窗口 abort 即时生效；0 请求；注册表干净 ✓",
-      "ms": 1
+      "ms": 3
     },
     {
       "id": "S16",
       "name": "一页两张图：每图一次请求、指令带「本页第 j/2 张图」、会话键 i 段不同、汇总合并为一节（不重复页头）、页数按页计",
       "ok": true,
       "detail": "2 图/1 页：j/k 指令、独立会话、无重复节、按页计数 ✓",
-      "ms": 151
+      "ms": 180
     },
     {
       "id": "S17",
       "name": "内嵌图扫描件（BI/ID/EI 1BPP）能取到图并识别（实测：v3 worker 转译为 paintImageXObject+合成 objs 键；OPS 86/87 分支作为防御保留）",
       "ok": true,
       "detail": "内嵌图 ✓（v3 实测转译为 paintImageXObject+objs；1BPP→RGBA→PNG→dataURI）",
-      "ms": 61
+      "ms": 63
     },
     {
       "id": "S18",
       "name": "全程不变式：库中唯一行来自人工确认；无空内容行；原文拷贝字节一致",
       "ok": true,
-      "detail": "唯一行 id=3d11ee37…（人工确认产物；副本字节一致）",
-      "ms": 10
+      "detail": "唯一行 id=51172713…（人工确认产物；副本字节一致）",
+      "ms": 17
     }
   ]
 }

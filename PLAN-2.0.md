@@ -1,12 +1,14 @@
 # Umi Claw 2.0 施工基线（持续记录）
 
 > 本文档是 2.0 的唯一规划基线，随开发进度持续更新。
-> 基线版本：v1.21 ｜ 更新日期：2026-09-16 ｜ 状态：**Commit 00/01/02/03/04/05a/06/07 均已通过验收，可开工 05b 或 08（05b 需 07，已满足）**
+> 基线版本：v1.29 ｜ 更新日期：2026-09-18 ｜ 状态：**Commit 00-08（含 05a/05b）均已通过验收；一期剩余 09 / 10 / 11 / 12**
 
 ## 修订记录
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| v1.29 | 2026-09-18 | **05b 复审收尾（北 7 条裁定）**：①「Commit 05b 落点与验收」代码围栏收口包住全部清单行（首行后误闭合的根因是会话显示截断；knowledgeManager 行的路径前缀实际文件本就完整，非丢字）；②顶部版本行与本行同步——规则：每加一行修订，同一次编辑内更新顶部版本行（v1.22-v1.27 六次漏同步、顶行停在 v1.21，05b 完成消息因此误报过基线状态）；③§五 commitRecognized 改具名 `input` 参数（消除 `title?` 排在必选 `content` 前的 TS 非法形状；字段形状进注释）；④v1.28 行一处形近错字更正为「识别兜底」；⑤AHx 的 `>` 一律按规范表述为 **EOD 结束符**（ISO 32000-1 §7.4.4.1，出现即终止解码，非「非法字符」），PLAN 与 fixture/accept 注释同口径；⑥探针证据回写仓库跟踪文件 `test/probe-scan-render.json`（S13 每次复跑重生成，时间戳 churn 属预期），`.tmp` 落盘不再作基线证据；⑦§七 05a 验收补充的 pdfjs 措辞与 :581 引述统一（删去多余的 worker 定语；worker 打包态 §六 已实测，不是未验项）。 |
+| v1.28 | 2026-09-18 | **Commit 05b 完成（aeb5f75）+ 三项文档漂移拍板落基线**：①**05b 扫描件/资料图 AI 识别兜底**：`marketing/scanRecognizer.ts`（pdfjs 取图 → 零依赖手写 PNG → 逐页流式 multimodal；探针 P1-P4 **PASS → 不降级**）+ `marketing:knowledge:{recognize, recognize:abort, commitRecognized}` + 确认弹窗（价格数字人工核对提示）+ 四路中止；`accept:scan` **18/18**（S13 内置探针复跑），回归 knowledge 23/23 · gateway 27/27 · advisor 10/10 · db 31/31 · context 22/22，两端 typecheck 0 错；详见「Commit 05b 落点与验收」。②**§五 knowledge 行补齐至 11 方法**——漂移自 05a 就存在（§五 只列 6 个，05a 已开 import/pickFile 共 8），一次改齐；§七 05a 清单行同步。③**§七 05a 误导句改写**：「条目标 FILE_PARSE_ERROR 待 05b」与「条目标红可重导入」→「失败信封回传、**不落库行**，reason=scanned-pdf 亮 05b 入口」（与 K9 断言及 05a 完成记录「不落行不落文件」拉齐；注记会被下一个人无视，改原句才断得了根）。④**§六 新增「PDF 内嵌图取图实测」**：v3 对 BI/ID/EI 转译成 `paintImageXObject`+合成 objs 键（img_p0_1），**不发 OPS 86/87**；AHx 的 `>` 是 **EOD 结束符**（ISO 32000-1 §7.4.4.1，出现即终止解码）；证据引 S13/S17 可复跑用例 + fixture 构造脚本（探针复跑回写仓库文件 `test/probe-scan-render.json`）。⑤**顶部基线版本行补上**（停在 v1.21 失联 6 版，每次修订漏同步的惯性要防）。待拍板三项（#26 顺带关闭：05b 已交）经复审建议全批 |
 | v1.27 | 2026-09-17 | **Commit 08 完成**（AI Advisor，主进程 + 渲染端）：`marketing/advisorManager.ts` + `ipc/advisor.ts` + preload `marketing.advisor` 面 + `AdvisorPanel.vue` + store advisor 切片 + 路由换真页；`accept:advisor` **10/10**，`typecheck:node`/`web` 0 错，回归 gateway 27/27 · context 22/22 · db 31/31 · project 18/18 · business 16/16 · knowledge 23/23。**本提交的 3 条口径**：①每轮只发 system+user（不回灌历史，§六 结论 A）；②扩词候选**不写库**，勾选后走 04 的 `addWatch`；③停止生成/切商家/卸载/退出**四路都中止上游**（`before-quit` 里 `abortAllAdvisorStreams`）。⏳ 真界面点击流未做（本机无桌面通道） |
 | v1.26 | 2026-09-17 | **Commit 08 主进程半边完成**（渲染端进行中）：`marketing/advisorManager.ts`（`ask` 组装 Context Pack→SSE / 事实护栏 system prompt / 资料缺口入 prompt / `suggestWatchlist` 扩词候选 + 本地清洗）+ `ipc/advisor.ts`（`marketing:advisor:{ask,abort,watchCandidates}`，流式增量走 07 事件名，`abort` 真断上游）+ preload `marketing.advisor` 面 + main wiring（含退出时 `abortAllAdvisorStreams()`）；`accept:advisor` **10/10**（真库 + 真 SSE 服务端 + 真 ContextEngine/GatewayClient），typecheck:node 0 错。两个自查修正留痕：测试脚手架漏注入 `conversationKeyResolver` 导致 5 项假红；A7 样本只有 28 字而误判「超长被丢」（期望应为 4 个可用）。渲染端（store 切片 / `AdvisorPanel.vue` / 路由）在子会话 `commit08-advisor-ui`，完成后再回填 08 的完整落点与验收。 |
 | v1.25 | 2026-09-17 | **#25 打包态端到端补做完成（7/7）**：真产物 `release/win-unpacked` + CDP 驱真渲染进程 + 便携数据目录（预置便携 Node、预写 `autoStart:false` 且端口改 3299 避开真机）——P1 建库 11 表/uv=1、P2 打包 preload 真暴露 `marketing.gateway.{status,ensureReady}` 且面内无 token、P3 `status` 真发 HTTP 并正确判非就绪（connect-failed）、P4/P5 打包态 Project/Knowledge/LIKE 检索/Watchlist/当前商家、**P6 打包启动即同步（chatCompletions.enabled=true 且 meta 无非法字段）**、P7 打包 main 里 06/07 两模块真被构造；残留打包进程 0。**新增安全阀（已写进脚本与基线）**：`clawManager.start()` 内含 `_killGhostProcesses()`（`taskkill /f /im openclaw.exe`）会误杀本机在跑的 OpenClaw → 冒烟预写 `autoStart:false`、绝不调 `claw:*`/`ensureReady`、收尾只按 PID 结束 |
@@ -327,7 +329,10 @@ window.api = {
     project:  { list, get, create, update, delete },
     context:  { getCurrentProject, setCurrentProject },   // current_project_id 存 app_meta（白名单内）
     business: { get(projectId), upsert(projectId, data) },// 1:1，无独立 list/create
-    knowledge:{ list(projectId), get, create(projectId, data), update, delete(projectId, id), search(projectId, query) },
+    knowledge:{ list(projectId), get, create(projectId, data), update, delete(projectId, id), search(projectId, query),
+                import(projectId, input), pickFile(),                                                       // 05a（v1.28 补入 §五）：文件/URL 导入——解析失败只回错误信封**不落库行**；取消选择=filePath:null 不是错误
+                recognize(projectId, {filePath,type?}), abortRecognize(taskId|null, projectId|null),        // 05b：**显式触发**识别（扫描 PDF/资料图）；产出**待确认文本、不落库**；流式增量**复用 07 事件名**（chunk/done/error，streamId=taskId）不新造事件；abort 两路定位——栅格化窗口里还没有 taskId 时按 projectId 取消该商家在途任务（UI 约束：同商家同时至多一个识别）
+                commitRecognized(projectId, input) },                                                      // 05b：**人工确认后唯一写入口**（硬规则 10）；input={filePath, type:'pdf'|'image', title?, content}；type=pdf/image、status=ready；同 (project_id,source_path) upsert 覆盖
     content:  { list(projectId), get, create(projectId, data), update, generate(projectId, spec), saveVersion },
     hot:      { list(projectId, {platform, force?}), get(topicId), refresh(), score(projectId, platform) },  // platform=发布平台(xiaohongshu/douyin)；list 返回热点+当前 project/该平台缓存评分；refresh=立即采集；score=懒评分
     gateway:  { status, ensureReady },   // Commit 07（v1.24 拍板纳入）：只读就绪面（零 token：只发 GET /health + GET /v1/models）+ 幂等拉起（探活→按需调 clawManager→就绪轮询）；baseUrl/token 只在主进程（硬规则 13）
@@ -398,6 +403,14 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 - 实测链路：建库 11 表 / uv=1 / WAL / FK=on（sqlite 3.53.4）→ 写样例 → **优雅退出后 WAL 截断（`-wal`/`-shm` 消失）** → 重启读回、`migrated:false`。
 - 关闭链路：`closeAction='ask'` 时窗口关闭被主进程拦截 → 渲染层确认框 → `resolveClose('exit')` 才真正退出（CDP 冒烟即走此路径，同时验证 before-quit → 注册表优雅停止）。
 - Electron 的 CDP 只暴露 page target，**没有 browser target**（`Browser.close` 不可用）。
+
+### PDF 内嵌图取图实测（2026-09-18，Commit 05b 验收产出）
+
+- **`page.getOperatorList()` 完成即图像就绪**：`paintImageXObject` / `paintImageXObjectRepeat` 的位图从 `page.objs.get(objId)` 取（await 兼容 Promise/直返两形态），kind 1/2/3 = 1bit 灰度 / RGB24 / RGBA32。
+- **BI/ID/EI 内嵌图不直发 OPS 86/87**（修正外部复审断言的前提）：pdfjs **v3** 的 worker 把内嵌图转译为 `paintImageXObject` + 合成 objId（形如 `img_p0_1`，**走 `page.objs`，`commonObjs` 里没有**）。OPS 86/87（`paintInlineImageXObject(Group)`，args[0] 直挂位图）是 worker 另一条路径（addImageOps）的形态——两条都接住，**不赌 pdfjs 内部实现**（05b 取图代码即此口径）。
+- **AHx（ASCIIHexDecode）的 `>` 是 EOD 结束符**（ISO 32000-1 §7.4.4.1）：出现即终止解码——内容里夹 `>` 表现为**截断**（pdf.js 告警 "EOD marker not found, searching for /EI/" 即找不到 EOD 时的兜底路径）；构造内嵌图样本时行分隔只用空白。
+- 证据（**可复跑**）：`npm run accept:scan` 的 **S13**（探针 P1-P4：逐页取图 / 手写 PNG 逐字节往返 / dataURI 过 07 校验 / 文字层 PDF 零图反向判据）与 **S17**（纯内嵌图扫描件端到端）；fixture 构造脚本 `test/fixtures/make-scanned-pdf.mjs`（含 `buildInlineImagePdf`）就是可复现 spec。探针复跑回写 `test/probe-scan-render.json`（仓库跟踪文件，时间戳 churn 属预期）。
+
 ### 会话隔离
 
 - `user` 格式 `conv:<projectId>:<conversation_key>` 从第一天写死；**conversation_key 是 project 创建时生成的 uuid、持久化于 projects 表**（不放 app_meta，删 project 即随级联清除）。
@@ -469,7 +482,7 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 | 05 | Knowledge（仅 05a） —— **✅ 2026-09-16 完成** | knowledgeManager + KnowledgeBase.vue + 文字层文档解析（docx/xlsx/pdf/url/faq）+ 导入/重导入 + LIKE 检索 + Knowledge 维度完整度；落点与验收见下 | 2.5d | 02、03 | | ✅ |
 | 06 | Context Engine —— **✅ 2026-09-16 完成** | Business + Knowledge + **Watchlist** + Platform → Context Pack（落点与验收见下） | 1d | 00、04、05 | | ✅ |
 | 07 | Gateway Client —— **✅ 2026-09-16 完成** | 端点开关默认化 + 老用户迁移、探活、自动拉起（**复用 clawManager 启停，不另起炉灶**）、就绪轮询、SSE→IPC 透传、会话隔离、多模态模型选择（落点与验收见下；顺带修待办 #15） | 2d | 00 | | ✅ |
-| 05b | 扫描件 AI 识别兜底 | 复用 07：扫描 PDF/带文字资料图的「用 AI 识别」显式触发 + 识别结果人工确认后入库；00⑦ 结论为不支持则只做提示 | 1.5d | 05a、07（可与 08 并行） | | ⬜ |
+| 05b | 扫描件 AI 识别兜底 —— **✅ 2026-09-18 完成**（探针 PASS，扫描 PDF 全量实现未降级） | 复用 07：扫描 PDF/带文字资料图的「用 AI 识别」显式触发 + 识别结果人工确认后入库；00⑦ 结论为不支持则只做提示（落点与验收见下） | 1.5d | 05a、07（与 08 并行） | | ✅ |
 | 08 | AI Advisor —— **✅ 2026-09-17 完成**（主进程 + 渲染端） | Grounded 营销问答面板（边界见第六节）：Context Pack + SSE + 停止生成 + 事实护栏；对话历史按 00⑥ 结论；**+ Watchlist AI 扩词推荐（候选词生成 + 用户勾选，v1.13 由 04 移入）**（落点与验收见下） | 2d | 06、07 | | ✅ |
 | 09 | Content Center | AI 生成（SSE 流式 + **AbortController「停止生成」**，规格同 08：组件卸载/切换必须中止上游）→ 编辑 → 版本（prompt 快照）→ 人工审核；**接收热点雷达结构化 payload 预填充（v1.9），source_topic_id 溯源（v1.10）**；**一次生成 3 个版本供选 + 极简发布标记（v1.12）** | 3d | 06、07、08 | | ⬜ |
 | 10 | 双平台工作流 | **小红书 + 抖音**平台适配（两套平台规则模板注入 Context Pack）；抖音一期只做口播脚本/标题/话题标签文案层，不做视频；均人工复制发布 | 2d | 09 | | ⬜ |
@@ -550,7 +563,7 @@ electron/main/marketing/knowledgeManager.ts        新增：list/get/create/upda
 electron/main/marketing/parsers/documentParsers.ts 新增：docx(mammoth) / xlsx(exceljs) / pdf(pdfjs) / text / markdown / faq
 electron/main/marketing/parsers/urlParser.ts       新增：HTML→文本（去 script/style、实体解码、块级转行）
 electron/main/marketing/parsers/pdfjsAssets.ts     新增：pdfjs 资产 dev/安装包双路径解析
-electron/main/ipc/marketing.ts + preload + index.ts  marketing:knowledge:{list,get,create,update,delete,search,import,pickFile}
+electron/main/ipc/marketing.ts + preload + index.ts  marketing:knowledge:{list,get,create,update,delete,search,import,pickFile}（v1.28 注：§五 已补齐至 11 方法——05a 当时没同步 §五 造成两口径并存，05b 的 3 条入 §五 时一并改齐）
 src/stores/marketing.ts                            +knowledge 九件套 + knowledgeCompleteness + overallCompleteness
 src/views/marketing/KnowledgeBase.vue              新增：四路导入（文件/文本/网址/FAQ）+ 拖拽 + LIKE 检索 + 列表预览 + 删除
 src/renderer/main.ts                               /marketing/knowledge 由占位页换真页
@@ -651,6 +664,35 @@ test/packaged-smoke-07.json       结果落盘（7 项）
   P6 **打包启动即同步**：`openclaw.json` 里 `chatCompletions.enabled=true` 且 `meta` 无非法字段（= #17 + #15 在真产物里落地）·
   P7 打包 main 里 06/07 两模块真被构造（`[context] Context Engine 就绪` / `[gateway] Gateway Client 就绪`）· 残留打包进程 **0**。
 - ⚠️ **安全阀（必须保留）**：`clawManager.start()` 内含 `_killGhostProcesses()` → `taskkill /f /im openclaw.exe`，在开发机上会误杀**正在运行**的 OpenClaw（含托管会话的实例）。故冒烟脚本：预写便携 `app.json`（`autoStart:false` + `port:3299` 避开真机 3213）、**绝不调** `claw:*` / `marketing:gateway:ensureReady`、收尾只按 **PID** 结束本进程。以后跑同类冒烟沿用这三条。
+
+### Commit 05b 落点与验收（✅ 2026-09-18）
+
+```text
+electron/main/marketing/scanRecognizer.ts    新增（~1000 行，注入式、不 import electron/不发 HTTP/不碰库）：pdfjs 取图（objs + OPS 86/87 防御分支）→ 零依赖手写 PNG → 逐页（含同页多图归组）流式识别；上限三闸（20MB/12页/6MB 图）；activeTasks 注册表先于栅格化
+electron/main/ipc/scan.ts                    新增：marketing:knowledge:{recognize, recognize:abort, commitRecognized} + abortAllScanStreams；增量经 07 forwardGatewayStream
+electron/main/ipc/marketing.ts               picker 增「资料图（png/jpg/jpeg/webp）」过滤器组
+electron/main/marketing/knowledgeManager.ts  +commitRecognized（人工确认后唯一写入口；同 source_path upsert 覆盖）
+electron/main/index.ts                       工厂/wiring（multimodalConfigured 预检复用 resolveGatewayModels）+ before-quit abortAllScanStreams
+electron/preload/index.ts                    +knowledge.{recognize, abortRecognize, commitRecognized}；流订阅复用 advisor 的 onChunk/onDone/onError（07 全局事件名）
+src/stores/marketing.ts                      +scan 切片：代际守卫 scanCallSeq（防栅格化窗口切商家回写串台）、scanCleanText（剥进度标记）、abort 两路
+electron/main/marketing/KnowledgeBase.vue    「用 AI 识别」→识别面板→确认弹窗（校对后文本入库；「价格数字请人工核对」显著提示）；四路中止之停止/切商家/卸载
+test/scan.accept.mjs + `accept:scan`         18 项（真源码 bundle + 真 SSE 服务端 + 真库直读）
+test/scan.probe.mjs（P1-P4 探针，S13 复跑）+ fixtures/make-scanned-pdf.mjs（扫描/同页多图/内嵌图三形态）
+```
+
+**验收（独立复跑）**：`accept:scan` **18/18**；回归 `accept:knowledge` **23/23**、`accept:gateway` **27/27**、`accept:advisor` **10/10**、`accept:db` **31/31**、`accept:context` **22/22**；`typecheck:node` / `typecheck:web` 0 错。
+
+**关键设计决策**
+
+- **探针先行（P1-P4 PASS）→ 全量实现不降级**：`getOperatorList()`→`page.objs`→zlib 手写 PNG **逐字节无损往返**实测成立（证据口径见 §六 新小节）；若探针失败本提交降级为「只收图片文件 + 按钮置灰」。
+- **人在回路落在方法边界**：scanRecognizer 源码级零落库路径（S1 静态扫描），确认前直读库断言 0 行、确认后才 1 行（S11）；唯一写入口 commitRecognized 复用 05a 的 upsert 键与拷贝语义（同文件重复确认覆盖、created_at 不动）。
+- **一页一请求 + 识别会话键 `conv:<pid>:scan-<taskId>-p<页>-i<图序>-a<重试>`**：不把 OCR 转录灌进商家 Advisor 的 sticky 历史，后图也「看不见」前图（防成本翻倍/串读）；同页多图按页归组汇总，**页数上限按页不按图计**（S16）。
+- **multimodal 双保险**：预检（注入 `multimodalConfigured`，栅格化**前**拒、`stage='precheck'`，零请求零解码）+ 07 按次解析最终防线；两条路同 payload（reason=multimodal-model-not-configured），绝不静默降级纯文本（S6）。
+- **只重试可恢复错误**（NOT_READY/TIMEOUT 各 1 次、流内明示「重试」）；401/配置类原码透传绝不重试（S9/S10）；判定用 `errorCodeOf` 不跨 bundle `instanceof`。
+- **中止全生命周期即时**：注册表先于栅格化（S15 门控 getDocument：解码期 cancelByProject 命中 → 解码完 0 请求）；abort IPC 两路定位（taskId/projectId）；四路 = 停止按钮/切商家/卸载（渲染端代际守卫 + clearScan 双参 abort）/退出（before-quit）；cancel 返回「首次作废」使两本账去重计数。
+- **价格不盲信模型**：本地正则定 `priceSuspected`（主进程/store 双份字面量由 S12 静态同源核对），确认弹窗「价格数字请人工核对」；进度标记只进直播流，权威汇总与确认基准都不含（scanCleanText 兜底中止态）。
+
+⏳ **未覆盖 / 已知风险**：①真 Gateway + 真多模态模型端到端未做（本机 3213 兼容面未开，与 08 同状态）；识别质量（护栏遵守/表格串行）需人工试用样本标定。②真界面点击流未做（本机无桌面通道）。③资料图（非 PDF 页）不降采样——jpg/webp 零依赖解不了码，超 6MB dataURI 闸即拒并提示降分辨率。④中止粒度按页——单页 getOperatorList 进行中不可打断（实测亚秒级，无真实卡死形态）。
 
 ### Commit 08 落点与验收（✅ 2026-09-17）
 
@@ -797,13 +839,13 @@ test/context.accept.mjs + `npm run accept:context`   22 项验收（打真 conte
 - **05a（约 2.5d）文字层文档全收**，新增依赖：`mammoth`（docx→文本）、`exceljs`（xlsx 按 sheet → Markdown 表）、`pdfjs-dist`（PDF 文字层，纯 JS 主进程运行，worker 打包路径进安装包冒烟）：
   - 支持 `text / markdown / url / faq / docx / xlsx / pdf`（doc/xls 老格式 v1 不支持，提示另存为新格式）；
   - url 类只做正文/HTML 到文本的轻量抽取；
-  - PDF 抽取后做**扫描件检测**（抽样页面文字量≈0）→ 条目标 `FILE_PARSE_ERROR` 待 05b 处理，不得静默存入空内容。
+  - PDF 抽取后做**扫描件检测**（抽样页面文字量≈0）→ **不落任何库行**：失败以错误信封回渲染端（`FILE_PARSE_ERROR` + `reason='scanned-pdf'`，K9 锁定「0 空内容行、0 孤儿文件」），UI 在报错处亮 05b 的「用 AI 识别」入口；不得静默存入空内容。（v1.28 校正：原句「条目标 FILE_PARSE_ERROR 待 05b」暗示库里有失败行，与 05a 实现不符）
 - **05b（约 1.5d）扫描件/图片 AI 识别兜底**：
   - 仅扫描 PDF 与**带文字的资料图**（价目表截图、海报、产品说明图等）；客片/商品图等营销素材归二期 Assets，不在本功能范围。UI 提供「用 AI 识别」按钮，**用户显式触发**（Human-in-the-loop），识别文本入库前必须人工确认；
   - 大文件分页/切块发送、大小上限、失败重试；可行性以 Commit 00 验收⑦结论为准——不支持图则降级为明确提示，不阻塞 05a；
-  - 解析失败统一 `FILE_PARSE_ERROR`，条目标红可重导入。
+  - 解析失败统一以 `FILE_PARSE_ERROR` 信封回传，**不落库行**；「可重导入」= 对同一文件再走一次导入（v1.28 校正：原句「条目标红可重导入」暗示库里有失败行可标红，与实现不符）。✅ 05b 已按此实现（见「Commit 05b 落点与验收」）。
 
-05a 验收补充：docx 套系单、xlsx 价目表、文字层 PDF 各一份真实样本导入后 LIKE 可检索且数字/表格无串行；安装包环境（非 dev）pdfjs worker 可用。
+05a 验收补充：docx 套系单、xlsx 价目表、文字层 PDF 各一份真实样本导入后 LIKE 可检索且数字/表格无串行；安装包环境（非 dev）pdfjs 可用。
 
 第二阶段：Assets / Calendar / Strategy+Topics（策略→选题→素材→内容→日历→人工发布）。
 第三阶段：Analytics + Learning（数据反馈 → 风格学习 → 生成闭环）。

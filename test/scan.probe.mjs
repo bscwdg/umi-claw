@@ -12,7 +12,7 @@
 //   P3 data URI 形态通过 07 的 imageDataPart() 校验；
 //   P4 文字层 PDF（min-text-layer.pdf）抽出 0 张图 → 「无图 ⇒ 不是扫描件」的反向判据成立。
 //
-//   判据与用法不变；证据落 `test/.tmp/probe-scan-render.json`（gitignore，不污染跟踪文件）。
+//   判据与用法不变；证据回写仓库跟踪文件 `test/probe-scan-render.json`（S13 每次复跑重生成，时间戳 churn 属预期）。
 //
 // 用法：node test/scan.probe.mjs   （探针失败 → 05b 一期降级为「只收图片文件」）
 
@@ -266,9 +266,8 @@ async function main() {
 
   results.ok = results.checks.every((c) => c.ok)
   results.finishedAt = new Date().toISOString()
-  // 证据写 `test/.tmp/`（已 gitignore）：每次验收复跑会刷时间戳，不污染跟踪文件（外部复审「小」项）
-  mkdirSync(tmpDir, { recursive: true })
-  writeFileSync(join(tmpDir, 'probe-scan-render.json'), JSON.stringify(results, null, 2), 'utf-8')
+  // 证据回写跟踪文件（基线 v1.29⑥：可审计证据不进 .tmp；churn 由复跑机制解释）
+  writeFileSync(join(here, 'probe-scan-render.json'), JSON.stringify(results, null, 2), 'utf-8')
   console.log(`\n===== 探针结论: ${results.ok ? 'PASS（扫描 PDF → PNG 可行）' : 'FAIL（05b 一期降级：只收图片文件）'} =====`)
   process.exit(results.ok ? 0 : 1)
 }
@@ -277,8 +276,7 @@ main().catch((e) => {
   console.error('探针脚本异常:', e)
   results.error = String(e && e.stack ? e.stack : e)
   try {
-    mkdirSync(tmpDir, { recursive: true })
-    writeFileSync(join(tmpDir, 'probe-scan-render.json'), JSON.stringify(results, null, 2), 'utf-8')
+    writeFileSync(join(here, 'probe-scan-render.json'), JSON.stringify(results, null, 2), 'utf-8')
   } catch { /* 忽略 */ }
   process.exit(2)
 })

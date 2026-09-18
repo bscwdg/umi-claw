@@ -186,10 +186,11 @@ export function buildScannedPdfMulti(pages) {
 
 /**
  * 只含**内嵌图**（BI/ID/EI，1BPP 灰度，/F /AHx 十六进制）的一页 PDF——
- * 05b S17 验内嵌图扫描件。⚙️ 实测事实（写探针时拓出）：pdfjs **v3 不发 OPS 86**，而是把内嵌图
+ * 05b S17 验内嵌图扫描件。⚙️ 实测事实（写探针时探出）：pdfjs **v3 不发 OPS 86**，而是把内嵌图
  * 转成 `paintImageXObject` + 合成 objId（`img_p0_1`）放进 `page.objs`（commonObjs 里没有）；
  * OPS 86/87 分支作为防御保留（部分路径真会直发 86，见 worker 的 addImageOps）。
- * 另：AHx 的 hex 流**不能**夹 `>`（会被当非法字符截断）；行分隔只用空白。
+ * 另：AHx 的 `>` 是 **EOD 结束符**（ISO 32000-1 §7.4.4.1）：出现即终止解码（在数据中间表现为截断），
+ * 故行分隔只用空白，hex 流里不得出现 '>'。
  */
 export function buildInlineImagePdf(width, height) {
   const rowBytes = Math.ceil(width / 8)
@@ -201,7 +202,7 @@ export function buildInlineImagePdf(width, height) {
       const byte = y % 4 < 2 ? 0xff : b === 0 ? 0xf0 : 0x00
       row += byte.toString(16).padStart(2, '0')
     }
-    hex += row + '\n' // 行分隔只用空白（AHx 容忍）；**不许**出现 '>'
+    hex += row + '\n' // 行分隔只用空白；**不得**出现 '>'（EOD 结束符，出现即终止解码）
   }
   const content =
     `q ${width} 0 0 ${height} 0 0 cm\n` +

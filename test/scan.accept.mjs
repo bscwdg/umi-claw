@@ -18,11 +18,11 @@
 //   S10 401 → 原码透传**不重试**
 //   S11 确认前不落库（直读行数）；commitRecognized 唯一写入口；同文件 upsert 覆盖
 //   S12 价格判据本地正则 + store/主进程字面量同源；进度标记同源
-//   S13 可行性探针复跑（真扫描 fixture → PNG；证据落 .tmp）
+//   S13 可行性探针复跑（真扫描 fixture → PNG；证据回写跟踪文件 probe-scan-render.json）
 //   S14 静态契约：3 通道三处一致 / picker 含资料图 / abort 两路 / before-quit / store+UI
 //   S15 【复审·中】栅格化窗口中止：cancelByProject 即时生效、不发任何模型请求、任务注销
 //   S16 【复审·低】一页多图：指令带「本页第 j/k 张图」、汇总按页归组不分节重复、页数按页计
-//   S17 【复审·低】内嵌图扫描件（BI/ID/EI，OPS paintInlineImageXObject）取到图并识别
+//   S17 内嵌图扫描件（BI/ID/EI）取到图并识别（实测：v3 转译为 paintImageXObject+objs；OPS 86/87 为防御分支）
 //   S18 全程不变式：库中唯一行来自人工确认；副本字节一致
 //
 // 用法：node test/scan.accept.mjs        （npm run accept:scan；--keep-tmp 保留临时目录）
@@ -650,14 +650,14 @@ try {
   })
 
   // ── S13 可行性探针证据 ──
-  await r.check('S13', '探针（真扫描 fixture → getOperatorList → objs → 手写 PNG）复跑通过，证据落 .tmp', async () => {
+  await r.check('S13', '探针（真扫描 fixture → getOperatorList → objs → 手写 PNG）复跑通过，证据回写跟踪文件', async () => {
     const res = spawnSync(process.execPath, [join(__dirname, 'scan.probe.mjs')], {
       cwd: repoRoot,
       encoding: 'utf-8',
       timeout: 240_000
     })
     assertEq(res.status, 0, `探针必须通过（05b 全量范围的前提）；输出尾部：\n${String(res.stdout || '').slice(-500)}${String(res.stderr || '').slice(-300)}`)
-    const probe = JSON.parse(readFileSync(join(tmpDir, 'probe-scan-render.json'), 'utf-8'))
+    const probe = JSON.parse(readFileSync(join(__dirname, 'probe-scan-render.json'), 'utf-8'))
     assertEq(probe.ok, true, 'probe-scan-render.json.ok')
     assertEq(probe.checks.length, 4, 'P1-P4 四判据')
     assert(probe.checks.every((c) => c.ok), '四判据全绿')
@@ -833,9 +833,9 @@ try {
     assertEq(fake.state.bodies.length, before + 1, '发了一次识别请求')
     assertEq(fake.state.bodies[before].imagePrefix.startsWith('data:image/png'), true, '位图重编码为 PNG')
     assertEq(res.pages.length, 1, '结果一页')
-    // 实测事实（写探针拓出，写进代码注释与汇报）：pdfjs v3 对 BI/ID/EI 发的是
+    // 实测事实（写探针时探出，已同步进 §六 与 fixture 注释）：pdfjs v3 对 BI/ID/EI 发的是
     // paintImageXObject + 合成 objId `img_p0_1`（走 page.objs，不走 commonObjs），
-    // 而非 OPS 86；取图代码两条都接住了，不赌单一形态。
+    // 而非 OPS 86；取图代码两条都接住（86/87 作防御分支），不赌单一形态。
     return '内嵌图 ✓（v3 实测转译为 paintImageXObject+objs；1BPP→RGBA→PNG→dataURI）'
   })
 
