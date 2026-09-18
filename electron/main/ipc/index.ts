@@ -4,6 +4,7 @@
 // （§三：第一阶段不搬任何现有文件）；新代码从这里聚合注册。
 // Commit 02 接 marketing.system；Commit 03 追加 marketing.project / marketing.context；
 // 04 追加 marketing.business / marketing.watchlist；05a 追加 marketing.knowledge；
+// 05b 追加扫描件识别（knowledge:recognize / recognize:abort / commitRecognized，见 ipc/scan.ts）；
 // 07 追加 marketing.gateway（status / ensureReady 两条只读面，见 ipc/gateway.ts）；
 // 08 追加 marketing.advisor（ask / abort / watchCandidates，流式增量走 07 的事件名）；
 // 09+/11+ 的 content/hot 在此继续追加。
@@ -32,4 +33,11 @@ export type {
   AdvisorPackSummary,
   AdvisorWatchCandidatesResult
 } from './advisor'
+export {
+  registerScanIpc,
+  abortAllScanStreams,
+  activeScanCount,
+  MARKETING_SCAN_CHANNELS
+} from './scan'
+export type { ScanIpcResult, ScanRecognizeInput, ScanRecognizeResult } from './scan'
 export type { IpcResult } from './marketing'

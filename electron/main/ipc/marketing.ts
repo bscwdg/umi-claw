@@ -211,13 +211,14 @@ export function registerMarketingIpc(
   )
 }
 
-/** 知识库「选一个本地文件导入」的文件选择器（docx/xlsx/pdf/txt/md + 所有文件） */
+/** 知识库「选一个本地文件导入」的文件选择器（docx/xlsx/pdf/txt/md + 05b 资料图 png/jpg/webp） */
 export async function pickKnowledgeFile(): Promise<{ filePath: string | null }> {
   const result = await dialog.showOpenDialog({
     title: '选择要导入的资料',
     properties: ['openFile'],
     filters: [
       { name: '资料文件 (docx / xlsx / pdf / txt / md)', extensions: ['docx', 'xlsx', 'pdf', 'txt', 'md'] },
+      { name: '资料图（需 AI 识别：png / jpg / jpeg / webp）', extensions: ['png', 'jpg', 'jpeg', 'webp'] },
       { name: '所有文件', extensions: ['*'] }
     ]
   })

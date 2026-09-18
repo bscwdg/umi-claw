@@ -20,7 +20,7 @@ import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv, GATEWAY_TOKEN } from './openClawPaths'
 import { DatabaseClient } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
-import { registerMarketingIpc, registerGatewayIpc, registerAdvisorIpc, abortAllAdvisorStreams } from './ipc'
+import { registerMarketingIpc, registerGatewayIpc, registerAdvisorIpc, registerScanIpc, abortAllAdvisorStreams, abortAllScanStreams } from './ipc'
 import { createProjectManager, type ProjectManager } from './marketing/projectManager'
 import {
   createBusinessManager,
@@ -34,6 +34,7 @@ import {
 } from './marketing/knowledgeManager'
 import { createContextEngine, type ContextEngine } from './marketing/contextEngine'
 import { createAdvisorManager, type AdvisorManager } from './marketing/advisorManager'
+import { createScanRecognizer, type ScanRecognizer } from './marketing/scanRecognizer'
 import {
   createGatewayClient,
   detectMultimodalCapability,
@@ -81,6 +82,9 @@ let marketingContextEngine: ContextEngine | null = null
 let marketingGatewayClient: GatewayClient | null = null
 // marketing AI Advisor（Commit 08）：只依赖 06 引擎 + 07 客户端 + 04 Watchlist，构造零 IO 副作用。
 let marketingAdvisorManager: AdvisorManager | null = null
+// marketing 扫描件/图片 AI 识别兑底（Commit 05b）：只依赖 07 客户端 + pdfjs 资产，构造零 IO 副作用；
+// 确认入库的写库动作在 knowledgeManager（05a 联动），识别本身不碰库（硬规则 10）。
+let marketingScanRecognizer: ScanRecognizer | null = null
 
 /**
  * 取 Context Engine 单例（Commit 06）。
@@ -635,6 +639,32 @@ function createMarketingAdvisorManager(): AdvisorManager {
   return advisor
 }
 
+// ─── marketing 扫描件识别 wiring（Commit 05b） ────────────────────────────────────
+
+/**
+ * 构造扫描件/图片 AI 识别器（Commit 05b）：注入 07 的 Gateway Client（唯一出站通道，
+ * multimodal 按次解析也在它手里）+ 05a 已解析好的 pdfjs 运行时资产（与文字层抽取同一套
+ * dev/打包双路径，不会出现「dev 能取图、包里取不到」）。
+ * 本函数零 IO 副作用；取图/HTTP 发生在第一次 recognize。不碰库：确认入库走 knowledgeManager。
+ */
+function createMarketingScanRecognizer(): ScanRecognizer {
+  const pdfjsAssets = resolvePdfjsAssets({
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath
+  })
+  const recognizer = createScanRecognizer({
+    gateway: getMarketingGatewayClient(),
+    pdfjsAssets,
+    // 多模态预检（栅格化之前的廉价判定）：复用 07 的按次解析，Setup 后换模型即时生效；
+    // 最终防线仍在 07（selectGatewayModel），预检只是不让用户白等几秒 PDF 解码
+    multimodalConfigured: () => Boolean(resolveGatewayModels().multimodal),
+    logger: (message: string) => console.log(message)
+  })
+  console.log('[scan] 扫描件识别就绪（扫描 PDF 逐页 + 资料图；显式触发、人工确认后入库）')
+  return recognizer
+}
+
 // ─── IPC 处理器 ───────────────────────────────────────────────────────────────
 
 function registerIpcHandlers(): void {
@@ -1112,6 +1142,9 @@ function registerIpcHandlers(): void {
 
   // ── marketing advisor（Commit 08：grounded 问答 + 停止生成 + 扩词候选） ──
   registerAdvisorIpc(marketingAdvisorManager!)
+
+  // ── marketing 扫描件识别（Commit 05b：显式触发 + 人工确认后入库；流式增量走 07 事件名） ──
+  registerScanIpc(marketingScanRecognizer!, marketingKnowledgeManager!)
 }
 
 // ─── 推送日志到渲染进程 ────────────────────────────────────────────────────────
@@ -1262,6 +1295,8 @@ app.whenReady().then(() => {
   marketingGatewayClient = createMarketingGatewayClient(marketingProjectManager!)
   // marketing AI Advisor（Commit 08）：用上面两个单例拼装（注入式，零 IO 副作用）
   marketingAdvisorManager = createMarketingAdvisorManager()
+  // marketing 扫描件识别（Commit 05b）：同样注入式零副作用；pdfjs 资产路径与 05a 双路径同口径
+  marketingScanRecognizer = createMarketingScanRecognizer()
   // 注入 Obsidian MCP 配置生成器：_syncOpenClawConfig 写回 openclaw.json 时调用
   configManager.setObsidianMcpInjector(() => obsidianManager.buildMcpServerConfig())
 
@@ -1308,6 +1343,13 @@ app.on('before-quit', async () => {
     if (aborted > 0) console.log(`[Main] 已中止 ${aborted} 条在途 Advisor 流`)
   } catch (e) {
     console.error('[Main] 中止 Advisor 流失败:', e)
+  }
+  // 在途的扫描件识别同理（05b 四路中止的第四路：停止按钮/切商家/卸载在渲染端，退出在这）
+  try {
+    const aborted = abortAllScanStreams()
+    if (aborted > 0) console.log(`[Main] 已中止 ${aborted} 条在途扫描件识别`)
+  } catch (e) {
+    console.error('[Main] 中止扫描件识别失败:', e)
   }
   // 注册表内的常驻子进程（marketing DB Worker）先优雅停：
   // wal_checkpoint(TRUNCATE) → close → exit(0)，避免留下 -wal/-shm 残骸

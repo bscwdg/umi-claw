@@ -45,6 +45,7 @@ import { PROJECTS_SUBDIR } from './projectManager'
 import {
   PARSEABLE_FILE_TYPES,
   assertFileTypeMatchesPath,
+  extensionOf,
   parseDocumentFile,
   parseTextFile,
   type ParseableFileType
@@ -116,6 +117,29 @@ export interface CreateKnowledgeInput {
 export interface UpdateKnowledgeInput {
   title?: string
   content?: string
+}
+
+/**
+ * 05b 确认入库入参（§七 05b：识别文本**人工确认后才入库**，硬规则 10）。
+ * 只给 `filePath` 与**人工确认后的文本**：type 限 pdf/image，其余与文件导入同口径
+ *（原件拷进 data/projects/<id>/、重导入按 UNIQUE(project_id, source_path) 覆盖）。
+ */
+export interface CommitRecognizedInput {
+  filePath: string
+  /** 05b 只允许识别类条目：'pdf'（扫描 PDF）/ 'image'（资料图） */
+  type: string
+  title?: string | null
+  /** 人工确认（可能已就地校对）的识别文本 */
+  content: string
+}
+
+/** 05b 可入库的识别类型（§四 type 枚举已含 image；文字层文档不走这条路） */
+export const RECOGNIZED_TYPES = ['pdf', 'image'] as const
+
+/** 识别条目类型 → 允许的扩展名（与 scanRecognizer.SCAN_FILE_KIND_BY_EXT 同口径，验收静态比对） */
+export const RECOGNIZED_TYPE_EXTENSIONS: Record<'pdf' | 'image', string[]> = {
+  pdf: ['.pdf'],
+  image: ['.png', '.jpg', '.jpeg', '.webp']
 }
 
 /** 检索命中（§五 `knowledge.search` → UI 只展示这三列） */
@@ -327,6 +351,44 @@ export class KnowledgeManager {
   }
 
   // ── 更新 / 删除 ─────────────────────────────────────────────────────────────
+
+  /**
+   * 05b 确认入库：扫描 PDF/资料图经**人工确认**后落为知识条目（type=pdf/image、status=ready）。
+   *
+   * 与 importKnowledge 的关键区别：这里**不做任何解析/识别**，文本是调用方（用户校对后）传进来的；
+   * 识别本身在 scanRecognizer（不碰库），确认前库里零变化——硬规则 10 的「人在回路」就落在这个方法边界上。
+   * 同一份文件反复确认入库走 `UNIQUE(project_id, source_path)` upsert（与重导入同构，不重复建行）。
+   */
+  async commitRecognized(projectId: string, input: CommitRecognizedInput): Promise<KnowledgeRow> {
+    const pid = requireId(projectId, 'commitRecognized')
+    const filePath = requireText(input?.filePath, 'commitRecognized', 'filePath')
+    const type = requireRecognizedType(input?.type)
+    const content = requireContent(input?.content, 'commitRecognized')
+    const ext = extensionOf(filePath)
+    const allowed = RECOGNIZED_TYPE_EXTENSIONS[type]
+    if (!allowed.includes(ext)) {
+      throw new AppError(
+        ERROR_CODES.VALIDATION_ERROR,
+        `识别条目类型与文件不符：类型 ${type} 应为 ${allowed.join('/')}，实际 ${ext || '（无扩展名）'}`,
+        { field: 'filePath', type, extension: ext, allowed }
+      )
+    }
+    // 确认弹窗可能开着很久，原件可能被移走：入库前再验一次存在性（不静默建无源文件条目）
+    if (!existsSync(filePath)) {
+      throw new AppError(ERROR_CODES.FILE_NOT_FOUND, `原始文件不存在或不可读: ${filePath}`, { path: filePath })
+    }
+    await assertProjectExists(this.database, pid)
+    const copied = this.copySourceFile(pid, filePath)
+    const title = normalizeTitle(input?.title, nameWithoutExtension(copied.name)) ?? FALLBACK_TITLE
+    this.log(`[knowledge] 05b 确认入库 ${copied.relPath}（type=${type}，${content.length} 字，人工已确认）`)
+    return this.upsertRow(pid, {
+      title,
+      type,
+      source_path: copied.relPath,
+      source_name: copied.name,
+      content: truncateContent(content, this.logger)
+    })
+  }
 
   /**
    * 改标题/正文（白名单）。未知字段 → VALIDATION_ERROR（静默丢弃会变成「改了但没生效」的幽灵 bug）。
@@ -620,6 +682,19 @@ function normalizeManualType(value: unknown): string {
 
 function isFileType(type: string): type is ParseableFileType {
   return (KNOWLEDGE_FILE_TYPES as readonly string[]).includes(type)
+}
+
+/** 05b 入库类型：只认 pdf/image（文件导入路径里的 image 入口依旧被 requireImportType 拒着） */
+function requireRecognizedType(value: unknown): 'pdf' | 'image' {
+  const type = typeof value === 'string' ? value.trim().toLowerCase() : ''
+  if (!(RECOGNIZED_TYPES as readonly string[]).includes(type)) {
+    throw new AppError(
+      ERROR_CODES.VALIDATION_ERROR,
+      `commitRecognized 只支持识别条目类型 ${RECOGNIZED_TYPES.join('/')}（实际 ${type || '（空）'}）`,
+      { field: 'type', value: type, allowed: [...RECOGNIZED_TYPES] }
+    )
+  }
+  return type as 'pdf' | 'image'
 }
 
 /** 标题归一：trim + 单行 + 截断；空值回落 `fallbackText`（再空则 null，由调用方给兜底标题） */

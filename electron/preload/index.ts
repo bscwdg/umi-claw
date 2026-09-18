@@ -191,7 +191,38 @@ const api = {
       ) => ipcRenderer.invoke('marketing:knowledge:import', projectId, input),
       // 本地文件选择器（dialog 在主进程）；用户取消 → data.filePath = null，不是错误
       pickFile: (): Promise<{ ok: true; data: { filePath: string | null } } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
-        ipcRenderer.invoke('marketing:knowledge:pickFile')
+        ipcRenderer.invoke('marketing:knowledge:pickFile'),
+      // Commit 05b：扫描件/资料图 AI 识别兑底（**用户显式触发**；结果人工确认后才入库）。
+      // 流式增量沿用 07 的事件名（marketing:gateway:chunk / done / error，streamId=taskId），
+      // 复用 advisor 下面的 onChunk/onDone/onError 订阅（全局事件、按 streamId 归并，不另订一套）
+      recognize: (
+        projectId: string,
+        input: { filePath: string; type?: string }
+      ): Promise<{
+        ok: true
+        data: {
+          taskId: string
+          projectId: string
+          kind: 'pdf' | 'image'
+          suggestedTitle: string
+          images: Array<{ page: number; width: number; height: number; bytes: number; downscaled: boolean }>
+        }
+      } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:knowledge:recognize', projectId, input),
+      // 停止识别；幂等（任务已结束时返回 aborted:false，不报错）。
+      // 两路定位（05b 外部复审）：有 taskId 按 taskId；栅格化窗口里还没有 taskId 时按 projectId
+      // 中止该商家在途任务（主进程 recognizer 的注册表覆盖整个生命周期）。
+      abortRecognize: (taskId?: string | null, projectId?: string | null) =>
+        ipcRenderer.invoke('marketing:knowledge:recognize:abort', taskId ?? null, projectId ?? null),
+      // 人工确认后入库（硬规则 10：确认弹窗的「确认入库」是唯一写入路径）
+      commitRecognized: (
+        projectId: string,
+        input: { filePath: string; type: string; title?: string | null; content: string }
+      ): Promise<{
+        ok: true
+        data: Record<string, unknown>
+      } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:knowledge:commitRecognized', projectId, input)
     },
     // Commit 07：Gateway 只读面（硬规则 13：token 与 HTTP 调用只留主进程，渲染端只拿快照）
     // status      = 只读就绪快照（零 token；只发 GET /health + GET /v1/models）
@@ -222,7 +253,8 @@ const api = {
     },
     // Commit 08：AI Advisor（grounded 问答 + 扩词候选）
     // 流式增量走 07 定死的事件名（marketing:gateway:chunk / done / error，payload 带 streamId），
-    // 面板按 streamId 归并自己的流；abort 会真断上游（07 已验证）
+    // 面板按 streamId 归并自己的流；abort 会真断上游（07 已验证）。
+    // 05b 的扫描件识别增量也走这三个事件（streamId=taskId），订阅只订一次。
     advisor: {
       ask: (input: { projectId: string; question: string; platform?: string | null; model?: string | null }) =>
         ipcRenderer.invoke('marketing:advisor:ask', input),

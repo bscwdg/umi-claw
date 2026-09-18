@@ -107,7 +107,41 @@
           </div>
         </div>
 
-        <div v-if="importError" class="err">{{ importError }}</div>
+        <div v-if="importError" class="err">
+          {{ importError }}
+          <!-- 05b：扫描件/资料图的「用 AI 识别」——**用户显式触发**，识别结果人工确认后才入库 -->
+          <div v-if="canRecognize" class="rec-actions">
+            <button class="btn btn-primary btn-sm" :disabled="marketing.scanStreaming" @click="startRecognize()">
+              用 AI 识别
+            </button>
+            <span class="text-sm text-muted">（{{ recognizeHint }}）</span>
+          </div>
+        </div>
+
+        <!-- 05b：识别进行中 / 待确认 -->
+        <div v-if="marketing.scanTask && (marketing.scanStreaming || marketing.scanCleanText || marketing.scanErrorMessage)" class="rec-box">
+          <div class="rec-head">
+            <span class="text-sm">AI 识别：{{ marketing.scanTask.suggestedTitle || marketing.scanTask.filePath }}</span>
+            <span class="badge">{{ marketing.scanTask.kind === 'pdf' ? `扫描 PDF · ${marketing.scanTask.images.length} 页` : '资料图' }}</span>
+            <span v-if="marketing.scanTask.images.some((i) => i.downscaled)" class="text-sm text-muted">部分页已降采样</span>
+            <span v-if="marketing.scanStreaming" class="text-sm text-muted">逐页识别中…</span>
+            <span v-else-if="marketing.scanAborted" class="text-sm" style="color: var(--yellow)">已停止（保留已识别部分）</span>
+          </div>
+          <div v-if="marketing.scanErrorCode" class="err" style="margin-top: 6px">
+            {{ scanErrorText }}
+            <div v-if="scanErrorNeedsSetup" class="rec-actions">
+              <button class="btn btn-sm" :disabled="gatewayStarting" @click="ensureGatewayReady()">
+                {{ gatewayStarting ? '启动中…' : '启动 OpenClaw 后重试' }}
+              </button>
+            </div>
+          </div>
+          <pre v-if="marketing.scanCleanText" class="preview rec-preview">{{ marketing.scanCleanText }}</pre>
+          <div class="rec-actions">
+            <button v-if="marketing.scanStreaming" class="btn" @click="marketing.stopRecognize()">停止识别</button>
+            <button v-else-if="hasUsefulScanText" class="btn btn-primary" @click="openConfirmDialog()">确认识别结果…</button>
+            <button v-if="!marketing.scanStreaming" class="btn btn-sm" @click="marketing.clearScan()">忽略</button>
+          </div>
+        </div>
       </div>
 
       <!-- 检索 -->
@@ -171,12 +205,34 @@
     <transition name="slide">
       <div v-if="toast" class="toast" :class="toast.type">{{ toast.msg }}</div>
     </transition>
+
+    <!-- 05b：识别结果人工确认弹窗（硬规则 10：确认后才入库，内容可就地校对） -->
+    <div v-if="confirmOpen" class="modal-mask" @click.self="closeConfirmDialog()">
+      <div class="modal">
+        <h3>确认识别结果</h3>
+        <p v-if="confirmPriceSuspected" class="price-warn">
+          ⚠️ 识别内容疑似包含价格：**价格数字请人工核对**后再入库（模型识别可能错读/串行）！
+        </p>
+        <p class="text-sm text-muted" style="margin: 4px 0 10px">
+          下方文本由 AI 从图像转录，尚未入库。可直接修改后确认；取消则不落库。
+        </p>
+        <input class="form-input" style="margin-bottom: 8px" placeholder="标题（默认用文件名）" v-model="confirmTitle" />
+        <textarea class="form-textarea" rows="12" v-model="confirmContent"></textarea>
+        <div class="rec-actions" style="justify-content: flex-end; margin-top: 12px">
+          <button class="btn" :disabled="confirmSaving" @click="closeConfirmDialog()">取消</button>
+          <button class="btn btn-primary" :disabled="confirmSaving || !confirmContent.trim()" @click="doCommitRecognized()">
+            {{ confirmSaving ? '入库中…' : '确认入库' }}
+          </button>
+        </div>
+        <div v-if="confirmError" class="err" style="margin-top: 8px">{{ confirmError }}</div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { useMarketingStore } from '@/stores/marketing'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useMarketingStore, MarketingIpcError, PRICE_SUSPECT_REGEX } from '@/stores/marketing'
 import { useProjectSwitcher } from '@/composables/useProjectSwitcher'
 import { useToast } from '@/composables/useToast'
 
@@ -220,7 +276,10 @@ const knowledgeComp = computed(() => marketing.knowledgeCompleteness)
 const overall = computed(() => marketing.overallCompleteness)
 
 const canImport = computed(() => {
-  if (mode.value === 'file') return !!filePath.value
+  if (mode.value === 'file') {
+    // 资料图（png/jpg/webp）不走确定性导入（没文字层可抽），由「用 AI 识别」按钮承接
+    return !!filePath.value && !SCAN_IMAGE_EXTS.includes(extOf(filePath.value))
+  }
   if (mode.value === 'url') return /^https?:\/\/.+/.test(url.value.trim())
   return !!text.value.trim()
 })
@@ -232,6 +291,146 @@ const FILE_IMPORT_TYPE_BY_EXT: Record<string, string> = {
   pdf: 'pdf',
   txt: 'text',
   md: 'markdown'
+}
+
+/** 05b：可走「用 AI 识别」的扩展名（扫描 PDF + 带文字资料图；客片/商品图属二期 Assets，不在本功能范围） */
+const SCAN_IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp']
+
+function scanKindOf(p: string): 'pdf' | 'image' | null {
+  const ext = extOf(p)
+  if (ext === 'pdf') return 'pdf'
+  if (SCAN_IMAGE_EXTS.includes(ext)) return 'image'
+  return null
+}
+
+/**
+ * 「用 AI 识别」按钮的出现条件（显式触发入口）：
+ *   - 刚导入了扫描 PDF（撞 scanned-pdf 报错，filePath 仍在手上），或
+ *   - 选的是资料图文件（png/jpg/webp，本就走不了确定性导入）
+ */
+const canRecognize = computed(() => {
+  if (!marketing.currentProjectId || !filePath.value) return false
+  if (marketing.scanStreaming) return false
+  const kind = scanKindOf(filePath.value)
+  if (!kind) return false
+  if (kind === 'image') return true
+  // PDF：只在「扫描件/无文字层」报错后出现（正常文字层 PDF 应直接导入）
+  return scannedPdfHit.value
+})
+
+const recognizeHint = computed(() => {
+  const kind = scanKindOf(filePath.value)
+  return kind === 'image' ? '资料图无文字层，走 AI 转录，结果需人工确认' : '未检测到文字层（扫描件），走 AI 转录，结果需人工确认'
+})
+
+/** 撞过 scanned-pdf / empty-text 类解析错误的标记（记住本次文件路径，导入前重置） */
+const scannedPdfHit = ref(false)
+
+/** 识别错误的「人话」：multimodal 未配置按 07 口径翻成配置引导，绝不静默降级纯文本 */
+const scanErrorText = computed(() => {
+  if (marketing.scanErrorReason === 'multimodal-model-not-configured') {
+    return '当前模型不支持图片输入（多模态未配置）：请到「配置」选择支持图片的模型后重试。AI 不会在看不见图的情况下假装识别。'
+  }
+  if (marketing.scanErrorCode === 'OPENCLAW_NOT_READY' || marketing.scanErrorCode === 'SETUP_REQUIRED') {
+    return marketing.scanErrorMessage || 'OpenClaw 尚未就绪，无法识别。'
+  }
+  return marketing.scanErrorMessage || '识别失败'
+})
+
+const scanErrorNeedsSetup = computed(
+  () => marketing.scanErrorCode === 'OPENCLAW_NOT_READY' || marketing.scanErrorCode === 'SETUP_REQUIRED'
+)
+const gatewayStarting = ref(false)
+
+async function ensureGatewayReady() {
+  gatewayStarting.value = true
+  try {
+    const res = await window.api.marketing.gateway.ensureReady()
+    if (res?.ok && res.data?.ready) {
+      showToast('OpenClaw 已就绪，请重新点「用 AI 识别」', 'success')
+      marketing.clearScan()
+    } else {
+      showToast('OpenClaw 仍未就绪，可到环境初始化检查', 'error')
+    }
+  } catch {
+    showToast('启动 OpenClaw 失败，请到环境初始化检查', 'error')
+  } finally {
+    gatewayStarting.value = false
+  }
+}
+
+/** 有可用文本（剥掉进度标记后≥ 2 字）才能进确认弹窗 */
+const hasUsefulScanText = computed(() => marketing.scanCleanText.length >= 2)
+
+async function startRecognize() {
+  const projectId = marketing.currentProjectId
+  if (!projectId || !filePath.value) return
+  const kind = scanKindOf(filePath.value)
+  if (!kind) return
+  importError.value = ''
+  try {
+    // 返回 null = await 期间切了商家/按了停止（代际守卫），静默收场
+    await marketing.recognizeScan(projectId, { filePath: filePath.value, type: kind })
+  } catch (e) {
+    // 错误详情已由 store 填进 scanErrorCode/Reason/Text，面板内展示；这里不另弹 toast
+    void e
+  }
+}
+
+// ── 确认弹窗（硬规则 10：人工校对后才落库） ──
+const confirmOpen = ref(false)
+const confirmTitle = ref('')
+const confirmContent = ref('')
+const confirmSaving = ref(false)
+const confirmError = ref('')
+const confirmPriceSuspected = ref(false)
+
+function openConfirmDialog() {
+  // 以**剥掉进度标记的干净文本**为基准（中止态没有 done 的权威汇总替换，这里是最后兜底）
+  confirmTitle.value = marketing.scanTask?.suggestedTitle || ''
+  confirmContent.value = marketing.scanCleanText
+  confirmPriceSuspected.value = PRICE_SUSPECT_REGEX.test(marketing.scanCleanText)
+  confirmError.value = ''
+  confirmOpen.value = true
+}
+
+function closeConfirmDialog() {
+  // 取消≠删除识别结果：面板里的文本保留，可再次点「确认」
+  confirmOpen.value = false
+  confirmSaving.value = false
+  confirmError.value = ''
+}
+
+async function doCommitRecognized() {
+  const projectId = marketing.currentProjectId
+  const task = marketing.scanTask
+  if (!projectId || !task) return
+  const content = confirmContent.value.trim()
+  if (!content) {
+    confirmError.value = '识别文本为空，不能入库'
+    return
+  }
+  confirmSaving.value = true
+  confirmError.value = ''
+  try {
+    await marketing.commitRecognized(projectId, {
+      filePath: task.filePath,
+      type: task.kind,
+      title: confirmTitle.value.trim() || null,
+      content
+    })
+    confirmOpen.value = false
+    filePath.value = ''
+    scannedPdfHit.value = false
+    showToast('已确认识别结果并入库', 'success')
+  } catch (e) {
+    confirmError.value =
+      e instanceof MarketingIpcError && e.code === 'FILE_NOT_FOUND'
+        ? '原始文件已不在（可能被移动），无法入库；请重新选择文件再识别'
+        : (e as Error)?.message || '确认入库失败'
+  } finally {
+    confirmSaving.value = false
+  }
 }
 
 function extOf(p: string) {
@@ -281,11 +480,18 @@ async function doImport() {
   importing.value = true
   importError.value = ''
   const t = title.value.trim()
+  scannedPdfHit.value = false
   try {
     if (mode.value === 'file') {
-      const importType = FILE_IMPORT_TYPE_BY_EXT[extOf(filePath.value)]
+      const ext = extOf(filePath.value)
+      const importType = FILE_IMPORT_TYPE_BY_EXT[ext]
       if (!importType) {
-        importError.value = '仅支持 docx / xlsx / pdf / txt / md 文件（doc、xls 旧格式请先另存为新格式）'
+        if (SCAN_IMAGE_EXTS.includes(ext)) {
+          // 资料图：不进确定性导入，直接引导到显式触发的 AI 识别
+          importError.value = '图片没有文字层可本地抽取，请用下方「用 AI 识别」（识别结果需人工确认后才入库）'
+        } else {
+          importError.value = '仅支持 docx / xlsx / pdf / txt / md 文件（doc、xls 旧格式请先另存为新格式）'
+        }
         return
       }
       await marketing.importKnowledge(projectId, {
@@ -307,6 +513,12 @@ async function doImport() {
     showToast('导入成功', 'success')
   } catch (e) {
     importError.value = (e as Error)?.message || marketing.error || '导入失败'
+    // 记住扫描件事实：撞 FILE_PARSE_ERROR + reason=scanned-pdf 才亮「用 AI 识别」
+    const details = (e as { details?: { reason?: unknown } } | undefined)?.details
+    scannedPdfHit.value =
+      e instanceof MarketingIpcError &&
+      e.code === 'FILE_PARSE_ERROR' &&
+      details?.reason === 'scanned-pdf'
   } finally {
     importing.value = false
   }
@@ -354,9 +566,18 @@ watch(
   () => {
     hits.value = null
     expanded.value = null
+    // 05b 四路中止之二：切换商家 → 中止在途识别并清空待确认文本（未入库的丢弃，防串到别家）
+    marketing.clearScan()
+    confirmOpen.value = false
     reload()
   }
 )
+
+onBeforeUnmount(() => {
+  // 05b 四路中止之三：组件卸载 → 断上游 + 注销全局订阅（退出那路在主进程 before-quit）
+  marketing.clearScan()
+  marketing.disposeScan()
+})
 </script>
 
 <style scoped>
@@ -427,6 +648,29 @@ watch(
   font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
 }
 .err { margin-top: 10px; font-size: 13px; color: var(--red); }
+
+/* 05b 扫描件识别 */
+.rec-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.rec-box {
+  margin-top: 10px; padding: 10px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-muted); background: var(--bg-base);
+}
+.rec-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rec-preview { margin-top: 8px; max-height: 220px; }
+.price-warn {
+  margin: 0 0 8px; padding: 8px 10px; border-radius: var(--radius-sm);
+  background: rgba(227, 179, 65, 0.15); border: 1px solid rgba(227, 179, 65, 0.55);
+  color: var(--yellow); font-size: 13px; font-weight: 600;
+}
+.modal-mask {
+  position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.modal {
+  width: min(720px, 94vw); max-height: 88vh; overflow: auto; padding: 18px 20px;
+  border-radius: var(--radius); background: var(--bg-elevated); border: 1px solid var(--border-muted);
+}
+.modal .form-textarea { width: 100%; resize: vertical; }
 
 .toast {
   position: fixed; bottom: 24px; right: 24px; padding: 10px 18px;

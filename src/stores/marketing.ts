@@ -262,6 +262,54 @@ export interface ImportKnowledgePayload {
 /** `status='ready'` 才计入「已建知识库」，也才是 AI 能吃的资料（与后端检索口径一致） */
 export const KNOWLEDGE_READY_STATUS = 'ready'
 
+// ── 扫描件/图片 AI 识别（Commit 05b）：类型 ─────────────────────────────────
+
+/** 识别入参（与主进程 ScanRecognizeInput 一致）：只认扫描 PDF 与资料图 */
+export interface RecognizeScanPayload {
+  filePath: string
+  type?: 'pdf' | 'image'
+}
+
+/** 确认入库入参（人工确认后才提交；与主进程 CommitRecognizedInput 一致） */
+export interface CommitRecognizedPayload {
+  filePath: string
+  /** 05b 只允许识别类条目：pdf（扫描件）/ image（资料图） */
+  type: 'pdf' | 'image'
+  title?: string | null
+  /** 用户在确认弹窗里校对后的文本（以它为准，不是模型原文） */
+  content: string
+}
+
+export interface ScanImageInfo {
+  page: number
+  width: number
+  height: number
+  bytes: number
+  downscaled: boolean
+}
+
+export interface ScanTaskInfo {
+  taskId: string
+  kind: 'pdf' | 'image'
+  filePath: string
+  suggestedTitle: string
+  images: ScanImageInfo[]
+}
+
+/**
+ * 「疑似价格」本地判据（与 `scanRecognizer.PRICE_SUSPECT_PATTERN` 同源；
+ * 跨 tsconfig 无法共享常量 → 两份正则由 test/scan.accept.mjs 做静态一致性核对防漂移）。
+ */
+export const PRICE_SUSPECT_REGEX = /[¥￥$]\s*\d|\d+(?:[.,]\d+)?\s*(?:元|人民币|块(?:钱)?)/
+
+/**
+ * 过程性进度标记（与主进程 `scanRecognizer.SCAN_PROGRESS_MARKER_PATTERN` 同字面量，
+ * 静态同源校验由 test/scan.accept.mjs 负责）：中止态没有 done 的权威汇总替换，
+ * 确认弹窗打开前用 `scanCleanText` 剥掉这些行，避免「正在识别…」混进文档正文。
+ */
+export const SCAN_PROGRESS_MARKER_REGEX =
+  /^\s*(?:【正在识别(?:第 \d+ 页 \/ 共 \d+ 页|：[^\n】]*)】|（第 \d+ 页识别失败，重试 1 次…）)\s*$/gm
+
 // ── AI Advisor（Commit 08）：类型 ───────────────────────────────────────────────
 
 /** 面板要展示的「AI 看见了什么」摘要（主进程 `marketing:advisor:ask` 返回） */
@@ -917,6 +965,231 @@ export const useMarketingStore = defineStore('marketing', () => {
     advisorCandidates.value = []
   }
 
+  // ── 扫描件/图片 AI 识别（Commit 05b） ──────────────────────────────────────
+  //
+  // 设计要点（硬规则 10：识别文本**人工确认后才入库**）：
+  //   - 本切片只产出「待确认文本」，**不写库**；唯一的写入路径是 `commitRecognized`
+  //     （确认弹窗的「确认入库」按钮才会调）；
+  //   - 增量事件沿用 07 定死的全局事件名（streamId = 05b 的 taskId），与 advisor 同一条
+  //     事件通道但按各自 id 过滤，不串台；
+  //   - 四路中止（照抄 08）：停止按钮（stopRecognize）/ 切换商家（面板 watch）/
+  //     组件卸载（onBeforeUnmount 调 stopRecognize+disposeScan）/ 应用退出（主进程 before-quit）。
+  const scanTask = ref<ScanTaskInfo | null>(null) as Ref<ScanTaskInfo | null>
+  const scanStreaming = ref(false)
+  const scanText = ref('')
+  const scanAborted = ref(false)
+  const scanPriceSuspected = ref(false)
+  const scanErrorCode = ref<string | null>(null)
+  const scanErrorReason = ref<string | null>(null)
+  const scanErrorMessage = ref<string | null>(null)
+  let scanStreamId: string | null = null
+  let scanOff: Array<() => void> = []
+  /**
+   * 代际守卫（外部复审：栅格化窗口切商家会串台）：每次 clearScan/stopRecognize/新调用都推一代，
+   * recognizeScan 的 await 续体发现代际变了就**丢弃结果不再回写 state**，并补发一次 abort。
+   */
+  let scanCallSeq = 0
+  /** 当前识别任务的商家（abort 两路定位的 projectId 兼路径；clearScan 时作废） */
+  let scanCurrentProjectId: string | null = null
+
+  function scanResetError(): void {
+    scanErrorCode.value = null
+    scanErrorReason.value = null
+    scanErrorMessage.value = null
+  }
+
+  /** 订阅识别增量（只订一次；事件名是 07 定的全局通道，按当前 taskId 过滤） */
+  function ensureScanSubscription(): void {
+    if (scanOff.length) return
+    const stream = window.api.marketing.advisor // chunk/done/error 是 07 事件名的全局订阅入口
+    scanOff = [
+      stream.onChunk((payload) => {
+        if (!scanStreamId || payload?.streamId !== scanStreamId) return
+        scanText.value += String(payload?.delta ?? '')
+      }),
+      stream.onDone((payload) => {
+        if (!scanStreamId || payload?.streamId !== scanStreamId) return
+        scanStreamId = null
+        scanStreaming.value = false
+        scanAborted.value = payload?.aborted === true
+        if (typeof payload?.text === 'string' && payload.text) {
+          // 主进程汇总文本是权威形态（多页带页分节头），以它为准
+          scanText.value = payload.text
+        }
+        scanPriceSuspected.value = PRICE_SUSPECT_REGEX.test(scanText.value)
+      }),
+      stream.onError((payload) => {
+        if (!scanStreamId || payload?.streamId !== scanStreamId) return
+        scanStreamId = null
+        scanStreaming.value = false
+        const code = String(payload?.error?.code ?? 'DB_ERROR')
+        scanErrorCode.value = code
+        scanErrorReason.value =
+          typeof (payload?.error?.details as { reason?: unknown } | undefined)?.reason === 'string'
+            ? String((payload.error!.details as { reason: string }).reason)
+            : null
+        scanErrorMessage.value = String(payload?.error?.message ?? ERROR_TEXT[code] ?? '识别失败')
+      })
+    ]
+  }
+
+  /** 释放订阅（页面卸载时调用） */
+  function disposeScan(): void {
+    for (const off of scanOff) {
+      try {
+        off()
+      } catch {
+        /* 忽略 */
+      }
+    }
+    scanOff = []
+  }
+
+  /**
+   * 发起一次识别（**用户在导入报错处点「用 AI 识别」才会调**，显式触发）。
+   * 失败抛出且 `code`/`details.reason` 可供 UI 分支（multimodal 未配置要翻人话）。
+   * 若 await 期间发生切商家/停止（代际变了），结果被丢弃并返回 null（已补发 abort）。
+   */
+  async function recognizeScan(
+    projectId: string,
+    input: RecognizeScanPayload
+  ): Promise<ScanTaskInfo | null> {
+    if (!projectId) throw new MarketingIpcError('VALIDATION_ERROR', '请先选择一个商家')
+    const seq = ++scanCallSeq
+    scanCurrentProjectId = projectId
+    scanResetError()
+    ensureScanSubscription()
+    scanText.value = ''
+    scanAborted.value = false
+    scanPriceSuspected.value = false
+    scanStreaming.value = true
+    try {
+      const res = (await window.api.marketing.knowledge.recognize(projectId, {
+        filePath: input.filePath,
+        type: input.type
+      })) as IpcEnvelope<any>
+      if (seq !== scanCallSeq) {
+        // 栅格化窗口里用户切了商家/按了停止：不武装旧任务，并告诉主进程别继续
+        const staleTaskId = String(res?.ok && res.data?.taskId ? res.data.taskId : '') || null
+        if (res?.ok && staleTaskId) {
+          try {
+            await window.api.marketing.knowledge.abortRecognize(staleTaskId, projectId)
+          } catch {
+            /* 尽力中止 */
+          }
+        }
+        return null
+      }
+      if (!res?.ok) throw envelopeToError(res, '识别失败')
+      const info: ScanTaskInfo = {
+        taskId: String(res.data?.taskId ?? ''),
+        kind: res.data?.kind === 'image' ? 'image' : 'pdf',
+        filePath: input.filePath,
+        suggestedTitle: String(res.data?.suggestedTitle ?? ''),
+        images: Array.isArray(res.data?.images) ? res.data.images : []
+      }
+      scanTask.value = info
+      scanStreamId = info.taskId || null
+      return info
+    } catch (e) {
+      const err = e instanceof MarketingIpcError ? e : envelopeToError(null, '识别失败')
+      if (seq !== scanCallSeq) {
+        // 已被停止/切商家接管：静默丢弃（用户自己取消的旧任务，错误不该染红新页面）
+        return null
+      }
+      scanStreaming.value = false
+      scanStreamId = null
+      scanErrorCode.value = err.code || 'DB_ERROR'
+      scanErrorReason.value =
+        typeof (err.details as { reason?: unknown } | undefined)?.reason === 'string'
+          ? String((err.details as { reason: string }).reason)
+          : null
+      scanErrorMessage.value = err.message
+      throw e instanceof Error ? e : new MarketingIpcError(scanErrorCode.value!, err.message)
+    }
+  }
+
+  /**
+   * 停止识别：先断上游，再立刻收尾本地 UI（幂等；没有在途任务时静默返回）。
+   * abort 两路定位（外部复审：栅格化窗口里手里没 taskId，不能空转）：
+   * `abortRecognize(taskId ?? null, projectId)` —— 主进程按 taskId 或「该商家全部在途」取消。
+   */
+  async function stopRecognize(): Promise<void> {
+    const id = scanStreamId
+    const pid = scanCurrentProjectId
+    scanCallSeq += 1 // 代际守卫：栅格化窗口里按了停止，之后的续体不得武装旧任务
+    scanStreamId = null
+    scanStreaming.value = false
+    scanAborted.value = true
+    if (!id && !pid) return
+    try {
+      await window.api.marketing.knowledge.abortRecognize(id, pid)
+    } catch {
+      /* 中止失败不弹错：上游最迟会因空闲超时结束，不值得打扰老板 */
+    }
+  }
+
+  /** 清空识别状态（确认入库后 / 忽略时 / 切商家时）；推一代使在途 await 续体失效 */
+  function clearScan(): void {
+    const id = scanStreamId
+    const pid = scanCurrentProjectId
+    scanCallSeq += 1
+    scanStreamId = null
+    scanCurrentProjectId = null
+    scanTask.value = null
+    scanText.value = ''
+    scanStreaming.value = false
+    scanAborted.value = false
+    scanPriceSuspected.value = false
+    scanResetError()
+    if (id || pid) {
+      void window.api.marketing.knowledge.abortRecognize(id, pid).catch(() => {
+        /* 尽力中止；失败不扰民 */
+      })
+    }
+  }
+
+  /**
+   * 去掉过程性标记的识别文本（确认弹窗与价格判定的基准）。
+   * 完成态里 scanText 已是 done 的权威汇总（本就无标记），中止态这里兜底。
+   */
+  const scanCleanText: ComputedRef<string> = computed(() =>
+    String(scanText.value ?? '')
+      .replace(SCAN_PROGRESS_MARKER_REGEX, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  )
+
+  /**
+   * 确认入库（硬规则 10 的人工确认点：UI 必须先把内容给用户校对过才调这里）。
+   * 成功刷新列表；失败抛出供弹窗提示。
+   */
+  async function commitRecognized(
+    projectId: string,
+    input: CommitRecognizedPayload
+  ): Promise<KnowledgeItem> {
+    knowledgeLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.knowledge.commitRecognized(projectId, {
+        filePath: input.filePath,
+        type: input.type,
+        title: input.title ?? null,
+        content: input.content
+      })) as IpcEnvelope<any>
+      if (!res?.ok) throw envelopeToError(res, '确认入库失败')
+      const item = toKnowledgeItem(res.data)
+      await loadKnowledge(projectId)
+      clearScan()
+      return item
+    } catch (e) {
+      error.value = messageOf(e, '确认入库失败')
+      throw e instanceof Error ? e : new MarketingIpcError('DB_ERROR', error.value)
+    } finally {
+      knowledgeLoading.value = false
+    }
+  }
+
   return {
     projects,
     currentProjectId,
@@ -960,6 +1233,21 @@ export const useMarketingStore = defineStore('marketing', () => {
     clearAdvisor,
     loadWatchCandidates,
     clearWatchCandidates,
-    disposeAdvisor
+    disposeAdvisor,
+    // 扫描件/图片 AI 识别（Commit 05b）
+    scanTask,
+    scanStreaming,
+    scanText,
+    scanCleanText,
+    scanAborted,
+    scanPriceSuspected,
+    scanErrorCode,
+    scanErrorReason,
+    scanErrorMessage,
+    recognizeScan,
+    stopRecognize,
+    clearScan,
+    commitRecognized,
+    disposeScan
   }
 })

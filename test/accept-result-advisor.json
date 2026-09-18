@@ -1,8 +1,8 @@
 {
   "suite": "advisor（AI Advisor 主进程半边：grounded 问答 + 扩词候选，打真 advisorManager.ts）",
-  "startedAt": "2026-09-17T03:48:18.504Z",
-  "finishedAt": "2026-09-17T03:48:19.128Z",
-  "durationMs": 624,
+  "startedAt": "2026-09-18T02:28:25.909Z",
+  "finishedAt": "2026-09-18T02:28:26.530Z",
+  "durationMs": 621,
   "total": 10,
   "passed": 10,
   "failed": 0,
@@ -14,19 +14,19 @@
     "runtimeNode": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe"
   },
   "bundle": "D:\\work2026\\umi-claw\\test\\.tmp\\advisor-manager.mjs",
-  "dataDir": "D:\\work2026\\umi-claw\\test\\.tmp\\advisor-1789616897592\\data",
+  "dataDir": "D:\\work2026\\umi-claw\\test\\.tmp\\advisor-1789698504971\\data",
   "nodePath": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe",
   "logSample": [
-    "[project] 已创建 c1890aad-0567-497f-b829-1c6c60ce1c83（C08 光影摄影），目录=D:\\work2026\\umi-claw\\test\\.tmp\\advisor-1789616897592\\data\\projects\\c1890aad-0567-497f-b829-1c6c60ce1c83",
-    "[business] 已创建 project_id=c1890aad-0567-497f-b829-1c6c60ce1c83",
-    "[watchlist] +杭州婚纱（project_id=c1890aad-0567-497f-b829-1c6c60ce1c83，共 1 词）",
-    "[project] 已创建 ca7d7b9e-720d-4724-ae20-ac20f124ffc6（C08 空资料商家），目录=D:\\work2026\\umi-claw\\test\\.tmp\\advisor-1789616897592\\data\\projects\\ca7d7b9e-720d-4724-ae20-ac20f124ffc6",
-    "[project] 已创建 0337baa2-b1f5-4f97-9ffe-d9e77fd1295c（C08 超预算商家），目录=D:\\work2026\\umi-claw\\test\\.tmp\\advisor-1789616897592\\data\\projects\\0337baa2-b1f5-4f97-9ffe-d9e77fd1295c",
-    "[advisor] ask project=c1890aad-0567-497f-b829-1c6c60ce1c83 platform=xiaohongshu knowledge=2/2 mode=full used=184/76800",
-    "[advisor] ask project=c1890aad-0567-497f-b829-1c6c60ce1c83 platform=- knowledge=2/2 mode=full used=175/76800",
-    "[advisor] ask project=ca7d7b9e-720d-4724-ae20-ac20f124ffc6 platform=- knowledge=0/0 mode=full used=67/76800",
-    "[context] project=0337baa2-b1f5-4f97-9ffe-d9e77fd1295c 裁剪：注入 1/1 条，未注入 0 条（mode=truncated，query=价目表里最贵的是哪个？）",
-    "[advisor] ask project=0337baa2-b1f5-4f97-9ffe-d9e77fd1295c platform=- knowledge=1/1 mode=truncated used=1711/1800"
+    "[project] 已创建 2ab9a2d7-8a55-4ad3-b5dc-50271e45f88b（C08 光影摄影），目录=D:\\work2026\\umi-claw\\test\\.tmp\\advisor-1789698504971\\data\\projects\\2ab9a2d7-8a55-4ad3-b5dc-50271e45f88b",
+    "[business] 已创建 project_id=2ab9a2d7-8a55-4ad3-b5dc-50271e45f88b",
+    "[watchlist] +杭州婚纱（project_id=2ab9a2d7-8a55-4ad3-b5dc-50271e45f88b，共 1 词）",
+    "[project] 已创建 fabe5fc2-1f2f-44c4-b5da-05d08ddec0bb（C08 空资料商家），目录=D:\\work2026\\umi-claw\\test\\.tmp\\advisor-1789698504971\\data\\projects\\fabe5fc2-1f2f-44c4-b5da-05d08ddec0bb",
+    "[project] 已创建 fa6e038b-f433-4b49-aac5-55fff63db6a0（C08 超预算商家），目录=D:\\work2026\\umi-claw\\test\\.tmp\\advisor-1789698504971\\data\\projects\\fa6e038b-f433-4b49-aac5-55fff63db6a0",
+    "[advisor] ask project=2ab9a2d7-8a55-4ad3-b5dc-50271e45f88b platform=xiaohongshu knowledge=2/2 mode=full used=184/76800",
+    "[advisor] ask project=2ab9a2d7-8a55-4ad3-b5dc-50271e45f88b platform=- knowledge=2/2 mode=full used=175/76800",
+    "[advisor] ask project=fabe5fc2-1f2f-44c4-b5da-05d08ddec0bb platform=- knowledge=0/0 mode=full used=67/76800",
+    "[context] project=fa6e038b-f433-4b49-aac5-55fff63db6a0 裁剪：注入 1/1 条，未注入 0 条（mode=truncated，query=价目表里最贵的是哪个？）",
+    "[advisor] ask project=fa6e038b-f433-4b49-aac5-55fff63db6a0 platform=- knowledge=1/1 mode=truncated used=1711/1800"
   ],
   "checks": [
     {
@@ -40,15 +40,15 @@
       "id": "A2",
       "name": "ask 组装：Context Pack + `user=conv:<pid>:<key>` + 只有 system/user 两条（不回灌历史）",
       "ok": true,
-      "detail": "user=conv:c1890aad-0567-497…；messages=2；system 含资料+价格+关注词+平台",
-      "ms": 81
+      "detail": "user=conv:2ab9a2d7-8a55-4ad…；messages=2；system 含资料+价格+关注词+平台",
+      "ms": 80
     },
     {
       "id": "A3",
       "name": "资料缺口（missing）显式入 prompt（§一「生成前主动追问缺口」）",
       "ok": true,
       "detail": "缺口 brand/target_customer 已入 prompt",
-      "ms": 2
+      "ms": 3
     },
     {
       "id": "A4",
@@ -69,21 +69,21 @@
       "name": "停止生成：cancel() 真断上游（服务端观测断连）+ aborted:true",
       "ok": true,
       "detail": "产出 2 个增量后中止；服务端断连 1 次，已发 2/60 帧",
-      "ms": 147
+      "ms": 145
     },
     {
       "id": "A7",
       "name": "扩词候选：容忍围栏/夹解释，去重、剔非法 type、排除已有词、上限收敛",
       "ok": true,
       "detail": "可用 4（弃重复/非法/超长），已有 1 个单独标记",
-      "ms": 10
+      "ms": 6
     },
     {
       "id": "A8",
       "name": "扩词脏输出不可解析 → VALIDATION_ERROR(candidates-unparsable)，不静默给空列表",
       "ok": true,
       "detail": "VALIDATION_ERROR/candidates-unparsable",
-      "ms": 5
+      "ms": 3
     },
     {
       "id": "A9",
@@ -97,7 +97,7 @@
       "name": "错误码透传：Gateway 401 → OPENCLAW_AUTH_ERROR（不被包装成 DB_ERROR）",
       "ok": true,
       "detail": "OPENCLAW_AUTH_ERROR（原码上抛）",
-      "ms": 3
+      "ms": 4
     }
   ]
 }
