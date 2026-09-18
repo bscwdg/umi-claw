@@ -20,7 +20,16 @@ import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv, GATEWAY_TOKEN } from './openClawPaths'
 import { DatabaseClient } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
-import { registerMarketingIpc, registerGatewayIpc, registerAdvisorIpc, registerScanIpc, abortAllAdvisorStreams, abortAllScanStreams } from './ipc'
+import {
+  registerMarketingIpc,
+  registerGatewayIpc,
+  registerAdvisorIpc,
+  registerScanIpc,
+  registerContentIpc,
+  abortAllAdvisorStreams,
+  abortAllScanStreams,
+  abortAllContentGenerations
+} from './ipc'
 import { createProjectManager, type ProjectManager } from './marketing/projectManager'
 import {
   createBusinessManager,
@@ -35,6 +44,7 @@ import {
 import { createContextEngine, type ContextEngine } from './marketing/contextEngine'
 import { createAdvisorManager, type AdvisorManager } from './marketing/advisorManager'
 import { createScanRecognizer, type ScanRecognizer } from './marketing/scanRecognizer'
+import { createContentManager, type ContentManager } from './marketing/contentManager'
 import {
   createGatewayClient,
   detectMultimodalCapability,
@@ -85,6 +95,8 @@ let marketingAdvisorManager: AdvisorManager | null = null
 // marketing 扫描件/图片 AI 识别兑底（Commit 05b）：只依赖 07 客户端 + pdfjs 资产，构造零 IO 副作用；
 // 确认入库的写库动作在 knowledgeManager（05a 联动），识别本身不碰库（硬规则 10）。
 let marketingScanRecognizer: ScanRecognizer | null = null
+// marketing Content Center（Commit 09）：06 引擎 + 07 客户端 + DatabaseClient，构造零 IO 副作用。
+let marketingContentManager: ContentManager | null = null
 
 /**
  * 取 Context Engine 单例（Commit 06）。
@@ -665,6 +677,24 @@ function createMarketingScanRecognizer(): ScanRecognizer {
   return recognizer
 }
 
+// ─── marketing Content Center wiring（Commit 09） ──────────────────────────────
+
+/**
+ * 构造 Content Center 管理器（Commit 09）：06 引擎（Context Pack）+ 07 客户端（唯一出站）
+ * + DatabaseClient（硬规则 8）。生成一次 3 路并行流式；版本落库在各自流 resolve 前完成；
+ * 不自动发布（硬规则 10）。零 IO 副作用；生成请求发生在 generate()。
+ */
+function createMarketingContentManager(): ContentManager {
+  const manager = createContentManager({
+    database: marketingDatabase!,
+    contextEngine: getMarketingContextEngine(),
+    gateway: getMarketingGatewayClient(),
+    logger: (message: string) => console.log(message)
+  })
+  console.log('[content] Content Center 就绪（一次 3 版供选 + 版本 prompt 快照 + 人工审核发布标记）')
+  return manager
+}
+
 // ─── IPC 处理器 ───────────────────────────────────────────────────────────────
 
 function registerIpcHandlers(): void {
@@ -1145,6 +1175,9 @@ function registerIpcHandlers(): void {
 
   // ── marketing 扫描件识别（Commit 05b：显式触发 + 人工确认后入库；流式增量走 07 事件名） ──
   registerScanIpc(marketingScanRecognizer!, marketingKnowledgeManager!)
+
+  // ── marketing Content Center（Commit 09：生成/编辑/版本/审核；流式增量走 07 事件名） ──
+  registerContentIpc(marketingContentManager!)
 }
 
 // ─── 推送日志到渲染进程 ────────────────────────────────────────────────────────
@@ -1297,6 +1330,8 @@ app.whenReady().then(() => {
   marketingAdvisorManager = createMarketingAdvisorManager()
   // marketing 扫描件识别（Commit 05b）：同样注入式零副作用；pdfjs 资产路径与 05a 双路径同口径
   marketingScanRecognizer = createMarketingScanRecognizer()
+  // marketing Content Center（Commit 09）：注入 06/07/DB 三个单例（硬规则 8/13）
+  marketingContentManager = createMarketingContentManager()
   // 注入 Obsidian MCP 配置生成器：_syncOpenClawConfig 写回 openclaw.json 时调用
   configManager.setObsidianMcpInjector(() => obsidianManager.buildMcpServerConfig())
 
@@ -1350,6 +1385,13 @@ app.on('before-quit', async () => {
     if (aborted > 0) console.log(`[Main] 已中止 ${aborted} 条在途扫描件识别`)
   } catch (e) {
     console.error('[Main] 中止扫描件识别失败:', e)
+  }
+  // 在途的内容生成（09 四路中止之退出路；规格同 08/05b）
+  try {
+    const aborted = abortAllContentGenerations()
+    if (aborted > 0) console.log(`[Main] 已中止 ${aborted} 个在途内容生成任务`)
+  } catch (e) {
+    console.error('[Main] 中止内容生成失败:', e)
   }
   // 注册表内的常驻子进程（marketing DB Worker）先优雅停：
   // wal_checkpoint(TRUNCATE) → close → exit(0)，避免留下 -wal/-shm 残骸

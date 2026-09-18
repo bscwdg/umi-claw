@@ -310,6 +310,147 @@ export const PRICE_SUSPECT_REGEX = /[¥￥$]\s*\d|\d+(?:[.,]\d+)?\s*(?:元|人�
 export const SCAN_PROGRESS_MARKER_REGEX =
   /^\s*(?:【正在识别(?:第 \d+ 页 \/ 共 \d+ 页|：[^\n】]*)】|（第 \d+ 页识别失败，重试 1 次…）)\s*$/gm
 
+// ── Content Center（Commit 09）：类型 ──────────────────────────────────────────────
+
+/** 内容状态机（与主进程 CONTENT_STATUSES 同源；人工推进，无自动跳转） */
+export const CONTENT_STATUSES = ['draft', 'review', 'approved', 'published', 'archived'] as const
+
+/** 状态 → 人话（徽章文案） */
+export const CONTENT_STATUS_LABELS: Record<string, string> = {
+  draft: '草稿',
+  review: '待审核',
+  approved: '已通过',
+  published: '已发布',
+  archived: '已归档'
+}
+
+/** `contents` 表一行 */
+export interface ContentItem {
+  id: string
+  project_id: string
+  title: string | null
+  platform: string | null
+  topic: string | null
+  source_topic_id: string | null
+  content: string | null
+  status: string
+  published_at: number | null
+  effect_note: string | null
+  created_at: number
+  updated_at: number
+}
+
+/** `content_versions` 表一行 */
+export interface ContentVersion {
+  id: string
+  content_id: string
+  version: number
+  content: string
+  source: string | null
+  prompt: string | null
+  created_at: number
+}
+
+export interface ContentListQuery {
+  status?: string | null
+  platform?: string | null
+  limit?: number
+}
+
+export interface CreateContentPayload {
+  title?: string | null
+  platform?: string | null
+  topic?: string | null
+  content?: string | null
+  /** 热点雷达 payload 溯源（hot_topics.id；11 上线前只有测试路径会带） */
+  sourceTopicId?: string | null
+}
+
+export interface UpdateContentPayload {
+  title?: string | null
+  platform?: string | null
+  topic?: string | null
+  content?: string | null
+  status?: string
+  published_at?: number | null
+  effect_note?: string | null
+}
+
+/** 生成入参（与主进程 GenerateContentSpec 一致；platform 必填） */
+export interface ContentGenerateSpec {
+  contentId?: string | null
+  platform: string
+  topic?: string | null
+  title?: string | null
+  customer?: string | null
+  sourceTopicId?: string | null
+  query?: string | null
+}
+
+/** 生成面板里一个版本位的流式状态 */
+export interface ContentAngleSlot {
+  streamId: string
+  angleKey: string
+  label: string
+  text: string
+  streaming: boolean
+  done: boolean
+  aborted: boolean
+  errorCode: string | null
+  errorMessage: string | null
+}
+
+export interface ContentGenState {
+  genTaskId: string
+  contentId: string
+  projectId: string
+  platform: string
+  topic: string | null
+  pack: AdvisorPackSummary | null
+  angles: ContentAngleSlot[]
+}
+
+export interface ContentGenerateResult {
+  genTaskId: string
+  contentId: string
+  angles: Array<{ streamId: string; key: string; label: string }>
+  pack: AdvisorPackSummary | null
+}
+
+function toContentItem(row: any): ContentItem {
+  return {
+    id: String(row?.id ?? ''),
+    project_id: String(row?.project_id ?? ''),
+    title: row?.title ?? null,
+    platform: row?.platform ?? null,
+    topic: row?.topic ?? null,
+    source_topic_id: row?.source_topic_id ?? null,
+    content: row?.content ?? null,
+    status: String(row?.status ?? 'draft'),
+    published_at: row?.published_at === null || row?.published_at === undefined ? null : Number(row.published_at),
+    effect_note: row?.effect_note ?? null,
+    created_at: Number(row?.created_at ?? 0),
+    updated_at: Number(row?.updated_at ?? 0)
+  }
+}
+
+function toContentVersion(row: any): ContentVersion {
+  return {
+    id: String(row?.id ?? ''),
+    content_id: String(row?.content_id ?? ''),
+    version: Number(row?.version ?? 0),
+    content: String(row?.content ?? ''),
+    source: row?.source ?? null,
+    prompt: row?.prompt ?? null,
+    created_at: Number(row?.created_at ?? 0)
+  }
+}
+
+/** 新草稿排前面（同级按 id 收敛；与后端 listContents 展示序一致） */
+function sortContents(list: ContentItem[]): ContentItem[] {
+  return [...list].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
+}
+
 // ── AI Advisor（Commit 08）：类型 ───────────────────────────────────────────────
 
 /** 面板要展示的「AI 看见了什么」摘要（主进程 `marketing:advisor:ask` 返回） */
@@ -1190,6 +1331,271 @@ export const useMarketingStore = defineStore('marketing', () => {
     }
   }
 
+  // ── Content Center（Commit 09） ──────────────────────────────────────────
+  //
+  // 设计要点：
+  //   - 生成一次 = 3 路并行流（三个固定角度）；chunk/done/error 仍是 07 全局事件，
+  //     本切片只订一次并按 streamId（`<genTaskId>-<角度key>`）归并到对应版本位；
+  //   - 版本行在主进程 done 前已落库（先落库后 done），因此任一流 done 后刷新版本清单必读得到；
+  //   - 代际守卫同 05b（await 期间切商家/停止 → 丢弃续体 + 补发 abort）；
+  //   - 不自动发布（硬规则 10）：状态推进/发布标记全是人工按钮。
+  const contents = ref<ContentItem[]>([]) as Ref<ContentItem[]>
+  const contentsLoading = ref<boolean>(false)
+  const contentGen = ref<ContentGenState | null>(null) as Ref<ContentGenState | null>
+  let contentStreamIds = new Set<string>()
+  let contentOff: Array<() => void> = []
+  let contentCallSeq = 0
+  let contentCurrentProjectId: string | null = null
+
+  const contentGenStreaming: ComputedRef<boolean> = computed(() =>
+    (contentGen.value?.angles ?? []).some((a) => a.streaming)
+  )
+
+  function ensureContentSubscription(): void {
+    if (contentOff.length) return
+    const stream = window.api.marketing.advisor // 07 全局事件名的订阅入口（同 05b）
+    const slotOf = (streamId: string | undefined | null) => {
+      const id = String(streamId ?? '')
+      if (!contentStreamIds.has(id)) return null
+      return contentGen.value?.angles.find((a) => a.streamId === id) ?? null
+    }
+    contentOff = [
+      stream.onChunk((payload) => {
+        const slot = slotOf(payload?.streamId)
+        if (slot?.streaming) slot.text += String(payload?.delta ?? '')
+      }),
+      stream.onDone((payload) => {
+        const slot = slotOf(payload?.streamId)
+        if (!slot) return
+        slot.streaming = false
+        slot.aborted = payload?.aborted === true
+        // 主进程 done 携带完整文本；中止态也带已收到部分（展示用，版本不落）
+        if (typeof payload?.text === 'string' && payload.text) slot.text = payload.text
+        slot.done = true
+      }),
+      stream.onError((payload) => {
+        const slot = slotOf(payload?.streamId)
+        if (!slot) return
+        slot.streaming = false
+        slot.done = true
+        slot.errorCode = String(payload?.error?.code ?? 'DB_ERROR')
+        slot.errorMessage = String(payload?.error?.message ?? '')
+      })
+    ]
+  }
+
+  function disposeContent(): void {
+    for (const off of contentOff) {
+      try {
+        off()
+      } catch {
+        /* 忽略 */
+      }
+    }
+    contentOff = []
+  }
+
+  /** 读内容列表（新→旧）；失败只置 error 不抛出（load 系列同约定） */
+  async function loadContents(projectId: string, options?: ContentListQuery): Promise<void> {
+    contentsLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.content.list(projectId, options ?? {})) as IpcEnvelope<any[]>
+      if (!res?.ok) {
+        contents.value = []
+        error.value = envelopeToError(res, '加载内容列表失败').message
+        return
+      }
+      const rows = Array.isArray(res.data) ? res.data : []
+      contents.value = sortContents(rows.map(toContentItem))
+    } catch (e) {
+      contents.value = []
+      error.value = messageOf(e, '加载内容列表失败')
+    } finally {
+      contentsLoading.value = false
+    }
+  }
+
+  /** 手工新建草稿（热点 payload 预填走这里带 sourceTopicId）；失败抛出 */
+  async function createContent(projectId: string, data: CreateContentPayload): Promise<ContentItem> {
+    contentsLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.content.create(projectId, data)) as IpcEnvelope<any>
+      if (!res?.ok) throw envelopeToError(res, '新建草稿失败')
+      const item = toContentItem(res.data)
+      contents.value = sortContents([item, ...contents.value.filter((c) => c.id !== item.id)])
+      return item
+    } catch (e) {
+      error.value = messageOf(e, '新建草稿失败')
+      throw e instanceof Error ? e : new MarketingIpcError('DB_ERROR', error.value)
+    } finally {
+      contentsLoading.value = false
+    }
+  }
+
+  /** 白名单更新（标题/平台/选题/正文/状态/发布标记/效果备注）；失败抛出 */
+  async function updateContent(
+    projectId: string,
+    id: string,
+    patch: UpdateContentPayload
+  ): Promise<ContentItem> {
+    contentsLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.content.update(projectId, id, patch)) as IpcEnvelope<any>
+      if (!res?.ok) throw envelopeToError(res, '保存失败')
+      const item = toContentItem(res.data)
+      contents.value = sortContents(
+        contents.value.map((c) => (c.id === item.id ? item : c)).concat(
+          contents.value.some((c) => c.id === item.id) ? [] : [item]
+        )
+      )
+      return item
+    } catch (e) {
+      error.value = messageOf(e, '保存失败')
+      throw e instanceof Error ? e : new MarketingIpcError('DB_ERROR', error.value)
+    } finally {
+      contentsLoading.value = false
+    }
+  }
+
+  /** 删除内容（幂等；版本随 FK 级联清） */
+  async function removeContent(projectId: string, id: string): Promise<void> {
+    contentsLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.content.delete(projectId, id)) as IpcEnvelope<any>
+      if (!res?.ok) throw envelopeToError(res, '删除内容失败')
+      contents.value = contents.value.filter((c) => c.id !== id)
+    } catch (e) {
+      error.value = messageOf(e, '删除内容失败')
+      throw e instanceof Error ? e : new MarketingIpcError('DB_ERROR', error.value)
+    } finally {
+      contentsLoading.value = false
+    }
+  }
+
+  async function loadContentVersions(projectId: string, id: string): Promise<ContentVersion[]> {
+    const res = (await window.api.marketing.content.versions(projectId, id)) as IpcEnvelope<any[]>
+    if (!res?.ok) throw envelopeToError(res, '加载版本失败')
+    const rows = Array.isArray(res.data) ? res.data : []
+    return rows.map(toContentVersion)
+  }
+
+  /** 存版本（老板改稿 source=user）；activate=true 同时写回正文 */
+  async function saveContentVersion(
+    projectId: string,
+    id: string,
+    input: { content: string; source?: string },
+    options?: { activate?: boolean }
+  ): Promise<ContentVersion> {
+    contentsLoading.value = true
+    error.value = null
+    try {
+      const res = (await window.api.marketing.content.saveVersion(projectId, id, input, options)) as IpcEnvelope<any>
+      if (!res?.ok) throw envelopeToError(res, '保存版本失败')
+      const item = toContentItem(res.data?.content)
+      contents.value = sortContents(contents.value.map((c) => (c.id === item.id ? item : c)))
+      return toContentVersion(res.data?.version)
+    } catch (e) {
+      error.value = messageOf(e, '保存版本失败')
+      throw e instanceof Error ? e : new MarketingIpcError('DB_ERROR', error.value)
+    } finally {
+      contentsLoading.value = false
+    }
+  }
+
+  /**
+   * 发起一次生成（3 版供选）。返回后三路开始流式；若 await 期间切商家/停止（代际变了），
+   * 结果丢弃并补发 abort，返回 null（同 05b 语义）。
+   */
+  async function generateContent(
+    projectId: string,
+    spec: ContentGenerateSpec
+  ): Promise<ContentGenerateResult | null> {
+    if (!projectId) throw new MarketingIpcError('VALIDATION_ERROR', '请先选择一个商家')
+    const seq = ++contentCallSeq
+    contentCurrentProjectId = projectId
+    ensureContentSubscription()
+    try {
+      const res = (await window.api.marketing.content.generate(projectId, spec)) as IpcEnvelope<any>
+      if (seq !== contentCallSeq) {
+        const staleId = String(res?.ok && res.data?.genTaskId ? res.data.genTaskId : '') || null
+        if (res?.ok && staleId) {
+          try {
+            await window.api.marketing.content.abortGenerate(staleId, projectId)
+          } catch {
+            /* 尽力中止 */
+          }
+        }
+        return null
+      }
+      if (!res?.ok) throw envelopeToError(res, '生成失败')
+      const anglesRaw = Array.isArray(res.data?.angles) ? res.data.angles : []
+      contentStreamIds = new Set(anglesRaw.map((a: any) => String(a?.streamId ?? '')))
+      contentGen.value = {
+        genTaskId: String(res.data?.genTaskId ?? ''),
+        contentId: String(res.data?.contentId ?? ''),
+        projectId,
+        platform: String(res.data?.platform ?? ''),
+        topic: res.data?.topic ?? null,
+        pack: (res.data?.pack ?? null) as AdvisorPackSummary | null,
+        angles: anglesRaw.map((a: any) => ({
+          streamId: String(a?.streamId ?? ''),
+          angleKey: String(a?.angle?.key ?? ''),
+          label: String(a?.angle?.label ?? ''),
+          text: '',
+          streaming: true,
+          done: false,
+          aborted: false,
+          errorCode: null,
+          errorMessage: null
+        }))
+      }
+      return {
+        genTaskId: contentGen.value.genTaskId,
+        contentId: contentGen.value.contentId,
+        angles: contentGen.value.angles.map((a) => ({ streamId: a.streamId, key: a.angleKey, label: a.label })),
+        pack: contentGen.value.pack
+      }
+    } catch (e) {
+      if (seq !== contentCallSeq) return null
+      error.value = messageOf(e, '生成失败')
+      throw e instanceof Error ? e : new MarketingIpcError('DB_ERROR', error.value)
+    }
+  }
+
+  /** 停止生成（两路定位）：先断上游再收尾 UI；幂等 */
+  async function stopGenerate(): Promise<void> {
+    const gen = contentGen.value
+    const id = gen?.genTaskId ?? null
+    const pid = gen?.projectId ?? contentCurrentProjectId
+    contentCallSeq += 1
+    if (gen) {
+      for (const a of gen.angles) {
+        if (a.streaming) {
+          a.streaming = false
+          a.done = true
+          a.aborted = true
+        }
+      }
+    }
+    if (!id && !pid) return
+    try {
+      await window.api.marketing.content.abortGenerate(id, pid)
+    } catch {
+      /* 中止失败不弹错：上游最迟空闲超时结束 */
+    }
+  }
+
+  /** 清空生成面板（采纳完成/忽略/切商家）；推代际使在途 await 续体失效 */
+  function clearGenerate(): void {
+    contentCallSeq += 1
+    contentGen.value = null
+    contentStreamIds = new Set()
+  }
+
   return {
     projects,
     currentProjectId,
@@ -1248,6 +1654,21 @@ export const useMarketingStore = defineStore('marketing', () => {
     stopRecognize,
     clearScan,
     commitRecognized,
-    disposeScan
+    disposeScan,
+    // Content Center（Commit 09）
+    contents,
+    contentsLoading,
+    contentGen,
+    contentGenStreaming,
+    loadContents,
+    createContent,
+    updateContent,
+    removeContent,
+    loadContentVersions,
+    saveContentVersion,
+    generateContent,
+    stopGenerate,
+    clearGenerate,
+    disposeContent
   }
 })

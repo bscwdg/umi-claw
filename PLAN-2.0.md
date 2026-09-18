@@ -1,12 +1,13 @@
 # Umi Claw 2.0 施工基线（持续记录）
 
 > 本文档是 2.0 的唯一规划基线，随开发进度持续更新。
-> 基线版本：v1.29 ｜ 更新日期：2026-09-18 ｜ 状态：**Commit 00-08（含 05a/05b）均已通过验收；一期剩余 09 / 10 / 11 / 12**
+> 基线版本：v1.30 ｜ 更新日期：2026-09-18 ｜ 状态：**Commit 00-09（含 05a/05b）均已通过验收；一期剩余 10 / 11 / 12**
 
 ## 修订记录
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| v1.30 | 2026-09-18 | **Commit 09 完成（Content Center，主进程 + 渲染端）**：`marketing/contentManager.ts` + `ipc/content.ts` + preload `marketing.content` 面 + `ContentCenter.vue` + store content 切片 + `useContentPrefill.ts`（11 的热点 payload 接收端，路径先行）+ 路由换真页；`accept:content` **12/12**（C1-C12），`typecheck:node`/`web` 0 错，回归 db 31/31 · worker 18/18 · project 18/18 · business 16/16 · knowledge 23/23 · context 22/22 · gateway 27/27 · advisor 10/10 · scan 18/18；详见「Commit 09 落点与验收」。**本提交的 7 条口径**：①一次 3 版 = 三个固定角度（直给/场景/异议）各起一条独立流式请求（temperature 0.8，护栏 system 兜事实），不搞「一次请求要三段」的脆弱拆分；②**先落库后 done**（result resolve 前落版本行，source=ai 必带 prompt 快照；中止/失败/空产出不落版本）；③并发版本号防重（per-contentId promise 链串行化「读最大号→写行」，表上无 UNIQUE 约束）；④会话键 `content-<genTaskId>-a<i>`，三路不共用 sticky、不污染 Advisor 记忆（05b 同课）；⑤**不自动发布**（硬规则 10）：状态机全人工推进，`status→published` 自动补 `published_at`（v1.13 复用状态列），空正文拒发布，退回保留最近发布时刻；⑥停止/切商家/卸载/退出**四路中止**（两路定位 genTaskId/projectId，幂等不双计）；⑦`sourceTopicId` 显式预检（`reason='source-topic-not-found'`），update 白名单不含溯源列（身份不可改）。**§五 content 行补齐至 9 方法**（本提交扩面 3 条：delete / generate:abort / versions，先例 v1.28）。⏳ 真界面点击流未做（本机无桌面通道，同 08）；平台规则模板注入归 10 |
 | v1.29 | 2026-09-18 | **05b 复审收尾（北 7 条裁定）**：①「Commit 05b 落点与验收」代码围栏收口包住全部清单行（首行后误闭合的根因是会话显示截断；knowledgeManager 行的路径前缀实际文件本就完整，非丢字）；②顶部版本行与本行同步——规则：每加一行修订，同一次编辑内更新顶部版本行（v1.22-v1.27 六次漏同步、顶行停在 v1.21，05b 完成消息因此误报过基线状态）；③§五 commitRecognized 改具名 `input` 参数（消除 `title?` 排在必选 `content` 前的 TS 非法形状；字段形状进注释）；④v1.28 行一处形近错字更正为「识别兜底」；⑤AHx 的 `>` 一律按规范表述为 **EOD 结束符**（ISO 32000-1 §7.4.4.1，出现即终止解码，非「非法字符」），PLAN 与 fixture/accept 注释同口径；⑥探针证据回写仓库跟踪文件 `test/probe-scan-render.json`（S13 每次复跑重生成，时间戳 churn 属预期），`.tmp` 落盘不再作基线证据；⑦§七 05a 验收补充的 pdfjs 措辞与 :581 引述统一（删去多余的 worker 定语；worker 打包态 §六 已实测，不是未验项）。 |
 | v1.28 | 2026-09-18 | **Commit 05b 完成（aeb5f75）+ 三项文档漂移拍板落基线**：①**05b 扫描件/资料图 AI 识别兜底**：`marketing/scanRecognizer.ts`（pdfjs 取图 → 零依赖手写 PNG → 逐页流式 multimodal；探针 P1-P4 **PASS → 不降级**）+ `marketing:knowledge:{recognize, recognize:abort, commitRecognized}` + 确认弹窗（价格数字人工核对提示）+ 四路中止；`accept:scan` **18/18**（S13 内置探针复跑），回归 knowledge 23/23 · gateway 27/27 · advisor 10/10 · db 31/31 · context 22/22，两端 typecheck 0 错；详见「Commit 05b 落点与验收」。②**§五 knowledge 行补齐至 11 方法**——漂移自 05a 就存在（§五 只列 6 个，05a 已开 import/pickFile 共 8），一次改齐；§七 05a 清单行同步。③**§七 05a 误导句改写**：「条目标 FILE_PARSE_ERROR 待 05b」与「条目标红可重导入」→「失败信封回传、**不落库行**，reason=scanned-pdf 亮 05b 入口」（与 K9 断言及 05a 完成记录「不落行不落文件」拉齐；注记会被下一个人无视，改原句才断得了根）。④**§六 新增「PDF 内嵌图取图实测」**：v3 对 BI/ID/EI 转译成 `paintImageXObject`+合成 objs 键（img_p0_1），**不发 OPS 86/87**；AHx 的 `>` 是 **EOD 结束符**（ISO 32000-1 §7.4.4.1，出现即终止解码）；证据引 S13/S17 可复跑用例 + fixture 构造脚本（探针复跑回写仓库文件 `test/probe-scan-render.json`）。⑤**顶部基线版本行补上**（停在 v1.21 失联 6 版，每次修订漏同步的惯性要防）。待拍板三项（#26 顺带关闭：05b 已交）经复审建议全批 |
 | v1.27 | 2026-09-17 | **Commit 08 完成**（AI Advisor，主进程 + 渲染端）：`marketing/advisorManager.ts` + `ipc/advisor.ts` + preload `marketing.advisor` 面 + `AdvisorPanel.vue` + store advisor 切片 + 路由换真页；`accept:advisor` **10/10**，`typecheck:node`/`web` 0 错，回归 gateway 27/27 · context 22/22 · db 31/31 · project 18/18 · business 16/16 · knowledge 23/23。**本提交的 3 条口径**：①每轮只发 system+user（不回灌历史，§六 结论 A）；②扩词候选**不写库**，勾选后走 04 的 `addWatch`；③停止生成/切商家/卸载/退出**四路都中止上游**（`before-quit` 里 `abortAllAdvisorStreams`）。⏳ 真界面点击流未做（本机无桌面通道） |
@@ -333,7 +334,10 @@ window.api = {
                 import(projectId, input), pickFile(),                                                       // 05a（v1.28 补入 §五）：文件/URL 导入——解析失败只回错误信封**不落库行**；取消选择=filePath:null 不是错误
                 recognize(projectId, {filePath,type?}), abortRecognize(taskId|null, projectId|null),        // 05b：**显式触发**识别（扫描 PDF/资料图）；产出**待确认文本、不落库**；流式增量**复用 07 事件名**（chunk/done/error，streamId=taskId）不新造事件；abort 两路定位——栅格化窗口里还没有 taskId 时按 projectId 取消该商家在途任务（UI 约束：同商家同时至多一个识别）
                 commitRecognized(projectId, input) },                                                      // 05b：**人工确认后唯一写入口**（硬规则 10）；input={filePath, type:'pdf'|'image', title?, content}；type=pdf/image、status=ready；同 (project_id,source_path) upsert 覆盖
-    content:  { list(projectId), get, create(projectId, data), update, generate(projectId, spec), saveVersion },
+    content:  { list(projectId, {status?,platform?,limit?}), get, create(projectId, data), update,             // 09（v1.30 补齐至 9 方法）：list 新→旧；update 白名单 title/platform/topic/content/status/published_at/effect_note（source_topic_id 是身份不可改）
+                delete(projectId, id),                                                                        // 09 扩面：删除幂等（跨 project/不存在 → deleted:false 不报错）；版本随 FK 级联清
+                generate(projectId, spec), abortGenerate(genTaskId|null, projectId|null),                     // 09：一次 3 版（直给/场景/异议）三路并行流式，streamId=`<genTaskId>-<角度key>`，增量复用 07 事件名；abort 两路定位（同 05b 口径），幂等
+                saveVersion(projectId, id, input, {activate?}), versions(projectId, id) },                    // 09 扩面：source=user 手改（prompt=NULL）/ai（必带 prompt 快照，§四）；activate=同时写回正文；versions=历史面板（version 升序）
     hot:      { list(projectId, {platform, force?}), get(topicId), refresh(), score(projectId, platform) },  // platform=发布平台(xiaohongshu/douyin)；list 返回热点+当前 project/该平台缓存评分；refresh=立即采集；score=懒评分
     gateway:  { status, ensureReady },   // Commit 07（v1.24 拍板纳入）：只读就绪面（零 token：只发 GET /health + GET /v1/models）+ 幂等拉起（探活→按需调 clawManager→就绪轮询）；baseUrl/token 只在主进程（硬规则 13）
   }
@@ -484,7 +488,7 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 | 07 | Gateway Client —— **✅ 2026-09-16 完成** | 端点开关默认化 + 老用户迁移、探活、自动拉起（**复用 clawManager 启停，不另起炉灶**）、就绪轮询、SSE→IPC 透传、会话隔离、多模态模型选择（落点与验收见下；顺带修待办 #15） | 2d | 00 | | ✅ |
 | 05b | 扫描件 AI 识别兜底 —— **✅ 2026-09-18 完成**（探针 PASS，扫描 PDF 全量实现未降级） | 复用 07：扫描 PDF/带文字资料图的「用 AI 识别」显式触发 + 识别结果人工确认后入库；00⑦ 结论为不支持则只做提示（落点与验收见下） | 1.5d | 05a、07（与 08 并行） | | ✅ |
 | 08 | AI Advisor —— **✅ 2026-09-17 完成**（主进程 + 渲染端） | Grounded 营销问答面板（边界见第六节）：Context Pack + SSE + 停止生成 + 事实护栏；对话历史按 00⑥ 结论；**+ Watchlist AI 扩词推荐（候选词生成 + 用户勾选，v1.13 由 04 移入）**（落点与验收见下） | 2d | 06、07 | | ✅ |
-| 09 | Content Center | AI 生成（SSE 流式 + **AbortController「停止生成」**，规格同 08：组件卸载/切换必须中止上游）→ 编辑 → 版本（prompt 快照）→ 人工审核；**接收热点雷达结构化 payload 预填充（v1.9），source_topic_id 溯源（v1.10）**；**一次生成 3 个版本供选 + 极简发布标记（v1.12）** | 3d | 06、07、08 | | ⬜ |
+| 09 | Content Center —— **✅ 2026-09-18 完成**（主进程 + 渲染端） | AI 生成（SSE 流式 + **AbortController「停止生成」**，规格同 08：组件卸载/切换必须中止上游）→ 编辑 → 版本（prompt 快照）→ 人工审核；**接收热点雷达结构化 payload 预填充（v1.9），source_topic_id 溯源（v1.10）**；**一次生成 3 个版本供选 + 极简发布标记（v1.12）**（落点与验收见下） | 3d | 06、07、08 | | ✅ |
 | 10 | 双平台工作流 | **小红书 + 抖音**平台适配（两套平台规则模板注入 Context Pack）；抖音一期只做口播脚本/标题/话题标签文案层，不做视频；均人工复制发布 | 2d | 09 | | ⬜ |
 | 11 | 热点采集与浏览（🔥 热点雷达） | 数据源 SPIKE（公开聚合源，双平台发布视角）+ collector adapters（只抓取 stdout JSON，硬规则 12）+ hotManager 经 Worker 落库 + 时间差定时/唤醒补检/打开即刷 + 三表 + **同源内**去重 + 生命周期 + 采样保留(24 条)/落榜清理(7 天) + 数据源状态条 + 雷达页（近 24h/Top20/平台筛选；「带去 Content Center」09 前占位）；**安装包内 collector 冒烟：复用 obsidianManager.getScriptPath 的 dev/安装包（process.resourcesPath）路径解析，不改打包配置**；**节点日历自建 adapter（origin=calendar）（v1.12）**；不依赖 Gateway | 3d | 02（可与 03-06 并行） | | ⬜ |
 | 12 | AI 商家匹配 | 当前 project × 平台懒评分（≤30 条/次、近 7 天在榜、24h TTL；**待评超 30 条按 heat 取前 30，每次打开雷达续评一批直到评完**）+ JSON 落库 + 部分失败容错 + 整体失败降级裸榜 + 分组（🔥/👀/❌ + **⏳ 待分析**）+ 手动重新分析 + 事实护栏；**雷达顶部「今日建议」摘要（1 条主推 + 理由 + 时机）（v1.12）** | 2d | 06、07、11 | | ⬜ |
@@ -739,6 +743,57 @@ test/advisor.accept.mjs + `npm run accept:advisor`   10 项验收（打真 advis
 ②「客户端 abort 后**服务端是否停止生成**」只验到「上游连接真断」（假服务端），真 Gateway + 真模型调用未验（§九 #14）；
 ③G21 真机探活实测本机 3213 有 Gateway 在跑（探活 200），但**兼容面 enabled=false**——真机上 `chatCompletions` 仍是关的
   （老配置迁移要等应用真正跑一次 `_syncOpenClawConfig`，它不在本验收的临时目录里）。
+
+### Commit 09 落点与验收（✅ 2026-09-18）
+
+```text
+electron/main/marketing/contentManager.ts   新增：ContentManager（CRUD + listVersions/saveVersion + generate 三路并行 + cancelGeneration/cancelByProject/cancelAll）+ wrapHandleSaveVersion（先落库后 done）+ buildGenerationMessages/buildPromptSnapshot（纯函数，验收直接断言）
+electron/main/ipc/content.ts                新增：marketing:content:{list,get,create,update,delete,generate,generate:abort,saveVersion,versions}（§五 扩面 3 条：delete/abort/versions）+ abortAllContentGenerations
+electron/main/ipc/index.ts                  + 转出 content 面
+electron/preload/index.ts                   + api.marketing.content.{list,get,create,update,delete,generate,abortGenerate,saveVersion,versions}
+electron/main/index.ts                      + 工厂/单例/wiring（注入 06 引擎 + 07 客户端 + DatabaseClient）+ before-quit abortAllContentGenerations（四路之退出路）
+src/stores/marketing.ts                     + content 切片（列表/CRUD/版本/生成三槽位按 streamId 归并订阅/代际守卫/停止/清空/dispose）+ CONTENT_STATUSES/CONTENT_STATUS_LABELS 导出
+src/composables/useContentPrefill.ts        新增：热点雷达 payload 接收端（模块级单例 set/consume 一次性；不走 router query——payload 含中文长文本；11 的按钮上线前路径先行）
+src/views/marketing/ContentCenter.vue       新增：生成表单（平台/选题/补充）+ 三路流式面板（采用为正文）+ 内容列表（状态/平台过滤）+ 编辑弹窗（状态机人工推进 + 价格核对警告 + 版本历史 + 「当时提示词」）
+src/renderer/main.ts                        /marketing/content 由占位页换真页
+test/content.accept.mjs + `npm run accept:content`   12 项验收（C1-C12；打真 contentManager.ts + 真 Node SSE 服务端 + 真 DB Worker 直读行数）
+```
+
+**验收（独立复跑，非自述）**：`accept:content` **12/12**；`typecheck:node` / `typecheck:web` 0 错；
+回归 `accept:db` **31/31**、worker 半边 **18/18**、`accept:project` **18/18**、`accept:business` **16/16**、
+`accept:knowledge` **23/23**、`accept:context` **22/22**、`accept:gateway` **27/27**、`accept:advisor` **10/10**、
+`accept:scan` **18/18** 均不受影响（结果 JSON 均为同日复跑回写）。
+
+**关键设计决策**
+
+- **一次 3 版 = 3 条独立流式请求**（§一 产品智能 / v1.12）：三个固定角度（直给卖点/场景故事/异议处理）写死在
+  `CONTENT_GENERATION_ANGLES`，各起一条请求、各自成版本——不搞「一次请求要三段」的脆弱拆分
+  （模型分节不可靠、截断互相拖累）；temperature 0.8（创作允许发挥），事实护栏在 system 兜底（08 同源、面向成稿）。
+- **先落库后 done**：每条流包一层 `wrapHandleSaveVersion`，`result` resolve **前**完成版本落行
+  （source=ai 必带 prompt 快照 = Context Pack 全文 + 本版角度，§四 v1.10）——渲染端收到 done 立即刷新版本必读得到；
+  **中止/失败/空产出（含剥围栏后为空，`FILE_PARSE_ERROR` + `reason='empty-generation'`）不落版本**：
+  半截稿子不是「供选版本」。
+- **并发版本号防重**：三路并行完成会同读同一 maxVersion（表上无 UNIQUE(content_id,version) 拦不住）；
+  per-contentId promise 链把「读最大号→写新行」锁成互斥段（C3 断言版本号恰为 {1,2,3}）。
+- **会话键 `content-<genTaskId>-a<i>`**：三路并行不共用商家 sticky（同 user 并发写会话历史会互相穿插，05b 同课），
+  也不进 Advisor 记忆；每轮只发 system + user（同 08 口径 A）。
+- **不自动发布（硬规则 10）**：状态机 draft/review/approved/published/archived 全人工推进、无自动跳转；
+  `status→published` 自动补 `published_at`（v1.13 复用状态列不设布尔列，唯一真相来源），空正文拒发布
+  （`reason='publish-without-content'`）；退回 draft 保留最近发布时刻；UI 明示「复制发布由老板自己完成」。
+- **四路中止**：停止生成（`cancelGeneration(genTaskId)`）、切商家/渲染端 await 期间失联
+  （`cancelGenerationByProject(projectId)`，两路定位同 05b）、组件卸载（dispose + clearGenerate）、
+  应用退出（`before-quit` → `abortAllContentGenerations()`）；全部幂等不双计（C12）。
+- **热点溯源**：`sourceTopicId` 落库前显式验行存在（FK 天书翻成 `VALIDATION_ERROR` +
+  `reason='source-topic-not-found'`，C9）；update 白名单不含 `source_topic_id`（身份与溯源不可改）。
+- **db-worker 零改动**：本提交只消费既有 generic CRUD 白名单（contents/content_versions 02 已建，11 表不变），
+  业务判断全在 manager（硬规则 8/12 精神，C10 静态断言白名单未扩）。
+
+⏳ **未覆盖 / 已知风险**：①真界面点击流未做（本机无桌面通道，同 08）；②平台规则模板注入归 Commit 10
+（本提交只把 `platform` 交给引擎与指令文本）；③热点 payload 真值路径要等 11 上线（当前仅测试与带 payload 跳转触达）；
+④生成质量（三角度是否真有区分度、护栏是否被遵守）只能人工试用 + 三期 Learning 反馈，自动化只验到「护栏/资料/角度确实进了 prompt」。
+
+过程留痕：C4 首轮把 contents 行数基线取在 `generate` 之后，而 generate 开头就落草稿（三路共写载体），
+期望 +3 实际 +2 假红——计数基线已改为 generate 之前取（注释在用例内，防止复犯）。
 
 ### Commit 06 落点与验收（✅ 2026-09-16）
 

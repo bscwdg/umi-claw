@@ -7,7 +7,8 @@
 // 05b 追加扫描件识别（knowledge:recognize / recognize:abort / commitRecognized，见 ipc/scan.ts）；
 // 07 追加 marketing.gateway（status / ensureReady 两条只读面，见 ipc/gateway.ts）；
 // 08 追加 marketing.advisor（ask / abort / watchCandidates，流式增量走 07 的事件名）；
-// 09+/11+ 的 content/hot 在此继续追加。
+// 09 追加 marketing.content（CRUD + 一次 3 版生成 + 两路 abort + 版本面，流式增量同样走 07 事件名）；
+// 11+/12 的 hot 在此继续追加。
 
 export {
   registerMarketingIpc,
@@ -40,4 +41,11 @@ export {
   MARKETING_SCAN_CHANNELS
 } from './scan'
 export type { ScanIpcResult, ScanRecognizeInput, ScanRecognizeResult } from './scan'
+export {
+  registerContentIpc,
+  abortAllContentGenerations,
+  activeContentStreamCount,
+  MARKETING_CONTENT_CHANNELS
+} from './content'
+export type { ContentIpcResult, ContentGenerateResult } from './content'
 export type { IpcResult } from './marketing'

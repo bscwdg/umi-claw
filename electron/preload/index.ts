@@ -279,6 +279,49 @@ const api = {
         ipcRenderer.on('marketing:gateway:error', handler)
         return () => ipcRenderer.off('marketing:gateway:error', handler)
       }
+    },
+    // Commit 09：Content Center（一次生成 3 版供选 → 编辑 → 版本 → 人工审核/发布标记）。
+    // 流式增量同样走 07 事件名（streamId=`<genTaskId>-<角度key>`），订阅复用 advisor 的
+    // onChunk/onDone/onError（全局事件按 streamId 归并，三路不串台）。
+    content: {
+      list: (projectId: string, options?: { status?: string | null; platform?: string | null; limit?: number }) =>
+        ipcRenderer.invoke('marketing:content:list', projectId, options),
+      get: (projectId: string, id: string) => ipcRenderer.invoke('marketing:content:get', projectId, id),
+      create: (
+        projectId: string,
+        data: { title?: string | null; platform?: string | null; topic?: string | null; content?: string | null; sourceTopicId?: string | null }
+      ) => ipcRenderer.invoke('marketing:content:create', projectId, data),
+      update: (
+        projectId: string,
+        id: string,
+        patch: {
+          title?: string | null
+          platform?: string | null
+          topic?: string | null
+          content?: string | null
+          status?: string
+          published_at?: number | null
+          effect_note?: string | null
+        }
+      ) => ipcRenderer.invoke('marketing:content:update', projectId, id, patch),
+      // §五 扩面：delete（幂等；版本随 FK 级联清）
+      delete: (projectId: string, id: string) => ipcRenderer.invoke('marketing:content:delete', projectId, id),
+      // 一次生成 3 版供选（三路并行流式；硬规则 10：产出一律人工采纳，永不自动发）
+      generate: (
+        projectId: string,
+        spec: { contentId?: string | null; platform: string; topic?: string | null; title?: string | null; customer?: string | null; sourceTopicId?: string | null; query?: string | null }
+      ) => ipcRenderer.invoke('marketing:content:generate', projectId, spec),
+      // 停止生成：两路定位（同 05b 口径）；幂等
+      abortGenerate: (genTaskId?: string | null, projectId?: string | null) =>
+        ipcRenderer.invoke('marketing:content:generate:abort', genTaskId ?? null, projectId ?? null),
+      saveVersion: (
+        projectId: string,
+        id: string,
+        input: { content: string; source?: string; prompt?: string | null },
+        options?: { activate?: boolean }
+      ) => ipcRenderer.invoke('marketing:content:saveVersion', projectId, id, input, options),
+      // §五 扩面：版本清单（历史面板）
+      versions: (projectId: string, id: string) => ipcRenderer.invoke('marketing:content:versions', projectId, id)
     }
   },
 

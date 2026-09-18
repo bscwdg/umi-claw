@@ -37,8 +37,9 @@ const router = createRouter({
     },
     {
       path: '/marketing/content',
-      component: () => import('../views/marketing/Placeholder.vue'),
-      meta: { title: 'Content Center', icon: '✍️', desc: 'AI 生成 → 编辑 → 版本 → 人工审核发布', commit: 'Commit 09' }
+      // Commit 09：占位页换真页（一次 3 版供选 → 编辑 → 版本 → 人工审核/发布标记）
+      component: () => import('../views/marketing/ContentCenter.vue'),
+      meta: { title: 'Content Center', icon: '✍️' }
     },
     {
       path: '/marketing/hot',
