@@ -62,6 +62,10 @@
               </button>
             </div>
           </div>
+          <div v-if="platformHint" class="gen-row">
+            <span class="gen-label"></span>
+            <span class="text-sm text-muted platform-hint">{{ platformHint }}</span>
+          </div>
           <div class="gen-row">
             <span class="gen-label">选题</span>
             <input
@@ -272,6 +276,19 @@ const PLATFORM_LABELS: Record<string, string> = {
   xiaohongshu: '小红书',
   douyin: '抖音'
 }
+
+/** 双平台工作流口径（Commit 10）：成稿组成 + 抖音文案层边界 + 均人工复制发布 */
+const PLATFORM_WORKFLOW_HINTS: Record<string, string> = {
+  xiaohongshu: '产出图文笔记：标题 + 正文 + 话题标签（不产图）；成稿后自行配图、人工复制发布',
+  douyin: '只做文案层：口播脚本 + 标题 + 话题标签，不做视频；成稿后自行拍摄、人工复制发布'
+}
+
+/** 归属域校验（平台只从 tab 选项取值；热点 prefill 的真值在 11 上线后才来，同样先过这道） */
+function isContentPlatform(value: string): boolean {
+  return CONTENT_PLATFORM_OPTIONS.some((o) => o.key === value)
+}
+
+const platformHint = computed(() => PLATFORM_WORKFLOW_HINTS[platform.value] ?? '')
 
 // ── 生成表单 ──
 const platform = ref<string>('xiaohongshu')
@@ -578,7 +595,9 @@ onMounted(async () => {
   if (p) {
     prefill.value = p
     topic.value = p.title
-    if (p.platform) platform.value = p.platform
+    // platform 是无校验的 string|null（来源还带 weibo/… 极易混淆），非法值不预填，
+    // 保留默认平台——否则生成必被主进程 VALIDATION_ERROR 拒且 prefill 已清，无 UI 恢复路径
+    if (p.platform && isContentPlatform(p.platform)) platform.value = p.platform
   }
   await reload()
 })

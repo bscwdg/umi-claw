@@ -1,32 +1,32 @@
 {
   "suite": "content（Commit 09：Content Center 一次 3 版供选 + 版本 prompt 快照 + 人工审核，打真 contentManager.ts）",
-  "startedAt": "2026-09-18T09:56:23.219Z",
-  "finishedAt": "2026-09-18T09:56:24.119Z",
-  "durationMs": 900,
+  "startedAt": "2026-09-18T18:28:55.189Z",
+  "finishedAt": "2026-09-18T18:28:57.662Z",
+  "durationMs": 2473,
   "total": 12,
   "passed": 12,
   "failed": 0,
   "env": {
-    "node": "v24.19.0",
+    "node": "v24.14.0",
     "platform": "win32",
     "arch": "x64",
-    "workerScript": "D:\\work2026\\umi-claw\\resources\\database\\db-worker.mjs",
-    "runtimeNode": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe"
+    "workerScript": "D:\\work2026\\files\\claw-desktop\\resources\\database\\db-worker.mjs",
+    "runtimeNode": "D:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe"
   },
-  "bundle": "D:\\work2026\\umi-claw\\test\\.tmp\\content-manager.mjs",
-  "dataDir": "D:\\work2026\\umi-claw\\test\\.tmp\\content-1789725381848\\data",
-  "nodePath": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe",
+  "bundle": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\content-manager.mjs",
+  "dataDir": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\content-1789756133260\\data",
+  "nodePath": "D:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe",
   "logSample": [
-    "[project] 已创建 5932b44d-3486-4c98-9d25-498ac27971bc（09 拾光摄影），目录=D:\\work2026\\umi-claw\\test\\.tmp\\content-1789725381848\\data\\projects\\5932b44d-3486-4c98-9d25-498ac27971bc",
-    "[business] 已创建 project_id=5932b44d-3486-4c98-9d25-498ac27971bc",
-    "[content] 新建草稿 808321f9-7f4b-4712-9bf3-3a2ce5b4fb06（project=5932b44d-3486-4c98-9d25-498ac27971bc platform=xiaohongshu topic=秋季外景预约）",
-    "[content] generate content-1-mu6sa7y9 → 808321f9-7f4b-4712-9bf3-3a2ce5b4fb06（platform=xiaohongshu，3 路并行，knowledge=1）",
-    "[content] 新建草稿 dab1a7e3-5af9-4ba1-a16e-d195367c9a73（project=5932b44d-3486-4c98-9d25-498ac27971bc platform=douyin topic=停一路测试）",
-    "[content] generate content-2-mu6sa800 → dab1a7e3-5af9-4ba1-a16e-d195367c9a73（platform=douyin，3 路并行，knowledge=1）",
-    "[content] 新建草稿 5567c93b-6a26-4d72-a6f7-a56d0b11f088（project=5932b44d-3486-4c98-9d25-498ac27971bc platform=douyin topic=）",
-    "[content] 已更新 808321f9-7f4b-4712-9bf3-3a2ce5b4fb06（status=draft）",
-    "[content] 已更新 808321f9-7f4b-4712-9bf3-3a2ce5b4fb06（status=published）",
-    "[content] 已更新 808321f9-7f4b-4712-9bf3-3a2ce5b4fb06（status=draft）"
+    "[project] 已创建 474c9dd4-8dd6-4688-9c96-4217f096e5fa（09 拾光摄影），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\content-1789756133260\\data\\projects\\474c9dd4-8dd6-4688-9c96-4217f096e5fa",
+    "[business] 已创建 project_id=474c9dd4-8dd6-4688-9c96-4217f096e5fa",
+    "[content] 新建草稿 0354fe13-f19a-4881-9612-c45696929bb9（project=474c9dd4-8dd6-4688-9c96-4217f096e5fa platform=xiaohongshu topic=秋季外景预约）",
+    "[content] generate content-1-mu7alcmg → 0354fe13-f19a-4881-9612-c45696929bb9（platform=xiaohongshu，3 路并行，knowledge=1）",
+    "[content] 新建草稿 95fa2cba-fc97-4acd-bc0d-162fe4961a79（project=474c9dd4-8dd6-4688-9c96-4217f096e5fa platform=douyin topic=停一路测试）",
+    "[content] generate content-2-mu7alcrw → 95fa2cba-fc97-4acd-bc0d-162fe4961a79（platform=douyin，3 路并行，knowledge=1）",
+    "[content] 新建草稿 b21595e0-1518-42da-9bd5-9259140eeb92（project=474c9dd4-8dd6-4688-9c96-4217f096e5fa platform=douyin topic=）",
+    "[content] 已更新 0354fe13-f19a-4881-9612-c45696929bb9（status=draft）",
+    "[content] 已更新 0354fe13-f19a-4881-9612-c45696929bb9（status=published）",
+    "[content] 已更新 0354fe13-f19a-4881-9612-c45696929bb9（status=draft）"
   ],
   "checks": [
     {
@@ -34,14 +34,14 @@
       "name": "contentManager 可纯 Node import；缺依赖 VALIDATION_ERROR；不 import electron/不发 HTTP/不直写 SQL；三角度与护栏写死",
       "ok": true,
       "detail": "依赖注入 + 无 electron/HTTP/SQL + 三角度护栏 ✓",
-      "ms": 1
+      "ms": 2
     },
     {
       "id": "C2",
       "name": "generate 三路并行：text 模型（无图）、user=conv:<pid>:content-<taskId>-a<i>（不进商家 sticky）、每路含 Context Pack 价格 + 独立角度指令、temperature 0.8",
       "ok": true,
       "detail": "3 路 streamId=…-direct/story/objection；pack.k=1 ✓",
-      "ms": 62
+      "ms": 186
     },
     {
       "id": "C3",
@@ -55,49 +55,49 @@
       "name": "只停第 1 路：上游真断（服务端观测 close）、该路 aborted 不落版本，其余两路照常落库",
       "ok": true,
       "detail": "断连观测 ✓；2 落 1 不落 ✓",
-      "ms": 220
+      "ms": 293
     },
     {
       "id": "C5",
       "name": "状态机全人工：生成后恒 draft；空正文不能 published；adopt→published 自动补 published_at；退回保留发布时刻",
       "ok": true,
       "detail": "draft→审核→发布→退回 全人工 ✓；published_at 语义 ✓",
-      "ms": 31
+      "ms": 168
     },
     {
       "id": "C6",
       "name": "跨 Project 视同不存在（get/update/generate contentId）；未知字段硬拒；PATCH 保留未传字段；delete 幂等 + 版本级联",
       "ok": true,
       "detail": "隔离 ×3 + 白名单 + PATCH + 级联/幂等 ✓",
-      "ms": 14
+      "ms": 320
     },
     {
       "id": "C7",
       "name": "saveVersion(source=user,activate)：正文写回 + prompt=NULL；listVersions 升序；非法 source 拒",
       "ok": true,
       "detail": "user 版 + activate + 升序 + 白名单 ✓",
-      "ms": 6
+      "ms": 55
     },
     {
       "id": "C8",
       "name": "401 三路 reject OPENCLAW_AUTH_ERROR 零版本；真空文本 done 但零版本；纯围栏 → FILE_PARSE_ERROR(empty-generation)",
       "ok": true,
       "detail": "鉴权/空文本/纯围栏 三分支各得其所 ✓",
-      "ms": 59
+      "ms": 190
     },
     {
       "id": "C9",
       "name": "sourceTopicId：预检存在性（不存在→source-topic-not-found）、随草稿入库、生成带 payload、身份列不可改",
       "ok": true,
       "detail": "payload 接收端就绪（11 的按钮直接可用）✓",
-      "ms": 37
+      "ms": 288
     },
     {
       "id": "C10",
       "name": "9 通道三处一致 + 两路 abort + before-quit + store/UI/路由契约 + db-worker 白名单零改动",
       "ok": true,
       "detail": "9 通道三处一致；四路中止；store 13 项；UI 人工链路；路由；worker 零改动 ✓",
-      "ms": 2
+      "ms": 3
     },
     {
       "id": "C11",
@@ -111,7 +111,7 @@
       "name": "run.cancel()/cancelByProject/cancelAll：三路全 aborted、零新版本、注册表即时清零（幂等重复取消不双计）",
       "ok": true,
       "detail": "整体中止 + 两路定位 + 幂等不双计 ✓",
-      "ms": 113
+      "ms": 188
     }
   ]
 }

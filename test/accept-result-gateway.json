@@ -1,33 +1,33 @@
 {
   "suite": "gateway（Gateway Client：探活/拉起/SSE/中止/会话隔离，打真 gatewayClient.ts）",
-  "startedAt": "2026-09-18T09:51:01.260Z",
-  "finishedAt": "2026-09-18T09:51:03.979Z",
-  "durationMs": 2719,
+  "startedAt": "2026-09-18T17:59:29.300Z",
+  "finishedAt": "2026-09-18T17:59:31.743Z",
+  "durationMs": 2443,
   "total": 27,
   "passed": 27,
   "failed": 0,
   "env": {
-    "node": "v24.21.0",
+    "node": "v24.14.0",
     "platform": "win32",
     "arch": "x64",
-    "workerScript": "D:\\work2026\\umi-claw\\resources\\database\\db-worker.mjs",
-    "runtimeNode": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe"
+    "workerScript": "D:\\work2026\\files\\claw-desktop\\resources\\database\\db-worker.mjs",
+    "runtimeNode": "D:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe"
   },
-  "bundle": "D:\\work2026\\umi-claw\\test\\.tmp\\gateway-client.mjs",
-  "dataDir": "D:\\work2026\\umi-claw\\test\\.tmp\\gateway-1789725059037\\data",
-  "nodePath": "D:\\work2026\\umi-claw\\data\\runtime\\node-win32-x64\\node.exe",
+  "bundle": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\gateway-client.mjs",
+  "dataDir": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\gateway-1789754368457\\data",
+  "nodePath": "D:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe",
   "logSample": [
     "[gateway] 探活失败：OPENCLAW_NOT_READY 无法连接 OpenClaw Gateway（http://127.0.0.1:1）：fetch failed",
-    "[project] 已创建 9ed543ab-3f9a-4b95-a236-2f0c758e62a2（C07 会话隔离商家），目录=D:\\work2026\\umi-claw\\test\\.tmp\\gateway-1789725059037\\data\\projects\\9ed543ab-3f9a-4b95-a236-2f0c758e62a2",
+    "[project] 已创建 32ba3a3b-7598-430a-9c92-24916cca485a（C07 会话隔离商家），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\gateway-1789754368457\\data\\projects\\32ba3a3b-7598-430a-9c92-24916cca485a",
     "[gateway] 自动拉起结果：{\"started\":true}",
     "[gateway] 就绪（轮询 1 次）",
-    "[gateway] 探活失败：OPENCLAW_NOT_READY 无法连接 OpenClaw Gateway（http://127.0.0.1:56124）：fetch failed",
+    "[gateway] 探活失败：OPENCLAW_NOT_READY 无法连接 OpenClaw Gateway（http://127.0.0.1:35432）：fetch failed",
     "[gateway] 自动拉起失败：自动拉起 OpenClaw 失败：clawManager.start() 失败：端口被占",
     "[gateway] 自动拉起结果：{\"started\":true}",
     "[gateway] 就绪缓存作废（connect-failed）——下次 ensureReady 会重新探活/拉起",
-    "[gateway] 探活失败：OPENCLAW_NOT_READY 无法连接 OpenClaw Gateway（http://127.0.0.1:56132）：fetch failed",
+    "[gateway] 探活失败：OPENCLAW_NOT_READY 无法连接 OpenClaw Gateway（http://127.0.0.1:35441）：fetch failed",
     "[gateway] 自动拉起结果：{\"started\":true}",
-    "[gateway] 探活失败：OPENCLAW_NOT_READY 无法连接 OpenClaw Gateway（http://127.0.0.1:56132）：fetch failed"
+    "[gateway] 探活失败：OPENCLAW_NOT_READY 无法连接 OpenClaw Gateway（http://127.0.0.1:35441）：fetch failed"
   ],
   "checks": [
     {
@@ -35,70 +35,70 @@
       "name": "gatewayClient.ts 可纯 Node import；端点/事件名/超时契约在位；缺依赖即炸",
       "ok": true,
       "detail": "端点/事件名/超时契约齐全；bundle 无 electron；缺依赖即 VALIDATION_ERROR",
-      "ms": 4
+      "ms": 2
     },
     {
       "id": "G2",
       "name": "探活：/health 200 即就绪判据之一；连不上 → OPENCLAW_NOT_READY(connect-failed)",
       "ok": true,
-      "detail": "探活 200 OK（71ms）；死端口 → OPENCLAW_NOT_READY/connect-failed",
-      "ms": 76
+      "detail": "探活 200 OK（30ms）；死端口 → OPENCLAW_NOT_READY/connect-failed",
+      "ms": 31
     },
     {
       "id": "G3",
       "name": "端点开关：/v1/models 200 才算兼容面开启；404 → endpoint-disabled",
       "ok": true,
       "detail": "开启 → 2 个模型；关闭 → endpoint-disabled",
-      "ms": 20
+      "ms": 11
     },
     {
       "id": "G4",
       "name": "getStatus 是只读面：零 token（不发 chat、不触发拉起）",
       "ok": true,
-      "detail": "ready=true/port=51778；零 chat、零拉起；快照无 token",
-      "ms": 21
+      "detail": "ready=true/port=35424；零 chat、零拉起；快照无 token",
+      "ms": 10
     },
     {
       "id": "G5",
       "name": "错误映射：401→AUTH / 400→VALIDATION / 5xx→NOT_READY(upstream)",
       "ok": true,
       "detail": "auth→OPENCLAW_AUTH_ERROR / badModel→VALIDATION_ERROR / server500→OPENCLAW_NOT_READY",
-      "ms": 38
+      "ms": 15
     },
     {
       "id": "G6",
       "name": "SSE 流式：增量顺序与拼接正确、usage 全 0 透传不炸、result 字段齐",
       "ok": true,
       "detail": "6 个增量按序；text=片1片2片3片4片5片6；usage.total_tokens=0 透传",
-      "ms": 43
+      "ms": 82
     },
     {
       "id": "G7",
       "name": "半途 abort：上游 socket 真被断开、aborted:true、之后不再产出（不是超时）",
       "ok": true,
       "detail": "产出 2 个增量后中止；服务端观测断连 1 次，已发 2/80 帧",
-      "ms": 166
+      "ms": 168
     },
     {
       "id": "G8",
       "name": "响应被截断（无 [DONE]）→ OPENCLAW_NOT_READY(stream-truncated)，不静默当成功",
       "ok": true,
       "detail": "OPENCLAW_NOT_READY/stream-truncated",
-      "ms": 24
+      "ms": 33
     },
     {
       "id": "G9",
       "name": "流内 error 帧 → OPENCLAW_NOT_READY(upstream-error)，不当成正常收尾",
       "ok": true,
       "detail": "OPENCLAW_NOT_READY/upstream-error",
-      "ms": 11
+      "ms": 15
     },
     {
       "id": "G10",
       "name": "会话隔离：user=conv:<projectId>:<conversation_key>（key 从库取）+ 注入防护",
       "ok": true,
-      "detail": "user=conv:9ed543ab-3f9a-4b95-…（key 来自库）；':' 注入被拒；preload 无 token",
-      "ms": 279
+      "detail": "user=conv:32ba3a3b-7598-430a-…（key 来自库）；':' 注入被拒；preload 无 token",
+      "ms": 386
     },
     {
       "id": "G11",
@@ -112,98 +112,98 @@
       "name": "含图请求：走多模态 model，图片必须是 data URI（外链只告警不静默）",
       "ok": true,
       "detail": "含图 → model=openclaw/main；部件数组保真；非 data URI 被拒",
-      "ms": 20
+      "ms": 3
     },
     {
       "id": "G13",
       "name": "自动拉起：starter 只调一次（并发单飞）；拉起后轮询到就绪；已就绪则不拉",
       "ok": true,
       "detail": "starter 调用 1 次（并发单飞 + 就绪缓存 + 已就绪不拉）",
-      "ms": 92
+      "ms": 14
     },
     {
       "id": "G14",
       "name": "拉起失败 → OPENCLAW_NOT_READY(start-failed)；轮询用尽 → OPENCLAW_TIMEOUT",
       "ok": true,
       "detail": "starter 失败→start-failed；轮询用尽→OPENCLAW_TIMEOUT",
-      "ms": 95
+      "ms": 19
     },
     {
       "id": "G16",
       "name": "透传助手：chunk*N → done 事件序；cancel 后静默；错误走 error 事件；销毁自动中止",
       "ok": true,
       "detail": "chunk×4→done；cancel 后 3 个事件不再增长；error 事件带信封；销毁即中止上游",
-      "ms": 429
+      "ms": 402
     },
     {
       "id": "G22",
       "name": "模型选择**按次解析**：配置从「无多模态」变「有多模态」后同一个 client 立刻生效",
       "ok": true,
       "detail": "无多模态→拒；更新配置后同一 client → model=openclaw/main；快照路径仍可用",
-      "ms": 11
+      "ms": 4
     },
     {
       "id": "G23",
       "name": "响应头**之前**中止也按契约 resolve aborted:true（不再 reject 成超时）",
       "ok": true,
       "detail": "aborted=true，text 空，迭代器干净收尾",
-      "ms": 3
+      "ms": 1
     },
     {
       "id": "G24",
       "name": "调用失败后作废就绪缓存：ensureReady 重新探活/拉起（不再回陈旧快照）",
       "ok": true,
       "detail": "失败前 starter=0；失败后重新拉起 starter=1（缓存确已作废）",
-      "ms": 41
+      "ms": 8
     },
     {
       "id": "G25",
       "name": "透传助手真接线 destroyed 事件：窗口销毁即中止上游（冷启动静默期也生效）",
       "ok": true,
       "detail": "destroyed → 服务端观测断连，共推 2 个事件后静默",
-      "ms": 454
+      "ms": 450
     },
     {
       "id": "G26",
       "name": "temperature 超范围/非法 → VALIDATION_ERROR（不静默丢）；合法值进请求体",
       "ok": true,
       "detail": "4 个非法值全拒；0.7 进 body",
-      "ms": 8
+      "ms": 3
     },
     {
       "id": "G27",
       "name": "/v1/models 返回 200 但结构不对 → 不算「已开启」（就绪判定不装绿灯）",
       "ok": true,
       "detail": "enabled=false / ready=false / reason=unexpected-response",
-      "ms": 20
+      "ms": 3
     },
     {
       "id": "G17",
       "name": "端点开关默认化：应用生成的配置里 chatCompletions.enabled = true",
       "ok": true,
       "detail": "新装 → enabled=true；二次同步仍 true",
-      "ms": 72
+      "ms": 9
     },
     {
       "id": "G18",
       "name": "老用户迁移：补上开关、其余字段一字不改、幂等（不毁老配置）",
       "ok": true,
       "detail": "开关补齐 + 4 处自定义字段保留 + 二次同步字节一致",
-      "ms": 98
+      "ms": 11
     },
     {
       "id": "G19",
       "name": "#15：meta 不再写非法字段（删 lastTouchedAt；lastTouchedVersion 写真实版本或省略）",
       "ok": true,
       "detail": "lastTouchedAt 已删；lastTouchedVersion=2026.9.4 → 读不到时省略；其它 meta 字段保留",
-      "ms": 151
+      "ms": 13
     },
     {
       "id": "G28",
       "name": "#15 第二处：安装期保底配置不再写非法 meta（真跑 downloadManager）",
       "ok": true,
       "detail": "保底配置无非法 meta；已存在配置不被覆盖",
-      "ms": 95
+      "ms": 9
     },
     {
       "id": "G20",
@@ -216,8 +216,8 @@
       "id": "G21",
       "name": "真 Gateway 只读探活（零 token：只 GET /health）",
       "ok": true,
-      "detail": "端口 3213 探活 200（12ms），兼容面 enabled=false（只读，未调 chat）",
-      "ms": 23
+      "detail": "端口 3213 探活 200（2ms），兼容面 enabled=false（只读，未调 chat）",
+      "ms": 304
     }
   ]
 }

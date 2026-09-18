@@ -42,10 +42,11 @@ import {
   type KnowledgeRow
 } from './knowledgeManager'
 import type { ProjectManager } from './projectManager'
+import { getPlatformRule } from './platformRules'
 
 // ── 常量（§六 / §七 Commit 06 / §十） ─────────────────────────────────────────
 
-/** §四 `contents.platform`：发布平台（xiaohongshu / douyin）；Commit 10 才注入平台规则模板 */
+/** §四 `contents.platform`：发布平台（xiaohongshu / douyin）；Commit 10 起规则模板挂 pack.platformRule */
 export const PLATFORMS = ['xiaohongshu', 'douyin'] as const
 export type Platform = (typeof PLATFORMS)[number]
 
@@ -181,6 +182,8 @@ export interface ContextPack {
   watchlist: PackedWatchWord[]
   customer: string | null
   platform: Platform | null
+  /** Commit 10：该发布平台的规则模板正文；platform 为 null 时也是 null（不进 60% 预算账本） */
+  platformRule: string | null
   task: string | null
   budget: ContextBudget
   dropped: DroppedKnowledge[]
@@ -326,7 +329,9 @@ function watchWordLabel(word: PackedWatchWord): string {
 }
 
 /**
- * Context Pack → 确定性纯文本块（给 07/08 拼请求用；**不含任何平台规则模板**，那属 Commit 10）。
+ * Context Pack → 确定性纯文本块（给 07/08 拼请求用）。
+ * **平台规则模板（Commit 10）不渲染在这里**：它属于 §六 预留的 40%（对话历史/生成/平台规则），
+ * 若并进本块，探针会把模板算进 60% 预算挤掉商家资料；消费方取 `pack.platformRule` 另起区块注入。
  * 组装时的预算账本与这里渲染出的文本同源，因此「账面上没超」在渲染后依然成立（验收 C10 断言）。
  */
 export function renderContextPackText(pack: ContextPack): string {
@@ -436,6 +441,7 @@ export class ContextEngine {
   async buildContextPack(projectId: string, options: BuildContextPackOptions = {}): Promise<ContextPack> {
     const pid = requireId(projectId, 'buildContextPack')
     const platform = normalizePlatform(options?.platform)
+    const platformRule = platform ? getPlatformRule(platform) : null
     const task = optionalPackText(options?.task, 'task')
     const customer = optionalPackText(options?.customer, 'customer')
     const query = optionalQuery(options?.query)
@@ -531,6 +537,7 @@ export class ContextEngine {
       watchlist,
       customer,
       platform,
+      platformRule,
       task,
       budget: { ...budgetSkeleton, mode: probeMode },
       dropped: droppedItems,
@@ -615,6 +622,7 @@ export class ContextEngine {
       watchlist,
       customer,
       platform,
+      platformRule,
       task,
       budget: {
         contextWindowTokens: window,

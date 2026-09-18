@@ -16,8 +16,8 @@
 //   - 生成会话键 `content-<genTaskId>-a<角度>`：三路并行若共用商家 sticky 会话，
 //     同一 user 并发写会话历史会互相穿插（05b 同课）；生成任务也不该污染 Advisor 记忆。
 //   - 生成**走 07 纯文本默认模型**（content 无图请求）；Context Pack 由 06 引擎组装
-//     （business + knowledge + watchlist + platform + task），platform 透传给 pack；
-//     10 才做平台规则模板注入，本提交只把 `platform` 交给引擎与指令文本。
+//     （business + knowledge + watchlist + platform + task）；
+//     Commit 10 起 pack.platformRule 带平台规则模板，生成指令与 prompt 快照都注入该区块。
 //   - 热点 payload（§七 v1.9/v1.10）：`source_topic_id` 溯源 hot_topics.id——
 //     落库前**显式验行存在**（FK 由 DB 保证，但预检能把错误翻成
 //     `VALIDATION_ERROR + reason='source-topic-not-found'` 而不是 FK 天书）；
@@ -33,6 +33,7 @@ import { randomUUID } from 'node:crypto'
 import { AppError, ERROR_CODES } from '../database/errors'
 import type { DatabaseClient } from '../database/database'
 import { PLATFORMS, renderContextPackText, type ContextEngine, type ContextPack, type Platform } from './contextEngine'
+import { renderPackRuleSection } from './platformRules'
 import {
   textPart,
   type GatewayClient,
@@ -107,7 +108,7 @@ export const CONTENT_GUARDRAILS = [
   '1) 价格、套餐、优惠、承诺、卖点、案例——**只能引用下面商家资料里出现过的信息**；',
   '   资料里没有的，宁可写「具体价格到店咨询」这类诚实表述，也不许编一个数字或承诺。',
   '2) 不虚构客户、不虚构效果、不虚构资质；不确定就模糊处理并留一行「（此处资料缺失，建议补充）」。',
-  '3) 成稿即成品：标题 + 正文 + 话题标签（如适用），拿掉指令性文字，不要输出「以下是文案」这类前言。',
+  '3) 成稿即成品：严格按「发布平台规则」规定的结构产出（小红书图文 / 抖音口播三件套），拿掉指令性文字，不要输出「以下是文案」这类前言。',
   '4) 只输出文案成品本身，不要解释、不要代码块围栏、不要多个版本混排。'
 ].join('\n')
 
@@ -712,7 +713,11 @@ export function buildGenerationMessages(
       : '',
     '',
     '——— 商家资料（唯一事实来源） ———',
-    renderContextPackText(pack)
+    renderContextPackText(pack),
+    '',
+    // 规则正文取 pack.platformRule（06 挂载，与 pack 同源）——不用 platform 现查全局模板，
+    // 防 pack 语境与注入规则两条派生链漂移（快照复盘「当时提示词」依赖这个同源）
+    renderPackRuleSection(platform, pack.platformRule)
   ]
     .filter(Boolean)
     .join('\n')
@@ -728,7 +733,9 @@ export function buildPromptSnapshot(pack: ContextPack, platform: Platform, topic
     `【任务】content-draft（平台=${platform}）`,
     `【选题】${topic || '（由模型自选）'}`,
     '',
-    renderContextPackText(pack)
+    renderContextPackText(pack),
+    '',
+    renderPackRuleSection(platform, pack.platformRule)
   ].join('\n')
 }
 

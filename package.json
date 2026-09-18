@@ -23,6 +23,7 @@
     "accept:advisor": "node test/advisor.accept.mjs",
     "accept:scan": "node test/scan.accept.mjs",
     "accept:content": "node test/content.accept.mjs",
+    "accept:platform": "node test/platform.accept.mjs",
     "probe:scan": "node test/scan.probe.mjs",
     "smoke:packaged": "node test/packaged-gateway.smoke.mjs"
   },

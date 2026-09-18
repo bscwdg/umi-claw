@@ -1,0 +1,78 @@
+{
+  "suite": "platform（Commit 10：双平台规则模板注入，打真 platformRules/contextEngine/contentManager/advisorManager）",
+  "startedAt": "2026-09-18T18:28:49.846Z",
+  "finishedAt": "2026-09-18T18:28:50.943Z",
+  "durationMs": 1097,
+  "total": 7,
+  "passed": 7,
+  "failed": 0,
+  "env": {
+    "node": "v24.14.0",
+    "platform": "win32",
+    "arch": "x64",
+    "workerScript": "D:\\work2026\\files\\claw-desktop\\resources\\database\\db-worker.mjs",
+    "runtimeNode": "D:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe"
+  },
+  "bundle": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\platform-rules.mjs",
+  "dataDir": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\platform-1789756127627\\data",
+  "nodePath": "D:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe",
+  "logSample": [
+    "[project] 已创建 9625484f-d301-483e-b64e-f9f6dcf62d4d（10 知秋女装），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\platform-1789756127627\\data\\projects\\9625484f-d301-483e-b64e-f9f6dcf62d4d",
+    "[business] 已创建 project_id=9625484f-d301-483e-b64e-f9f6dcf62d4d",
+    "[content] 新建草稿 39648a2e-1de2-47aa-a0f0-850feabcb36a（project=9625484f-d301-483e-b64e-f9f6dcf62d4d platform=douyin topic=秋款真丝衬衫）",
+    "[content] generate content-1-mu7al8j6 → 39648a2e-1de2-47aa-a0f0-850feabcb36a（platform=douyin，3 路并行，knowledge=1）",
+    "[content] 新建草稿 81a19846-69a3-4310-ab0e-58651ba19714（project=9625484f-d301-483e-b64e-f9f6dcf62d4d platform=xiaohongshu topic=湖滨探店）",
+    "[content] generate content-2-mu7al8od → 81a19846-69a3-4310-ab0e-58651ba19714（platform=xiaohongshu，3 路并行，knowledge=1）"
+  ],
+  "checks": [
+    {
+      "id": "P1",
+      "name": "两套规则齐备：小红书=图文笔记三件套、抖音=口播三件套且写死「不做视频」；均人工复制发布；非法平台 VALIDATION_ERROR",
+      "ok": true,
+      "detail": "两平台模板齐备、边界与合规写死、非法平台拒绝 ✓",
+      "ms": 1
+    },
+    {
+      "id": "P2",
+      "name": "buildGenerationMessages：三角度每路都带本平台规则区块、互不串味；快照含规则；护栏引用平台规则",
+      "ok": true,
+      "detail": "三角度 × 两平台规则注入正确；快照留存 ✓",
+      "ms": 8
+    },
+    {
+      "id": "P3",
+      "name": "pack.platformRule 与模板同源；不带平台为 null；规则不进 60% 预算账本（六键契约不变）",
+      "ok": true,
+      "detail": "platformRule 挂载 + 预算边界 + 六键不变 ✓",
+      "ms": 2
+    },
+    {
+      "id": "P4",
+      "name": "Advisor system：带平台追加规则区块（保留原平台行）；不带平台不出现规则",
+      "ok": true,
+      "detail": "Advisor 规则注入/缺省正确 ✓",
+      "ms": 3
+    },
+    {
+      "id": "P5",
+      "name": "真 generate（抖音）：三路请求都带抖音规则、不串小红书；版本 prompt 快照落库抖音规则",
+      "ok": true,
+      "detail": "三路抖音口径正确 + 版本快照留存 ✓",
+      "ms": 187
+    },
+    {
+      "id": "P6",
+      "name": "真 generate（小红书）：三路请求 + 快照均小红书口径，商家资料不丢",
+      "ok": true,
+      "detail": "三路小红书口径正确 ✓",
+      "ms": 88
+    },
+    {
+      "id": "P7",
+      "name": "规则不上 IPC（§五 边界）/ 不扩 worker 白名单 / 渲染端不直接引主进程模块 / UI 双平台提示齐备",
+      "ok": true,
+      "detail": "规则纯主进程内部数据 + worker 零改动 + UI 提示齐备 ✓",
+      "ms": 2
+    }
+  ]
+}

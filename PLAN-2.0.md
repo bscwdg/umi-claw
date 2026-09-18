@@ -1,12 +1,13 @@
 # Umi Claw 2.0 施工基线（持续记录）
 
 > 本文档是 2.0 的唯一规划基线，随开发进度持续更新。
-> 基线版本：v1.30 ｜ 更新日期：2026-09-18 ｜ 状态：**Commit 00-09（含 05a/05b）均已通过验收；一期剩余 10 / 11 / 12**
+> 基线版本：v1.31 ｜ 更新日期：2026-09-19 ｜ 状态：**Commit 00-10（含 05a/05b）均已通过验收；一期剩余 11 / 12**
 
 ## 修订记录
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| v1.31 | 2026-09-19 | **Commit 10 完成（双平台工作流，主进程 + 渲染端提示，无新表/无新通道/worker 零改动）**：新增 `marketing/platformRules.ts`（小红书=图文笔记三件套、抖音=口播脚本/标题/话题且写死「不做视频」两套模板 + `getPlatformRule`/`renderPlatformRuleSection`，非法平台 VALIDATION_ERROR）；Context Pack 加 `platformRule` 附加字段（§六 六键契约不变；**模板不进 `renderContextPackText`、不占 60% 预算，属预留 40%**）；09 生成每路 user 指令与版本 prompt 快照、08 Advisor system 均注入规则区块；ContentCenter 平台 tabs 下加双平台工作流提示；`accept:platform` **7/7**（P1-P7，打真 4 模块 + 真 Worker + 真 SSE），`typecheck:node`/`web` 0 错，回归 content 12/12 · context 22/22 · advisor 10/10 · db 31/31 · project 18/18 · business 16/16 · knowledge 23/23 · gateway 27/27 · scan 18/18；详见「Commit 10 落点与验收」。**5 条口径**：①规则是主进程内部数据，同 Context Pack 不上 IPC（preload/ipc/白名单三处静态断言）；②两模板互不串味（图文笔记/口播脚本双向断言，P2/P5/P6）；③抖音边界在模板与 UI 双处写死，两平台均人工复制发布（硬规则 10）；④快照拼同一规则区块，「当时提示词」可复盘平台口径；⑤三角度仍各一条独立请求、规则每路必带。⏳ 真界面点击流未做（同 08/09）；模板文案质量待人工试用标定，调优只改 platformRules.ts 一处。另：`package-lock.json` 被 npm 顺带对齐（lock 停在 1.0.0、缺 05a/05b 的 exceljs/mammoth/pdfjs-dist；现 1.1.0 补齐），非本提交新增依赖决策 |
 | v1.30 | 2026-09-18 | **Commit 09 完成（Content Center，主进程 + 渲染端）**：`marketing/contentManager.ts` + `ipc/content.ts` + preload `marketing.content` 面 + `ContentCenter.vue` + store content 切片 + `useContentPrefill.ts`（11 的热点 payload 接收端，路径先行）+ 路由换真页；`accept:content` **12/12**（C1-C12），`typecheck:node`/`web` 0 错，回归 db 31/31 · worker 18/18 · project 18/18 · business 16/16 · knowledge 23/23 · context 22/22 · gateway 27/27 · advisor 10/10 · scan 18/18；详见「Commit 09 落点与验收」。**本提交的 7 条口径**：①一次 3 版 = 三个固定角度（直给/场景/异议）各起一条独立流式请求（temperature 0.8，护栏 system 兜事实），不搞「一次请求要三段」的脆弱拆分；②**先落库后 done**（result resolve 前落版本行，source=ai 必带 prompt 快照；中止/失败/空产出不落版本）；③并发版本号防重（per-contentId promise 链串行化「读最大号→写行」，表上无 UNIQUE 约束）；④会话键 `content-<genTaskId>-a<i>`，三路不共用 sticky、不污染 Advisor 记忆（05b 同课）；⑤**不自动发布**（硬规则 10）：状态机全人工推进，`status→published` 自动补 `published_at`（v1.13 复用状态列），空正文拒发布，退回保留最近发布时刻；⑥停止/切商家/卸载/退出**四路中止**（两路定位 genTaskId/projectId，幂等不双计）；⑦`sourceTopicId` 显式预检（`reason='source-topic-not-found'`），update 白名单不含溯源列（身份不可改）。**§五 content 行补齐至 9 方法**（本提交扩面 3 条：delete / generate:abort / versions，先例 v1.28）。⏳ 真界面点击流未做（本机无桌面通道，同 08）；平台规则模板注入归 10 |
 | v1.29 | 2026-09-18 | **05b 复审收尾（北 7 条裁定）**：①「Commit 05b 落点与验收」代码围栏收口包住全部清单行（首行后误闭合的根因是会话显示截断；knowledgeManager 行的路径前缀实际文件本就完整，非丢字）；②顶部版本行与本行同步——规则：每加一行修订，同一次编辑内更新顶部版本行（v1.22-v1.27 六次漏同步、顶行停在 v1.21，05b 完成消息因此误报过基线状态）；③§五 commitRecognized 改具名 `input` 参数（消除 `title?` 排在必选 `content` 前的 TS 非法形状；字段形状进注释）；④v1.28 行一处形近错字更正为「识别兜底」；⑤AHx 的 `>` 一律按规范表述为 **EOD 结束符**（ISO 32000-1 §7.4.4.1，出现即终止解码，非「非法字符」），PLAN 与 fixture/accept 注释同口径；⑥探针证据回写仓库跟踪文件 `test/probe-scan-render.json`（S13 每次复跑重生成，时间戳 churn 属预期），`.tmp` 落盘不再作基线证据；⑦§七 05a 验收补充的 pdfjs 措辞与 :581 引述统一（删去多余的 worker 定语；worker 打包态 §六 已实测，不是未验项）。 |
 | v1.28 | 2026-09-18 | **Commit 05b 完成（aeb5f75）+ 三项文档漂移拍板落基线**：①**05b 扫描件/资料图 AI 识别兜底**：`marketing/scanRecognizer.ts`（pdfjs 取图 → 零依赖手写 PNG → 逐页流式 multimodal；探针 P1-P4 **PASS → 不降级**）+ `marketing:knowledge:{recognize, recognize:abort, commitRecognized}` + 确认弹窗（价格数字人工核对提示）+ 四路中止；`accept:scan` **18/18**（S13 内置探针复跑），回归 knowledge 23/23 · gateway 27/27 · advisor 10/10 · db 31/31 · context 22/22，两端 typecheck 0 错；详见「Commit 05b 落点与验收」。②**§五 knowledge 行补齐至 11 方法**——漂移自 05a 就存在（§五 只列 6 个，05a 已开 import/pickFile 共 8），一次改齐；§七 05a 清单行同步。③**§七 05a 误导句改写**：「条目标 FILE_PARSE_ERROR 待 05b」与「条目标红可重导入」→「失败信封回传、**不落库行**，reason=scanned-pdf 亮 05b 入口」（与 K9 断言及 05a 完成记录「不落行不落文件」拉齐；注记会被下一个人无视，改原句才断得了根）。④**§六 新增「PDF 内嵌图取图实测」**：v3 对 BI/ID/EI 转译成 `paintImageXObject`+合成 objs 键（img_p0_1），**不发 OPS 86/87**；AHx 的 `>` 是 **EOD 结束符**（ISO 32000-1 §7.4.4.1，出现即终止解码）；证据引 S13/S17 可复跑用例 + fixture 构造脚本（探针复跑回写仓库文件 `test/probe-scan-render.json`）。⑤**顶部基线版本行补上**（停在 v1.21 失联 6 版，每次修订漏同步的惯性要防）。待拍板三项（#26 顺带关闭：05b 已交）经复审建议全批 |
@@ -489,7 +490,7 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 | 05b | 扫描件 AI 识别兜底 —— **✅ 2026-09-18 完成**（探针 PASS，扫描 PDF 全量实现未降级） | 复用 07：扫描 PDF/带文字资料图的「用 AI 识别」显式触发 + 识别结果人工确认后入库；00⑦ 结论为不支持则只做提示（落点与验收见下） | 1.5d | 05a、07（与 08 并行） | | ✅ |
 | 08 | AI Advisor —— **✅ 2026-09-17 完成**（主进程 + 渲染端） | Grounded 营销问答面板（边界见第六节）：Context Pack + SSE + 停止生成 + 事实护栏；对话历史按 00⑥ 结论；**+ Watchlist AI 扩词推荐（候选词生成 + 用户勾选，v1.13 由 04 移入）**（落点与验收见下） | 2d | 06、07 | | ✅ |
 | 09 | Content Center —— **✅ 2026-09-18 完成**（主进程 + 渲染端） | AI 生成（SSE 流式 + **AbortController「停止生成」**，规格同 08：组件卸载/切换必须中止上游）→ 编辑 → 版本（prompt 快照）→ 人工审核；**接收热点雷达结构化 payload 预填充（v1.9），source_topic_id 溯源（v1.10）**；**一次生成 3 个版本供选 + 极简发布标记（v1.12）**（落点与验收见下） | 3d | 06、07、08 | | ✅ |
-| 10 | 双平台工作流 | **小红书 + 抖音**平台适配（两套平台规则模板注入 Context Pack）；抖音一期只做口播脚本/标题/话题标签文案层，不做视频；均人工复制发布 | 2d | 09 | | ⬜ |
+| 10 | 双平台工作流 —— **✅ 2026-09-19 完成**（主进程 + 渲染端提示） | **小红书 + 抖音**平台适配（两套平台规则模板：挂 `pack.platformRule`，注入 09 生成指令/版本快照与 08 Advisor system）；抖音一期只做口播脚本/标题/话题标签文案层，不做视频；均人工复制发布（落点与验收见下） | 2d | 09 | | ✅ |
 | 11 | 热点采集与浏览（🔥 热点雷达） | 数据源 SPIKE（公开聚合源，双平台发布视角）+ collector adapters（只抓取 stdout JSON，硬规则 12）+ hotManager 经 Worker 落库 + 时间差定时/唤醒补检/打开即刷 + 三表 + **同源内**去重 + 生命周期 + 采样保留(24 条)/落榜清理(7 天) + 数据源状态条 + 雷达页（近 24h/Top20/平台筛选；「带去 Content Center」09 前占位）；**安装包内 collector 冒烟：复用 obsidianManager.getScriptPath 的 dev/安装包（process.resourcesPath）路径解析，不改打包配置**；**节点日历自建 adapter（origin=calendar）（v1.12）**；不依赖 Gateway | 3d | 02（可与 03-06 并行） | | ⬜ |
 | 12 | AI 商家匹配 | 当前 project × 平台懒评分（≤30 条/次、近 7 天在榜、24h TTL；**待评超 30 条按 heat 取前 30，每次打开雷达续评一批直到评完**）+ JSON 落库 + 部分失败容错 + 整体失败降级裸榜 + 分组（🔥/👀/❌ + **⏳ 待分析**）+ 手动重新分析 + 事实护栏；**雷达顶部「今日建议」摘要（1 条主推 + 理由 + 时机）（v1.12）** | 2d | 06、07、11 | | ⬜ |
 
@@ -794,6 +795,47 @@ test/content.accept.mjs + `npm run accept:content`   12 项验收（C1-C12；打
 
 过程留痕：C4 首轮把 contents 行数基线取在 `generate` 之后，而 generate 开头就落草稿（三路共写载体），
 期望 +3 实际 +2 假红——计数基线已改为 generate 之前取（注释在用例内，防止复犯）。
+
+### Commit 10 落点与验收（✅ 2026-09-19）
+
+```text
+electron/main/marketing/platformRules.ts   新增：双平台规则纯数据模块（PLATFORM_LABELS + 小红书/抖音两套模板 + getPlatformRule/getPlatformScope/renderPlatformRuleSection；非法平台 VALIDATION_ERROR；不 import electron、不发 HTTP、不落库）
+electron/main/marketing/contextEngine.ts    + ContextPack.platformRule 附加字段（platform=null 则 null；§六 CONTEXT_PACK_KEYS 六键不变）；模板**不进 renderContextPackText**（不占 60% 预算，属预留 40%）
+electron/main/marketing/contentManager.ts   + buildGenerationMessages 每路 user 末尾注入「发布平台规则」区块；buildPromptSnapshot 同步（版本「当时提示词」复盘得到平台口径）；护栏第 3 条改指平台规则结构
+electron/main/marketing/advisorManager.ts   + buildSystemPrompt 带平台时追加同一规则区块（保留原「本次面向的发布平台：id」行，A2 口径不变）
+src/views/marketing/ContentCenter.vue       + 平台 tabs 下工作流提示（小红书=图文笔记三件套不产图；抖音=口播三件套、写死不做视频；均自行人工复制发布）
+package.json                                + accept:platform 脚本
+test/platform.accept.mjs + `npm run accept:platform`   7 项验收（P1-P7；打真 platformRules/contextEngine/contentManager/advisorManager + 真 DB Worker + 真 Node SSE 假 Gateway）
+```
+
+**验收（独立复跑，非自述）**：`accept:platform` **7/7**；`typecheck:node` / `typecheck:web` 0 错；
+回归 `accept:content` **12/12**、`accept:context` **22/22**、`accept:advisor` **10/10**、
+`accept:db` **31/31**、`accept:project` **18/18**、`accept:business` **16/16**、
+`accept:knowledge` **23/23**、`accept:gateway` **27/27**、`accept:scan` **18/18** 均不受影响
+（结果 JSON 均为同日复跑回写）。
+
+**关键设计决策**
+
+- **规则是主进程内部数据，不上 IPC**：与 Context Pack 同边界（§五 v1.20），preload 无新面、
+  content/advisor IPC 零改动、**db-worker 白名单零扩展、11 张表不变**（P7 三处静态断言）；
+  渲染端只有一行写死的工作流提示文案，不引主进程模块。
+- **模板不进 60% 预算**：§六 预留 40% 本就包含「平台规则」；`renderContextPackText` 不含模板，
+  预算探针账本因此与 06 完全一致——P3 用 2 万字假模板断言渲染 token 分毫不变，规则再长也挤不掉商家资料。
+- **互不串味**：小红书模板只讲图文笔记（标题/正文/话题），抖音模板只讲口播三件套（口播脚本/标题/话题，
+  写死「不做视频」）；P2（纯函数 × 三角度 × 两平台）与 P5/P6（端到端请求体与落库快照）双向断言
+  「我有他无」，防止以后改模板时互相污染。
+- **快照同源**：`buildPromptSnapshot` 在 Pack 之后拼同一规则区块——版本「当时提示词」能复盘
+  当时的平台口径（§四 v1.10 prompt 快照职责的延伸，C3 旧断言「快照带平台」依旧绿）。
+- **抖音边界双处写死**：模板正文 + UI 提示都明示「一期只做文案层、不做视频」「人工复制发布」，
+  不留给生成端自由发挥；两平台都不自动发布（硬规则 10，09 状态机不变）。
+- **三角度机制不动**：仍是直给/场景/异议各一条独立流式请求（09 口径①），规则区块每路必带；
+  temperature、会话键 `content-<genTaskId>-a<i>`、四路中止全部维持。
+
+⏳ **未覆盖 / 已知风险**：①真界面点击流未做（本机无桌面通道，同 08/09）；②模板文案的实际出稿质量
+（字数/结构/合规遵守度）只能人工试用标定，后续调优只改 `platformRules.ts` 一处、P1 关键词随之更新；
+③Advisor 面板不传平台时不带规则（设计如此，顾问问答不挑平台）；④`package-lock.json` 本次被 npm
+顺带对齐（committed lock 停在 1.0.0、缺 05a/05b 引入的 exceljs/mammoth/pdfjs-dist；现对齐 1.1.0 并补齐三项），
+非本提交的依赖决策，提交时可单列或并入，不影响运行时。
 
 ### Commit 06 落点与验收（✅ 2026-09-16）
 

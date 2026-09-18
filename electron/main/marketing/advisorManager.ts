@@ -27,6 +27,7 @@ import {
   type ContextPack,
   type Platform
 } from './contextEngine'
+import { renderPackRuleSection } from './platformRules'
 import type { GatewayClient, GatewayChatMessage, GatewayStreamHandle, GatewayUsage } from '../gatewayClient'
 
 /** 提问长度上限（防把整篇文档粘进来；顾问问题是短问句） */
@@ -137,7 +138,8 @@ export class AdvisorManager {
   buildSystemPrompt(pack: ContextPack, platform: Platform | null): string {
     const parts = [ADVISOR_GUARDRAILS, '', '——— 以下是这位商家的资料 ———', renderContextPackText(pack)]
     if (platform) {
-      parts.push('', `本次面向的发布平台：${platform}`)
+      // 规则正文取 pack.platformRule（与 pack 同源；ask() 里两者由同一 platform 构建）
+      parts.push('', `本次面向的发布平台：${platform}`, '', renderPackRuleSection(platform, pack.platformRule))
     }
     const missing = pack.businessCompleteness.missing
     parts.push(
