@@ -49,6 +49,7 @@ import { createAdvisorManager, type AdvisorManager } from './marketing/advisorMa
 import { createScanRecognizer, type ScanRecognizer } from './marketing/scanRecognizer'
 import { createContentManager, type ContentManager } from './marketing/contentManager'
 import { createHotManager, type HotManager } from './marketing/hotManager'
+import { createHotScoreManager, type HotScoreManager } from './marketing/hotScoreManager'
 import {
   createGatewayClient,
   detectMultimodalCapability,
@@ -103,6 +104,7 @@ let marketingScanRecognizer: ScanRecognizer | null = null
 let marketingContentManager: ContentManager | null = null
 // marketing 热点雷达（Commit 11）：collector 短命子进程 + DB Worker，构造零 IO 副作用。
 let marketingHotManager: HotManager | null = null
+let marketingHotScoreManager: HotScoreManager | null = null
 // 热点后台 tick 定时器（退出时清掉，避免 before-quit 清理途中又起一轮 collector）
 let hotTickTimer: ReturnType<typeof setInterval> | null = null
 
@@ -730,6 +732,24 @@ function createMarketingHotManager(): HotManager {
   return manager
 }
 
+// ─── marketing 热点 AI 评分 wiring（Commit 12） ────────────────────────────────
+
+/**
+ * 构造热点评分器（Commit 12）：注入 02 DB（project_hot_topics 缓存）+ 06 Context Engine
+ * （评分唯一事实来源）+ 07 Gateway（唯一出站）。懒评分、24h TTL、每批 ≤30；
+ * 采集与评分分离——网关不可用时热点榜本身（11）照常工作。零 IO 副作用，调用 scoreBatch 才花钱。
+ */
+function createMarketingHotScoreManager(): HotScoreManager {
+  const scoreManager = createHotScoreManager({
+    database: marketingDatabase!,
+    contextEngine: getMarketingContextEngine(),
+    gateway: getMarketingGatewayClient(),
+    logger: (message) => console.log(message)
+  })
+  console.log('[hot-score] 热点 AI 评分就绪（Project × 平台懒评分，24h TTL，每批 ≤30）')
+  return scoreManager
+}
+
 // ─── IPC 处理器 ───────────────────────────────────────────────────────────────
 
 function registerIpcHandlers(): void {
@@ -1215,7 +1235,7 @@ function registerIpcHandlers(): void {
   registerContentIpc(marketingContentManager!)
 
   // ── marketing 热点雷达（Commit 11：list/get/refresh；score 归 12） ──
-  registerHotIpc(marketingHotManager!)
+  registerHotIpc(marketingHotManager!, marketingHotScoreManager!)
 }
 
 // ─── 推送日志到渲染进程 ────────────────────────────────────────────────────────
@@ -1372,6 +1392,8 @@ app.whenReady().then(() => {
   marketingContentManager = createMarketingContentManager()
   // marketing 热点雷达（Commit 11）：零 IO 副作用，首次 tick/打开页面才拉 collector
   marketingHotManager = createMarketingHotManager()
+  // marketing 热点 AI 评分（Commit 12）：懒评分，打开雷达按批评，零 IO 副作用
+  marketingHotScoreManager = createMarketingHotScoreManager()
   // 注入 Obsidian MCP 配置生成器：_syncOpenClawConfig 写回 openclaw.json 时调用
   configManager.setObsidianMcpInjector(() => obsidianManager.buildMcpServerConfig())
 

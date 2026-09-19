@@ -23,6 +23,7 @@ import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { AppError, ERROR_CODES } from '../database/errors'
 import type { DatabaseClient } from '../database/database'
+import { listAllRows, compareHeatRank } from './hotShared'
 
 // ── 常量（§六 / §七 Commit 11） ───────────────────────────────────────────────
 
@@ -531,7 +532,7 @@ export class HotManager {
     )
 
     // 分页拉全（C1：limit 5000 截断后旧指纹走 INSERT 必撞 UNIQUE，整轮采集永久卡死）
-    const existingRows = await this.listAllRows<HotTopicRow>('hot_topics', {
+    const existingRows = await listAllRows<HotTopicRow>(this.database, 'hot_topics', {
       source_platform: source.sourcePlatform
     })
     const byFingerprint = new Map<string, HotTopicRow>()
@@ -597,7 +598,7 @@ export class HotManager {
         } catch (e) {
           // C1 防线：分页之外仍有并发/异常漏网时，UNIQUE 冲突回退「按指纹查存量→更新」，不炸整轮
           if (!(e as { code?: string })?.code || (e as { code: string }).code !== 'CONFLICT') throw e
-          const dup = await this.listAllRows<HotTopicRow>('hot_topics', {
+          const dup = await listAllRows<HotTopicRow>(this.database, 'hot_topics', {
             source_platform: source.sourcePlatform,
             fingerprint
           })
@@ -665,28 +666,6 @@ export class HotManager {
   }
 
   /**
-   * 分页拉全一张表（worker 单次硬上限 5000）。
-   * 采集/清理路径绝不能假设「5000 行装得下」：截断会让旧指纹走 INSERT 撞 UNIQUE（C1）、
-   * 引用集漏判击穿 v1.11 例外（C2）、雷达漏行（A5）。100 页（50 万行）保险丝防失控。
-   */
-  private async listAllRows<T>(table: string, where?: Record<string, unknown>): Promise<T[]> {
-    const BATCH = 5000
-    const MAX_BATCHES = 100
-    const out: T[] = []
-    for (let batch = 0; batch < MAX_BATCHES; batch++) {
-      const rows = await this.database.request<T[]>(`${table}.list`, {
-        where: where ?? {},
-        limit: BATCH,
-        offset: batch * BATCH
-      })
-      const list = Array.isArray(rows) ? rows : []
-      out.push(...list)
-      if (list.length < BATCH) return out
-    }
-    throw new AppError(ERROR_CODES.DB_ERROR, `${table} 行数超过 ${BATCH * MAX_BATCHES}，停止采集以防失控`)
-  }
-
-  /**
    * 按采样序列重判生命周期（复查问题 5：不再全量拉采样表）。
    * 缺测轮 heatNow=null 时直接保阶段（classify 的 null 分支），零查询；
    * 否则只取最近 3 条采样，heatPrev 取其中「本轮之前最近的一条非空热度」
@@ -734,7 +713,7 @@ export class HotManager {
   /** 落榜清理：last_seen_at 超 7 天删除；被 contents.source_topic_id 引用的保留（v1.11） */
   private async cleanupExpired(): Promise<number> {
     const cutoff = this.now() - this.staleTopicMs
-    const all = await this.listAllRows<HotTopicRow>('hot_topics')
+    const all = await listAllRows<HotTopicRow>(this.database, 'hot_topics')
     const expired = (Array.isArray(all) ? all : []).filter((r) => Number(r.last_seen_at) < cutoff)
     if (!expired.length) return 0
 
@@ -742,7 +721,7 @@ export class HotManager {
     // （含 content 正文字段，无法只读 source_topic_id；复查问题 6：α 阶段内容量级小，
     // 每小时一轮可接受；若后期内容量上万，应给 worker 加列投影或单独的引用 id 方法）。
     // C2：分页拉全——5000 截断会漏判最新内容的引用，击穿 v1.11「被引用热点不删」例外
-    const contents = await this.listAllRows<{ source_topic_id: string | null }>('contents')
+    const contents = await listAllRows<{ source_topic_id: string | null }>(this.database, 'contents')
     const referenced = new Set(
       (Array.isArray(contents) ? contents : [])
         .map((c) => c.source_topic_id)
@@ -772,8 +751,9 @@ export class HotManager {
   async listRadar(
     projectId: string,
     // skipCollect=true：只读库不触发采集（「立即刷新」已强制采过一轮，避免全源失败时
-    // last_fetch 未推进又立刻起第二轮，双倍连打端点、按钮卡 ~90s）
-    options: { platform?: string | null; force?: boolean; skipCollect?: boolean } = {}
+    // last_fetch 未推进又立刻起第二轮，双倍连打端点、按钮卡 ~90s）。
+    // windowHours：雷达展示窗（v1.11：默认 24h，可切 72/168）；评分候选窗固定 7 天，与此无关。
+    options: { platform?: string | null; force?: boolean; skipCollect?: boolean; windowHours?: number } = {}
   ): Promise<RadarView> {
     const pid = typeof projectId === 'string' ? projectId.trim() : ''
     if (!pid) {
@@ -797,13 +777,16 @@ export class HotManager {
       }
     }
 
-    const since = this.now() - this.radarWindowMs
-    const rows = await this.listAllRows<HotTopicRow>('hot_topics')
+    const wh = Number(options.windowHours)
+    const windowMs =
+      wh === 72 || wh === 168 ? wh * 60 * 60 * 1000 : this.radarWindowMs
+    const since = this.now() - windowMs
+    const rows = await listAllRows<HotTopicRow>(this.database, 'hot_topics')
     const fresh = (Array.isArray(rows) ? rows : []).filter((r) => Number(r.last_seen_at) >= since)
 
     const scoreWhere: Record<string, string> = { project_id: pid }
     if (platform) scoreWhere.platform = platform
-    const scoreRows = await this.listAllRows<{
+    const scoreRows = await listAllRows<{
       topic_id: string
       match_score: number | null
       platform_fit: number | null
@@ -811,7 +794,7 @@ export class HotManager {
       content_angle: string | null
       lifecycle_advice: string | null
       scored_at: number
-    }>('project_hot_topics', scoreWhere)
+    }>(this.database, 'project_hot_topics', scoreWhere)
     const scoreByTopic = new Map<string, RadarTopic['score']>()
     for (const s of Array.isArray(scoreRows) ? scoreRows : []) {
       scoreByTopic.set(s.topic_id, {
@@ -825,17 +808,8 @@ export class HotManager {
     }
 
     const toRadar = (r: HotTopicRow): RadarTopic => ({ ...r, score: scoreByTopic.get(r.id) ?? null })
-    const cmpBoard = (a: HotTopicRow, b: HotTopicRow): number => {
-      const ha = typeof a.heat === 'number' ? a.heat : -1
-      const hb = typeof b.heat === 'number' ? b.heat : -1
-      if (ha !== hb) return hb - ha
-      const ra = typeof a.rank === 'number' ? a.rank : 9999
-      const rb = typeof b.rank === 'number' ? b.rank : 9999
-      if (ra !== rb) return ra - rb
-      return b.last_seen_at - a.last_seen_at
-    }
 
-    const board = fresh.filter((r) => r.origin !== 'calendar').sort(cmpBoard).map(toRadar)
+    const board = fresh.filter((r) => r.origin !== 'calendar').sort(compareHeatRank).map(toRadar)
     const calendar = fresh
       .filter((r) => r.origin === 'calendar')
       .sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'))

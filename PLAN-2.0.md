@@ -1,12 +1,13 @@
 # Umi Claw 2.0 施工基线（持续记录）
 
 > 本文档是 2.0 的唯一规划基线，随开发进度持续更新。
-> 基线版本：v1.32 ｜ 更新日期：2026-09-19 ｜ 状态：**Commit 00-11（含 05a/05b）均已通过验收；一期剩余 12**
+> 基线版本：v1.33 ｜ 更新日期：2026-09-20 ｜ 状态：**Commit 00-12（含 05a/05b）全部通过验收；一期功能收官，剩整体测试**
 
 ## 修订记录
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| v1.33 | 2026-09-20 | **Commit 12 完成（AI 商家匹配，一期功能收官）**：新增 `electron/main/marketing/hotScoreManager.ts`（注入 DB + 06 ContextEngine + 07 Gateway，**不 import electron、不发裸 HTTP**，与 11 的 hotManager 保持「采集不碰 AI」边界）——①**懒评分**：只评当前 project × 发布平台（xiaohongshu/douyin 各一行缓存，防抖音源热点在小红书虚高适配）近 **7 天在榜 board 热点**（日历节点不花评分钱），**每批 ≤30 条**（超量按 heat/rank 取前 30，渲染端打开雷达自动续批评完），**24h TTL** 内零模型调用短路，手动「重新分析」force 无视 TTL；②**一次非流式 chat 评一批**（temperature 0.2），system=事实护栏（只能依据 Context Pack、资料无据宁低分并写「资料不足」、严禁脑补价格承诺）+ 商家资料 + 平台规则（`renderPackRuleSection`），user=编号热点清单，严格 JSON 数组契约（idx/match_score/platform_fit/reason/content_angle/lifecycle_advice）；③**传输走 SSE 逐帧拼 JSON（自测修正，原方案非流式）**：真网关（127.0.0.1:3213，deepseek-v4-flash 经 OpenClaw）实测 30 条/批详细中文输出约 90-225s，**非流式 120s 整体超时会整批挂掉、续批永不启动**；改 `createChatStream`（只有 chunk 间 120s 空闲超时、无整体超时），独立会话键 `hot-score-<platform>-<uuid>`（每批唯一，同 key 实测会在网关排队导致第二批空闲超时），prompt 收紧输出（reason≤30 字/angle≤25 字/advice≤15 字、紧凑单行 JSON）。④**容错双层**：单条 idx 越界/重复/分数非法/缺字段只计 failed 丢弃留下批，好条目照落 `project_hot_topics.upsert`；整次网关错误（OPENCLAW_NOT_READY 等）**原样透传**、JSON 不可解析/全条目非法抛 VALIDATION_ERROR，渲染端黄条降级裸榜不挡 11 任何功能；**断点续评**：成功批次落库后 scored_at 刷新、TTL 内不再入选，失败条目不落库，下次打开/补试只评未评条目，不重复花钱；store 续批循环加批间退让 1.5s + 单批失败退让 3s 补试一次（真网实测 provider 间歇空闲超时，非确定性故障可当场自愈）；④评分读表与写表均走分页助手（不重引入 5000 截断）；⑤IPC 增 `marketing:hot:score`（§五原契约预留行落地），preload/store 贯通，store `runHotScoring` 续批循环 + 代际令牌（切商家/切平台作废旧循环）+ 同 key single-flight；listRadar 加 `windowHours`（24/72/168，v1.11 时间窗切换，与 7 天评分窗独立）；⑥HotCenter：**四档分组**（🔥值得跟 match≥70 且 fit≥70 双门槛 / 👀观察任一 40-69 / ❌不建议双低 / ⏳待分析，阈值双端静态锁定）+ 分组内按总分排序、组折叠 + **顶部「今日建议」卡**（24h 窗 hot 档取 (match+fit) 最高、平分看 heat/rank，1 主推+理由+时机+一键带去 Content Center，无合格推荐不硬凑）+ 时间窗 tabs + 「重新分析」按钮 + 评分进度/失败可观测。⑦验收新增 `test/hotscore.accept.mjs` **10/10**（S1-S10：候选选取/heat Top30/日历过期排除/Context Pack 真注入、TTL 短路+续批、force、双平台隔离、部分失败、整败透传、垃圾 JSON、纯函数四档/清洗/解析/时机、今日建议排序与窗口、静态契约）；11 的 H12 负向断言（「score 归 12 不开」）更新为已开；双 typecheck 0 错，回归 11 套（hot 16/16、hotscore 10/10 + 既有 10 套）全绿，`npm run build` 通过（HotCenter chunk 18.8→28.6 kB，零新依赖/零新表列/worker 白名单零改）。**真网关冒烟（`test/hotscore.real-smoke.mjs`，复制真实库 73 条真热点到临时副本、造摄影商家、不碰真库不花真商家额度）**：30 条/批 SSE 全量 JSON 解析 0 失败、评分质量符合护栏（弱相关给低分并写「资料不足，鲸鱼摄影非婚纱客片」类理由、无脑补），档位分布 watch/skip 合理、无强相关时今日建议返回 null（宁缺毋滥实测成立）；多轮实测第二批约 1/3 概率撞网关空闲超时（provider 排队），已由「唯一会话键+批间退让+失败补试+断点续评」四重防线覆盖，彻底消除率归一期整体测试继续观察。⏳ 真 Electron GUI 点击流未做（同 08-11，归一期整体测试）；真网耗时偏长（70 条约 3-6 分钟）是后台任务+分批上屏，可接受，若 provider 长期如此可在二期把默认批量从 30 下调（v1.8「≤30」允许）|
 | v1.32 | 2026-09-19 | **Commit 11 完成（热点采集与浏览，主进程 + 渲染端）**：①**SPIKE 结论改写供给线**（证据 `spikes/011-hot-sources/`，可复跑）——官方 `api-hot.imsyy.top` 已 NXDOMAIN、Vercel 镜像被墙、社区镜像全灭；抖音匿名接口被风控不可靠、知乎 401、微博 403、DailyHotApi 上游无小红书；**头条 hot-board 公开 JSON 直连稳定 50 条、B站 popular 公开 JSON 稳定 20 条（均免登录/免 Cookie）**，经用户拍板走**方案 A：内置直连为默认 + 保留 DailyHotApi 聚合协议**（base 可配，缺省**跳过不是失败**，自部署 6688 即插即用；默认路由收敛为 douyin/weibo/zhihu/baidu/kuaishou 五个直连未覆盖的长尾，头条/B站不双线重复抓）；②交付 `resources/collector/`（零 npm 依赖、只 stdout JSONL、不写库不碰 electron）+ `hotManager.ts`（60s tick + ≥60min 时间差 + powerResume + 打开即刷、single-flight、同源指纹+批内包含合并、五档生命周期、24 条采样、7 天落榜清理且 contents 引用例外、listRadar 近 24h board/calendar + 评分 LEFT 关联）+ `ipc/hot.ts` 三通道（list/get/refresh，**score 归 12**）+ preload `marketing.hot` 面 + 主进程 wiring（before-quit abort）+ `HotCenter.vue`（Top20/源筛选/发布视角/状态条三态/日历分区/一键带去 Content Center）+ store hot 切片 + 路由换真页；③**修了两个真 bug**：collector 成功描述符漏 `ok:true`（manager 全误判全源失败）、single-flight check-then-await 竞态（`isDue()` await 后未复查 inFlight，定时 tick 与打开页相撞会双采集）；④验收 `accept:hot` **12/12**（H1-H12，打真 hotManager + 真 collector + 真 Worker + 真 Node http 假端点），双 typecheck 0 错，`npm run build` 通过（HotCenter chunk 产出，extraResources 整目录随包零改动），回归 10 套全绿（content C10 路由护栏由 Placeholder 更新为 HotCenter 后 12/12），真外网冒烟头条 50/B站 20/日历 3；详见「Commit 11 落点与验收」。**5 条口径**：①`source_platform`=榜单出处（toutiao/bilibili/聚合路由名/calendar），成功与失败描述符严格同键；②跨平台同事件不物理合并（v1.9 不变）；③dailyhot 未配置=跳过态，状态条成功/失败/跳过三态分开；④小红书视角明示「综合榜+节点日历」，不假装存在专属榜（v1.12 降级口径）；⑤带去 Content Center 的六字段 payload 已实装，11 阶段 content_angle/lifecycle_advice 恒 null（无评分）。⏳ 真 Electron GUI 点击流未做（同 08/09/10）；SPIKE 清单项「行业命中率 ≥3 条 match≥70」归 12 有评分后量化；打包态 collector 冒烟由 extraResources 静态断言覆盖，win-unpacked CDP 留一期整体测试。**提交前 8 角度复审 11 项已全部修复并补 H13-H16 回归**：A1 exit→close 防 stdio 丢尾、A2 dailyhot 成败描述符同 host、A3 缺测不覆盖旧热度、A4 日历改本地时区；C1/C2/A5 用 listAllRows 分页消灭 5000 截断（另加 UNIQUE 回退防线）、C3 过期节点主动下线、C4/C5 失败可观测与跳过误报、C6 store 竞态令牌（12 前拆雷）、③URL 白名单、⑧定时器退出清理；验收升至 accept:hot 16/16；**第二轮用户复查 8 项亦全部处理**：缺测采样改如实写 null（修假趋势/死代码）、状态条 chip key 去重、listRadar 加 skipCollect 消灭全源失败后双采集、onMounted 容错 + loadError 提示、采样查询从两批全量降为 count+末 3 条/溢出旧行、run-shared.bat 按用户指示不动（提交排除）、产物 churn 按仓库先例；复测 accept:hot 16/16、双 typecheck 0 错、回归 10 套全绿、build 通过、外网冒烟头条 50/B站 20/日历 3 |
 | v1.31 | 2026-09-19 | **Commit 10 完成（双平台工作流，主进程 + 渲染端提示，无新表/无新通道/worker 零改动）**：新增 `marketing/platformRules.ts`（小红书=图文笔记三件套、抖音=口播脚本/标题/话题且写死「不做视频」两套模板 + `getPlatformRule`/`renderPlatformRuleSection`，非法平台 VALIDATION_ERROR）；Context Pack 加 `platformRule` 附加字段（§六 六键契约不变；**模板不进 `renderContextPackText`、不占 60% 预算，属预留 40%**）；09 生成每路 user 指令与版本 prompt 快照、08 Advisor system 均注入规则区块；ContentCenter 平台 tabs 下加双平台工作流提示；`accept:platform` **7/7**（P1-P7，打真 4 模块 + 真 Worker + 真 SSE），`typecheck:node`/`web` 0 错，回归 content 12/12 · context 22/22 · advisor 10/10 · db 31/31 · project 18/18 · business 16/16 · knowledge 23/23 · gateway 27/27 · scan 18/18；详见「Commit 10 落点与验收」。**5 条口径**：①规则是主进程内部数据，同 Context Pack 不上 IPC（preload/ipc/白名单三处静态断言）；②两模板互不串味（图文笔记/口播脚本双向断言，P2/P5/P6）；③抖音边界在模板与 UI 双处写死，两平台均人工复制发布（硬规则 10）；④快照拼同一规则区块，「当时提示词」可复盘平台口径；⑤三角度仍各一条独立请求、规则每路必带。⏳ 真界面点击流未做（同 08/09）；模板文案质量待人工试用标定，调优只改 platformRules.ts 一处。另：`package-lock.json` 被 npm 顺带对齐（lock 停在 1.0.0、缺 05a/05b 的 exceljs/mammoth/pdfjs-dist；现 1.1.0 补齐），非本提交新增依赖决策 |
 | v1.30 | 2026-09-18 | **Commit 09 完成（Content Center，主进程 + 渲染端）**：`marketing/contentManager.ts` + `ipc/content.ts` + preload `marketing.content` 面 + `ContentCenter.vue` + store content 切片 + `useContentPrefill.ts`（11 的热点 payload 接收端，路径先行）+ 路由换真页；`accept:content` **12/12**（C1-C12），`typecheck:node`/`web` 0 错，回归 db 31/31 · worker 18/18 · project 18/18 · business 16/16 · knowledge 23/23 · context 22/22 · gateway 27/27 · advisor 10/10 · scan 18/18；详见「Commit 09 落点与验收」。**本提交的 7 条口径**：①一次 3 版 = 三个固定角度（直给/场景/异议）各起一条独立流式请求（temperature 0.8，护栏 system 兜事实），不搞「一次请求要三段」的脆弱拆分；②**先落库后 done**（result resolve 前落版本行，source=ai 必带 prompt 快照；中止/失败/空产出不落版本）；③并发版本号防重（per-contentId promise 链串行化「读最大号→写行」，表上无 UNIQUE 约束）；④会话键 `content-<genTaskId>-a<i>`，三路不共用 sticky、不污染 Advisor 记忆（05b 同课）；⑤**不自动发布**（硬规则 10）：状态机全人工推进，`status→published` 自动补 `published_at`（v1.13 复用状态列），空正文拒发布，退回保留最近发布时刻；⑥停止/切商家/卸载/退出**四路中止**（两路定位 genTaskId/projectId，幂等不双计）；⑦`sourceTopicId` 显式预检（`reason='source-topic-not-found'`），update 白名单不含溯源列（身份不可改）。**§五 content 行补齐至 9 方法**（本提交扩面 3 条：delete / generate:abort / versions，先例 v1.28）。⏳ 真界面点击流未做（本机无桌面通道，同 08）；平台规则模板注入归 10 |
@@ -494,7 +495,7 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 | 09 | Content Center —— **✅ 2026-09-18 完成**（主进程 + 渲染端） | AI 生成（SSE 流式 + **AbortController「停止生成」**，规格同 08：组件卸载/切换必须中止上游）→ 编辑 → 版本（prompt 快照）→ 人工审核；**接收热点雷达结构化 payload 预填充（v1.9），source_topic_id 溯源（v1.10）**；**一次生成 3 个版本供选 + 极简发布标记（v1.12）**（落点与验收见下） | 3d | 06、07、08 | | ✅ |
 | 10 | 双平台工作流 —— **✅ 2026-09-19 完成**（主进程 + 渲染端提示） | **小红书 + 抖音**平台适配（两套平台规则模板：挂 `pack.platformRule`，注入 09 生成指令/版本快照与 08 Advisor system）；抖音一期只做口播脚本/标题/话题标签文案层，不做视频；均人工复制发布（落点与验收见下） | 2d | 09 | | ✅ |
 | 11 | 热点采集与浏览（🔥 热点雷达） —— **✅ 2026-09-19 完成**（主进程 + 渲染端） | SPIKE 改写供给线（公共聚合实例全灭→头条/B站官方公开 JSON **直连为默认**，聚合协议保留可配；见 v1.32）+ collector adapters（只抓取 stdout JSON，硬规则 12）+ hotManager 经 Worker 落库 + 时间差定时/唤醒补检/打开即刷（single-flight）+ 三表（02 已建，worker 零改）+ **同源内**去重 + 生命周期 + 采样保留(24 条)/落榜清理(7 天，contents 引用例外) + 数据源状态条（成功/失败/跳过三态）+ HotCenter 雷达页（近 24h/Top20/源筛选/发布视角；「带去 Content Center」已实装六字段 payload）；节点日历自建 adapter（origin=calendar）；extraResources 整目录随包零改；不依赖 Gateway（落点与验收见下） | 3d | 02（可与 03-06 并行） | | ✅ |
-| 12 | AI 商家匹配 | 当前 project × 平台懒评分（≤30 条/次、近 7 天在榜、24h TTL；**待评超 30 条按 heat 取前 30，每次打开雷达续评一批直到评完**）+ JSON 落库 + 部分失败容错 + 整体失败降级裸榜 + 分组（🔥/👀/❌ + **⏳ 待分析**）+ 手动重新分析 + 事实护栏；**雷达顶部「今日建议」摘要（1 条主推 + 理由 + 时机）（v1.12）** | 2d | 06、07、11 | | ⬜ |
+| 12 | AI 商家匹配 | 当前 project × 平台懒评分（≤30 条/次、近 7 天在榜、24h TTL；**待评超 30 条按 heat 取前 30，每次打开雷达续评一批直到评完**）+ JSON 落库 + 部分失败容错 + 整体失败降级裸榜 + 分组（🔥/👀/❌ + **⏳ 待分析**）+ 手动重新分析 + 事实护栏；**雷达顶部「今日建议」摘要（1 条主推 + 理由 + 时机）（v1.12，✅ 已落地）** —— **✅ 2026-09-20 完成（落点与验收见下）** | 2d | 06、07、11 | | ✅ |
 
 顺序备注：00 必须第一；**01 与 02 互不依赖、可并行**；03/04/05 依赖 02；06 必须在 00 结论之后；07 之后插入 05b（可与 08 并行），08/09/10 顺序推进；**11 是纯工程，02 完成后即可与 03-06 并行（跳转按钮占位到 09）；12 必须在 06/07/11 之后**。一期做完再整体测试，后续迭代优化。
 
@@ -944,6 +945,61 @@ test/hot.accept.mjs + package.json        16 项验收（H1-H16；H13-H16 为提
 冒烟（随包事实由 H12 extraResources/双路径静态断言覆盖，留一期整体测试）；③热点排序依赖各平台自报热度数值，
 跨平台数值口径不可直接比较（头条数万级 vs B站播放量），11 仅按数值降序展示，「哪个平台最火」的严格对比留二期 cluster；
 ④抖音/微博等长尾的实际可取性取决于自部署实例质量，默认状态下雷达只有头条/B站/日历三线，这是合规红线下的有意取舍。
+
+### Commit 12 落点与验收（✅ 2026-09-20）
+
+```text
+electron/main/marketing/hotShared.ts        新增：listAllRows 分页拉全 + compareHeatRank（采集/评分单一真相，复审 6/8）
+electron/main/marketing/hotScoreManager.ts 新增：AI 懒评分（注入 DB+ContextEngine+Gateway；不 import electron、不发裸 HTTP）
+                                           候选选取（近 7 天 board、日历不评、heat Top30）/ 24h TTL / force /
+                                           一次 SSE 调用评一批（逐帧拼 JSON；护栏+资料+平台规则 prompt）/
+                                           双层容错（单条丢弃、整败抛错信封）/ upsert project_hot_topics /
+                                           纯函数 scoreTier/coerceScore/parseScoreItems/timingFor/pickTodaySuggestion
+electron/main/marketing/hotManager.ts      listRadar 加 windowHours（24/72/168）；采集侧零改动，评分经 LEFT 关联自动可见
+electron/main/ipc/hot.ts                   marketing:hot:score 通道（registerHotIpc 加 scoreManager 参数）
+electron/preload/index.ts                  hot.score；hot.list options 加 windowHours
+electron/main/index.ts                     createMarketingHotScoreManager wiring（02 DB + 06 引擎 + 07 网关注入）
+src/stores/marketing.ts                    runHotScoring 续批循环 + 代际令牌 + 同 key single-flight；
+                                           hotScoring/hotScoreError/hotSuggestion/hotScoreProgress；切平台清旧建议
+src/views/marketing/HotCenter.vue          四档分组（🔥/👀/❌/⏳，双门槛）+ 今日建议卡 + 时间窗 tabs +
+                                           「重新分析」+ 评分进度/失败黄条；分组阈值与后端静态锁定
+test/hotscore.accept.mjs + accept:hotscore 14 项验收（真 hotScoreManager + 真 ContextEngine + 真 Worker + 假 Gateway）
+```
+
+**评分契约（v1.8/v1.9/v1.11/v1.12 落地口径）**
+
+- **懒评分、不 fan-out**：只对当前 project × 当前发布平台评；热点全局共享、评分按 project×平台缓存；
+  候选窗固定近 7 天在榜 board 热点，与展示窗（24h/3d/7d 可切）相互独立；日历节点是确定要跟的备稿节点，不评。
+- **每批 ≤30、续批评完**：待评超 30 按 heat（再 rank）取前 30；store 打开雷达自动续批，remaining=0 停；
+  24h TTL 内打开只走 DB（零模型调用），仍返回最新「今日建议」；手动「重新分析」force 无视 TTL（首批 30 + 续批）。
+- **一次调用一批（SSE 传输，自测修正）**：走 `createChatStream` 逐帧拼完整 JSON（temperature 0.2）
+  ——真网实测 30 条详细中文评分 90-225s，非流式 120s 整体超时会整批挂；流式只有 chunk 空闲超时。
+  会话键每批一个 `hot-score-<platform>-<uuid>`（不进 Advisor sticky 历史、不互相排队）；写死文本模型。
+- **批间韧性**：批间退让 1.5s；单批失败退让 3s 补试一次、再败显黄条终止；成功批次 TTL 内不重评，
+  天然断点续评（见 v1.33 真网冒烟记录）。
+- **双层容错**：坏条目（idx 越界/重复/分数非 0-100 整数/缺双分）只计 failed、留下批评，好条目照落；
+  整次网关错误原样透传错误码（前端据此显示黄条、榜单照常用）、整包不可解析或全条目非法抛 VALIDATION_ERROR。
+- **四档分组（展示层，数字全保留）**：🔥 match≥70 **且** fit≥70（双门槛，防高相关低适配误推）；
+  👀 任一 40-69；❌ 双 <40；⏳ 未评分。阈值在前后端两处静态断言锁定（hotscore S10）。
+- **今日建议**：24h 窗内 hot 档取 (match+fit) 最高、平分看 heat/rank；reason 用评分理由，
+  timing 优先模型 lifecycle_advice、缺失按本地五档生命周期兜底；无合格推荐返回 null（宁缺毋滥）。
+- **边界**：hotManager 仍不引用 GatewayClient（S10 静态断言）；project_hot_topics 仍是 02 封板的 9 列；
+  worker 白名单零改（走既有 upsert/list/count）；零新 npm 依赖；评分不触发任何采集。
+
+**验收（独立复跑，非自述）**：`accept:hotscore` **14/14**（S1-S11 + 第三轮复审新增 S12 force 水位/S13 漏回续批/S14 Pack 缓存；S11 打通评分→listRadar LEFT 关联/三时间窗/project×平台隔离/增量只评新条）；`accept:hot` 在 H12 改为「score 已随 12 开通」后仍 **16/16**；
+`typecheck:node` / `typecheck:web` 0 错；回归 db/project/business/knowledge/context/gateway/advisor/scan/content/platform
+十套全绿；`npm run build` 通过；**真网关冒烟通过**（real-smoke 脚本，真 73 条热点副本，30 条/批 JSON 解析 0 失败、护栏质量与四档分布合理，详见 v1.33 行；间歇空闲超时由四重防线覆盖，彻底消除率继续观察）。⏳ 真 Electron GUI 点击流同 08-11 留一期整体测试。
+
+**第三轮复审修复（2026-09-20，第三方 10 条：1-4/6-10 全修，问题 5 run-shared.bat 本机路径用户拍板不动，提交时排除）**
+
+- **① 重新分析只重评第一批 → force 水位**：force 调用在内存记 `pid|平台 → now` 水位，续批虽改回非 force，评分早于水位的旧分仍判 stale；配合 remaining 真实重算，35/600 条都能跨续批全部重评，又不会把 TTL 新鲜行无限重评（S12 锁定）。
+- **② 续批捕获旧 windowHours → getter**：`runHotScoring` 改收 `getWindowHours()`，每批评完按当前 tab 重读榜单，多批评分期间切窗不再回退视图。
+- **③ 非法条目提前终止续批 → remaining 落库后重算**：remaining 改为「落库后仍 stale 的候选数」，模型漏回/非法条目计入（S5 期望值由错误的 30 修正为 33；S13 锁定漏回 3 条时 remaining=8 且好条目不重复评分）。
+- **④ guard 耗尽静默退出 → 可见提示**：20 批（>600 候选）耗尽后置 `hotScoreError` 黄条「已分析 N/总数，其余稍后重新打开雷达自动续评」，进度保留。
+- **⑥/⑧ 分页与排序单一真相**：新建 `hotShared.ts`（`listAllRows` 5000 分页 + 100 页保险丝、`compareHeatRank`），hotManager 删私有拷贝与 cmpBoard；选批/今日建议平分兜底共用；HotCenter 的 cmpScore 平分兜底补齐 rank→last_seen 同口径（跨 tsconfig 不能共享代码，S10 静态锁定双份一致）。
+- **⑦ 每批全表扫+重建 Pack → 60s TTL 缓存**：按 `pid|平台` 缓存热点表与 Context Pack（`project_hot_topics` 仍每批重读保证 stale 新鲜）；`cacheTtlMs:0` 可关，S14 锁定两批只构建 1 次 Pack、过期 force 重建。
+- **⑨ 30 次串行写库 → `Promise.all` 一排并发**（client 按请求 id 多路复用，worker 单连接串行落库，upsert 幂等、主键互不相同）。
+- **⑩ 展开态跨视角串用 → 切发布平台/切商家重置 `expandedGroups` 与 `sourceFilter`**。
 
 ### Commit 06 落点与验收（✅ 2026-09-16）
 

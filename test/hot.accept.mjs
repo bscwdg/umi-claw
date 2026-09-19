@@ -669,7 +669,10 @@ try {
       assert(ipcSrc.includes(ch), 'IPC 注册通道 ' + ch)
       assert(preloadSrc.includes("'" + ch + "'"), 'preload 暴露通道 ' + ch)
     }
-    assert(!/marketing:hot:score/.test(preloadSrc), 'score 通道归 Commit 12，11 不开')
+    // score 通道已随 Commit 12 开通（hotscore.accept.mjs 专测）；11 的 list/get/refresh 三通道仍在
+    for (const ch of ['marketing:hot:list', 'marketing:hot:score']) {
+      assert(preloadSrc.includes(ch), 'preload 暴露通道 ' + ch)
+    }
 
     const workerSrc = read('resources/database/db-worker.mjs')
     for (const t of ['hot_topics:', 'hot_topic_samples:', 'project_hot_topics:']) {

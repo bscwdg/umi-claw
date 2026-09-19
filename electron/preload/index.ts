@@ -324,12 +324,14 @@ const api = {
       versions: (projectId: string, id: string) => ipcRenderer.invoke('marketing:content:versions', projectId, id)
     },
     // Commit 11：热点雷达。list 打开页看时间差决定是否立即采集（force 强制）；
-    // score 归 Commit 12，暂不暴露。
+    // Commit 12：score 懒评分（按批续评，force=手动重新分析）。
     hot: {
-      list: (projectId: string, options?: { platform?: string | null; force?: boolean; skipCollect?: boolean }) =>
+      list: (projectId: string, options?: { platform?: string | null; force?: boolean; skipCollect?: boolean; windowHours?: number }) =>
         ipcRenderer.invoke('marketing:hot:list', projectId, options),
       get: (topicId: string) => ipcRenderer.invoke('marketing:hot:get', topicId),
-      refresh: () => ipcRenderer.invoke('marketing:hot:refresh')
+      refresh: () => ipcRenderer.invoke('marketing:hot:refresh'),
+      score: (projectId: string, platform: string, options?: { force?: boolean }) =>
+        ipcRenderer.invoke('marketing:hot:score', projectId, platform, options)
     }
   },
 

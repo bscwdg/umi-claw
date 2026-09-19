@@ -514,6 +514,29 @@ export interface HotRadarView {
   calendar: HotTopic[]
 }
 
+/** marketing:hot:score 单批结果（Commit 12） */
+export interface HotScoreBatchResult {
+  scored: number
+  failed: number
+  total: number
+  remaining: number
+  forced: boolean
+  suggestion: HotTodaySuggestion | null
+}
+
+/** 雷达顶部「今日建议」（v1.12：1 条主推 + 理由 + 时机） */
+export interface HotTodaySuggestion {
+  topicId: string
+  title: string
+  sourcePlatform: string
+  url: string | null
+  lifecycle: string | null
+  matchScore: number
+  platformFit: number
+  reason: string
+  timing: string
+}
+
 function toHotRadar(data: any): HotRadarView {
   return {
     collected: data?.collected ?? null,
@@ -521,6 +544,21 @@ function toHotRadar(data: any): HotRadarView {
     lastError: typeof data?.lastError === 'string' ? data.lastError : null,
     board: Array.isArray(data?.board) ? data.board : [],
     calendar: Array.isArray(data?.calendar) ? data.calendar : []
+  }
+}
+
+function toSuggestion(data: any): HotTodaySuggestion | null {
+  if (!data || typeof data !== 'object' || typeof data.topicId !== 'string') return null
+  return {
+    topicId: data.topicId,
+    title: String(data.title ?? ''),
+    sourcePlatform: String(data.sourcePlatform ?? ''),
+    url: typeof data.url === 'string' ? data.url : null,
+    lifecycle: typeof data.lifecycle === 'string' ? data.lifecycle : null,
+    matchScore: Number(data.matchScore) || 0,
+    platformFit: Number(data.platformFit) || 0,
+    reason: String(data.reason ?? ''),
+    timing: String(data.timing ?? '')
   }
 }
 
@@ -1677,13 +1715,21 @@ export const useMarketingStore = defineStore('marketing', () => {
   const hotLoading = ref(false)
   const hotRefreshing = ref(false)
   const hotError = ref<string | null>(null)
+  const hotScoring = ref(false)
+  const hotScoreError = ref<string | null>(null)
+  const hotSuggestion = ref<HotTodaySuggestion | null>(null)
+  const hotScoreProgress = ref<{ scored: number; total: number; remaining: number } | null>(null)
   // C6：请求代际令牌。快速切商家 A→B 时，A 的迟到响应不得覆盖 B 的视图
   // （11 评分恒 null 暂无可见症状，12 上线即会「B 页显示 A 的相关度」）。
   let hotCallSeq = 0
+  // Commit 12：评分续批循环的代际令牌（切商家/切平台/手动重评作废旧循环）
+  let hotScoreSeq = 0
+  let scoreInFlight: Promise<void> | null = null
+  let scoreInFlightKey = ''
 
   async function loadHotRadar(
     projectId: string,
-    options?: { platform?: string | null; force?: boolean; skipCollect?: boolean }
+    options?: { platform?: string | null; force?: boolean; skipCollect?: boolean; windowHours?: number }
   ): Promise<HotRadarView> {
     const seq = ++hotCallSeq
     hotLoading.value = true
@@ -1722,11 +1768,126 @@ export const useMarketingStore = defineStore('marketing', () => {
     }
   }
 
+  /**
+   * Commit 12：AI 懒评分续批循环。
+   * 后端每批 ≤30（超量按 heat 取前 30），remaining>0 且本批真评了就续下一批；
+   * 无待评时后端零模型调用直接返回（含今日建议），所以每次打开雷达调一次也不花钱。
+   * 单批失败（真网实测多为网关空闲超时/排队）退让 3s 补试一次，再败才 hotScoreError
+   * 黄条、榜单照常浏览；已落库批次 TTL 内不重评，重试与下次打开都只补未评条目（断点续评）。
+   * 自动评分同 project×平台 single-flight；手动重新分析（force）不复用、立即起一轮。
+   */
+  async function runHotScoring(
+    projectId: string,
+    platform: 'xiaohongshu' | 'douyin',
+    // getWindowHours：每批重读一次时间窗——多批评分要跑几十秒，期间用户切 24h→7d，
+    // 循环结束后若拿启动时的旧值重载榜单，会出现 tab 在新窗、数据却是旧窗（复审 2）
+    options: { force?: boolean; getWindowHours?: () => number } = {}
+  ): Promise<void> {
+    const key = projectId + '|' + platform
+    if (!options.force && scoreInFlight && scoreInFlightKey === key) return scoreInFlight
+    const seq = ++hotScoreSeq
+    const task = (async (): Promise<void> => {
+      hotScoring.value = true
+      hotScoreError.value = null
+      // 切平台后旧平台建议不得滞留（网关冷启动期间新平台首批未回，宁可不显示也不串台）
+      hotSuggestion.value = null
+      hotScoreProgress.value = null
+      let force = options.force === true
+      // 真网实测：30 条/批评分偶发在第二、三批撞网关空闲超时（provider 排队，非确定性错误）。
+      // 已落库条目 scored_at 刚刷新、TTL 内不再入选，故重试只会补未评条目，天然断点续评不重复花钱。
+      let failures = 0
+      const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+      try {
+        let guard = 0
+        while (guard++ < 20) {
+          if (seq !== hotScoreSeq) return
+          let res: IpcEnvelope<HotScoreBatchResult>
+          try {
+            res = (await window.api.marketing.hot.score(
+              projectId,
+              platform,
+              force ? { force: true } : {}
+            )) as IpcEnvelope<HotScoreBatchResult>
+            if (!res?.ok) throw envelopeToError(res, '热点 AI 分析失败')
+          } catch (e) {
+            // 单批失败（多为网关空闲超时/未就绪）：退让后补试一次；再败才显黄条终止，
+            // 已分组的批次不受影响，下次打开雷达仍会从断点续评
+            failures += 1
+            if (seq !== hotScoreSeq) return
+            if (failures >= 2) throw e
+            await delay(3000)
+            if (seq !== hotScoreSeq) return
+            continue
+          }
+          if (seq !== hotScoreSeq) return
+          failures = 0
+          hotSuggestion.value = toSuggestion(res.data.suggestion)
+          hotScoreProgress.value = {
+            scored: res.data.scored,
+            total: res.data.total,
+            remaining: res.data.remaining
+          }
+          // 分数已落库：skipCollect 重读榜单，分组/建议即时归位，不再触发采集
+          try {
+            await loadHotRadar(projectId, {
+              platform,
+              skipCollect: true,
+              windowHours: options.getWindowHours ? options.getWindowHours() : undefined
+            })
+          } catch {
+            /* 榜单重载失败不杀评分循环：分数已落库，下次 reload/打开页自会带上 */
+          }
+          if (seq !== hotScoreSeq) return
+          if (res.data.remaining <= 0 || res.data.scored === 0) break
+          // 续批改回非 force：后端按本轮 force 水位识别未重评条目，TTL 新鲜的不会无限重评
+          force = false
+          // 批间退让：避免背靠背大请求在网关/provider 侧排队触发空闲超时
+          await delay(1500)
+          if (seq !== hotScoreSeq) return
+        }
+        // 复审 4：20 批 guard 耗尽（候选 >600）不能静默结束。保留进度，黄条提示稍后继续；
+        // remaining>0 只可能是耗尽（正常 break 时后端 remaining 已为 0）
+        if (seq === hotScoreSeq) {
+          const progress = hotScoreProgress.value
+          if (progress && progress.total > 0 && progress.remaining > 0) {
+            hotScoreError.value =
+              '热点较多，本轮已分析 ' + Math.max(0, progress.total - progress.remaining) + '/' + progress.total +
+              ' 条；其余 ' + progress.remaining + ' 条稍后重新打开雷达会自动续评。'
+          }
+        }
+      } catch (e) {
+        if (seq === hotScoreSeq) {
+          hotScoreError.value = messageOf(e, '热点 AI 分析失败，榜单照常浏览')
+        }
+      } finally {
+        if (seq === hotScoreSeq) hotScoring.value = false
+      }
+    })()
+    if (!options.force) {
+      scoreInFlight = task
+      scoreInFlightKey = key
+      void task.finally(() => {
+        if (scoreInFlight === task) {
+          scoreInFlight = null
+          scoreInFlightKey = ''
+        }
+      })
+    }
+    return task
+  }
+
   /** 切商家/离开页面时清掉旧视图，防串 */
   function clearHot(): void {
     hotCallSeq += 1
+    hotScoreSeq += 1
     hotRadar.value = null
     hotError.value = null
+    hotScoring.value = false
+    hotScoreError.value = null
+    hotSuggestion.value = null
+    hotScoreProgress.value = null
+    scoreInFlight = null
+    scoreInFlightKey = ''
   }
 
   return {
@@ -1810,6 +1971,12 @@ export const useMarketingStore = defineStore('marketing', () => {
     hotError,
     loadHotRadar,
     refreshHot,
+    // Commit 12：AI 懒评分 + 今日建议
+    hotScoring,
+    hotScoreError,
+    hotSuggestion,
+    hotScoreProgress,
+    runHotScoring,
     clearHot
   }
 })

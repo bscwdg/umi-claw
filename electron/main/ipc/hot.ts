@@ -1,7 +1,7 @@
 // electron/main/ipc/hot.ts —— 热点雷达面 IPC（PLAN-2.0.md Commit 11）
 //
-// §五 hot 面：list(projectId,{platform,force?}) / get(topicId) / refresh()；
-// score(projectId, platform) 归 Commit 12（AI 懒评分），本提交不开通道。
+// §五 hot 面：list(projectId,{platform,force?,skipCollect?,windowHours?}) / get(topicId) /
+// refresh() / score(projectId, platform, {force?})（Commit 12：AI 懒评分，按批续评）。
 // 采集是主进程定时/唤醒触发的后台行为，不经 IPC 直接启动子进程——refresh 只是
 // 「忽略时间差立即采一轮」的薄封装。
 //
@@ -12,13 +12,15 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
 import type { HotManager, RadarView, HotTopicRow, HotCollectStatus } from '../marketing/hotManager'
+import type { HotScoreManager, HotScoreBatchResult } from '../marketing/hotScoreManager'
 
 export type HotIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
 
 export const MARKETING_HOT_CHANNELS = {
   list: 'marketing:hot:list',
   get: 'marketing:hot:get',
-  refresh: 'marketing:hot:refresh'
+  refresh: 'marketing:hot:refresh',
+  score: 'marketing:hot:score'
 } as const
 
 let registeredManager: HotManager | null = null
@@ -39,9 +41,9 @@ function handle(
   ipcMain.handle(channel, fn)
 }
 
-export function registerHotIpc(manager: HotManager): void {
+export function registerHotIpc(manager: HotManager, scoreManager: HotScoreManager): void {
   registeredManager = manager
-  handle(MARKETING_HOT_CHANNELS.list, (_e, projectId: string, options?: { platform?: string | null; force?: boolean; skipCollect?: boolean }) =>
+  handle(MARKETING_HOT_CHANNELS.list, (_e, projectId: string, options?: { platform?: string | null; force?: boolean; skipCollect?: boolean; windowHours?: number }) =>
     wrap<RadarView>(() => registeredManager!.listRadar(projectId, options || {}))
   )
   handle(MARKETING_HOT_CHANNELS.get, (_e, topicId: string) =>
@@ -49,6 +51,11 @@ export function registerHotIpc(manager: HotManager): void {
   )
   handle(MARKETING_HOT_CHANNELS.refresh, () =>
     wrap<HotCollectStatus>(() => registeredManager!.refresh())
+  )
+  handle(
+    MARKETING_HOT_CHANNELS.score,
+    (_e, projectId: string, platform: string, options?: { force?: boolean }) =>
+      wrap<HotScoreBatchResult>(() => scoreManager.scoreBatch(projectId, platform, options || {}))
   )
 }
 

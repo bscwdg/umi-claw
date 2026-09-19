@@ -24,6 +24,7 @@
     "accept:scan": "node test/scan.accept.mjs",
     "accept:content": "node test/content.accept.mjs",
     "accept:hot": "node test/hot.accept.mjs",
+    "accept:hotscore": "node test/hotscore.accept.mjs",
     "accept:platform": "node test/platform.accept.mjs",
     "probe:scan": "node test/scan.probe.mjs",
     "smoke:packaged": "node test/packaged-gateway.smoke.mjs"

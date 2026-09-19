@@ -12,6 +12,14 @@
         </p>
       </div>
       <div class="flex gap-2" v-if="marketing.currentProjectId">
+        <button
+          class="btn"
+          :disabled="marketing.hotScoring"
+          title="忽略 24 小时缓存，让 AI 重新分析当前视角下的全部热点"
+          @click="rescore()"
+        >
+          {{ marketing.hotScoring ? 'AI 分析中…' : '重新分析' }}
+        </button>
         <button class="btn" :disabled="marketing.hotLoading || marketing.hotRefreshing" @click="forceRefresh()">
           {{ marketing.hotLoading || marketing.hotRefreshing ? '采集处理中…' : '立即刷新' }}
         </button>
@@ -70,8 +78,53 @@
         </div>
       </div>
 
+      <!-- 今日建议（v1.12：1 条主推 + 理由 + 时机；评分失败只显黄条，不挡榜单） -->
+      <div v-if="marketing.hotSuggestion" class="card suggest-card">
+        <div class="suggest-head">
+          <span class="suggest-badge">💡 今日建议</span>
+          <a
+            v-if="marketing.hotSuggestion.url"
+            class="title-link suggest-title"
+            @click="openUrl(marketing.hotSuggestion.url!)"
+            >{{ marketing.hotSuggestion.title }}</a
+          >
+          <span v-else class="suggest-title">{{ marketing.hotSuggestion.title }}</span>
+          <span class="badge badge-green">相关 {{ marketing.hotSuggestion.matchScore }}</span>
+          <span class="badge badge-blue">适配 {{ marketing.hotSuggestion.platformFit }}</span>
+        </div>
+        <div class="suggest-body text-sm">
+          <span class="text-muted">理由：</span>{{ marketing.hotSuggestion.reason }}
+          <span class="text-muted" style="margin-left: 12px">时机：</span>{{ marketing.hotSuggestion.timing }}
+        </div>
+        <div class="suggest-actions">
+          <button class="btn btn-sm btn-primary" @click="takeSuggestion()">带去 Content Center</button>
+        </div>
+      </div>
+      <div
+        v-else-if="marketing.hotScoreError"
+        class="card text-sm"
+        style="color: var(--yellow); border-color: var(--yellow)"
+      >
+        ⚠️ {{ marketing.hotScoreError }}
+      </div>
+
       <!-- 视角与数据源筛选 -->
       <div class="card filter-card">
+        <div class="filter-row">
+          <span class="filter-label">时间范围</span>
+          <div class="tabs">
+            <button
+              v-for="w in WINDOW_OPTIONS"
+              :key="w.hours"
+              class="tab"
+              :class="{ on: windowHours === w.hours }"
+              @click="windowHours = w.hours"
+            >
+              {{ w.label }}
+            </button>
+          </div>
+          <span class="text-sm text-muted">AI 只评近 7 天在榜热点；时间窗只改变榜单展示范围</span>
+        </div>
         <div class="filter-row">
           <span class="filter-label">发布视角</span>
           <div class="tabs">
@@ -113,7 +166,18 @@
 
       <!-- 榜单 -->
       <div class="card">
-        <h3>📈 全网热点榜 · 近 24h</h3>
+        <div class="board-head">
+          <h3 style="margin: 0">📈 全网热点榜 · {{ windowLabel }}</h3>
+          <span v-if="marketing.hotScoring" class="text-sm" style="color: var(--green)">
+            AI 分析中…{{ scoringProgress }}
+          </span>
+          <span v-else-if="marketing.hotScoreError" class="text-sm" style="color: var(--yellow)">
+            AI 暂不可用，未评分热点可正常浏览
+          </span>
+          <span v-else-if="filteredBoard.length" class="text-sm text-muted">
+            已按商家相关度 × 平台适配度分组
+          </span>
+        </div>
         <div v-if="marketing.hotLoading && !radar" class="loading-hint text-sm text-muted">采集与加载中…</div>
         <div v-else-if="!filteredBoard.length" class="empty-inline">
           <div style="font-size: 28px">🫙</div>
@@ -121,30 +185,41 @@
           <p class="text-muted text-sm" v-if="radar?.calendar.length">往下看节点日历，节点前备稿正当时。</p>
         </div>
         <template v-else>
-          <div v-for="t in visibleBoard" :key="t.id" class="topic">
-            <span class="rank" :class="rankClass(t.rank)">{{ t.rank ?? '·' }}</span>
-            <div class="topic-main">
-              <div class="topic-title">
-                <a v-if="t.url" class="title-link" @click="openUrl(t.url)">{{ t.title }}</a>
-                <span v-else>{{ t.title }}</span>
-              </div>
-              <div class="topic-meta">
-                <span class="badge badge-blue">{{ sourceLabel(t.source_platform) }}</span>
-                <span v-if="lifecycleMeta(t.lifecycle)" class="badge" :class="lifecycleMeta(t.lifecycle)!.cls">
-                  {{ lifecycleMeta(t.lifecycle)!.label }}
-                </span>
-                <span class="text-sm text-muted">{{ heatText(t.heat) }}</span>
-                <span v-if="t.score?.match_score != null" class="badge badge-green">
-                  相关度 {{ t.score.match_score }}
-                </span>
-              </div>
+          <div v-for="g in groups" :key="g.key" class="tier-group" v-show="g.items.length">
+            <div class="tier-head">
+              <span class="tier-name">{{ g.icon }} {{ g.label }}</span>
+              <span class="text-sm text-muted">{{ g.items.length }} 条 · {{ g.hint }}</span>
             </div>
-            <button class="btn btn-sm btn-primary take-btn" @click="takeToContent(t)">带去 Content Center</button>
-          </div>
-          <div v-if="filteredBoard.length > PAGE_SIZE" class="list-footer">
-            <button class="btn btn-sm" @click="expanded = !expanded">
-              {{ expanded ? '收起，只看 Top ' + PAGE_SIZE : '展开全部 ' + filteredBoard.length + ' 条' }}
-            </button>
+            <div v-for="t in visibleOf(g.key)" :key="t.id" class="topic">
+              <span class="rank" :class="rankClass(t.rank)">{{ t.rank ?? '·' }}</span>
+              <div class="topic-main">
+                <div class="topic-title">
+                  <a v-if="t.url" class="title-link" @click="openUrl(t.url)">{{ t.title }}</a>
+                  <span v-else>{{ t.title }}</span>
+                </div>
+                <div class="topic-meta">
+                  <span class="badge badge-blue">{{ sourceLabel(t.source_platform) }}</span>
+                  <span v-if="lifecycleMeta(t.lifecycle)" class="badge" :class="lifecycleMeta(t.lifecycle)!.cls">
+                    {{ lifecycleMeta(t.lifecycle)!.label }}
+                  </span>
+                  <span class="text-sm text-muted">{{ heatText(t.heat) }}</span>
+                  <template v-if="t.score && t.score.match_score != null">
+                    <span class="badge" :class="tierBadge(t.score.match_score, t.score.platform_fit)">
+                      相关 {{ t.score.match_score }}
+                    </span>
+                    <span class="badge badge-muted">适配 {{ t.score.platform_fit }}</span>
+                  </template>
+                  <span v-else class="badge badge-muted">⏳ 待分析</span>
+                </div>
+                <div v-if="t.score?.reason" class="topic-reason text-sm text-muted">💡 {{ t.score.reason }}</div>
+              </div>
+              <button class="btn btn-sm btn-primary take-btn" @click="takeToContent(t)">带去 Content Center</button>
+            </div>
+            <div v-if="g.items.length > TIER_PAGE" class="list-footer">
+              <button class="btn btn-sm" @click="toggleGroup(g.key)">
+                {{ expandedGroups.has(g.key) ? '收起，只看前 ' + TIER_PAGE + ' 条' : '展开全部 ' + g.items.length + ' 条' }}
+              </button>
+            </div>
           </div>
         </template>
       </div>
@@ -179,11 +254,19 @@ const PUBLISH_PLATFORMS = [
   { key: 'douyin', label: '抖音' }
 ] as const
 
-const PAGE_SIZE = 20
-
 const publishPlatform = ref<'xiaohongshu' | 'douyin'>('xiaohongshu')
 const sourceFilter = ref('')
-const expanded = ref(false)
+const windowHours = ref<number>(24)
+const expandedGroups = ref<Set<string>>(new Set())
+
+const WINDOW_OPTIONS = [
+  { hours: 24, label: '近 24 小时' },
+  { hours: 72, label: '近 3 天' },
+  { hours: 168, label: '近 7 天' }
+] as const
+const windowLabel = computed(
+  () => WINDOW_OPTIONS.find((w) => w.hours === windowHours.value)?.label ?? '近 24 小时'
+)
 const loadError = ref<string | null>(null)
 
 const radar = computed(() => marketing.hotRadar)
@@ -212,9 +295,63 @@ const filteredBoard = computed(() => {
   const board = radar.value?.board ?? []
   return sourceFilter.value ? board.filter((t) => t.source_platform === sourceFilter.value) : board
 })
-const visibleBoard = computed(() =>
-  expanded.value ? filteredBoard.value : filteredBoard.value.slice(0, PAGE_SIZE)
-)
+
+// v1.11 四档分组（阈值与后端 hotScoreManager.scoreTier 静态契约锁定，双端不得漂移）
+type TierKey = 'hot' | 'watch' | 'skip' | 'pending'
+const TIER_DEFS = [
+  { key: 'hot', label: '值得跟', icon: '🔥', hint: '相关度与平台适配都 ≥70，优先跟' },
+  { key: 'watch', label: '观察', icon: '👀', hint: '至少一项在 40-69，可结合排期观察' },
+  { key: 'skip', label: '不建议', icon: '❌', hint: '两项都 <40，与当前商家/平台不匹配' },
+  { key: 'pending', label: '待分析', icon: '⏳', hint: 'AI 尚未评分，打开雷达后每批 30 条自动续评' }
+] as const
+const TIER_PAGE = 10
+
+function tierOf(topic: HotTopic): TierKey {
+  const m = topic.score?.match_score
+  const f = topic.score?.platform_fit
+  if (typeof m !== 'number' || typeof f !== 'number') return 'pending'
+  if (m >= 70 && f >= 70) return 'hot'
+  if (m < 40 && f < 40) return 'skip'
+  return 'watch'
+}
+function tierBadge(match: number | null, fit: number | null): string {
+  if (typeof match !== 'number' || typeof fit !== 'number') return 'badge-muted'
+  if (match >= 70 && fit >= 70) return 'badge-green'
+  if (match < 40 && fit < 40) return 'badge-muted'
+  return 'badge-yellow'
+}
+const groups = computed(() => {
+  const buckets: Record<TierKey, HotTopic[]> = { hot: [], watch: [], skip: [], pending: [] }
+  for (const t of filteredBoard.value) buckets[tierOf(t)].push(t)
+  const cmpScore = (a: HotTopic, b: HotTopic): number => {
+    const sa = (a.score?.match_score ?? 0) + (a.score?.platform_fit ?? 0)
+    const sb = (b.score?.match_score ?? 0) + (b.score?.platform_fit ?? 0)
+    if (sa !== sb) return sb - sa
+    // 平分兜底与后端 hotShared.compareHeatRank 同口径（heat→rank→last_seen），双端不得漂移
+    const ha = a.heat ?? -1
+    const hb = b.heat ?? -1
+    if (ha !== hb) return hb - ha
+    const ra = a.rank ?? 9999
+    const rb = b.rank ?? 9999
+    if (ra !== rb) return ra - rb
+    return (b.last_seen_at ?? 0) - (a.last_seen_at ?? 0)
+  }
+  buckets.hot.sort(cmpScore)
+  buckets.watch.sort(cmpScore)
+  buckets.skip.sort(cmpScore)
+  return TIER_DEFS.map((d) => ({ ...d, items: buckets[d.key] }))
+})
+function visibleOf(key: string): HotTopic[] {
+  const group = groups.value.find((g) => g.key === key)
+  const items = group?.items ?? []
+  return expandedGroups.value.has(key) ? items : items.slice(0, TIER_PAGE)
+}
+function toggleGroup(key: string): void {
+  const next = new Set(expandedGroups.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedGroups.value = next
+}
 
 const SOURCE_LABELS: Record<string, string> = {
   toutiao: '头条',
@@ -290,10 +427,49 @@ async function reload(force = false): Promise<void> {
   const pid = marketing.currentProjectId
   if (!pid) return
   try {
-    await marketing.loadHotRadar(pid, { platform: publishPlatform.value, force })
+    await marketing.loadHotRadar(pid, {
+      platform: publishPlatform.value,
+      force,
+      windowHours: windowHours.value
+    })
   } catch {
     /* hotError 已在状态条展示 */
   }
+}
+
+/** AI 懒评分（Commit 12）：后端无待评时零模型调用；切平台/切商家由 store 代际令牌作废旧循环 */
+function scheduleScore(): void {
+  const pid = marketing.currentProjectId
+  if (!pid) return
+  void marketing.runHotScoring(pid, publishPlatform.value, { getWindowHours: () => windowHours.value })
+}
+
+/** 手动重新分析：无视 24h TTL，当前视角全部重评 */
+async function rescore(): Promise<void> {
+  const pid = marketing.currentProjectId
+  if (!pid || marketing.hotScoring) return
+  await marketing.runHotScoring(pid, publishPlatform.value, {
+    force: true,
+    getWindowHours: () => windowHours.value
+  })
+}
+
+const scoringProgress = computed(() => {
+  const p = marketing.hotScoreProgress
+  if (!p || !p.total) return ''
+  return '（' + Math.max(0, p.total - p.remaining) + '/' + p.total + '）'
+})
+
+function takeSuggestion(): void {
+  const s = marketing.hotSuggestion
+  if (!s) return
+  const topic = radar.value?.board.find((t) => t.id === s.topicId)
+  if (topic) {
+    takeToContent(topic)
+    return
+  }
+  // 建议来自 24h 窗，理论上必在 board；极端情况下用建议载荷兜底跳转
+  takeToContent({ id: s.topicId, title: s.title, source_platform: s.sourcePlatform, score: null } as HotTopic)
 }
 
 /** 立即刷新：先走全局强制采集（全源失败会抛错 → 状态条显红），再重载库内榜单 */
@@ -308,10 +484,15 @@ async function forceRefresh(): Promise<void> {
   try {
     // skipCollect：强制采集刚跑完，这里只读库渲染；否则全源失败时 last_fetch 未推进，
     // listRadar 会立刻起第二轮采集，双倍连打端点、按钮卡 ~90s
-    await marketing.loadHotRadar(pid, { platform: publishPlatform.value, skipCollect: true })
+    await marketing.loadHotRadar(pid, {
+      platform: publishPlatform.value,
+      skipCollect: true,
+      windowHours: windowHours.value
+    })
   } catch {
     /* hotError 已在状态条展示 */
   }
+  scheduleScore()
 }
 
 onMounted(async () => {
@@ -324,12 +505,30 @@ onMounted(async () => {
     }
   }
   await reload()
+  scheduleScore()
+})
+
+// 切发布视角：榜单 LEFT 关联换一套评分，同时触发该平台的懒评分（两平台各评各的缓存）
+watch(publishPlatform, () => {
+  expandedGroups.value = new Set()
+  sourceFilter.value = ''
+  void reload()
+  scheduleScore()
+})
+// 时间窗只改展示范围（评分候选窗固定 7 天），不触发评分
+watch(windowHours, () => {
+  void reload()
 })
 
 watch(
   () => marketing.currentProjectId,
   (pid) => {
-    if (pid) void reload()
+    expandedGroups.value = new Set()
+    sourceFilter.value = ''
+    if (pid) {
+      void reload()
+      scheduleScore()
+    }
     else marketing.clearHot()
   }
 )
@@ -472,6 +671,65 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: center;
   padding-top: 12px;
+}
+
+/* Commit 12：今日建议卡 */
+.suggest-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-color: rgba(63, 185, 80, 0.45);
+}
+.suggest-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.suggest-badge {
+  font-weight: 600;
+  color: var(--green);
+  flex: none;
+}
+.suggest-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.suggest-body {
+  line-height: 1.7;
+}
+.suggest-actions {
+  display: flex;
+}
+
+/* Commit 12：分组榜单 */
+.board-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.tier-group {
+  margin-bottom: 14px;
+}
+.tier-group:last-of-type {
+  margin-bottom: 0;
+}
+.tier-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border-muted);
+}
+.tier-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.topic-reason {
+  line-height: 1.6;
 }
 
 .cal-grid {
