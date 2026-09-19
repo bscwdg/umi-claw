@@ -138,7 +138,8 @@ export const ERROR_TEXT: Record<string, string> = {
   OPENCLAW_TIMEOUT: '请求超时，请重试',
   OPENCLAW_AUTH_ERROR: 'OpenClaw 鉴权失败，请检查配置',
   FILE_NOT_FOUND: '原始文件不存在',
-  FILE_PARSE_ERROR: '文件解析失败'
+  FILE_PARSE_ERROR: '文件解析失败',
+  HOT_SOURCE_ERROR: '热点数据源暂时不可用，请稍后重试'
 }
 
 function messageOf(e: unknown, fallback: string): string {
@@ -449,6 +450,78 @@ function toContentVersion(row: any): ContentVersion {
 /** 新草稿排前面（同级按 id 收敛；与后端 listContents 展示序一致） */
 function sortContents(list: ContentItem[]): ContentItem[] {
   return [...list].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))
+}
+
+// ── Hot Radar（Commit 11）：类型 ───────────────────────────────────────────────
+
+/** project_hot_topics 评分缓存（Commit 12 才会有真值；11 恒为 null） */
+export interface HotTopicScore {
+  match_score: number | null
+  platform_fit: number | null
+  reason: string | null
+  content_angle: string | null
+  lifecycle_advice: string | null
+  scored_at: number | null
+}
+
+/** `hot_topics` 一行（snake_case 与主进程/DB 一致；跨 tsconfig 不共享，静态契约由 hot.accept.mjs 核对） */
+export interface HotTopic {
+  id: string
+  source_platform: string
+  source: string
+  origin: string
+  title: string
+  url: string | null
+  fingerprint: string
+  heat: number | null
+  rank: number | null
+  lifecycle: string | null
+  first_seen_at: number
+  last_seen_at: number
+  /** 12 的商家相关度评分；11 LEFT 关联不到时为 null */
+  score: HotTopicScore | null
+}
+
+/** 单个数据源一轮采集的结果 */
+export interface HotSourceStatus {
+  source: string
+  sourcePlatform: string
+  origin: 'board' | 'calendar'
+  ok: boolean
+  count: number
+  error?: string
+}
+
+/** 一轮采集的完整状态（持久化在 app_meta.hot_source_status） */
+export interface HotCollectStatus {
+  fetchedAt: number
+  durationMs: number
+  sources: HotSourceStatus[]
+  inserted: number
+  updated: number
+  samples: number
+  expiredDeleted: number
+  topicsTotal: number
+}
+
+/** marketing:hot:list 返回的雷达视图 */
+export interface HotRadarView {
+  /** 本次调用是否新跑了一轮（时间差未到跳过/打开页时为 null） */
+  collected: HotCollectStatus | null
+  lastStatus: HotCollectStatus | null
+  lastError: string | null
+  board: HotTopic[]
+  calendar: HotTopic[]
+}
+
+function toHotRadar(data: any): HotRadarView {
+  return {
+    collected: data?.collected ?? null,
+    lastStatus: data?.lastStatus ?? null,
+    lastError: typeof data?.lastError === 'string' ? data.lastError : null,
+    board: Array.isArray(data?.board) ? data.board : [],
+    calendar: Array.isArray(data?.calendar) ? data.calendar : []
+  }
 }
 
 // ── AI Advisor（Commit 08）：类型 ───────────────────────────────────────────────
@@ -1596,6 +1669,66 @@ export const useMarketingStore = defineStore('marketing', () => {
     contentStreamIds = new Set()
   }
 
+  // ── Hot Radar（Commit 11） ────────────────────────────────────────────────
+  //
+  // list 打开页即按时间差决定要不要采一轮（force=true 忽略时间差）；后台定时/唤醒在主进程，
+  // 渲染端不直接起采集。refresh() 是全局「立即刷新」薄封装（不按 project 隔离）。
+  const hotRadar = ref<HotRadarView | null>(null) as Ref<HotRadarView | null>
+  const hotLoading = ref(false)
+  const hotRefreshing = ref(false)
+  const hotError = ref<string | null>(null)
+  // C6：请求代际令牌。快速切商家 A→B 时，A 的迟到响应不得覆盖 B 的视图
+  // （11 评分恒 null 暂无可见症状，12 上线即会「B 页显示 A 的相关度」）。
+  let hotCallSeq = 0
+
+  async function loadHotRadar(
+    projectId: string,
+    options?: { platform?: string | null; force?: boolean; skipCollect?: boolean }
+  ): Promise<HotRadarView> {
+    const seq = ++hotCallSeq
+    hotLoading.value = true
+    hotError.value = null
+    try {
+      const res = (await window.api.marketing.hot.list(projectId, options ?? {})) as IpcEnvelope<HotRadarView>
+      if (!res?.ok) throw envelopeToError(res, '热点雷达加载失败')
+      const view = toHotRadar(res.data)
+      if (seq !== hotCallSeq) return view // 迟到响应：只返回给当时的调用方，不覆盖当前视图
+      hotRadar.value = view
+      // C4：listRadar 全源失败时信封仍是 ok（降级裸榜），采集错误藏在 lastError 里——
+      // 不提到 hotError，UI 会一直停在「正在完成第一轮采集…」
+      if (view.lastError) hotError.value = view.lastError
+      return view
+    } catch (e) {
+      if (seq === hotCallSeq) hotError.value = messageOf(e, '热点雷达加载失败')
+      throw e instanceof Error ? e : new MarketingIpcError('DB_ERROR', messageOf(e, '热点雷达加载失败'))
+    } finally {
+      if (seq === hotCallSeq) hotLoading.value = false
+    }
+  }
+
+  async function refreshHot(): Promise<HotCollectStatus> {
+    const seq = ++hotCallSeq
+    hotRefreshing.value = true
+    hotError.value = null
+    try {
+      const res = (await window.api.marketing.hot.refresh()) as IpcEnvelope<HotCollectStatus>
+      if (!res?.ok) throw envelopeToError(res, '热点刷新失败')
+      return res.data as HotCollectStatus
+    } catch (e) {
+      if (seq === hotCallSeq) hotError.value = messageOf(e, '热点刷新失败')
+      throw e instanceof Error ? e : new MarketingIpcError('HOT_SOURCE_ERROR', messageOf(e, '热点刷新失败'))
+    } finally {
+      if (seq === hotCallSeq) hotRefreshing.value = false
+    }
+  }
+
+  /** 切商家/离开页面时清掉旧视图，防串 */
+  function clearHot(): void {
+    hotCallSeq += 1
+    hotRadar.value = null
+    hotError.value = null
+  }
+
   return {
     projects,
     currentProjectId,
@@ -1669,6 +1802,14 @@ export const useMarketingStore = defineStore('marketing', () => {
     generateContent,
     stopGenerate,
     clearGenerate,
-    disposeContent
+    disposeContent,
+    // Hot Radar（Commit 11）
+    hotRadar,
+    hotLoading,
+    hotRefreshing,
+    hotError,
+    loadHotRadar,
+    refreshHot,
+    clearHot
   }
 })

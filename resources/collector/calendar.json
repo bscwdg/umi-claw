@@ -1,0 +1,25 @@
+[
+  { "id": "new-year", "kind": "festival", "title": "元旦新年：新年期许 / 年度总结 / 新年照", "date": "01-01", "leadDays": 10 },
+  { "id": "spring-festival-2026", "kind": "festival", "title": "春节档：年夜饭 / 新年照 / 年货 / 红色穿搭", "date": "2026-02-17", "leadDays": 21 },
+  { "id": "valentine", "kind": "festival", "title": "情人节：礼品 / 约会穿搭 / 情侣写真", "date": "02-14", "leadDays": 12 },
+  { "id": "womens-day", "kind": "festival", "title": "三八妇女节：她经济 / 悦己消费", "date": "03-08", "leadDays": 10 },
+  { "id": "spring-look", "kind": "season", "title": "春季换新：春游外景 / 春装上新", "start": "03-01", "end": "04-15", "leadDays": 7 },
+  { "id": "may-day", "kind": "festival", "title": "五一假期：出游旅拍 / 出行穿搭", "date": "05-01", "leadDays": 12 },
+  { "id": "mothers-day-2026", "kind": "festival", "title": "母亲节：亲情写真 / 送礼场景", "date": "2026-05-10", "leadDays": 12 },
+  { "id": "520", "kind": "festival", "title": "520：表白 / 情侣 / 礼品场景", "date": "05-20", "leadDays": 10 },
+  { "id": "childrens-day", "kind": "festival", "title": "六一：亲子 / 家庭合影", "date": "06-01", "leadDays": 10 },
+  { "id": "618", "kind": "promo", "title": "618 年中大促：优惠 / 套餐种草", "date": "06-18", "leadDays": 14 },
+  { "id": "summer", "kind": "season", "title": "暑期盛夏：夏日穿搭 / 亲子外景", "start": "07-01", "end": "08-20", "leadDays": 5 },
+  { "id": "qixi-2026", "kind": "festival", "title": "七夕：中式浪漫 / 情侣写真", "date": "2026-08-19", "leadDays": 12 },
+  { "id": "back-to-school", "kind": "season", "title": "开学季：秋装上新 / 返校场景", "start": "08-20", "end": "09-10", "leadDays": 10 },
+  { "id": "mid-autumn-2026", "kind": "festival", "title": "中秋节：团圆 / 家庭合影 / 礼品", "date": "2026-09-25", "leadDays": 12 },
+  { "id": "national-day", "kind": "festival", "title": "国庆假期：旅拍 / 出游 / 红色主题", "date": "10-01", "leadDays": 14 },
+  { "id": "autumn-look", "kind": "season", "title": "秋季换新：外景黄金季 / 秋装上新", "start": "09-15", "end": "11-05", "leadDays": 7 },
+  { "id": "double11", "kind": "promo", "title": "双11：全年大促 / 囤货种草", "date": "11-11", "leadDays": 16 },
+  { "id": "winter-look", "kind": "season", "title": "冬季换新：大衣羽绒服 / 年终写真", "start": "11-15", "end": "12-20", "leadDays": 7 },
+  { "id": "double12", "kind": "promo", "title": "双12：年终返场 / 清仓", "date": "12-12", "leadDays": 10 },
+  { "id": "christmas", "kind": "festival", "title": "圣诞节：氛围感情侣 / 礼品", "date": "12-25", "leadDays": 12 },
+  { "id": "new-year-eve", "kind": "festival", "title": "跨年：年终总结 / 新年预约", "date": "12-31", "leadDays": 12 },
+  { "id": "spring-festival-2027", "kind": "festival", "title": "春节档：年夜饭 / 新年照 / 年货 / 红色穿搭", "date": "2027-02-06", "leadDays": 21 }
+]
+

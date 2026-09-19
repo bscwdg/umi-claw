@@ -24,7 +24,9 @@ export const ERROR_CODES = {
   /** 原始文件缺失 */
   FILE_NOT_FOUND: 'FILE_NOT_FOUND',
   /** 原始文件解析失败 */
-  FILE_PARSE_ERROR: 'FILE_PARSE_ERROR'
+  FILE_PARSE_ERROR: 'FILE_PARSE_ERROR',
+  /** Commit 11：热点 collector 子进程失败 / 全部数据源不可用 */
+  HOT_SOURCE_ERROR: 'HOT_SOURCE_ERROR'
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

@@ -12,6 +12,8 @@ config
 /.vscode
 /electron-builder-cache
 /.dev-user-data
+# dev 运行数据目录（DB、app.json、backup 等；run-shared.bat 以 CLAW_DATA_DIR 指向它）
+/data/
 
 # build artifacts
 *.tsbuildinfo

@@ -622,7 +622,8 @@ try {
     assert(/onBeforeUnmount\([\s\S]{0,200}clearGenerate[\s\S]{0,80}disposeContent/.test(vueSrc), '四路之卸载')
     assert(/永不自动发布/.test(vueSrc), 'UI 明示不自动发（§一 不做全自动）')
     assert(routeSrc.includes("import('../views/marketing/ContentCenter.vue')"), '路由换真页')
-    assert(/marketing\/hot[\s\S]{0,120}Placeholder\.vue/.test(routeSrc), '热点路由仍指向 Placeholder（11 未上线，09 不误删）')
+    // Commit 11 上线后，热点路由由 Placeholder 换为 HotCenter（payload 接收端仍在本页，见 prefill 用例）
+    assert(/marketing\/hot[\s\S]{0,160}HotCenter\.vue/.test(routeSrc), '热点路由 11 已换真页 HotCenter')
 
     // db-worker 白名单零改动：本提交只消费既有 generic CRUD
     assert(workerSrc.includes("contents: {"), 'contents 表定义（02 建，未动）')

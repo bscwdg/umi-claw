@@ -1,12 +1,13 @@
 # Umi Claw 2.0 施工基线（持续记录）
 
 > 本文档是 2.0 的唯一规划基线，随开发进度持续更新。
-> 基线版本：v1.31 ｜ 更新日期：2026-09-19 ｜ 状态：**Commit 00-10（含 05a/05b）均已通过验收；一期剩余 11 / 12**
+> 基线版本：v1.32 ｜ 更新日期：2026-09-19 ｜ 状态：**Commit 00-11（含 05a/05b）均已通过验收；一期剩余 12**
 
 ## 修订记录
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| v1.32 | 2026-09-19 | **Commit 11 完成（热点采集与浏览，主进程 + 渲染端）**：①**SPIKE 结论改写供给线**（证据 `spikes/011-hot-sources/`，可复跑）——官方 `api-hot.imsyy.top` 已 NXDOMAIN、Vercel 镜像被墙、社区镜像全灭；抖音匿名接口被风控不可靠、知乎 401、微博 403、DailyHotApi 上游无小红书；**头条 hot-board 公开 JSON 直连稳定 50 条、B站 popular 公开 JSON 稳定 20 条（均免登录/免 Cookie）**，经用户拍板走**方案 A：内置直连为默认 + 保留 DailyHotApi 聚合协议**（base 可配，缺省**跳过不是失败**，自部署 6688 即插即用；默认路由收敛为 douyin/weibo/zhihu/baidu/kuaishou 五个直连未覆盖的长尾，头条/B站不双线重复抓）；②交付 `resources/collector/`（零 npm 依赖、只 stdout JSONL、不写库不碰 electron）+ `hotManager.ts`（60s tick + ≥60min 时间差 + powerResume + 打开即刷、single-flight、同源指纹+批内包含合并、五档生命周期、24 条采样、7 天落榜清理且 contents 引用例外、listRadar 近 24h board/calendar + 评分 LEFT 关联）+ `ipc/hot.ts` 三通道（list/get/refresh，**score 归 12**）+ preload `marketing.hot` 面 + 主进程 wiring（before-quit abort）+ `HotCenter.vue`（Top20/源筛选/发布视角/状态条三态/日历分区/一键带去 Content Center）+ store hot 切片 + 路由换真页；③**修了两个真 bug**：collector 成功描述符漏 `ok:true`（manager 全误判全源失败）、single-flight check-then-await 竞态（`isDue()` await 后未复查 inFlight，定时 tick 与打开页相撞会双采集）；④验收 `accept:hot` **12/12**（H1-H12，打真 hotManager + 真 collector + 真 Worker + 真 Node http 假端点），双 typecheck 0 错，`npm run build` 通过（HotCenter chunk 产出，extraResources 整目录随包零改动），回归 10 套全绿（content C10 路由护栏由 Placeholder 更新为 HotCenter 后 12/12），真外网冒烟头条 50/B站 20/日历 3；详见「Commit 11 落点与验收」。**5 条口径**：①`source_platform`=榜单出处（toutiao/bilibili/聚合路由名/calendar），成功与失败描述符严格同键；②跨平台同事件不物理合并（v1.9 不变）；③dailyhot 未配置=跳过态，状态条成功/失败/跳过三态分开；④小红书视角明示「综合榜+节点日历」，不假装存在专属榜（v1.12 降级口径）；⑤带去 Content Center 的六字段 payload 已实装，11 阶段 content_angle/lifecycle_advice 恒 null（无评分）。⏳ 真 Electron GUI 点击流未做（同 08/09/10）；SPIKE 清单项「行业命中率 ≥3 条 match≥70」归 12 有评分后量化；打包态 collector 冒烟由 extraResources 静态断言覆盖，win-unpacked CDP 留一期整体测试。**提交前 8 角度复审 11 项已全部修复并补 H13-H16 回归**：A1 exit→close 防 stdio 丢尾、A2 dailyhot 成败描述符同 host、A3 缺测不覆盖旧热度、A4 日历改本地时区；C1/C2/A5 用 listAllRows 分页消灭 5000 截断（另加 UNIQUE 回退防线）、C3 过期节点主动下线、C4/C5 失败可观测与跳过误报、C6 store 竞态令牌（12 前拆雷）、③URL 白名单、⑧定时器退出清理；验收升至 accept:hot 16/16；**第二轮用户复查 8 项亦全部处理**：缺测采样改如实写 null（修假趋势/死代码）、状态条 chip key 去重、listRadar 加 skipCollect 消灭全源失败后双采集、onMounted 容错 + loadError 提示、采样查询从两批全量降为 count+末 3 条/溢出旧行、run-shared.bat 按用户指示不动（提交排除）、产物 churn 按仓库先例；复测 accept:hot 16/16、双 typecheck 0 错、回归 10 套全绿、build 通过、外网冒烟头条 50/B站 20/日历 3 |
 | v1.31 | 2026-09-19 | **Commit 10 完成（双平台工作流，主进程 + 渲染端提示，无新表/无新通道/worker 零改动）**：新增 `marketing/platformRules.ts`（小红书=图文笔记三件套、抖音=口播脚本/标题/话题且写死「不做视频」两套模板 + `getPlatformRule`/`renderPlatformRuleSection`，非法平台 VALIDATION_ERROR）；Context Pack 加 `platformRule` 附加字段（§六 六键契约不变；**模板不进 `renderContextPackText`、不占 60% 预算，属预留 40%**）；09 生成每路 user 指令与版本 prompt 快照、08 Advisor system 均注入规则区块；ContentCenter 平台 tabs 下加双平台工作流提示；`accept:platform` **7/7**（P1-P7，打真 4 模块 + 真 Worker + 真 SSE），`typecheck:node`/`web` 0 错，回归 content 12/12 · context 22/22 · advisor 10/10 · db 31/31 · project 18/18 · business 16/16 · knowledge 23/23 · gateway 27/27 · scan 18/18；详见「Commit 10 落点与验收」。**5 条口径**：①规则是主进程内部数据，同 Context Pack 不上 IPC（preload/ipc/白名单三处静态断言）；②两模板互不串味（图文笔记/口播脚本双向断言，P2/P5/P6）；③抖音边界在模板与 UI 双处写死，两平台均人工复制发布（硬规则 10）；④快照拼同一规则区块，「当时提示词」可复盘平台口径；⑤三角度仍各一条独立请求、规则每路必带。⏳ 真界面点击流未做（同 08/09）；模板文案质量待人工试用标定，调优只改 platformRules.ts 一处。另：`package-lock.json` 被 npm 顺带对齐（lock 停在 1.0.0、缺 05a/05b 的 exceljs/mammoth/pdfjs-dist；现 1.1.0 补齐），非本提交新增依赖决策 |
 | v1.30 | 2026-09-18 | **Commit 09 完成（Content Center，主进程 + 渲染端）**：`marketing/contentManager.ts` + `ipc/content.ts` + preload `marketing.content` 面 + `ContentCenter.vue` + store content 切片 + `useContentPrefill.ts`（11 的热点 payload 接收端，路径先行）+ 路由换真页；`accept:content` **12/12**（C1-C12），`typecheck:node`/`web` 0 错，回归 db 31/31 · worker 18/18 · project 18/18 · business 16/16 · knowledge 23/23 · context 22/22 · gateway 27/27 · advisor 10/10 · scan 18/18；详见「Commit 09 落点与验收」。**本提交的 7 条口径**：①一次 3 版 = 三个固定角度（直给/场景/异议）各起一条独立流式请求（temperature 0.8，护栏 system 兜事实），不搞「一次请求要三段」的脆弱拆分；②**先落库后 done**（result resolve 前落版本行，source=ai 必带 prompt 快照；中止/失败/空产出不落版本）；③并发版本号防重（per-contentId promise 链串行化「读最大号→写行」，表上无 UNIQUE 约束）；④会话键 `content-<genTaskId>-a<i>`，三路不共用 sticky、不污染 Advisor 记忆（05b 同课）；⑤**不自动发布**（硬规则 10）：状态机全人工推进，`status→published` 自动补 `published_at`（v1.13 复用状态列），空正文拒发布，退回保留最近发布时刻；⑥停止/切商家/卸载/退出**四路中止**（两路定位 genTaskId/projectId，幂等不双计）；⑦`sourceTopicId` 显式预检（`reason='source-topic-not-found'`），update 白名单不含溯源列（身份不可改）。**§五 content 行补齐至 9 方法**（本提交扩面 3 条：delete / generate:abort / versions，先例 v1.28）。⏳ 真界面点击流未做（本机无桌面通道，同 08）；平台规则模板注入归 10 |
 | v1.29 | 2026-09-18 | **05b 复审收尾（北 7 条裁定）**：①「Commit 05b 落点与验收」代码围栏收口包住全部清单行（首行后误闭合的根因是会话显示截断；knowledgeManager 行的路径前缀实际文件本就完整，非丢字）；②顶部版本行与本行同步——规则：每加一行修订，同一次编辑内更新顶部版本行（v1.22-v1.27 六次漏同步、顶行停在 v1.21，05b 完成消息因此误报过基线状态）；③§五 commitRecognized 改具名 `input` 参数（消除 `title?` 排在必选 `content` 前的 TS 非法形状；字段形状进注释）；④v1.28 行一处形近错字更正为「识别兜底」；⑤AHx 的 `>` 一律按规范表述为 **EOD 结束符**（ISO 32000-1 §7.4.4.1，出现即终止解码，非「非法字符」），PLAN 与 fixture/accept 注释同口径；⑥探针证据回写仓库跟踪文件 `test/probe-scan-render.json`（S13 每次复跑重生成，时间戳 churn 属预期），`.tmp` 落盘不再作基线证据；⑦§七 05a 验收补充的 pdfjs 措辞与 :581 引述统一（删去多余的 worker 定语；worker 打包态 §六 已实测，不是未验项）。 |
@@ -440,6 +441,7 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
   1. **榜单**（`origin=board`）：公开聚合 API（DailyHotApi 类），实测**无需认证直接调用**，覆盖 50-60+ 源（抖音热点 / 微博热搜 / 百度 / 头条 / 知乎 / B站 / 快手等）；collector 的 **base URL 可配置**——默认公开实例，高级用户可自部署（Docker/Vercel，本地 6688 端口）。
   2. **节点日历**（`origin=calendar`）：**自建 JSON**（节日 / 换季 / 大促 / 场景季，带提前量），零抓取、零鉴权、零失效、命中率 100%；走同一 `hot_topics` 与同一评分管线。对摄影店 / 女装店的实用价值高于全网热榜。
   3. **Watchlist**（`origin=watch`）：老板填的关注词，**一期只喂 AI 上下文，不触发任何采集**（表见 schema `project_watchlist`）。
+- **v1.32 供给线修订（SPIKE 实测后，用户拍板方案 A）**：公共 DailyHotApi 实例 2026-09-19 全灭（官方域名 NXDOMAIN、镜像被墙/不可达），榜单供给改为两条腿——**头条/B站官方公开 JSON 直连为默认内置源**（免登录免 Cookie，实测稳定 50/20 条；adapter 各自带 UA、不做任何签名），**DailyHotApi 聚合协议保留但降级为可选项**（`config.hot.dailyhotBaseUrl` 缺省即跳过、状态条显示「已跳过」而非失败；自部署 6688 或公共实例恢复后填地址即插即用；默认路由去掉头条/B站，避免与直连双线重复）。实际产物文件名 `resources/collector/index.mjs`（硬规则 12 不变）；实现中钉死两条契约：**成功描述符必须显式 `ok:true`**、**single-flight 在 `isDue()` await 之后复查 inFlight**（均由 accept:hot 负向/并发断言锁定）。
 - **小红书降级口径（v1.12 写死）**：小红书**没有公开、稳定、免鉴权的热点出口**（平台策略，非技术难度；第三方聚合源版本间时有时无）。Commit 11 SPIKE 实测两种结果均有预案——**验得通**则纳入，雷达双平台对称；**验不通**则降级为「综合榜 + AI 语义判断 + 节点日历」，并在 UI 明示小红书侧选题来源，**不得假装小红书有专属榜单**。影响可控：内容生产靠平台规则 Skill + 商家资料（不依赖小红书数据），`platform_fit` 本就由 AI 语义判断。
 - **collector 结构（v1.12）**：`resources/collector/index.mjs` + `sources/*.mjs`（每来源一个 adapter），沿用硬规则 12。**红线：不做任何要求登录 / Cookie 的抓取。**
 - **生命周期**：由 `hot_topic_samples` 时间序列计算（同热点 ≥2 次采样才能判 rising/breaking/peak/long_tail），首次入库标 `new`；跨源/跨标题去重靠 fingerprint + 标题相似度聚类。
@@ -449,11 +451,11 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 - **去重范围（v1.9 钉死）**：v1 只做**同源内**标题归一化（去特殊符号/统一大小写/剥平台前缀词）+ 阈值合并；**跨平台同一事件不物理合并**（抖音/微博各保留各的行，这样才回答得了「哪个平台最火」）。跨源 cluster 聚合需要额外表，二期再做，v1 接受同事件被各平台分别评分。
 - **护栏沿用 Advisor**：推荐理由/选题角度只能基于 Business + Knowledge，资料不支持就明示；热点内容不自动发布，一键仅带入 Content Center 生成草稿，仍走人工审核（硬规则 10）。
 - `platform_fit` 按 project_hot_topics.platform（发布平台）分别评分缓存；评分 prompt 中体现该平台适配性，防止抖音/微博源热点在小红书得到虚高适配分。
-- **Commit 11 页面降级**：11 是纯工程、可早于 09 交付；热点页「带去 Content Center」按钮在 09 上线前占位禁用，11 不得提前实现内容生成。
+- **Commit 11 页面降级**：11 是纯工程、可早于 09 交付；热点页「带去 Content Center」按钮在 09 上线前占位禁用，11 不得提前实现内容生成。**【v1.32 实际情况：09/10 均已上线，11 直接交付可用跳转；占位降级条款未被触发】**
 - **Commit 12 评分边界（v1.8）**：每次批量调用最多 30 条，仅评近 7 天在榜（last_seen_at）且当前 project × 平台未评分（或超过 24h TTL 且手动触发）的热点；返回 JSON 部分条目解析失败时，成功条目照常落库、失败条目留待下次重试，整次调用失败才降级为裸榜。
 - **热点雷达页 UI 规格（v1.11 统一口径，12 的验收标准）**：时间范围默认近 24h（可切 3 天/7 天）；默认只展示 Top 20；**评分三档 + 一个待分析态**——🔥 值得跟（match_score ≥ 70 **且** platform_fit ≥ 70，双门槛防高相关低适配误推）/ 👀 观察（任一分数 40–69）/ ❌ 不建议（均 < 40）/ ⏳ 待分析（尚未评分，不参与三档，续评后自动归位）；底层数字全部保留可查，分组只是展示层。
 - **数据源健康状态（v1.9）**：每个数据源的最后成功时间/错误写 `app_meta.hot_source_status / hot_source_error`（不建表）；热点雷达页顶部显示各源「正常 · N 分钟前 / 异常已降级」状态条，单源失败不拖垮整页与其他源。
-- **热点 → Content Center（v1.9）**：09 落地跳转，携带结构化 payload `{ topic_id, title, source_platform, platform, content_angle, lifecycle_advice }` 预填充生成表单；11 阶段按钮只占位禁用。**热点情报永不自动写入 Knowledge Base**（External Intelligence ≠ Merchant Knowledge，概念见第十节），只有老板人工采纳后才可能成为商家资料。
+- **热点 → Content Center（v1.9）**：09 落地跳转，携带结构化 payload `{ topic_id, title, source_platform, platform, content_angle, lifecycle_advice }` 预填充生成表单；11 阶段按钮只占位禁用。**【v1.32：11 已实装该跳转（前端字段名 topicId/contentAngle/lifecycleAdvice 驼峰），11 无评分故后两字段恒 null；按钮对所有热点（含未评分、日历节点）可用，仅预填选题，生成/发布仍全人工】** **热点情报永不自动写入 Knowledge Base**（External Intelligence ≠ Merchant Knowledge，概念见第十节），只有老板人工采纳后才可能成为商家资料。
 
 ### AI Advisor 定义（Commit 08 交付边界）
 
@@ -491,7 +493,7 @@ Context Pack：`{ business, knowledge[], watchlist[], customer, platform, task }
 | 08 | AI Advisor —— **✅ 2026-09-17 完成**（主进程 + 渲染端） | Grounded 营销问答面板（边界见第六节）：Context Pack + SSE + 停止生成 + 事实护栏；对话历史按 00⑥ 结论；**+ Watchlist AI 扩词推荐（候选词生成 + 用户勾选，v1.13 由 04 移入）**（落点与验收见下） | 2d | 06、07 | | ✅ |
 | 09 | Content Center —— **✅ 2026-09-18 完成**（主进程 + 渲染端） | AI 生成（SSE 流式 + **AbortController「停止生成」**，规格同 08：组件卸载/切换必须中止上游）→ 编辑 → 版本（prompt 快照）→ 人工审核；**接收热点雷达结构化 payload 预填充（v1.9），source_topic_id 溯源（v1.10）**；**一次生成 3 个版本供选 + 极简发布标记（v1.12）**（落点与验收见下） | 3d | 06、07、08 | | ✅ |
 | 10 | 双平台工作流 —— **✅ 2026-09-19 完成**（主进程 + 渲染端提示） | **小红书 + 抖音**平台适配（两套平台规则模板：挂 `pack.platformRule`，注入 09 生成指令/版本快照与 08 Advisor system）；抖音一期只做口播脚本/标题/话题标签文案层，不做视频；均人工复制发布（落点与验收见下） | 2d | 09 | | ✅ |
-| 11 | 热点采集与浏览（🔥 热点雷达） | 数据源 SPIKE（公开聚合源，双平台发布视角）+ collector adapters（只抓取 stdout JSON，硬规则 12）+ hotManager 经 Worker 落库 + 时间差定时/唤醒补检/打开即刷 + 三表 + **同源内**去重 + 生命周期 + 采样保留(24 条)/落榜清理(7 天) + 数据源状态条 + 雷达页（近 24h/Top20/平台筛选；「带去 Content Center」09 前占位）；**安装包内 collector 冒烟：复用 obsidianManager.getScriptPath 的 dev/安装包（process.resourcesPath）路径解析，不改打包配置**；**节点日历自建 adapter（origin=calendar）（v1.12）**；不依赖 Gateway | 3d | 02（可与 03-06 并行） | | ⬜ |
+| 11 | 热点采集与浏览（🔥 热点雷达） —— **✅ 2026-09-19 完成**（主进程 + 渲染端） | SPIKE 改写供给线（公共聚合实例全灭→头条/B站官方公开 JSON **直连为默认**，聚合协议保留可配；见 v1.32）+ collector adapters（只抓取 stdout JSON，硬规则 12）+ hotManager 经 Worker 落库 + 时间差定时/唤醒补检/打开即刷（single-flight）+ 三表（02 已建，worker 零改）+ **同源内**去重 + 生命周期 + 采样保留(24 条)/落榜清理(7 天，contents 引用例外) + 数据源状态条（成功/失败/跳过三态）+ HotCenter 雷达页（近 24h/Top20/源筛选/发布视角；「带去 Content Center」已实装六字段 payload）；节点日历自建 adapter（origin=calendar）；extraResources 整目录随包零改；不依赖 Gateway（落点与验收见下） | 3d | 02（可与 03-06 并行） | | ✅ |
 | 12 | AI 商家匹配 | 当前 project × 平台懒评分（≤30 条/次、近 7 天在榜、24h TTL；**待评超 30 条按 heat 取前 30，每次打开雷达续评一批直到评完**）+ JSON 落库 + 部分失败容错 + 整体失败降级裸榜 + 分组（🔥/👀/❌ + **⏳ 待分析**）+ 手动重新分析 + 事实护栏；**雷达顶部「今日建议」摘要（1 条主推 + 理由 + 时机）（v1.12）** | 2d | 06、07、11 | | ⬜ |
 
 顺序备注：00 必须第一；**01 与 02 互不依赖、可并行**；03/04/05 依赖 02；06 必须在 00 结论之后；07 之后插入 05b（可与 08 并行），08/09/10 顺序推进；**11 是纯工程，02 完成后即可与 03-06 并行（跳转按钮占位到 09）；12 必须在 06/07/11 之后**。一期做完再整体测试，后续迭代优化。
@@ -837,6 +839,112 @@ test/platform.accept.mjs + `npm run accept:platform`   7 项验收（P1-P7；打
 顺带对齐（committed lock 停在 1.0.0、缺 05a/05b 引入的 exceljs/mammoth/pdfjs-dist；现对齐 1.1.0 并补齐三项），
 非本提交的依赖决策，提交时可单列或并入，不影响运行时。
 
+### Commit 11 落点与验收（✅ 2026-09-19）
+
+```text
+spikes/011-hot-sources/                   SPIKE 证据：spike-hot.mjs 可复跑 + spike-result.json（各源可达性/字段/条数）
+resources/collector/index.mjs             新增：短命子进程入口（参数/环境双通道；--sources/--base/--routes/
+                                          --toutiao-url/--bili-url/--calendar-path/--now/--timeout-ms；
+                                          成功描述符显式 ok:true，dailyhot 无 base 只 stderr SKIP）
+resources/collector/sources/util.mjs      fetchJson（8s 超时、非 2xx/非 JSON 抛错）、toHeat（万/亿文案兜底）、makeItem/finalizeItems
+resources/collector/sources/toutiao.mjs   头条 hot-board 直连（平台键 toutiao，默认源）
+resources/collector/sources/bilibili.mjs  B站 popular 直连（平台键 bilibili，默认源）
+resources/collector/sources/dailyhot.mjs  DailyHotApi 协议（平台键=路由名；DEFAULT_ROUTES 收敛为 5 个长尾）
+resources/collector/sources/calendar.mjs + calendar.json（22 节点，leadDays 提前量窗口，UTC 解析防跨日）
+electron/main/marketing/hotManager.ts     新增：spawn collector + JSONL 解析 + 时间差/single-flight/超时 kill；
+                                          同源指纹去重 + 批内包含合并 + upsert + samples 追加/裁剪(24)；
+                                          生命周期 new/rising/breaking/peak/long_tail；7 天清理（contents 引用例外）；
+                                          listRadar 近 24h board/calendar + project×平台评分 LEFT 关联；
+                                          不 import electron、不发 HTTP、不直写 SQL（依赖全部注入）
+electron/main/ipc/hot.ts                  新增：marketing:hot:list/get/refresh 三通道 + abortHotCollectors（score 归 12）
+electron/main/database/errors.ts          + HOT_SOURCE_ERROR
+electron/main/index.ts                    wiring：dev/安装包双路径解析 collector（extraResources 零改）、便携 Node、
+                                          config.hot.dailyhotBaseUrl 按次读、60s tick、powerMonitor resume、before-quit abort
+electron/preload/index.ts                 + marketing.hot 面（list/get/refresh，无 score）
+src/stores/marketing.ts                   + hot 切片（hotRadar/hotLoading/hotRefreshing/hotError + load/refresh/clear）+ HOT_SOURCE_ERROR 文案
+src/views/marketing/HotCenter.vue         新增真页：状态条三态 / 发布视角 / 源筛选 / Top20（可展开）/ 生命周期徽章 /
+                                          日历分区 / 一键带去 Content Center（六字段 payload）/ 小红书降级口径明示
+src/renderer/main.ts                     /marketing/hot 由 Placeholder 换 HotCenter
+test/hot.accept.mjs + package.json        16 项验收（H1-H16；H13-H16 为提交前第三方复审补的回归）+ accept:hot
+```
+
+**验收（独立复跑，非自述）**：`accept:hot` **16/16**（H1-H12 + 复审 H13-H16）；`typecheck:node` / `typecheck:web` 0 错；`npm run build` 通过
+（renderer 产出 HotCenter chunk；collector 随 `resources/` 整目录 extraResources，打包配置零改动）；回归
+`accept:db` **31/31**、`accept:project` **18/18**、`accept:business` **16/16**、`accept:knowledge` **23/23**、
+`accept:context` **22/22**、`accept:gateway` **27/27**、`accept:advisor` **10/10**、`accept:scan` **18/18**、
+`accept:platform` **7/7**、`accept:content` **12/12**（C10 热点路由护栏由「仍指 Placeholder」更新为「已换 HotCenter」）。
+真外网冒烟（便携 Node 直跑真 adapter）：头条 50 条、B站 20 条、日历 3 节点。
+
+**关键设计决策**
+
+- **方案 A：直连为主 + 聚合协议保留**：SPIKE 证明公共聚合实例在当前网络环境全灭，而头条/B站自家公开 JSON
+  免登录稳定可取；直连 adapter 成为默认源，DailyHotApi 降级为「配了 base 才启用」的可选线（覆盖抖音/微博/知乎/百度/快手长尾）。
+  红线不变：只用公开端点、不带 Cookie、不绕风控、任何鉴权要求按该源失败处理。
+- **成功/失败/跳过三态**：成功描述符必须显式 `ok:true`（本轮真 bug：adapter 返回值漏字段导致 manager 全误判失败）；
+  未配 base 的 dailyhot **不产生失败描述符**，状态条显示「已跳过」并给自部署提示；全源失败才抛 HOT_SOURCE_ERROR，
+  且**不推进 `hot_last_fetch_at`**（下个 tick/打开页立即重试），部分失败只写错误串、榜单照常。
+- **并发安全**：single-flight 不仅入口同步判一次，`isDue()` await 回来后必须**复查 inFlight**
+  （本轮真 bug：定时 tick 与打开雷达相撞时两个 collector 并发起跑，H7 负向断言锁定）。
+- **同源去重不跨源**：指纹 = source_platform + 标题归一化（剥前缀词/标点、压空白、只留字母数字 CJK）；
+  批内短串被长串包含（归一化后 ≥6 字）合并为信息更全的一条，热度/名次取更显著者；跨平台同事件各保一行。
+  日历用稳定 `cal:<id>` 指纹，不参与生命周期判定。
+- **生命周期只看采样序列**：new（首采样）→ breaking（热度翻倍且冲进前 10）/ rising（涨 15%）/ long_tail（跌 15%）/ peak（其余），
+  heat 缺失保持原状不瞎判；判定依据取最近两次 sample，与当前库行状态解耦。
+- **落榜清理的引用例外（v1.11）**：清理在 JS 侧取 contents.source_topic_id 集合做豁免（worker 只支持等值/IS NULL，α 内容量小），
+  被引用热点连同样本保留；未引用者随 FK CASCADE 清 samples/评分（H11 级联断言）。
+- **采集独立于 Gateway 且不写库**：collector 零 npm 依赖、只 stdout JSONL（进度走 stderr）；落库全部经 DB Worker generic CRUD，
+  worker 白名单零扩展（02 建的三表 + app_meta 三键），manager bundle 后纯 Node 可验收（H12 静态断言）。
+- **11 不开评分**：`project_hot_topics` 只做 LEFT 关联（11 恒 null），`marketing:hot:score` 通道不存在；
+  发布视角（小红书/抖音）当前只影响跳转预填，为 12 的 project×平台评分留好接缝。
+
+**提交前第三方复审修复（8 角度，11 项；H13-H16 + H12 静态锁定）**
+
+- **A1 间歇丢尾部 JSON**：collector 子进程由 `child.on('exit')` 改 `'close'`——exit 时 stdio 可能未 flush，
+  会随机丢最后一行数据源（表现为「未返回任何数据源」）。
+- **A2 dailyhot 失败归因错位**：失败兜底曾退回 job 名 `dailyhot:<route>`，成功时 source 是 `dailyhot:<host>`；
+  现由 main 按实际 base 预给 fallback，成败严格同 source/平台键（H13）。
+- **A3 缺测不砸行值**：某轮 heat/rank/url 字段缺失时**行上**沿用最近已知值（保展示与排序）；
+  但**采样序列如实写 null**（旧实现连采样也沿用旧值=伪造趋势点，第二轮复查 1 修正）（H14）。
+- **A4 日历本地时区**：节点日期由 UTC 构造改为**本地零点**——东八区节点当天 00:00-08:00 打开时，
+  UTC 还是前一天，窗口错一位（H13 本地零点边界断言）。
+- **C1/C2/A5 消灭 5000 截断假设**：`listAllRows` 分页助手（5000/页、100 页保险丝）用于存量指纹、
+  contents 引用集、雷达与评分读取；另加 UNIQUE 冲突→按指纹回退更新的防线。后果分别是：
+  C1 单平台超 5000 行后采集**永久卡死**（CONFLICT + 不推进 last_fetch + 无可见错误）；
+  C2 击穿 v1.11「被引用热点不删」、静默 SET NULL 三期溯源；A5 雷达漏行（H15 直连 SQLite 造 5001 行夹具；H16 造 5001 条 contents）。
+- **C3 过期节点次日下榜**：日历源本轮未见的节点主动把 last_seen_at 打到清理阈值前，同轮清理收敛
+  （被 contents 引用的仍享 v1.11 豁免），不再以「提前备稿窗口内」标题滞留最长 24h（H16）。
+- **C4/C5/⑥ 失败可观测 + 死代码**：「立即刷新」改走 `refreshHot()`（全源失败会显式 reject）再重载榜单，
+  store hotError 与首轮失败红条接通；「聚合源未配置」提示加 lastStatus 守卫，首轮整体失败不再误报跳过。
+- **C6 竞态令牌（12 的定时雷）**：store 加 `hotCallSeq`，切商家后迟到响应不覆盖当前视图——
+  11 评分恒 null 无症状，12 上线即会「B 店页显示 A 店相关度」。
+- **③ openUrl 协议白名单**：外部榜单 url 只放行 http(s)，防 javascript:/file: 经系统浏览器打开。
+- **⑧ 定时器清理**：hot tick 定时器在 before-quit 显式 clearInterval，退出清理途中不再起新 collector。
+
+**第二轮用户复查修复（8 项；H14 改写 + H12 静态锁定，accept:hot 仍 16/16）**
+
+- **复查 1（功能性，最毒）缺测假采样**：persistSource 缺测轮原用旧值补采样点（heatNow===heatPrev），
+  上升热点被误判 peak，且 classifyLifecycle 的 heatNow===null 保阶段分支永不触发（死代码）。
+  改为采样如实写 heat:null（行 heat/rank 仍沿用旧值，A3 展示口径不变）；recomputeLifecycle 缺测轮零查询
+  直接保阶段，非缺测轮只取末 3 条并向前找最近非空 heatPrev——一次缺测不会冻住后续趋势（H14 改写）。
+- **复查 2 状态条 chip 重复 key**：dailyhot 多路由成败描述符 source 同为 dailyhot:<host>，v-for key 重复、
+  ✓/✗ 可能与平台错位；key 改 sourcePlatform + '|' + source（H12 锁定）。
+- **复查 3 全源失败时「立即刷新」双采集**：失败不推进 last_fetch，刷新后 reload 又起第二轮完整采集，
+  按钮卡 ~90s 且双倍连打上游。listRadar 新增 skipCollect（只读库不采集），贯通 ipc/preload/store，
+  forceRefresh 在 refreshHot 之后以 skipCollect 读库（H12 四处静态锁定）。
+- **复查 4 mounted 无容错**：marketing.load() 抛错会中断整个挂载回调、reload 不执行、页面空白无提示；
+  现包 try/catch + loadError 红条，雷达加载仍照常尝试（H12 锁定）。
+- **复查 5/6 采样查询量级**：recomputeLifecycle 原每热点每轮两次全量拉采样表（各最多 5000 行，
+  70 热点 × 每小时 ≈ 140 次冗余查询），改 count + 只取末 3 条；pruneSamples 改 count + 只拉溢出旧行；
+  cleanupExpired 读 contents 含正文字段（worker 不支持列裁剪）补量级假设注释，截断风险已随 C2 分页消除。
+- **复查 7 run-shared.bat 私有路径**：用户本机改动，按本人指示不还原、提交时排除。
+- **复查 8 验收产物 churn**：accept-result-*.json / probe-scan-render.json 时间戳重写，
+  按仓库先例一直随提交入库，本次照旧（必要时可分开提交）。
+
+⏳ **未覆盖 / 已知风险**：①真 Electron GUI 点击流未做（本机无桌面自动化通道，同 08/09/10）；②打包态未跑 win-unpacked CDP
+冒烟（随包事实由 H12 extraResources/双路径静态断言覆盖，留一期整体测试）；③热点排序依赖各平台自报热度数值，
+跨平台数值口径不可直接比较（头条数万级 vs B站播放量），11 仅按数值降序展示，「哪个平台最火」的严格对比留二期 cluster；
+④抖音/微博等长尾的实际可取性取决于自部署实例质量，默认状态下雷达只有头条/B站/日历三线，这是合规红线下的有意取舍。
+
 ### Commit 06 落点与验收（✅ 2026-09-16）
 
 ```text
@@ -879,12 +987,20 @@ test/context.accept.mjs + `npm run accept:context`   22 项验收（打真 conte
 ### Commit 11 数据源 SPIKE（v1.12 新增）
 
 ```text
-[ ] 榜单聚合源可用性：抖音热点 / 微博热搜等接口实测可取，字段含 title / heat / rank / url
-[ ] 小红书源实测：能否免鉴权拿到？结论二选一（可 → 纳入雷达；不可 → 按降级口径执行并写回本基线）
-[ ] 节点日历 adapter：JSON 内置，插桩后能生成 origin=calendar 的 hot_topics 行
-[ ] 行业命中率：每天 50 条榜中，被摄影 / 女装行业评到 match≥70 的有 ≥3 条；否则补充来源或调整口径
-[ ] 空态规则：无高相关热点时显示「今天没有值得跟的」+ 节点日历兜底建议
-[ ] base URL 可配置：公开实例不可用时能切自部署地址
+[x] 榜单聚合源可用性（2026-09-19 实测，证据 spikes/011-hot-sources/，可复跑）：
+    · 官方演示域名 api-hot.imsyy.top 已 NXDOMAIN；Vercel 镜像连接被墙；社区公共镜像全灭
+    · 抖音匿名接口被风控（时好时坏，不作默认源）、知乎 401、微博 403；本机无 Docker、6688 无服务
+    · 头条 hot-board 公开 JSON 直连稳定 50 条、B站 popular 公开 JSON 稳定 20 条：免登录/免 Cookie
+      → 经用户拍板走方案 A：内置直连为默认源，DailyHotApi 聚合协议保留（base 可配、缺省跳过）
+[x] 小红书源实测：无公开、稳定、免鉴权的热点出口（平台策略）→ 执行 v1.12 降级口径（综合榜 + 节点日历），
+    HotCenter 在小红书视角下明示来源，不假装存在专属榜单；DailyHotApi 上游亦无小红书路由
+[x] 节点日历 adapter：calendar.json 内置 22 个节点（2026/2027 农历按年写死），fid 走 cal:<id> 指纹，
+    accept H2 落 origin=calendar 行（无热度、无生命周期）
+[ ] 行业命中率：每天 50 条榜中，被摄影/女装行业评到 match≥70 的有 ≥3 条 —— 归 Commit 12（需 AI 评分后量化；
+    11 无评分能力，若不足按预案补来源/调口径）
+[x] 空态规则：无在榜热点时显示「今天没有值得跟的」+ 节点日历分区兜底（HotCenter）
+[x] base URL 可配置：collector --base / HOT_DAILYHOT_BASE，主进程 config.hot.dailyhotBaseUrl 按次读（改配置无需重启）；
+    公共实例恢复后填地址即插即用，默认路由收敛为 douyin/weibo/zhihu/baidu/kuaishou（直连已覆盖头条/B站）
 ```
 
 ### Commit 00 验收（✅ 2026-09-15 通过 → Primary）

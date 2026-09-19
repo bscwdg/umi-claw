@@ -43,8 +43,9 @@ const router = createRouter({
     },
     {
       path: '/marketing/hot',
-      component: () => import('../views/marketing/Placeholder.vue'),
-      meta: { title: '🔥 热点雷达', icon: '🔥', desc: '全网热点榜单 + 商家相关度评分', commit: 'Commit 11/12' }
+      // Commit 11：占位页换真页（近 24h 榜单 + 节点日历 + 数据源状态条；评分归 12）
+      component: () => import('../views/marketing/HotCenter.vue'),
+      meta: { title: '🔥 热点雷达', icon: '🔥' }
     }
   ]
 })

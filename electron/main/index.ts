@@ -7,7 +7,8 @@ import {
   Tray,
   Menu,
   nativeImage,
-  protocol
+  protocol,
+  powerMonitor
 } from 'electron'
 import { join, parse, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -26,9 +27,11 @@ import {
   registerAdvisorIpc,
   registerScanIpc,
   registerContentIpc,
+  registerHotIpc,
   abortAllAdvisorStreams,
   abortAllScanStreams,
-  abortAllContentGenerations
+  abortAllContentGenerations,
+  abortHotCollectors
 } from './ipc'
 import { createProjectManager, type ProjectManager } from './marketing/projectManager'
 import {
@@ -45,6 +48,7 @@ import { createContextEngine, type ContextEngine } from './marketing/contextEngi
 import { createAdvisorManager, type AdvisorManager } from './marketing/advisorManager'
 import { createScanRecognizer, type ScanRecognizer } from './marketing/scanRecognizer'
 import { createContentManager, type ContentManager } from './marketing/contentManager'
+import { createHotManager, type HotManager } from './marketing/hotManager'
 import {
   createGatewayClient,
   detectMultimodalCapability,
@@ -97,6 +101,10 @@ let marketingAdvisorManager: AdvisorManager | null = null
 let marketingScanRecognizer: ScanRecognizer | null = null
 // marketing Content Center（Commit 09）：06 引擎 + 07 客户端 + DatabaseClient，构造零 IO 副作用。
 let marketingContentManager: ContentManager | null = null
+// marketing 热点雷达（Commit 11）：collector 短命子进程 + DB Worker，构造零 IO 副作用。
+let marketingHotManager: HotManager | null = null
+// 热点后台 tick 定时器（退出时清掉，避免 before-quit 清理途中又起一轮 collector）
+let hotTickTimer: ReturnType<typeof setInterval> | null = null
 
 /**
  * 取 Context Engine 单例（Commit 06）。
@@ -695,6 +703,33 @@ function createMarketingContentManager(): ContentManager {
   return manager
 }
 
+// ─── marketing 热点雷达 wiring（Commit 11） ───────────────────────────────────
+
+/**
+ * 构造热点管理器：collector 路径沿用 obsidianManager.getScriptPath 的 dev/安装包
+ * 双路径口径（dev=app.getAppPath()/resources；安装包=process.resourcesPath/resources，
+ * extraResources 整目录复制 resources/，打包配置零改动）；node 用便携 Node。
+ * base URL 每次采集按次从配置读（v1.22 modelsResolver 同精神：改配置无需重启）。
+ */
+function createMarketingHotManager(): HotManager {
+  const isDev = !app.isPackaged
+  const resourcesRoot = isDev ? join(app.getAppPath(), 'resources') : join(process.resourcesPath, 'resources')
+  const collectorScriptPath = join(resourcesRoot, 'collector', 'index.mjs')
+  const manager = createHotManager({
+    database: marketingDatabase!,
+    collectorScriptPath,
+    nodePath: configManager.getNodePath(),
+    logger: (message: string) => console.log(message),
+    getDailyhotBase: () => {
+      const hot = (configManager.getConfig() as { hot?: { dailyhotBaseUrl?: string | null } }).hot
+      const v = hot?.dailyhotBaseUrl
+      return typeof v === 'string' && v.trim() ? v.trim() : null
+    }
+  })
+  console.log('[hot] 热点雷达就绪（时间差定时 + 唤醒补检 + 打开即刷；collector=' + collectorScriptPath + '）')
+  return manager
+}
+
 // ─── IPC 处理器 ───────────────────────────────────────────────────────────────
 
 function registerIpcHandlers(): void {
@@ -1178,6 +1213,9 @@ function registerIpcHandlers(): void {
 
   // ── marketing Content Center（Commit 09：生成/编辑/版本/审核；流式增量走 07 事件名） ──
   registerContentIpc(marketingContentManager!)
+
+  // ── marketing 热点雷达（Commit 11：list/get/refresh；score 归 12） ──
+  registerHotIpc(marketingHotManager!)
 }
 
 // ─── 推送日志到渲染进程 ────────────────────────────────────────────────────────
@@ -1332,6 +1370,8 @@ app.whenReady().then(() => {
   marketingScanRecognizer = createMarketingScanRecognizer()
   // marketing Content Center（Commit 09）：注入 06/07/DB 三个单例（硬规则 8/13）
   marketingContentManager = createMarketingContentManager()
+  // marketing 热点雷达（Commit 11）：零 IO 副作用，首次 tick/打开页面才拉 collector
+  marketingHotManager = createMarketingHotManager()
   // 注入 Obsidian MCP 配置生成器：_syncOpenClawConfig 写回 openclaw.json 时调用
   configManager.setObsidianMcpInjector(() => obsidianManager.buildMcpServerConfig())
 
@@ -1346,6 +1386,20 @@ app.whenReady().then(() => {
   createWindow()
   createTray()
   setupLogForwarding()
+
+  // ── 热点雷达后台调度（Commit 11，§六 v1.7 拍板） ──
+  // 每分钟 tick，但「是否采集」由 hotManager 按 app_meta.hot_last_fetch_at 时间差判断
+  // （≥60min 才跑）；不用 setInterval 直接计时，睡眠唤醒后靠 powerMonitor resume 补检。
+  const hotTick = (): void => {
+    marketingHotManager
+      ?.tickDue()
+      .then((s) => {
+        if (s) console.log('[hot] 定时采集完成：total=' + s.topicsTotal + ' +' + s.inserted)
+      })
+      .catch((e) => console.warn('[hot] 定时采集失败:', (e as Error)?.message || e))
+  }
+  hotTickTimer = setInterval(hotTick, 60 * 1000)
+  powerMonitor.on('resume', hotTick)
 
   // 启动时同步开机自启项，保证与配置一致
   const startupConfig = configManager.getConfig()
@@ -1392,6 +1446,17 @@ app.on('before-quit', async () => {
     if (aborted > 0) console.log(`[Main] 已中止 ${aborted} 个在途内容生成任务`)
   } catch (e) {
     console.error('[Main] 中止内容生成失败:', e)
+  }
+  // 在途的热点 collector（11：短命子进程，退出时别留下孤儿）
+  try {
+    if (hotTickTimer) {
+      clearInterval(hotTickTimer)
+      hotTickTimer = null
+    }
+    const killed = abortHotCollectors()
+    if (killed > 0) console.log('[Main] 已停止在途热点采集进程')
+  } catch (e) {
+    console.error('[Main] 停止热点采集失败:', e)
   }
   // 注册表内的常驻子进程（marketing DB Worker）先优雅停：
   // wal_checkpoint(TRUNCATE) → close → exit(0)，避免留下 -wal/-shm 残骸

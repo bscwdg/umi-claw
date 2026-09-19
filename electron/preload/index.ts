@@ -322,6 +322,14 @@ const api = {
       ) => ipcRenderer.invoke('marketing:content:saveVersion', projectId, id, input, options),
       // §五 扩面：版本清单（历史面板）
       versions: (projectId: string, id: string) => ipcRenderer.invoke('marketing:content:versions', projectId, id)
+    },
+    // Commit 11：热点雷达。list 打开页看时间差决定是否立即采集（force 强制）；
+    // score 归 Commit 12，暂不暴露。
+    hot: {
+      list: (projectId: string, options?: { platform?: string | null; force?: boolean; skipCollect?: boolean }) =>
+        ipcRenderer.invoke('marketing:hot:list', projectId, options),
+      get: (topicId: string) => ipcRenderer.invoke('marketing:hot:get', topicId),
+      refresh: () => ipcRenderer.invoke('marketing:hot:refresh')
     }
   },
 
