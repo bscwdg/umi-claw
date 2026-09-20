@@ -41,7 +41,8 @@ umi-claw/
 │   │   ├── downloadManager.ts # 环境下载安装
 │   │   ├── channelManager.ts  # 渠道（微信等）安装与管理
 │   │   ├── channelCatalog.ts  # 渠道目录 / 元信息
-│   │   ├── modelConfig.ts     # 模型预设配置（含 embedding 预设）
+│   │   ├── modelConfig.ts     # 模型预设键位/命名避让（预设数据已外置）
+│   │   ├── modelPresets.ts    # 预设加载/校验/「拉取最新」（上游：Gitee awesome-llm-models，快照在 resources/model-presets/）
 │   │   └── obsidian/          # Obsidian 知识库管理
 │   │       ├── obsidianManager.ts  # 配置/索引/检索测试/MCP 配置生成
 │   │       └── types.ts            # 类型定义
@@ -185,6 +186,8 @@ window.api.config.reset()             // 恢复默认配置
 window.api.config.getDataDir()        // 获取数据目录路径
 window.api.config.openDataDir()       // 打开数据目录
 window.api.config.getPresetModels(name) // 获取某服务商的预设模型
+window.api.config.refreshModelPresets() // 「拉取最新」：从 Gitee 上游更新预设，立即生效
+window.api.config.getModelPresetsInfo() // 预设来源信息（overlay/内置快照、更新时间、数量）
 window.api.config.testConnection(cfg) // 测试模型连通性
 
 // 主要配置字段示例（config.save 时可传入）：

@@ -415,6 +415,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle('config:getPresetModels', (_e, configName: string) =>
     configManager.getPresetModels(configName)
   )
+  ipcMain.handle('config:refreshModelPresets', () => configManager.refreshModelPresets())
+  ipcMain.handle('config:getModelPresetsInfo', () => configManager.getModelPresetsInfo())
   ipcMain.handle('config:openDataDir', () => shell.openPath(configManager.getDataDir()))
 
   // 环境初始化
