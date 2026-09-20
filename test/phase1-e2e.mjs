@@ -376,7 +376,7 @@ async function main() {
       if (!m) return false
       result.scoreProgress0 = m[0]
       return Number(m[1]) >= 25
-    }, { timeout: 300000, label: '首批评分落库（真 SSE，最长 5 分钟）', interval: 2000 })
+    }, { timeout: 600000, label: '首批评分落库（真 SSE，最长 10 分钟）', interval: 2000 })
     await sleep(1500)
     const board = await readBoard()
     const pendingKey = Object.keys(board.perGroup).find((k) => k.includes('待分析'))
@@ -410,7 +410,7 @@ async function main() {
       if (stop) sawStop = true
       const done = await ev("[...document.querySelectorAll('button')].filter(b => b.innerText.includes('采用为正文')).length")
       return done >= 3
-    }, { timeout: 300000, label: '3 版真生成完成（最长 5 分钟）', interval: 2500 })
+    }, { timeout: 600000, label: '3 版真生成完成（最长 10 分钟）', interval: 2500 })
     const slots = await ev("[...document.querySelectorAll('.slot-body,pre')].filter(p => p.closest('div') && p.innerText.length>30).length")
     return '从「' + jumped + '」组跳转；预填：' + prefill.slice(0, 80) + '；3 版完成' + (sawStop ? '（流式期有停止按钮）' : '')
   }, { shot: '08-content-3versions' })

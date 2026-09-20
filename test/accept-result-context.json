@@ -1,42 +1,42 @@
 {
   "suite": "context（Context Engine：全量打包 / 超预算 LIKE 裁剪，打真 contextEngine.ts）",
-  "startedAt": "2026-09-19T18:18:08.320Z",
-  "finishedAt": "2026-09-19T18:18:11.193Z",
-  "durationMs": 2873,
+  "startedAt": "2026-09-20T17:38:04.703Z",
+  "finishedAt": "2026-09-20T17:38:07.110Z",
+  "durationMs": 2407,
   "total": 22,
   "passed": 22,
   "failed": 0,
   "env": {
-    "node": "v24.14.0",
+    "node": "v24.21.0",
     "platform": "win32",
     "arch": "x64",
     "workerScript": "D:\\work2026\\files\\claw-desktop\\resources\\database\\db-worker.mjs",
     "runtimeNode": "D:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe"
   },
   "bundle": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-engine.mjs",
-  "dataDir": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-1789841886544\\data",
+  "dataDir": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-1789925883127\\data",
   "nodePath": "D:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe",
   "logSample": [
-    "[project] 已创建 743c2204-cff9-44b1-b560-ae2163b70078（C06 摄影工作室），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-1789841886544\\data\\projects\\743c2204-cff9-44b1-b560-ae2163b70078",
-    "[project] 已创建 36fc30a9-fdd2-484c-998b-085465817df0（C06 超预算商家），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-1789841886544\\data\\projects\\36fc30a9-fdd2-484c-998b-085465817df0",
-    "[project] 已创建 ece43cfe-1b7e-4dff-8f4f-babec024469e（C06 单条超大商家），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-1789841886544\\data\\projects\\ece43cfe-1b7e-4dff-8f4f-babec024469e",
-    "[project] 已创建 f0cfc80a-aafa-44ba-b84a-f262e4d83b98（C06 命中排序商家），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-1789841886544\\data\\projects\\f0cfc80a-aafa-44ba-b84a-f262e4d83b98",
-    "[project] 已创建 141d4f8d-03b3-4280-a6e8-254b1edf4143（C06 空商家），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-1789841886544\\data\\projects\\141d4f8d-03b3-4280-a6e8-254b1edf4143",
-    "[project] 已创建 4582b8e5-17bb-4730-935a-375c9605c1e0（C06 隔壁商家），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-1789841886544\\data\\projects\\4582b8e5-17bb-4730-935a-375c9605c1e0",
-    "[business] 已创建 project_id=743c2204-cff9-44b1-b560-ae2163b70078",
-    "[watchlist] +杭州婚纱（project_id=743c2204-cff9-44b1-b560-ae2163b70078，共 1 词）",
-    "[watchlist] +旅拍（project_id=743c2204-cff9-44b1-b560-ae2163b70078，共 2 词）",
-    "[watchlist] +暂停词（project_id=743c2204-cff9-44b1-b560-ae2163b70078，共 3 词）",
-    "[context] project=743c2204-cff9-44b1-b560-ae2163b70078 裁剪：注入 3/3 条，未注入 0 条（mode=full，query=（无，按时间））",
-    "[knowledge] 已删除 7beeb4f1-91ba-4a0a-aebb-8f0d5128fa1d（project_id=743c2204-cff9-44b1-b560-ae2163b70078）",
-    "[business] 已创建 project_id=36fc30a9-fdd2-484c-998b-085465817df0",
-    "[context] project=36fc30a9-fdd2-484c-998b-085465817df0 裁剪：注入 1/6 条，未注入 5 条（mode=truncated，query=（无，按时间））",
-    "[context] project=ece43cfe-1b7e-4dff-8f4f-babec024469e 裁剪：注入 1/1 条，未注入 0 条（mode=truncated，query=（无，按时间））",
-    "[context] project=36fc30a9-fdd2-484c-998b-085465817df0 裁剪：注入 1/6 条，未注入 5 条（mode=truncated，query=（无，按时间））",
-    "[context] project=ece43cfe-1b7e-4dff-8f4f-babec024469e 裁剪：注入 1/1 条，未注入 0 条（mode=truncated，query=（无，按时间））",
-    "[context] project=ece43cfe-1b7e-4dff-8f4f-babec024469e 裁剪：注入 1/1 条，未注入 0 条（mode=truncated，query=（无，按时间））",
-    "[context] project=f0cfc80a-aafa-44ba-b84a-f262e4d83b98 裁剪：注入 1/3 条，未注入 2 条（mode=truncated，query=价目表）",
-    "[context] project=f0cfc80a-aafa-44ba-b84a-f262e4d83b98 裁剪：注入 1/3 条，未注入 2 条（mode=truncated，query=（无，按时间））"
+    "[project] 已创建 ec1967d3-88f2-4112-89ab-3c1466cc0a97（C06 摄影工作室），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-1789925883127\\data\\projects\\ec1967d3-88f2-4112-89ab-3c1466cc0a97",
+    "[project] 已创建 a2779360-6a15-4ef6-aa87-13487e98d4c7（C06 超预算商家），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-1789925883127\\data\\projects\\a2779360-6a15-4ef6-aa87-13487e98d4c7",
+    "[project] 已创建 9c5e915f-6abb-4057-864f-17515daa4d37（C06 单条超大商家），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-1789925883127\\data\\projects\\9c5e915f-6abb-4057-864f-17515daa4d37",
+    "[project] 已创建 955e1556-7ff0-4549-8924-ff25ff698112（C06 命中排序商家），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-1789925883127\\data\\projects\\955e1556-7ff0-4549-8924-ff25ff698112",
+    "[project] 已创建 5e27413e-9e23-4526-951c-858c239878f3（C06 空商家），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-1789925883127\\data\\projects\\5e27413e-9e23-4526-951c-858c239878f3",
+    "[project] 已创建 5d940cfa-6ed4-43a5-ad4f-7f5f0c038810（C06 隔壁商家），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\context-1789925883127\\data\\projects\\5d940cfa-6ed4-43a5-ad4f-7f5f0c038810",
+    "[business] 已创建 project_id=ec1967d3-88f2-4112-89ab-3c1466cc0a97",
+    "[watchlist] +杭州婚纱（project_id=ec1967d3-88f2-4112-89ab-3c1466cc0a97，共 1 词）",
+    "[watchlist] +旅拍（project_id=ec1967d3-88f2-4112-89ab-3c1466cc0a97，共 2 词）",
+    "[watchlist] +暂停词（project_id=ec1967d3-88f2-4112-89ab-3c1466cc0a97，共 3 词）",
+    "[context] project=ec1967d3-88f2-4112-89ab-3c1466cc0a97 裁剪：注入 3/3 条，未注入 0 条（mode=full，query=（无，按时间））",
+    "[knowledge] 已删除 62171164-07a8-43c0-87d7-ac429329dee1（project_id=ec1967d3-88f2-4112-89ab-3c1466cc0a97）",
+    "[business] 已创建 project_id=a2779360-6a15-4ef6-aa87-13487e98d4c7",
+    "[context] project=a2779360-6a15-4ef6-aa87-13487e98d4c7 裁剪：注入 1/6 条，未注入 5 条（mode=truncated，query=（无，按时间））",
+    "[context] project=9c5e915f-6abb-4057-864f-17515daa4d37 裁剪：注入 1/1 条，未注入 0 条（mode=truncated，query=（无，按时间））",
+    "[context] project=a2779360-6a15-4ef6-aa87-13487e98d4c7 裁剪：注入 1/6 条，未注入 5 条（mode=truncated，query=（无，按时间））",
+    "[context] project=9c5e915f-6abb-4057-864f-17515daa4d37 裁剪：注入 1/1 条，未注入 0 条（mode=truncated，query=（无，按时间））",
+    "[context] project=9c5e915f-6abb-4057-864f-17515daa4d37 裁剪：注入 1/1 条，未注入 0 条（mode=truncated，query=（无，按时间））",
+    "[context] project=955e1556-7ff0-4549-8924-ff25ff698112 裁剪：注入 1/3 条，未注入 2 条（mode=truncated，query=价目表）",
+    "[context] project=955e1556-7ff0-4549-8924-ff25ff698112 裁剪：注入 1/3 条，未注入 2 条（mode=truncated，query=（无，按时间））"
   ],
   "checks": [
     {
@@ -44,7 +44,7 @@
       "name": "contextEngine.ts 可纯 Node import；六键/比例/平台常量与 §六 一致；缺依赖即炸",
       "ok": true,
       "detail": "常量与 §六 逐字一致；bundle 无 electron；缺依赖即 VALIDATION_ERROR",
-      "ms": 2
+      "ms": 1
     },
     {
       "id": "C2",
@@ -58,28 +58,28 @@
       "name": "预算内**全量打包**：ready 条目全进包、正文完整、不做检索、不裁剪",
       "ok": true,
       "detail": "3/3 条全量注入；usedTokens=225 ≤ budget=76800",
-      "ms": 4
+      "ms": 2
     },
     {
       "id": "C4",
       "name": "只打包 status='ready' 的条目（草稿态不进 AI 上下文）",
       "ok": true,
       "detail": "draft 态被排除（3→2→3）",
-      "ms": 71
+      "ms": 73
     },
     {
       "id": "C5",
       "name": "内容为空的 ready 条目显式 dropped（不静默、也不占 AI 上下文）",
       "ok": true,
       "detail": "空条目 reason=empty-content；不进包也不计入总数",
-      "ms": 115
+      "ms": 102
     },
     {
       "id": "C6",
       "name": "Watchlist 只把 enabled=1 的词喂给上下文（禁用词不进包）",
       "ok": true,
       "detail": "2/3 词进包；禁用词被过滤",
-      "ms": 3
+      "ms": 4
     },
     {
       "id": "C7",
@@ -93,35 +93,35 @@
       "name": "超预算退化为裁剪：条目数守恒（included+dropped=total），未注入原因可查",
       "ok": true,
       "detail": "included=1/6，dropped=5，used=2311/2400",
-      "ms": 352
+      "ms": 382
     },
     {
       "id": "C9",
       "name": "单条超长条目在裁剪模式下按预算截断，并带显式截断标记",
       "ok": true,
       "detail": "截断 1 条：2246 字 / used=2311 ≤ 2400",
-      "ms": 174
+      "ms": 155
     },
     {
       "id": "C10",
       "name": "账本可信：渲染后的真实 token 数 ≤ 预算；reserved = window − budget",
       "ok": true,
       "detail": "w=128000:194/76800 w=4000:2311/2400 w=4000:2311/2400 w=3000:1711/1800",
-      "ms": 248
+      "ms": 245
     },
     {
       "id": "C11",
       "name": "裁剪模式按 LIKE 命中排序：命中的那条即使最旧也排第一",
       "ok": true,
       "detail": "mode=like hits=1 首条=套系价目表",
-      "ms": 127
+      "ms": 120
     },
     {
       "id": "C12",
       "name": "超预算但没给 query：按时间（最新优先）裁剪，并标明 recency",
       "ok": true,
       "detail": "mode=recency 首条=门店地址",
-      "ms": 6
+      "ms": 5
     },
     {
       "id": "C13",
@@ -156,14 +156,14 @@
       "name": "Context Pack 按 Project 隔离：别的商家的资料不会进包（硬规则 9）",
       "ok": true,
       "detail": "P1 不含别家资料；P3 只见自己 1 条",
-      "ms": 5
+      "ms": 3
     },
     {
       "id": "C18",
       "name": "同输入两次构包结果一致（除 builtAt）；包可 JSON 序列化",
       "ok": true,
       "detail": "两次一致；JSON 往返无损（3 条）",
-      "ms": 5
+      "ms": 4
     },
     {
       "id": "C19",

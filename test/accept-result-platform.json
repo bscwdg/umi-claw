@@ -1,28 +1,28 @@
 {
   "suite": "platform（Commit 10：双平台规则模板注入，打真 platformRules/contextEngine/contentManager/advisorManager）",
-  "startedAt": "2026-09-19T18:18:38.864Z",
-  "finishedAt": "2026-09-19T18:18:40.241Z",
-  "durationMs": 1377,
+  "startedAt": "2026-09-20T17:39:17.881Z",
+  "finishedAt": "2026-09-20T17:39:18.971Z",
+  "durationMs": 1090,
   "total": 7,
   "passed": 7,
   "failed": 0,
   "env": {
-    "node": "v24.14.0",
+    "node": "v24.21.0",
     "platform": "win32",
     "arch": "x64",
     "workerScript": "D:\\work2026\\files\\claw-desktop\\resources\\database\\db-worker.mjs",
     "runtimeNode": "D:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe"
   },
   "bundle": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\platform-rules.mjs",
-  "dataDir": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\platform-1789841916419\\data",
+  "dataDir": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\platform-1789925955707\\data",
   "nodePath": "D:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe",
   "logSample": [
-    "[project] 已创建 9983bcb5-8a16-4243-945a-48d1e42dbad9（10 知秋女装），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\platform-1789841916419\\data\\projects\\9983bcb5-8a16-4243-945a-48d1e42dbad9",
-    "[business] 已创建 project_id=9983bcb5-8a16-4243-945a-48d1e42dbad9",
-    "[content] 新建草稿 ef78ae18-1c9c-4791-830a-a8885b833a6a（project=9983bcb5-8a16-4243-945a-48d1e42dbad9 platform=douyin topic=秋款真丝衬衫）",
-    "[content] generate content-1-mu8pnzxp → ef78ae18-1c9c-4791-830a-a8885b833a6a（platform=douyin，3 路并行，knowledge=1）",
-    "[content] 新建草稿 1e31012b-7f9d-4f92-8f98-4c54e14eec40（project=9983bcb5-8a16-4243-945a-48d1e42dbad9 platform=xiaohongshu topic=湖滨探店）",
-    "[content] generate content-2-mu8po02w → 1e31012b-7f9d-4f92-8f98-4c54e14eec40（platform=xiaohongshu，3 路并行，knowledge=1）"
+    "[project] 已创建 709ca33e-5f37-4b50-b970-17ad91f1ab50（10 知秋女装），目录=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\platform-1789925955707\\data\\projects\\709ca33e-5f37-4b50-b970-17ad91f1ab50",
+    "[business] 已创建 project_id=709ca33e-5f37-4b50-b970-17ad91f1ab50",
+    "[content] 新建草稿 6641d14d-f8a3-4c68-9cf2-de60d454e44a（project=709ca33e-5f37-4b50-b970-17ad91f1ab50 platform=douyin topic=秋款真丝衬衫）",
+    "[content] generate content-1-mua3p8o0 → 6641d14d-f8a3-4c68-9cf2-de60d454e44a（platform=douyin，3 路并行，knowledge=1）",
+    "[content] 新建草稿 b50c0056-2b9d-4795-b0db-cc68c6cd0bad（project=709ca33e-5f37-4b50-b970-17ad91f1ab50 platform=xiaohongshu topic=湖滨探店）",
+    "[content] generate content-2-mua3p8sx → b50c0056-2b9d-4795-b0db-cc68c6cd0bad（platform=xiaohongshu，3 路并行，knowledge=1）"
   ],
   "checks": [
     {
@@ -30,14 +30,14 @@
       "name": "两套规则齐备：小红书=图文笔记三件套、抖音=口播三件套且写死「不做视频」；均人工复制发布；非法平台 VALIDATION_ERROR",
       "ok": true,
       "detail": "两平台模板齐备、边界与合规写死、非法平台拒绝 ✓",
-      "ms": 2
+      "ms": 1
     },
     {
       "id": "P2",
       "name": "buildGenerationMessages：三角度每路都带本平台规则区块、互不串味；快照含规则；护栏引用平台规则",
       "ok": true,
       "detail": "三角度 × 两平台规则注入正确；快照留存 ✓",
-      "ms": 9
+      "ms": 8
     },
     {
       "id": "P3",
@@ -51,21 +51,21 @@
       "name": "Advisor system：带平台追加规则区块（保留原平台行）；不带平台不出现规则",
       "ok": true,
       "detail": "Advisor 规则注入/缺省正确 ✓",
-      "ms": 3
+      "ms": 4
     },
     {
       "id": "P5",
       "name": "真 generate（抖音）：三路请求都带抖音规则、不串小红书；版本 prompt 快照落库抖音规则",
       "ok": true,
       "detail": "三路抖音口径正确 + 版本快照留存 ✓",
-      "ms": 328
+      "ms": 175
     },
     {
       "id": "P6",
       "name": "真 generate（小红书）：三路请求 + 快照均小红书口径，商家资料不丢",
       "ok": true,
       "detail": "三路小红书口径正确 ✓",
-      "ms": 77
+      "ms": 115
     },
     {
       "id": "P7",

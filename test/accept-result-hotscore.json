@@ -1,70 +1,70 @@
 {
   "suite": "hotscore（Commit 12：热点 AI 懒评分，打真 hotScoreManager + 真 ContextEngine + 真 Worker）",
-  "startedAt": "2026-09-19T18:22:48.865Z",
-  "finishedAt": "2026-09-19T18:23:00.876Z",
-  "durationMs": 12011,
+  "startedAt": "2026-09-20T17:38:57.532Z",
+  "finishedAt": "2026-09-20T17:39:15.015Z",
+  "durationMs": 17483,
   "total": 14,
   "passed": 14,
   "failed": 0,
   "env": {
-    "node": "v24.14.0",
+    "node": "v24.21.0",
     "platform": "win32",
     "arch": "x64",
-    "workerScript": "d:\\work2026\\files\\claw-desktop\\resources\\database\\db-worker.mjs",
-    "runtimeNode": "d:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe"
+    "workerScript": "D:\\work2026\\files\\claw-desktop\\resources\\database\\db-worker.mjs",
+    "runtimeNode": "D:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe"
   },
-  "bundle": "d:\\work2026\\files\\claw-desktop\\test\\.tmp\\score-manager.mjs",
-  "dataDir": "d:\\work2026\\files\\claw-desktop\\test\\.tmp\\hotscore-1789842166873\\data",
-  "nodePath": "d:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe",
+  "bundle": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\score-manager.mjs",
+  "dataDir": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\hotscore-1789925935687\\data",
+  "nodePath": "D:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe",
   "checks": [
     {
       "id": "S1",
       "name": "懒评分候选：近7天 board、heat 前 30、日历/过期排除、资料真注入",
       "ok": true,
       "detail": "",
-      "ms": 1377
+      "ms": 1494
     },
     {
       "id": "S2",
       "name": "续批 5 条评完；TTL 内再调零模型调用；今日建议返回",
       "ok": true,
       "detail": "",
-      "ms": 203
+      "ms": 221
     },
     {
       "id": "S3",
       "name": "手动重新分析 force=true 无视 24h TTL",
       "ok": true,
       "detail": "",
-      "ms": 966
+      "ms": 1085
     },
     {
       "id": "S4",
       "name": "platform_fit 按平台分别评分缓存，行不串",
       "ok": true,
       "detail": "",
-      "ms": 1021
+      "ms": 1282
     },
     {
       "id": "S5",
       "name": "单条 idx 越界/分数非法/缺字段只计 failed，好条目照落",
       "ok": true,
       "detail": "",
-      "ms": 105
+      "ms": 128
     },
     {
       "id": "S6",
       "name": "OPENCLAW_NOT_READY 原样透传，无评分落库，不吞错不包装",
       "ok": true,
       "detail": "",
-      "ms": 43
+      "ms": 53
     },
     {
       "id": "S7",
       "name": "模型不返回 JSON 数组时抛 VALIDATION_ERROR",
       "ok": true,
       "detail": "",
-      "ms": 37
+      "ms": 416
     },
     {
       "id": "S8",
@@ -78,7 +78,7 @@
       "name": "pickTodaySuggestion：窗口/门槛/排序/日历排除/宁缺毋滥",
       "ok": true,
       "detail": "",
-      "ms": 1
+      "ms": 0
     },
     {
       "id": "S10",
@@ -92,28 +92,28 @@
       "name": "force 首批 30 后，非 force 续批仍补评余下 5 条 TTL 内旧分",
       "ok": true,
       "detail": "",
-      "ms": 2433
+      "ms": 3794
     },
     {
       "id": "S13",
       "name": "首批漏回 3 条时 remaining=8，续批只补 8 条，27 好条目不重评",
       "ok": true,
       "detail": "",
-      "ms": 1214
+      "ms": 2621
     },
     {
       "id": "S14",
       "name": "热点表/Context Pack 60s 内跨批复用；评分不缓存；TTL 过期后重建",
       "ok": true,
       "detail": "",
-      "ms": 2447
+      "ms": 4091
     },
     {
       "id": "S11",
       "name": "评分后 listRadar 读到分数；窗口 24/72/168 边界；project 与平台隔离；增量只评新条",
       "ok": true,
       "detail": "",
-      "ms": 60
+      "ms": 155
     }
   ]
 }
