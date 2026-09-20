@@ -1,8 +1,8 @@
 {
   "suite": "db-worker（Worker 半边）",
-  "startedAt": "2026-09-18T17:58:58.623Z",
-  "finishedAt": "2026-09-18T17:59:01.305Z",
-  "durationMs": 2682,
+  "startedAt": "2026-09-19T18:17:35.619Z",
+  "finishedAt": "2026-09-19T18:17:38.421Z",
+  "durationMs": 2802,
   "total": 18,
   "passed": 18,
   "failed": 0,
@@ -19,15 +19,15 @@
       "id": "W1",
       "name": "worker 启动即建库（spawn 前不存在）",
       "ok": true,
-      "detail": "db=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\worker-1789754338302\\umi-claw.db pid=16628",
-      "ms": 427
+      "detail": "db=D:\\work2026\\files\\claw-desktop\\test\\.tmp\\worker-1789841855280\\umi-claw.db pid=35540",
+      "ms": 426
     },
     {
       "id": "W2",
       "name": "migrate 0 → 1，user_version=1",
       "ok": true,
       "detail": "applied=v1",
-      "ms": 85
+      "ms": 139
     },
     {
       "id": "W3",
@@ -41,7 +41,7 @@
       "name": "11 张表齐备（10 业务表 + app_meta），无 project_messages",
       "ok": true,
       "detail": "app_meta, businesses, content_versions, contents, hot_topic_samples, hot_topics, knowledge_chunks, knowledge_items, project_hot_topics, project_watchlist, projects",
-      "ms": 0
+      "ms": 1
     },
     {
       "id": "W5",
@@ -55,14 +55,14 @@
       "name": "WAL 生效（journal_mode=wal + -wal 文件出现）",
       "ok": true,
       "detail": "journal_mode=wal wal=168952B",
-      "ms": 36
+      "ms": 34
     },
     {
       "id": "W7",
       "name": "foreign_keys=ON：删 project 级联清业务数据",
       "ok": true,
       "detail": "businesses/knowledge/chunks/contents/versions/watchlist/scores 全部级联清空",
-      "ms": 675
+      "ms": 696
     },
     {
       "id": "W8",
@@ -76,7 +76,7 @@
       "name": "错误码信封：NOT_FOUND / VALIDATION_ERROR / CONFLICT / 白名单",
       "ok": true,
       "detail": "allowed=84 个方法",
-      "ms": 4
+      "ms": 3
     },
     {
       "id": "W10",
@@ -90,14 +90,14 @@
       "name": "knowledge.search（LIKE）与 count",
       "ok": true,
       "detail": "snippet=轻写真 999 元，含 3 套服装",
-      "ms": 35
+      "ms": 37
     },
     {
       "id": "W12",
       "name": "脏请求行（非 JSON / 缺 method）不自杀",
       "ok": true,
       "detail": "stderr 片段=[db-worker] 无法解析的请求行: 这不是 JSON；{\"id\":\"w12-no-method\"}",
-      "ms": 262
+      "ms": 264
     },
     {
       "id": "W13",
@@ -111,35 +111,35 @@
       "name": "强杀（SIGKILL）后库不损坏，数据仍在",
       "ok": true,
       "detail": "integrity_check=ok projects=2 user_version=1",
-      "ms": 291
+      "ms": 333
     },
     {
       "id": "W15",
       "name": "强杀后重启：数据仍在、migrate 幂等",
       "ok": true,
       "detail": "projects=p2,p3",
-      "ms": 130
+      "ms": 122
     },
     {
       "id": "W16",
       "name": "shutdown 指令优雅退出（exit 0 + WAL 截断）",
       "ok": true,
       "detail": "exitCode=0 wal=0B",
-      "ms": 11
+      "ms": 13
     },
     {
       "id": "W17",
       "name": "stdin 关闭（EOF）也优雅退出",
       "ok": true,
       "detail": "exitCode=0",
-      "ms": 133
+      "ms": 131
     },
     {
       "id": "W18",
       "name": "SIGTERM 触发优雅退出",
       "ok": true,
       "detail": "exitCode=null integrity_check=ok（Windows 无信号语义，POSIX 下为 0）",
-      "ms": 145
+      "ms": 152
     }
   ]
 }
