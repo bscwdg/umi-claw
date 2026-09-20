@@ -110,8 +110,8 @@ const navGroups = [
     items: [
       { to: '/marketing/business', icon: '🏪', label: '商家大脑' },
       { to: '/marketing/knowledge', icon: '📚', label: '知识库' },
-      { to: '/marketing/advisor', icon: '💬', label: 'AI Advisor' },
-      { to: '/marketing/content', icon: '✍️', label: 'Content Center' },
+      { to: '/marketing/advisor', icon: '💬', label: 'AI 顾问（AI Advisor）' },
+      { to: '/marketing/content', icon: '✍️', label: '内容中心（Content Center）' },
       { to: '/marketing/hot', icon: '🔥', label: '热点雷达' }
     ]
   },

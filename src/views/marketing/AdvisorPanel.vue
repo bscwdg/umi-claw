@@ -2,12 +2,12 @@
   <div class="adv">
     <div class="page-header">
       <div>
-        <h1>AI Advisor</h1>
+        <h1>AI 顾问（AI Advisor）</h1>
         <p class="text-muted text-sm" style="margin-top: 4px">
           {{
             marketing.currentProject
               ? `${marketing.currentProject.name} · 只依据这个商家的资料回答（资料里没有的，AI 会明说）`
-              : 'AI Advisor 按商家隔离，先选一个商家'
+              : 'AI 顾问按商家隔离，先选一个商家'
           }}
         </p>
       </div>
@@ -25,7 +25,7 @@
       <div style="font-size: 32px">💬</div>
       <h3>还没有选择商家</h3>
       <p class="text-muted text-sm" style="max-width: 460px; line-height: 1.7">
-        Advisor 会先把「这个商家是谁、手里有什么资料」组装成上下文，再回答问题。
+        AI 顾问会先把「这个商家是谁、手里有什么资料」组装成上下文，再回答问题。
       </p>
       <button class="btn btn-primary" @click="switcher.show()">打开商家切换器</button>
     </div>

@@ -109,15 +109,15 @@
           <span class="marketing-icon">✨</span>
           <div>
             <div class="marketing-title">AI 营销</div>
-            <div class="text-sm text-muted">Advisor / Content / 🔥 热点雷达</div>
+            <div class="text-sm text-muted">AI 顾问 / 内容中心 / 🔥 热点雷达</div>
           </div>
         </div>
         <div class="marketing-body text-sm text-muted">
-          营销能力将在后续版本逐步上线：AI 问答、内容生成、热点跟踪。
+          已上线：AI 顾问问答、内容中心三版生成、热点雷达与 AI 商家匹配评分。
         </div>
         <div class="marketing-actions">
-          <button class="btn btn-sm" @click="router.push('/marketing/advisor')">AI Advisor</button>
-          <button class="btn btn-sm" @click="router.push('/marketing/content')">Content Center</button>
+          <button class="btn btn-sm" @click="router.push('/marketing/advisor')">AI 顾问</button>
+          <button class="btn btn-sm" @click="router.push('/marketing/content')">内容中心</button>
           <button class="btn btn-sm" @click="router.push('/marketing/hot')">🔥 热点雷达</button>
         </div>
       </div>

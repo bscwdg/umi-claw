@@ -2,7 +2,7 @@
   <div class="cc">
     <div class="page-header">
       <div>
-        <h1>Content Center</h1>
+        <h1>内容中心（Content Center）</h1>
         <p class="text-muted text-sm" style="margin-top: 4px">
           {{
             marketing.currentProject

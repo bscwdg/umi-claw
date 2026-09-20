@@ -35,7 +35,7 @@
       <div style="font-size: 32px">🔥</div>
       <h3>还没有选择商家</h3>
       <p class="text-muted text-sm" style="max-width: 460px; line-height: 1.7">
-        热点榜单本身全商家共享，但「带去 Content Center」要知道写给谁、发到哪个平台。
+        热点榜单本身全商家共享，但「带去内容中心」要知道写给谁、发到哪个平台。
       </p>
       <button class="btn btn-primary" @click="switcher.show()">打开商家切换器</button>
     </div>
@@ -97,7 +97,7 @@
           <span class="text-muted" style="margin-left: 12px">时机：</span>{{ marketing.hotSuggestion.timing }}
         </div>
         <div class="suggest-actions">
-          <button class="btn btn-sm btn-primary" @click="takeSuggestion()">带去 Content Center</button>
+          <button class="btn btn-sm btn-primary" @click="takeSuggestion()">带去内容中心</button>
         </div>
       </div>
       <div
@@ -139,7 +139,7 @@
             </button>
           </div>
           <span class="text-sm text-muted">
-            AI 相关度评分在 Commit 12 上线；当前视角决定「带去 Content Center」的默认发布平台
+            AI 相关度评分在 Commit 12 上线；当前视角决定「带去内容中心」的默认发布平台
           </span>
         </div>
         <div class="filter-row" v-if="sourceOptions.length > 1">
@@ -213,7 +213,7 @@
                 </div>
                 <div v-if="t.score?.reason" class="topic-reason text-sm text-muted">💡 {{ t.score.reason }}</div>
               </div>
-              <button class="btn btn-sm btn-primary take-btn" @click="takeToContent(t)">带去 Content Center</button>
+              <button class="btn btn-sm btn-primary take-btn" @click="takeToContent(t)">带去内容中心</button>
             </div>
             <div v-if="g.items.length > TIER_PAGE" class="list-footer">
               <button class="btn btn-sm" @click="toggleGroup(g.key)">
@@ -230,7 +230,7 @@
         <div class="cal-grid">
           <div v-for="t in radar.calendar" :key="t.id" class="cal-item">
             <span class="cal-title">{{ t.title }}</span>
-            <button class="btn btn-sm" @click="takeToContent(t)">带去 Content Center</button>
+            <button class="btn btn-sm" @click="takeToContent(t)">带去内容中心</button>
           </div>
         </div>
       </div>

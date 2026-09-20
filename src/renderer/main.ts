@@ -33,13 +33,13 @@ const router = createRouter({
     {
       path: '/marketing/advisor',
       component: () => import('../views/marketing/AdvisorPanel.vue'),
-      meta: { title: 'AI Advisor', icon: '💬' }
+      meta: { title: 'AI 顾问（AI Advisor）', icon: '💬' }
     },
     {
       path: '/marketing/content',
       // Commit 09：占位页换真页（一次 3 版供选 → 编辑 → 版本 → 人工审核/发布标记）
       component: () => import('../views/marketing/ContentCenter.vue'),
-      meta: { title: 'Content Center', icon: '✍️' }
+      meta: { title: '内容中心（Content Center）', icon: '✍️' }
     },
     {
       path: '/marketing/hot',
