@@ -20,7 +20,26 @@
     <template v-else>
       <!-- 当前激活服务商 -->
       <div class="card section">
-        <h3 style="margin-bottom: 16px">激活服务商</h3>
+        <div class="section-head">
+          <h3>激活服务商</h3>
+          <div class="head-actions">
+            <span
+              v-if="presetInfo && presetInfo.source !== 'empty'"
+              class="text-sm text-muted"
+              :title="presetInfo.source === 'overlay' ? '预设来源：已拉取的远程数据' : '预设来源：应用内置快照'"
+            >
+              预设 {{ presetInfo.providerCount }} 家<template v-if="presetInfo.updatedAt"> · 更新于 {{ presetInfo.updatedAt }}</template>
+            </span>
+            <button
+              class="btn btn-sm"
+              :disabled="refreshingPresets"
+              @click="refreshPresets"
+              title="从 Gitee 拉取最新模型与服务商预设，成功后立即生效（无需重启）；失败不影响本地数据"
+            >
+              {{ refreshingPresets ? "拉取中..." : "⬇️ 拉取最新" }}
+            </button>
+          </div>
+        </div>
         <div class="provider-grid">
           <div
             v-for="p in config.providers"
@@ -347,7 +366,42 @@ function onCustomModelsUpdated(models: PresetModel[]) {
 // 进入设置页时重新拉取配置，确保主进程（如关闭对话框“记住选择”）写入的变更能回显
 onMounted(() => {
   configStore.load();
+  loadPresetInfo();
 });
+
+// ── 拉取最新模型预设（Gitee 上游，成功后立即生效，无需重启）────────────────
+const refreshingPresets = ref(false);
+const presetInfo = ref<{ source: string; updatedAt: string; providerCount: number } | null>(null);
+
+async function loadPresetInfo() {
+  try {
+    presetInfo.value = await window.api.config.getModelPresetsInfo();
+  } catch {
+    presetInfo.value = null;
+  }
+}
+
+async function refreshPresets() {
+  refreshingPresets.value = true;
+  try {
+    const r = await window.api.config.refreshModelPresets();
+    if (r.success) {
+      // 新服务商要进 provider 网格/详情表单/key 列表，重新拉一次配置
+      await configStore.load();
+      await loadPresetInfo();
+      if (r.unchanged) showToast("模型预设已是最新", "success");
+      else if (r.persisted === false) showToast("模型预设已生效，但本地缓存写入失败——重启后会回退内置快照，可重试拉取", "warning");
+      else if (r.addedProviders?.length) showToast(`已更新模型预设，新增 ${r.addedProviders.length} 个服务商`, "success");
+      else showToast("模型预设已更新，立即生效", "success");
+    } else {
+      showToast(`拉取失败：${r.error ?? "未知错误"}（本地预设未受影响）`, "error");
+    }
+  } catch (e: any) {
+    showToast(`拉取失败：${e?.message || e}（本地预设未受影响）`, "error");
+  } finally {
+    refreshingPresets.value = false;
+  }
+}
 
 const config = computed(() => configStore.config);
 
@@ -470,6 +524,17 @@ async function testConnection() {
 }
 .section {
 }
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 
 /* Provider Grid */
 .provider-grid {
@@ -578,6 +643,10 @@ async function testConnection() {
 }
 .toast.error {
   background: rgba(248, 81, 73, 0.9);
+  color: #fff;
+}
+.toast.warning {
+  background: rgba(230, 162, 60, 0.95);
   color: #fff;
 }
 

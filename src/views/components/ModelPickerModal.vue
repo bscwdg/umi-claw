@@ -1,12 +1,12 @@
 <template>
-  <div v-if="visible" class="modal-overlay" @click.self="close">
+  <div v-if="visible" class="modal-overlay" @click.self="requestClose">
     <div class="modal-card">
       <div class="modal-header">
         <div class="title-group">
           <span>🧩</span>
           <h4>{{ provider?.name }} 模型管理</h4>
         </div>
-        <span class="close-btn" @click="close">✕</span>
+        <span class="close-btn" @click="requestClose">✕</span>
       </div>
 
       <div class="modal-body">
@@ -129,7 +129,7 @@
 
       <div class="modal-footer">
         <span class="text-sm text-muted footer-hint">改动保存后需点页面「💾 保存配置」生效</span>
-        <button class="btn btn-sm" @click="close">关闭</button>
+        <button class="btn btn-sm" @click="requestClose">关闭</button>
       </div>
     </div>
 
@@ -141,6 +141,16 @@
       confirm-text="删除"
       danger
       @confirm="confirmRemoveModel"
+    />
+
+    <ConfirmDialog
+      v-model:visible="showCloseConfirm"
+      icon="⚠️"
+      title="放弃未保存的修改？"
+      message="表单中有尚未保存的模型参数，关闭后将丢失。"
+      confirm-text="丢弃并关闭"
+      danger
+      @confirm="close"
     />
   </div>
 </template>
@@ -261,6 +271,7 @@ watch(
       error.value = "";
       showAddForm.value = true;
       editingId.value = null;
+      showCloseConfirm.value = false;
       resetForm();
       await loadPresets();
     }
@@ -335,7 +346,7 @@ function editTitle(m: ModelRow): string {
   return "编辑参数并添加为自定义模型";
 }
 
-/** 打开编辑：预填表单并展开。编辑预设/在线模型时保存为同 id 的自定义模型（覆盖预设参数）。 */
+/** 打开编辑：预填表单与快照基线。编辑预设/在线模型时保存为同 id 的自定义模型（覆盖预设参数）。 */
 function startEdit(m: ModelRow) {
   editingId.value = m.id;
   form.id = m.id;
@@ -344,6 +355,7 @@ function startEdit(m: ModelRow) {
   form.maxTokensRaw = toRawTokens(m.maxTokens);
   form.input = m.input && m.input.length ? [...m.input] : [];
   form.reasoning = !!m.reasoning;
+  editBaseline.value = formSnapshot();
   showAddForm.value = true;
   error.value = "";
 }
@@ -441,8 +453,9 @@ function confirmRemoveModel() {
 
 function resetForm() {
   Object.assign(form, createForm());
-  // 回到新增模式：清空/重置都意味着放弃当前编辑
+  // 回到新增模式：清空/重置都意味着放弃当前编辑（快照基线一并失效）
   editingId.value = null;
+  editBaseline.value = "";
 }
 
 function fmt(n: number): string {
@@ -453,6 +466,54 @@ function fmt(n: number): string {
 
 function close() {
   emit("update:visible", false);
+}
+
+const showCloseConfirm = ref(false);
+
+/** 编辑起始快照：与被编辑行原值完全一致 = 未改动，关闭时不弹放弃确认 */
+const editBaseline = ref("");
+
+function formSnapshot(): string {
+  return JSON.stringify([
+    form.id.trim(),
+    form.name.trim(),
+    form.contextWindowRaw.trim(),
+    form.maxTokensRaw.trim(),
+    [...form.input].sort(), // 多选顺序不构成差异
+    form.input.length ? 1 : 0, // 区分「原行无 input」与「用户清空」
+    form.reasoning,
+  ]);
+}
+
+/** 表单中是否有未保存的输入。任一字段有值即视为脏；但编辑模式下与原值
+ * 完全一致视为未改（点「编辑」未动任何东西就关闭，不应误弹放弃确认）。
+ * 收起后的表单仍持有输入，一并保护。 */
+function formDirty(): boolean {
+  const touched = !!(
+    form.id.trim() ||
+    form.name.trim() ||
+    form.contextWindowRaw.trim() ||
+    form.maxTokensRaw.trim() ||
+    form.input.length ||
+    form.reasoning
+  );
+  if (!touched) return false;
+  if (editingId.value && editBaseline.value) {
+    return formSnapshot() !== editBaseline.value;
+  }
+  return true;
+}
+
+/**
+ * 关闭守卫：表单有未保存输入时先弹确认，防止误触 overlay/✕/关闭
+ * 把正在填写的模型参数整个丢掉（用户反馈过“输入中弹窗闪退”）。
+ */
+function requestClose() {
+  if (formDirty()) {
+    showCloseConfirm.value = true;
+    return;
+  }
+  close();
 }
 </script>
 
