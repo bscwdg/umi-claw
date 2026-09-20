@@ -3,28 +3,56 @@
 // 红线（PLAN-2.0.md §七 Commit 11）：只用公开聚合端点，**不登录、不带 Cookie、不绕风控**；
 // 任何鉴权/签名要求一律按「该源不可用」处理并在 ok=false 里写明。
 
-/** 带超时的 GET → JSON；非 2xx / 非 JSON / 超时都抛错（由调用方归入该源的 ok=false） */
-export async function fetchJson(url, timeoutMs, headers) {
-  const ctrl = new AbortController()
-  const timer = setTimeout(function () { ctrl.abort() }, timeoutMs)
-  try {
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      redirect: 'follow',
-      headers: Object.assign({ accept: 'application/json' }, headers || {})
-    })
-    const text = await res.text()
-    if (!res.ok) throw new Error('http ' + res.status)
-    let json
+/** 延时（重试退避用） */
+function sleep(ms) {
+  return new Promise(function (resolve) { setTimeout(resolve, ms) })
+}
+
+/**
+ * 带超时的 GET → JSON；非 2xx / 非 JSON / 超时都抛错（由调用方归入该源的 ok=false）。
+ *
+ * 有限重试（PLAN #6）：仅对**瞬时错误**重试——超时(AbortError)、网络层错误(TypeError)、5xx；
+ * 默认再试 2 次（共 3 次），指数退避 + 抖动。
+ * 4xx / 非 JSON / 鉴权类（401/403）**不重试**（重试也无意义，且不碰任何登录态操作，守红线）。
+ */
+export async function fetchJson(url, timeoutMs, headers, retries) {
+  const maxAttempts = (Number.isFinite(Number(retries)) ? Number(retries) : 2) + 1
+  let lastError
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const ctrl = new AbortController()
+    const timer = setTimeout(function () { ctrl.abort() }, timeoutMs)
     try {
-      json = JSON.parse(text)
-    } catch {
-      throw new Error('non-json response (' + text.length + ' chars)')
+      const res = await fetch(url, {
+        signal: ctrl.signal,
+        redirect: 'follow',
+        headers: Object.assign({ accept: 'application/json' }, headers || {})
+      })
+      const text = await res.text()
+      if (!res.ok) {
+        const err = new Error('http ' + res.status)
+        // 5xx 视为瞬时可重试；其余（含 401/403）直接失败
+        if (res.status >= 500) err.retryable = true
+        throw err
+      }
+      try {
+        return JSON.parse(text)
+      } catch {
+        throw new Error('non-json response (' + text.length + ' chars)')
+      }
+    } catch (e) {
+      lastError = e
+      const isAbort = e && e.name === 'AbortError'
+      const isNetwork = e && e.name === 'TypeError'
+      const canRetry = (isAbort || isNetwork || e && e.retryable === true) && attempt < maxAttempts - 1
+      if (!canRetry) throw e
+    } finally {
+      clearTimeout(timer)
     }
-    return json
-  } finally {
-    clearTimeout(timer)
+    // 指数退避 + 抖动：300ms、600ms …（多源并发同时失败时避免齐刷刷重试）
+    const backoff = 300 * Math.pow(2, attempt) + Math.floor(Math.random() * 200)
+    await sleep(backoff)
   }
+  throw lastError
 }
 
 /** 热度字段形态不一（数字 / 带逗号字符串 / null）：统一成 number|null，非法值不编造成 0 */

@@ -1,21 +1,21 @@
 {
   "suite": "hot（Commit 11：热点采集与浏览，打真 hotManager.ts + 真 collector + 真 DB Worker）",
-  "startedAt": "2026-09-19T18:23:01.544Z",
-  "finishedAt": "2026-09-19T18:23:27.294Z",
-  "durationMs": 25750,
+  "startedAt": "2026-09-20T16:56:40.737Z",
+  "finishedAt": "2026-09-20T16:57:06.290Z",
+  "durationMs": 25553,
   "total": 16,
   "passed": 16,
   "failed": 0,
   "env": {
-    "node": "v24.14.0",
+    "node": "v24.21.0",
     "platform": "win32",
     "arch": "x64",
-    "workerScript": "d:\\work2026\\files\\claw-desktop\\resources\\database\\db-worker.mjs",
-    "runtimeNode": "d:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe"
+    "workerScript": "D:\\work2026\\files\\claw-desktop\\resources\\database\\db-worker.mjs",
+    "runtimeNode": "D:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe"
   },
-  "bundle": "d:\\work2026\\files\\claw-desktop\\test\\.tmp\\hot-manager.mjs",
-  "dataDir": "d:\\work2026\\files\\claw-desktop\\test\\.tmp\\hot-1789842181085\\data",
-  "nodePath": "d:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe",
+  "bundle": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\hot-manager.mjs",
+  "dataDir": "D:\\work2026\\files\\claw-desktop\\test\\.tmp\\hot-1789923400105\\data",
+  "nodePath": "D:\\work2026\\files\\claw-desktop\\data\\runtime\\node-win32-x64\\node.exe",
   "logSample": [
     "[hot] (collector) [collector] OK builtin-calendar n=1",
     "[hot] (collector) [collector] OK toutiao-web n=6",
@@ -32,105 +32,105 @@
       "name": "collector：成功描述符平台键 / 失败一致 / dailyhot 无 base 跳过",
       "ok": true,
       "detail": "成功/失败/跳过三态描述符契约 ✓",
-      "ms": 582
+      "ms": 549
     },
     {
       "id": "H2",
       "name": "同源指纹去重 + 批内包含合并；跨平台不合并；日历 cal: 指纹",
       "ok": true,
       "detail": "头条 4/B站 2/日历 3；跨平台同事件各一行 ✓",
-      "ms": 1323
+      "ms": 1349
     },
     {
       "id": "H3",
       "name": "二轮 upsert：零新增、samples 追加、last_seen 推进",
       "ok": true,
       "detail": "幂等落库 + 时间序列追加 ✓",
-      "ms": 1084
+      "ms": 1393
     },
     {
       "id": "H4",
       "name": "samples 只保留最近 maxSamples 条",
       "ok": true,
       "detail": "maxSamples 裁剪 ✓",
-      "ms": 3446
+      "ms": 3697
     },
     {
       "id": "H5",
       "name": "生命周期纯函数 + 热度变化积分（rising/breaking/long_tail/peak）",
       "ok": true,
       "detail": "5 档生命周期纯函数 + 真采样积分 ✓",
-      "ms": 3777
+      "ms": 3764
     },
     {
       "id": "H6",
       "name": "未到间隔跳过 / 到点采集 / force 恒采集",
       "ok": true,
       "detail": "时间差闸门 + force ✓",
-      "ms": 1751
+      "ms": 1728
     },
     {
       "id": "H7",
       "name": "并发 collect 复用同一在途 Promise，collector 只起一轮",
       "ok": true,
       "detail": "single-flight ✓",
-      "ms": 920
+      "ms": 982
     },
     {
       "id": "H8",
       "name": "全源失败 HOT_SOURCE_ERROR + 不推进 last_fetch + 恢复后清错",
       "ok": true,
       "detail": "失败不推进时间戳；恢复自愈 ✓",
-      "ms": 1183
+      "ms": 2691
     },
     {
       "id": "H9",
       "name": "collector 超时被 kill，不留僵尸，下一轮正常",
       "ok": true,
       "detail": "超时 kill + 无僵尸 ✓",
-      "ms": 3480
+      "ms": 1842
     },
     {
       "id": "H10",
       "name": "listRadar：24h 窗口/分组/评分 LEFT 关联/校验/状态",
       "ok": true,
       "detail": "24h 窗口 + 分组 + 评分 project×平台隔离 + 校验 ✓",
-      "ms": 191
+      "ms": 203
     },
     {
       "id": "H11",
       "name": "7 天落榜清理；contents 引用过的保留（v1.11）；samples 级联",
       "ok": true,
       "detail": "落榜删 1 条；引用例外 + 级联正确 ✓",
-      "ms": 933
+      "ms": 1006
     },
     {
       "id": "H13",
       "name": "A2 dailyhot 成败描述符同 host；A4 日历按本地日历日过窗",
       "ok": true,
       "detail": "A2 host 一致；A4 本地零点边界 ✓",
-      "ms": 480
+      "ms": 1585
     },
     {
       "id": "H14",
       "name": "heat 字段缺失：行上沿用旧值，采样写 null 且生命周期保阶段",
       "ok": true,
       "detail": "行值沿用；采样如实 null；阶段保持 ✓",
-      "ms": 2296
+      "ms": 943
     },
     {
       "id": "H15",
       "name": "C1 存量 >5000 行分页拉全，UNIQUE 冲突不再卡死采集",
       "ok": true,
       "detail": "5001 行存量分页命中，采集不卡死 ✓",
-      "ms": 1407
+      "ms": 1189
     },
     {
       "id": "H16",
       "name": "C3 过期节点次日下榜；C2 引用集 >5000 分页，v1.11 豁免不被击穿",
       "ok": true,
       "detail": "C3 过期节点次日下榜；C2 5001 行引用集分页不丢豁免 ✓",
-      "ms": 2540
+      "ms": 2301
     },
     {
       "id": "H12",
