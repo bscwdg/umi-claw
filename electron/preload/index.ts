@@ -53,7 +53,9 @@ const api = {
     openDataDir: () => ipcRenderer.invoke('config:openDataDir'),
     testConnection: (config) => ipcRenderer.invoke('test-connection', config),
     getPresetModels: (configName: string) =>
-      ipcRenderer.invoke('config:getPresetModels', configName)
+      ipcRenderer.invoke('config:getPresetModels', configName),
+    refreshModelPresets: () => ipcRenderer.invoke('config:refreshModelPresets'),
+    getModelPresetsInfo: () => ipcRenderer.invoke('config:getModelPresetsInfo')
   },
 
   // 环境

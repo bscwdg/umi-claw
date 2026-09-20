@@ -3,6 +3,7 @@ import { join, dirname, basename } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync } from 'fs'
 import AdmZip from 'adm-zip'
 import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawProviderRefs, isReservedOpenClawProviderKey } from './modelConfig'
+import { ModelPresetService, type PresetInfo, type RefreshResult } from './modelPresets'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
 import type { ObsidianConfig } from './obsidian/types'
 
@@ -93,7 +94,9 @@ const DEFAULT_PROVIDERS: ModelProvider[] = [
     name: '千问百炼 (阿里云)',
     baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic',
     apiKey: '',
-    model: 'qwen3.7-max',
+    // 🔧 对齐预设清单：QWEN_BAILIAN_DEFAULT_PROVIDERS 只有 qwen3.6-plus/MiniMax-M2.5/glm-5/deepseek-v3.2，
+    // 原默认 qwen3.7-max 未声明（那是通义千问 QWEN_DASHSCOPE 的模型），激活不换模型会指向不存在的 primary
+    model: 'qwen3.6-plus',
     enabled: false,
     configName: 'QWEN_BAILIAN_DEFAULT_PROVIDERS',
   },
@@ -194,6 +197,8 @@ export class ConfigManager {
   private config: AppConfig
   private openClawConfigPath: string
   private portableSkillsDir: string
+  /** 官方模型预设服务（overlay → 内置快照加载 + 「拉取最新」在线更新） */
+  private modelPresets: ModelPresetService
   /** Obsidian MCP 注入器：返回 mcp.servers.obsidian 配置，未启用返回 null */
   private obsidianMcpInjector: (() => Record<string, unknown> | null) | null = null
 
@@ -236,6 +241,10 @@ export class ConfigManager {
     // 初始化目录结构
     this._ensureDirectories()
 
+    // 加载官方模型预设（overlay → 内置快照）。必须先于 _load()：
+    // _load 的动态服务商合并依赖预设 meta
+    this.modelPresets = new ModelPresetService(this.dataDir)
+    this.modelPresets.loadLocal()
 
     // 加载配置
     this.config = this._load()
@@ -285,6 +294,8 @@ export class ConfigManager {
    */
   resetConfig(): AppConfig {
     this.config = getDeepCopyDefaultConfig()
+    // 恢复默认不丢「拉取最新」带来的动态服务商（DEFAULT_CONFIG 是静态快照，不含动态项）
+    this._appendDynamicPresetProviders(this.config.providers)
     // this._persist()
     this._syncOpenClawConfig()
     return this.getConfig()
@@ -300,6 +311,100 @@ export class ConfigManager {
    */
   syncOpenClawConfig(): void {
     this._syncOpenClawConfig()
+  }
+
+  /**
+   * 「拉取最新」：从 Gitee 上游拉取最新官方模型预设并立即生效（无需重启）。
+   * 成功后把新增的动态服务商合并进 providers：有新增则 saveConfig({}) 持久化并
+   * 同步 openclaw.json；无新增（仅模型更新）也重写 openclaw.json，让已填 key 的
+   * provider 立即拿到新模型列表。失败时本地数据分毫不动。
+   */
+  async refreshModelPresets(): Promise<RefreshResult> {
+    const result = await this.modelPresets.fetchLatest()
+    if (result.success) {
+      const added = this._appendDynamicPresetProviders(this.config.providers)
+      if (added.length) {
+        // saveConfig({}) 会把当前 providers 落盘并触发 _syncOpenClawConfig
+        this.saveConfig({})
+        result.addedProviders = added
+      } else {
+        this._syncOpenClawConfig()
+      }
+    }
+    return result
+  }
+
+  /** 预设来源信息（overlay / 内置快照 / 空），供配置页展示 */
+  getModelPresetsInfo(): PresetInfo {
+    return this.modelPresets.getInfo()
+  }
+
+  /**
+   * 把预设 meta 中的动态服务商追加进 providers 列表（幂等，两条 _load 返回路径与
+   * resetConfig 共用）。只新增：同 configName 或同 id 已存在时跳过，
+   * 永不覆盖用户已填 key 的行；持久化由调用方在 this.config 就绪后负责。
+   * @returns 本次实际新增的 [providerId, label] 列表
+   */
+  private _appendDynamicPresetProviders(providers: ModelProvider[]): Array<{ id: string; label: string }> {
+    const meta = this.modelPresets.getMeta()
+    const added: Array<{ id: string; label: string }> = []
+    for (const [configName, m] of Object.entries(meta)) {
+      if (providers.some((p) => p.configName === configName || p.id === m.providerId)) continue
+      const body = OFFICIAL_MODEL_PRESETS[configName]
+      if (!body || !Array.isArray(body.models)) continue
+      providers.push({
+        id: m.providerId,
+        name: m.label,
+        baseUrl: String(body.baseUrl || ''),
+        apiKey: '',
+        model: body.models[0]?.id ? String(body.models[0].id) : '',
+        enabled: false,
+        configName,
+      })
+      added.push({ id: m.providerId, label: m.label })
+    }
+    return added
+  }
+
+  /**
+   * 解析 provider 请求超时（秒）：合法正数采用用户值（上限 86400/天），
+   * 无效或未填时默认 900 秒（15 分钟）。主路径与预设缺失的 fallback 路径共用，
+   * 保证两种情况下写入 openclaw.json 的超时行为一致。
+   */
+  private _resolveTimeoutSeconds(p: ModelProvider): number {
+    const timeoutSeconds = Number(p.timeoutSeconds)
+    return Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
+      ? Math.min(Math.round(timeoutSeconds), 86400)
+      : 900
+  }
+
+  /**
+   * 把用户自定义模型合并进预设模型列表（去重，自定义覆盖同 id 预设）。
+   * 同时做 OpenClaw model schema 规范化：name 缺失/空白用 id 兜底；
+   * input/contextWindow/maxTokens/cost 缺失补最小合法默认，避免自定义模型
+   * 被网关 Zod 校验拒绝（仅补缺失项，用户显式值保留）。
+   */
+  private _mergeCustomModels(baseModels: any[], customModels?: PresetModel[]): any[] {
+    const merged = Array.isArray(baseModels) ? baseModels.map((m) => ({ ...m })) : []
+    if (!Array.isArray(customModels)) return merged
+    for (const rawCm of customModels) {
+      if (!rawCm || !rawCm.id) continue
+      const cm = {
+        input: ['text'],
+        contextWindow: 8192,
+        maxTokens: 4096,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        ...rawCm,
+        name: (rawCm.name && String(rawCm.name).trim()) ? rawCm.name : rawCm.id,
+      }
+      const idx = merged.findIndex((m: any) => m && m.id === cm.id)
+      if (idx >= 0) {
+        merged[idx] = { ...merged[idx], ...cm }
+      } else {
+        merged.push(cm)
+      }
+    }
+    return merged
   }
 
   /**
@@ -455,6 +560,26 @@ export class ConfigManager {
           // 如果找到保存的配置且是对象，则合并，否则使用默认值
           return saved_p ? { ...def, ...saved_p } : def
         })
+        // 追加保存了但不在 DEFAULT_PROVIDERS 里的 provider（例如「拉取最新」带来的
+        // 新服务商）：否则重启时会被下面的默认合并静默丢弃，用户已填的 apiKey 随之丢失。
+        // 只复活预设 meta 中仍存在的官方动态服务商（configName 或 providerId 命中），
+        // 避免历史版本遗留的已下线 provider（UI 无删除入口）被静默永久带回列表
+        const presetMeta = this.modelPresets.getMeta()
+        const metaProviderIds = new Set(Object.values(presetMeta).map((m) => m.providerId))
+        for (const sp of savedProviders) {
+          if (!sp || typeof sp !== 'object') continue
+          if (typeof sp.id !== 'string' || !sp.id) continue
+          if (typeof sp.name !== 'string') continue
+          const isDynamicPreset =
+            (typeof sp.configName === 'string' && Object.prototype.hasOwnProperty.call(presetMeta, sp.configName)) ||
+            metaProviderIds.has(sp.id)
+          if (!isDynamicPreset) continue
+          if (!mergedProviders.some((p) => p.id === sp.id)) {
+            mergedProviders.push(sp as ModelProvider)
+          }
+        }
+        // 合并「拉取最新」带来的动态服务商（幂等；只新增，永不覆盖已填 key 的行）
+        this._appendDynamicPresetProviders(mergedProviders)
         return {
           ...DEFAULT_CONFIG,
           ...saved,
@@ -478,7 +603,9 @@ export class ConfigManager {
     }
 
     // 返回全新的默认配置副本
-    return getDeepCopyDefaultConfig()
+    const defaults = getDeepCopyDefaultConfig()
+    this._appendDynamicPresetProviders(defaults.providers)
+    return defaults
   }
 
   /**
@@ -575,37 +702,12 @@ private _syncOpenClawConfig(): void {
         // 国内慢模型卡顿可调大）；无效/未填时默认 900 秒（15 分钟），
         // 显式落盘保证默认值生效，也避免下方 {...旧值, ...officialBody}
         // 合并残留上次设置的旧超时
-        const timeoutSeconds = Number(p.timeoutSeconds)
-        officialBody.timeoutSeconds =
-          Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
-            ? Math.min(Math.round(timeoutSeconds), 86400)
-            : 900
-        // 合并用户自定义模型（去重，自定义覆盖同 id 预设）
-        if (Array.isArray(p.customModels) && p.customModels.length) {
-          const baseModels = Array.isArray(officialBody.models) ? officialBody.models : []
-          const merged = [...baseModels]
-          for (const rawCm of p.customModels) {
-            if (!rawCm || !rawCm.id) continue
-            // OpenClaw model schema 规范化：name 缺失/空白则用 id 兜底；
-            // input/contextWindow/maxTokens/cost 缺失则补最小合法默认，避免自定义模型
-            // 因缺字段被网关 Zod 校验拒绝（仅补缺失项，用户显式值保留）。
-            const cm = {
-              input: ["text"],
-              contextWindow: 8192,
-              maxTokens: 4096,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              ...rawCm,
-              name: (rawCm.name && String(rawCm.name).trim()) ? rawCm.name : rawCm.id,
-            }
-            const idx = merged.findIndex((m: any) => m && m.id === cm.id)
-            if (idx >= 0) {
-              merged[idx] = { ...merged[idx], ...cm }
-            } else {
-              merged.push(cm)
-            }
-          }
-          officialBody.models = merged
-        }
+        officialBody.timeoutSeconds = this._resolveTimeoutSeconds(p)
+        // 合并用户自定义模型（去重，自定义覆盖同 id 预设；并做 schema 规范化）
+        officialBody.models = this._mergeCustomModels(
+          Array.isArray(officialBody.models) ? officialBody.models : [],
+          p.customModels
+        )
         // 融合技能（如果预设中包含 skills）
         if (officialBody.skills) {
           const incomingSkills = officialBody.skills.entries || officialBody.skills
@@ -623,7 +725,33 @@ private _syncOpenClawConfig(): void {
           ...officialBody
         }
       } else {
-        console.warn(`[ConfigManager] 未找到 configName: ${p.configName} 对应的预设配置，跳过`)
+        // 预设缺失（如内置快照损坏且从未拉取成功）：用 provider 自身数据合成最小 body，
+        // 避免 keyed provider 从 openclaw.json 静默消失导致网关不可用
+        console.warn(`[ConfigManager] 未找到 configName: ${p.configName} 对应的预设配置，使用 provider 数据合成最小配置`)
+        // 与主路径保持一致：默认超时 900 秒，并合入用户自定义模型（schema 规范化），
+        // 避免降级场景下行为分叉
+        const fallbackBaseModels = p.model
+          ? [{
+              id: p.model,
+              name: p.model,
+              input: ['text'],
+              contextWindow: 8192,
+              maxTokens: 4096,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+            }]
+          : []
+        const fallbackBody: any = {
+          baseUrl: p.baseUrl,
+          apiKey: p.apiKey,
+          api: 'openai-completions',
+          timeoutSeconds: this._resolveTimeoutSeconds(p),
+          models: this._mergeCustomModels(fallbackBaseModels, p.customModels)
+        }
+        const fallbackKey = toOpenClawProviderKey(p.id)
+        existingConfig.models.providers[fallbackKey] = {
+          ...existingConfig.models.providers[fallbackKey],
+          ...fallbackBody
+        }
       }
     }
 
