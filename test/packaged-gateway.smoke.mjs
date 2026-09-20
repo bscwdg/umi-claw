@@ -129,8 +129,12 @@ try {
     'utf-8'
   )
 
+  // 安全阀：宿主 shell 可能已带 CLAW_DATA_DIR（指向真实数据目录），子进程会继承它，
+  // 导致便携 dataDir 被整体忽略。这里强制覆盖为本脚本的隔离目录。
+  const childEnv = { ...process.env, CLAW_DATA_DIR: dataDir }
   child = spawn(exePath, [`--remote-debugging-port=${CDP_PORT}`], {
     cwd: exeDir,
+    env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true
   })

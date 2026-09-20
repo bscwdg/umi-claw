@@ -1,16 +1,16 @@
 {
   "suite": "packaged-06/07（真安装包产物 + CDP 驱真渲染进程）",
-  "finishedAt": "2026-09-17T02:38:28.264Z",
+  "finishedAt": "2026-09-20T16:30:52.244Z",
   "total": 7,
   "passed": 7,
   "failed": 0,
-  "exePath": "D:\\work2026\\umi-claw\\release\\win-unpacked\\Umi Claw.exe",
-  "dataDir": "D:\\work2026\\umi-claw\\release\\win-unpacked\\data",
+  "exePath": "D:\\work2026\\files\\claw-desktop\\release\\win-unpacked\\Umi Claw.exe",
+  "dataDir": "D:\\work2026\\files\\claw-desktop\\release\\win-unpacked\\data",
   "leftoverPackagedProcesses": 0,
   "stderrSample": [
     "\r",
-    "DevTools listening on ws://127.0.0.1:9223/devtools/browser/1b10631c-0638-4b24-bb7d-0376f61448c3\r",
-    "[26996:0917/103825.655:ERROR:devtools_http_handler.cc(306)] Error writing DevTools active port to file D:\\work2026\\umi-claw\\release\\win-unpacked\\context-data\\DevToolsActivePort: 系统找不到指定的路径。 (0x3)\r",
+    "DevTools listening on ws://127.0.0.1:9223/devtools/browser/3bf0508a-b8b8-4596-9237-bd995ff42cd2\r",
+    "[20476:0921/003047.476:ERROR:devtools_http_handler.cc(306)] Error writing DevTools active port to file D:\\work2026\\files\\claw-desktop\\release\\win-unpacked\\context-data\\DevToolsActivePort: 系统找不到指定的路径。 (0x3)\r",
     ""
   ],
   "checks": [
@@ -36,13 +36,13 @@
       "id": "P4",
       "name": "打包态真 IPC：Project / Knowledge / Watchlist / 当前商家",
       "ok": true,
-      "detail": "project=bd5b4bd7… 目录已建"
+      "detail": "project=3de01228… 目录已建"
     },
     {
       "id": "P5",
       "name": "打包态 Knowledge 写入 + LIKE 检索 + Watchlist + 当前商家持久化",
       "ok": true,
-      "detail": "检索 1 条（snippet 命中 5999）；watchlist 已加；current=bd5b4bd7…"
+      "detail": "检索 1 条（snippet 命中 5999）；watchlist 已加；current=3de01228…"
     },
     {
       "id": "P6",
