@@ -12,9 +12,14 @@ config
 /.vscode
 /electron-builder-cache
 /.dev-user-data
+# dev 运行数据目录（DB、app.json、backup 等；run-shared.bat 以 CLAW_DATA_DIR 指向它）
+/data/
 
 # build artifacts
 *.tsbuildinfo
 electron.vite.config.*.mjs
 CLAUDE.md
 .claude/
+
+# Commit 02 验收脚本的临时产物（esbuild bundle / 临时库）
+test/.tmp/
