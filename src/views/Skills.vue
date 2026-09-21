@@ -9,6 +9,13 @@
       </div>
       <div class="flex gap-2">
         <button
+          class="btn"
+          @click="handleSyncFromRemote"
+          :disabled="actionLoading"
+        >
+          ☁️ 拉取云端技能
+        </button>
+        <button
           class="btn btn-primary"
           @click="handleImportZip"
           :disabled="actionLoading"
@@ -131,6 +138,39 @@ async function enableAll() {
   actionLoading.value = false;
 }
 
+// 🟢 新增：从 Gitee 云端技能仓库同步官方技能（与初始化共用主进程 SkillSyncService）
+async function handleSyncFromRemote() {
+  actionLoading.value = true;
+  try {
+    const result = await window.api.skills.syncFromRemote();
+    if (result.success) {
+      if (result.failed.length > 0) {
+        // 单槽 toast，成功概览 + 失败明细合并成一条 warning
+        showToast(
+          `云端同步完成：新装 ${result.installed.length} 个、跳过 ${
+            result.skipped.length
+          } 个，失败 ${result.failed.length} 个（${result.failed
+            .map((f: { file: string; error: string }) => f.file)
+            .join("、")}）`,
+          "warning"
+        );
+      } else {
+        showToast(
+          `云端同步完成：新装 ${result.installed.length} 个，跳过 ${result.skipped.length} 个`,
+          "success"
+        );
+      }
+      await load(); // 刷新列表，新技能以「已禁用」状态上架
+    } else {
+      showToast(result.error || "云端技能拉取失败", "error");
+    }
+  } catch (err) {
+    showToast(`云端拉取发生系统异常${err}`, "error");
+  } finally {
+    actionLoading.value = false;
+  }
+}
+
 // 🟢 新增：处理压缩包导入并自动刷新列表
 async function handleImportZip() {
   actionLoading.value = true;
@@ -219,6 +259,10 @@ onMounted(load);
 }
 .toast.error {
   background: rgba(248, 81, 73, 0.9);
+  color: #fff;
+}
+.toast.warning {
+  background: rgba(245, 158, 11, 0.9);
   color: #fff;
 }
 </style>

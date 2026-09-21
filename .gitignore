@@ -12,6 +12,9 @@ config
 /.vscode
 /electron-builder-cache
 /.dev-user-data
+# 便携数据目录与本地临时测试产物，不入库
+/data/
+/test/
 
 # build artifacts
 *.tsbuildinfo
