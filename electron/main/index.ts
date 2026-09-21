@@ -14,6 +14,7 @@ import { join, parse, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { ClawManager } from './clawManager'
 import { ConfigManager } from './configManager'
+import { SkillSyncService } from './skillSyncService'
 import { DownloadManager, type DownloadProgress } from './downloadManager'
 import { ChannelManager } from './channelManager'
 import { ObsidianManager } from './obsidian/obsidianManager'
@@ -77,6 +78,7 @@ let configManager: ConfigManager
 let downloadManager: DownloadManager
 let channelManager: ChannelManager
 let obsidianManager: ObsidianManager
+let skillSyncService: SkillSyncService
 // marketing DB Worker 客户端（Commit 02）。构造是廉价的：惰性初始化，
 // 应用启动不建库、不拉 Worker，首次 marketing IPC 才 spawn。
 let marketingDatabase: DatabaseClient | null = null
@@ -963,6 +965,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('skills:importSkillZip', async () => {
     return await configManager.importSkillZip()
   })
+  ipcMain.handle('skills:syncFromRemote', () => skillSyncService.syncFromRemote())
 
   // 外部链接 - 增加简单的协议校验，防止 file:// 等危险协议
   // channels: plugin install for native long-connection channels (e.g. feishu)
@@ -1409,6 +1412,7 @@ app.whenReady().then(() => {
   })
 
   configManager = new ConfigManager()
+  skillSyncService = new SkillSyncService(configManager)
   clawManager = new ClawManager(configManager)
   downloadManager = new DownloadManager(configManager)
   channelManager =

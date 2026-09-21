@@ -7,6 +7,7 @@ import { createHash } from 'crypto'
 import { Readable, Transform } from 'stream'
 import { pipeline } from 'stream/promises'
 import { ConfigManager } from './configManager'
+import { SkillSyncService } from './skillSyncService'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
 import { subprocessRegistry } from './subprocessRegistry'
 
@@ -1444,11 +1445,40 @@ export class DownloadManager extends EventEmitter {
   }
 
   private async _installBuiltinSkills(): Promise<void> {
-    this._progress('装配技能', '正在解压并激活内置基础交互技能包...', 92)
-    await new Promise((r) => setTimeout(r, 400))
+    this._progress('装配技能', '正在获取云端技能列表...', 92)
     // 这里不要发 100%：100% 留给最终“完成”事件（携带 done=true），
     // 否则进度条到 100% 但 done 仍为 false，UI 会一直显示“正在拼命装配”。
-    this._progress('装配技能', '内置基础技能包部署完毕', 98)
+    try {
+      const sync = new SkillSyncService(this.configManager)
+      const result = await sync.syncFromRemote({
+        externalSignal: this.abortController?.signal,
+        onProgress: (stepText, p01) => {
+          // p01 ∈ [0,1] 映射到 93~97，98 收尾
+          this._progress('装配技能', stepText, 93 + Math.round(p01 * 4))
+        }
+      })
+      this._writeDebugLog(
+        `[SkillSync] installed=${result.installed.length} skipped=${result.skipped.length} failed=${result.failed.length}`
+      )
+      if (result.failed.length > 0) {
+        this._progress(
+          '装配技能',
+          `云端技能同步完成：新装 ${result.installed.length} 个、跳过 ${result.skipped.length} 个、失败 ${result.failed.length} 个`,
+          98
+        )
+      } else {
+        this._progress(
+          '装配技能',
+          `云端技能同步完成：新装 ${result.installed.length} 个、跳过 ${result.skipped.length} 个`,
+          98
+        )
+      }
+    } catch (err: any) {
+      if (err?.name === 'AbortError') throw err // 用户取消必须上抛，initEnvironment catch 会识别
+      // 非致命降级：网络/仓库不可达不影响初始化整体成功，可稍后在技能管理页手动重试
+      this._writeDebugLog(`[SkillSync] 非致命失败: ${err?.message || err}`)
+      this._progress('装配技能', '云端技能拉取失败，不影响使用，可稍后在技能管理页重试', 98)
+    }
   }
 
   private _ensureOpenClawConfig(): void {
