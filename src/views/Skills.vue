@@ -35,6 +35,47 @@
       >
     </div>
 
+    <!-- 云端可更新技能勾选面板：拉取同步后若有更新则出现 -->
+    <div v-if="pendingUpdates.length" class="card update-panel">
+      <div class="skill-header">
+        <div class="skill-name">🔄 云端有 {{ pendingUpdates.length }} 个技能可更新</div>
+        <label class="flex gap-2 text-sm" style="align-items: center; cursor: pointer">
+          <input
+            type="checkbox"
+            :checked="allSelected"
+            @change="toggleSelectAll"
+          />
+          全选
+        </label>
+      </div>
+      <div class="update-list">
+        <label
+          v-for="u in pendingUpdates"
+          :key="u.id"
+          class="update-item"
+        >
+          <input type="checkbox" v-model="selectedUpdates[u.id]" />
+          <span class="update-id">{{ u.id }}</span>
+          <span class="text-muted text-xs">
+            {{ u.localVersion ?? "未记录" }} → {{ u.remoteVersion }}
+            <span v-if="!u.localVersion" class="badge badge-yellow">未记录过版本</span>
+          </span>
+        </label>
+      </div>
+      <div class="flex gap-2" style="justify-content: flex-end; margin-top: 10px">
+        <button class="btn btn-sm" @click="dismissUpdates" title="仅本次忽略，下次拉取同步时会重新提示">
+          忽略
+        </button>
+        <button
+          class="btn btn-sm btn-primary"
+          @click="handleApplyUpdates"
+          :disabled="updating || selectedCount === 0"
+        >
+          {{ updating ? "更新中..." : `更新所选 (${selectedCount})` }}
+        </button>
+      </div>
+    </div>
+
     <div class="skills-grid">
       <div v-for="skill in skills" :key="skill.id" class="skill-card card">
         <div class="skill-header">
@@ -100,6 +141,37 @@ const loadingMap = ref<Record<string, boolean>>({});
 const actionLoading = ref(false);
 const { toast, showToast } = useToast();
 
+// ── 云端技能更新面板状态 ──
+interface UpdateCandidate {
+  id: string;
+  remoteVersion: string;
+  localVersion: string | null;
+}
+const pendingUpdates = ref<UpdateCandidate[]>([]);
+const selectedUpdates = ref<Record<string, boolean>>({});
+const updating = ref(false);
+
+const selectedCount = computed(
+  () => Object.values(selectedUpdates.value).filter(Boolean).length
+);
+const allSelected = computed(
+  () =>
+    pendingUpdates.value.length > 0 &&
+    pendingUpdates.value.every((u) => selectedUpdates.value[u.id])
+);
+
+function toggleSelectAll() {
+  const target = !allSelected.value;
+  for (const u of pendingUpdates.value) {
+    selectedUpdates.value[u.id] = target;
+  }
+}
+
+function dismissUpdates() {
+  pendingUpdates.value = [];
+  selectedUpdates.value = {};
+}
+
 // 动态计算当前已开启的技能数量
 const enabledCount = computed(
   () => skills.value.filter((s) => s.enabled).length
@@ -138,25 +210,34 @@ async function enableAll() {
   actionLoading.value = false;
 }
 
-// 🟢 新增：从 Gitee 云端技能仓库同步官方技能（与初始化共用主进程 SkillSyncService）
+// 🟢 从 Gitee 云端技能仓库同步官方技能（与初始化共用主进程 SkillSyncService）
 async function handleSyncFromRemote() {
   actionLoading.value = true;
   try {
     const result = await window.api.skills.syncFromRemote();
     if (result.success) {
+      // 可更新列表进勾选面板（默认全选），与「跳过」分开表述
+      pendingUpdates.value = result.updates ?? [];
+      selectedUpdates.value = {};
+      for (const u of pendingUpdates.value) {
+        selectedUpdates.value[u.id] = true;
+      }
+      const updateHint = pendingUpdates.value.length
+        ? `、可更新 ${pendingUpdates.value.length} 个（见下方列表）`
+        : "";
       if (result.failed.length > 0) {
         // 单槽 toast，成功概览 + 失败明细合并成一条 warning
         showToast(
           `云端同步完成：新装 ${result.installed.length} 个、跳过 ${
             result.skipped.length
-          } 个，失败 ${result.failed.length} 个（${result.failed
+          } 个${updateHint}，失败 ${result.failed.length} 个（${result.failed
             .map((f: { file: string; error: string }) => f.file)
             .join("、")}）`,
           "warning"
         );
       } else {
         showToast(
-          `云端同步完成：新装 ${result.installed.length} 个，跳过 ${result.skipped.length} 个`,
+          `云端同步完成：新装 ${result.installed.length} 个，跳过 ${result.skipped.length} 个${updateHint}`,
           "success"
         );
       }
@@ -168,6 +249,39 @@ async function handleSyncFromRemote() {
     showToast(`云端拉取发生系统异常${err}`, "error");
   } finally {
     actionLoading.value = false;
+  }
+}
+
+// 🟢 应用勾选的云端技能更新（staging 覆盖替换，enabled 状态保留）
+async function handleApplyUpdates() {
+  const ids = pendingUpdates.value
+    .filter((u) => selectedUpdates.value[u.id])
+    .map((u) => u.id);
+  if (ids.length === 0) return;
+  updating.value = true;
+  try {
+    const result = await window.api.skills.applyUpdates(ids);
+    const failText = result.failed.length
+      ? `，失败 ${result.failed.length} 个（${result.failed
+          .map((f: { id: string; error: string }) => f.id)
+          .join("、")}）`
+      : "";
+    showToast(
+      `云端技能更新完成：${result.updated.length} 个已更新${failText}`,
+      result.failed.length ? "warning" : "success"
+    );
+    // 已更新项从面板移除，失败的保留可重试；刷新列表
+    pendingUpdates.value = pendingUpdates.value.filter(
+      (u) => !result.updated.includes(u.id)
+    );
+    for (const id of result.updated) {
+      delete selectedUpdates.value[id];
+    }
+    await load();
+  } catch (err) {
+    showToast(`更新发生系统异常${err}`, "error");
+  } finally {
+    updating.value = false;
   }
 }
 
@@ -192,7 +306,21 @@ async function handleImportZip() {
   }
 }
 
-onMounted(load);
+onMounted(async () => {
+  await load();
+  // 跳页回来时从主进程缓存恢复勾选面板，避免重新拉远端
+  try {
+    const cached = await window.api.skills.getPendingUpdates();
+    if (Array.isArray(cached) && cached.length && !pendingUpdates.value.length) {
+      pendingUpdates.value = cached;
+      for (const u of pendingUpdates.value) {
+        selectedUpdates.value[u.id] = true;
+      }
+    }
+  } catch {
+    /* 恢复失败不影响页面 */
+  }
+});
 </script>
 
 <style scoped>
@@ -241,6 +369,27 @@ onMounted(load);
   align-items: center;
   justify-content: space-between;
   margin-top: 4px;
+}
+
+/* 云端可更新技能勾选面板 */
+.update-panel {
+  padding: 16px;
+}
+.update-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.update-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.update-id {
+  font-weight: 600;
+  font-size: 13px;
 }
 
 .toast {

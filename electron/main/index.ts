@@ -514,6 +514,10 @@ function registerIpcHandlers(): void {
     return await configManager.importSkillZip()
   })
   ipcMain.handle('skills:syncFromRemote', () => skillSyncService.syncFromRemote())
+  // 勾选更新：主进程先过滤非 string 项，service 内再做白名单校验与去重
+  ipcMain.handle('skills:applyUpdates', (_e, ids: unknown) =>
+    skillSyncService.applyUpdates(Array.isArray(ids) ? ids.filter((i): i is string => typeof i === 'string') : []))
+  ipcMain.handle('skills:getPendingUpdates', () => skillSyncService.getPendingUpdates())
 
   // 外部链接 - 增加简单的协议校验，防止 file:// 等危险协议
   // channels: plugin install for native long-connection channels (e.g. feishu)

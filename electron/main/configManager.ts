@@ -1,11 +1,25 @@
 import { app,dialog } from 'electron'
 import { join, dirname, basename, resolve, sep } from 'path'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync, rmSync } from 'fs'
 import AdmZip from 'adm-zip'
 import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawProviderRefs, isReservedOpenClawProviderKey } from './modelConfig'
 import { ModelPresetService, type PresetInfo, type RefreshResult } from './modelPresets'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
 import type { ObsidianConfig } from './obsidian/types'
+
+/**
+ * 技能版本 manifest 的单条记录（skill-manifest.json）。
+ * key 为 zip 文件名 stem（与云端 versions.json 的 key 一致，作为唯一锚点）；
+ * 磁盘目录名与 openclaw.json skills.entries 的键一律用 actualDir。
+ */
+export interface SkillManifestEntry {
+  /** 安装/更新时的版本号；取不到记 'unknown' */
+  version: string
+  /** 安装/更新时间（ISO 字符串） */
+  installedAt: string
+  /** 实际落盘目录名（规范包按 zip 顶层目录名落盘，可能与 key 不同） */
+  actualDir: string
+}
 
 export interface PresetModel {
   id: string
@@ -197,6 +211,8 @@ export class ConfigManager {
   private config: AppConfig
   private openClawConfigPath: string
   private portableSkillsDir: string
+  /** 技能版本 manifest（记录云端同步/导入的技能版本，供更新比对） */
+  private skillManifestPath: string
   /** 官方模型预设服务（overlay → 内置快照加载 + 「拉取最新」在线更新） */
   private modelPresets: ModelPresetService
   /** Obsidian MCP 注入器：返回 mcp.servers.obsidian 配置，未启用返回 null */
@@ -238,6 +254,7 @@ export class ConfigManager {
     this.configPath = join(this.dataDir, 'config', 'app.json')
     this.openClawConfigPath = openClawPaths.openClawConfig(this.dataDir)
     this.portableSkillsDir = openClawPaths.portableSkillsDir(this.dataDir)
+    this.skillManifestPath = openClawPaths.skillManifest(this.dataDir)
     // 初始化目录结构
     this._ensureDirectories()
 
@@ -465,10 +482,17 @@ export class ConfigManager {
   /**
    * 从 SKILL.md 的 YAML Front Matter 中解析指定字段
    * 支持 name: xxx、name: "xxx"、name: 'xxx' 三种写法
+   * 只在前置 front-matter 区块（文件开头的 --- ... ---）内匹配：
+   * 正文里出现的同名行（如文档示例中的 version:）不会被误取；嵌套缩进的
+   * 子键（如 metadata.version）也不会被当成顶层字段；无 front-matter 区块返回 undefined。
    * @returns 解析到的值（已 trim），未匹配到返回 undefined
    */
   private _parseFrontMatterField(content: string, field: string): string | undefined {
-    const match = content.match(new RegExp(`${field}:\\s*["']?(.*?)["']?(\\r?\\n|$)`))
+    let text = content
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
+    const block = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+    if (!block) return undefined
+    const match = block[1].match(new RegExp(`^${field}:\\s*["']?(.*?)["']?\\s*(\\r?\\n|$)`, 'm'))
     return match && match[1] ? match[1].trim() : undefined
   }
 
@@ -929,7 +953,8 @@ private _archiveLegacyAuthProfiles(): void {
       const entries = readdirSync(this.portableSkillsDir, { withFileTypes: true })
 
       for (const entry of entries) {
-        if (entry.isDirectory()) {
+        // 以点开头的目录是内部目录（如 staging 更新残留 .staging-*），不属于技能
+        if (entry.isDirectory() && !entry.name.startsWith('.')) {
           const skillFolderId = entry.name // 文件夹名作为唯一 ID（例如 "pdf-helper"）
           const skillMdPath = join(this.portableSkillsDir, skillFolderId, 'SKILL.md')
 
@@ -1031,12 +1056,123 @@ private _archiveLegacyAuthProfiles(): void {
       const zipFileName = basename(zipPath, '.zip')
 
       const result = this.installSkillZipData(readFileSync(zipPath), zipFileName)
+      if (result.success && !result.exists) {
+        // 手动导入也记 manifest 台账：key = zip 文件名 stem；SKILL.md 无 version 时记 'unknown'
+        // （若恰好与云端同名同 stem，后续更新检测可正常比对）
+        this.recordSkillInstalled(zipFileName, result.version ?? 'unknown', result.skillId ?? zipFileName)
+      }
       return { success: result.success, error: result.error }
 
     } catch (err: any) {
       console.error('[ConfigManager] 导入 Skill 压缩包失败:', err)
       return { success: false, error: err.message || '解压安装过程中发生未知错误' }
     }
+  }
+
+  // ───────────────────────── 技能版本 manifest ─────────────────────────
+
+  /**
+   * 读取技能版本 manifest。文件不存在 / BOM / JSON 非法 / 结构非法时
+   * 降级返回 {}（全量已装技能会被云端同步视为「版本未记录 → 可更新」），不抛异常。
+   */
+  public getSkillManifest(): Record<string, SkillManifestEntry> {
+    try {
+      if (!existsSync(this.skillManifestPath)) return {}
+      let text = readFileSync(this.skillManifestPath, 'utf-8')
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
+      const parsed = JSON.parse(text)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+      const out: Record<string, SkillManifestEntry> = {}
+      for (const [key, val] of Object.entries(parsed)) {
+        const v = val as any
+        if (v && typeof v === 'object' && typeof v.version === 'string' && typeof v.actualDir === 'string') {
+          out[key] = { version: v.version, installedAt: String(v.installedAt ?? ''), actualDir: v.actualDir }
+        }
+      }
+      return out
+    } catch (err) {
+      console.warn('[ConfigManager] 读取技能 manifest 失败，视为空台账:', err)
+      return {}
+    }
+  }
+
+  /** 原子写入 manifest（复用 _atomicWriteFileSync 的 tmp + rename 策略） */
+  private _writeSkillManifest(manifest: Record<string, SkillManifestEntry>): void {
+    mkdirSync(dirname(this.skillManifestPath), { recursive: true })
+    this._atomicWriteFileSync(this.skillManifestPath, JSON.stringify(manifest, null, 2))
+  }
+
+  /**
+   * 合并写入单条安装/更新记录。台账只是辅助数据，任何异常仅 warn 吞掉，
+   * 绝不影响已成功的安装/更新主流程。
+   */
+  public recordSkillInstalled(skillKey: string, version: string, actualDir: string): void {
+    try {
+      const manifest = this.getSkillManifest()
+      manifest[skillKey] = { version: version || 'unknown', installedAt: new Date().toISOString(), actualDir }
+      this._writeSkillManifest(manifest)
+    } catch (err) {
+      console.warn(`[ConfigManager] 记录技能 [${skillKey}] 版本到 manifest 失败（不影响安装）:`, err)
+    }
+  }
+
+  // ───────────────────────── zip 包安装/更新 ─────────────────────────
+
+  /**
+   * 解析 zip 包结构：定位 SKILL.md、判定规范包（自带顶层文件夹）或平铺包，
+   * 并算出应落盘的目录名（平铺包按 SKILL.md name，frontmatter 不可信已做合法化）。
+   * installSkillZipData 与 updateSkillZipData 共用，保证落盘目录名判定逻辑只有一份。
+   */
+  private _resolveZipTarget(
+    zip: AdmZip,
+    fallbackName: string
+  ): { ok: true; dirName: string; hasParentFolder: boolean; skillMdContent: string | null } | { ok: false; error: string } {
+    // 深度扫描：定位 SKILL.md 并摸清它的底层结构
+    let skillMdEntry: any = null
+    let hasParentFolder = false
+    let detectedFolderName = ''
+
+    for (const entry of zip.getEntries()) {
+      if (entry.entryName.endsWith('SKILL.md')) {
+        skillMdEntry = entry
+        const parts = entry.entryName.split('/')
+        // 如果切开大于 1，说明形如 "pdf-helper/SKILL.md"，天然自带了父文件夹
+        if (parts.length > 1 && parts[0] !== '') {
+          hasParentFolder = true
+          detectedFolderName = parts[0]
+        }
+        break
+      }
+    }
+
+    if (!skillMdEntry) {
+      return { ok: false, error: '不合法的 Skill 包：未检测到 SKILL.md 文件！' }
+    }
+
+    let skillMdContent: string | null = null
+    try {
+      skillMdContent = skillMdEntry.getData().toString('utf8')
+    } catch { /* 内容读不出时 version 解析降级为 undefined，不阻断安装 */ }
+
+    if (hasParentFolder) {
+      return { ok: true, dirName: detectedFolderName, hasParentFolder: true, skillMdContent }
+    }
+
+    // 平铺包：解析 SKILL.md 里的 name 作为专属文件夹名
+    let targetSkillName = fallbackName
+    try {
+      if (skillMdContent) {
+        targetSkillName = this._parseFrontMatterField(skillMdContent, 'name') ?? targetSkillName
+      }
+    } catch (e) {
+      console.warn('[ConfigManager] 从平铺的 SKILL.md 中解析 name 失败，改用压缩包名')
+    }
+    // 目录名安全合法化：frontmatter 不可信，防 `name: ../../evil` 目录穿越
+    if (targetSkillName === '.' || targetSkillName === '..' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(targetSkillName)) {
+      console.warn(`[ConfigManager] SKILL.md name 非法 (${targetSkillName})，回退为 zip 文件名`)
+      targetSkillName = fallbackName
+    }
+    return { ok: true, dirName: targetSkillName, hasParentFolder: false, skillMdContent }
   }
 
   /**
@@ -1050,7 +1186,7 @@ private _archiveLegacyAuthProfiles(): void {
     data: Buffer,
     fallbackName: string,
     opts?: { overwrite?: boolean }
-  ): { success: boolean; skillId?: string; exists?: boolean; error?: string } {
+  ): { success: boolean; skillId?: string; exists?: boolean; version?: string; error?: string } {
     const overwrite = opts?.overwrite !== false
     try {
       const zip = new AdmZip(data)
@@ -1059,74 +1195,142 @@ private _archiveLegacyAuthProfiles(): void {
       const slipProblem = this._validateZipEntries(zip, this.portableSkillsDir)
       if (slipProblem) return { success: false, error: `不合法的 Skill 包：${slipProblem}` }
 
-      const zipEntries = zip.getEntries()
-
-      // 1. 深度扫描：定位 SKILL.md 并摸清它的底层结构
-      let skillMdEntry: any = null
-      let hasParentFolder = false
-      let detectedFolderName = ''
-
-      for (const entry of zipEntries) {
-        if (entry.entryName.endsWith('SKILL.md')) {
-          skillMdEntry = entry
-          const parts = entry.entryName.split('/')
-          // 如果切开大于 1，说明形如 "pdf-helper/SKILL.md"，天然自带了父文件夹
-          if (parts.length > 1 && parts[0] !== '') {
-            hasParentFolder = true
-            detectedFolderName = parts[0]
-          }
-          break
-        }
-      }
-
-      if (!skillMdEntry) {
-        return { success: false, error: '不合法的 Skill 包：未检测到 SKILL.md 文件！' }
-      }
+      const target = this._resolveZipTarget(zip, fallbackName)
+      if (!target.ok) return { success: false, error: target.error }
 
       mkdirSync(this.portableSkillsDir, { recursive: true })
 
-      // 2. 智能化分流解压机制
-      if (hasParentFolder) {
+      // SKILL.md 顶层 version 字段（可能没有），供调用方记 manifest 台账
+      const version = target.skillMdContent
+        ? this._parseFrontMatterField(target.skillMdContent, 'version')
+        : undefined
+
+      // 智能化分流解压机制
+      if (target.hasParentFolder) {
         // 🔹 情况 A：压缩包本身很规范，里面已经套了文件夹 (如 pdf-helper/SKILL.md)
-        if (!overwrite && existsSync(join(this.portableSkillsDir, detectedFolderName))) {
-          return { success: true, exists: true, skillId: detectedFolderName }
+        if (!overwrite && existsSync(join(this.portableSkillsDir, target.dirName))) {
+          return { success: true, exists: true, skillId: target.dirName, version: version ?? undefined }
         }
         // 直接解压释放到父目录，adm-zip 会完整保留 pdf-helper 文件夹
         zip.extractAllTo(this.portableSkillsDir, true)
-        console.log(`[ConfigManager] 规范包解压完成，保留了原有目录: ${detectedFolderName}`)
-        return { success: true, skillId: detectedFolderName }
+        console.log(`[ConfigManager] 规范包解压完成，保留了原有目录: ${target.dirName}`)
+        return { success: true, skillId: target.dirName, version: version ?? undefined }
       }
 
       // 🔹 情况 B：压缩包不规范，文件全平铺在根部 (如 📂zip根部/SKILL.md)
-      // 我们需要硬核解析出 SKILL.md 里的 name，作为它的专属文件夹名
-      let targetSkillName = fallbackName // 默认用压缩包文件名兜底
-      try {
-        const fileContent = skillMdEntry.getData().toString('utf8')
-        // 精准提取 yaml 里的 name: pdf-helper
-        targetSkillName = this._parseFrontMatterField(fileContent, 'name') ?? targetSkillName
-      } catch (e) {
-        console.warn('[ConfigManager] 从平铺的 SKILL.md 中解析 name 失败，改用压缩包名')
-      }
-      // 目录名安全合法化：frontmatter 不可信，防 `name: ../../evil` 目录穿越
-      if (targetSkillName === '.' || targetSkillName === '..' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(targetSkillName)) {
-        console.warn(`[ConfigManager] SKILL.md name 非法 (${targetSkillName})，回退为 zip 文件名`)
-        targetSkillName = fallbackName
-      }
-
       // 拼接出它应该去的合规子目录绝对路径：data/config/.openclaw/skills/pdf-helper
-      const finalSkillDir = join(this.portableSkillsDir, targetSkillName)
+      const finalSkillDir = join(this.portableSkillsDir, target.dirName)
       if (!overwrite && existsSync(finalSkillDir)) {
-        return { success: true, exists: true, skillId: targetSkillName }
+        return { success: true, exists: true, skillId: target.dirName, version: version ?? undefined }
       }
 
       // 强行把整个压缩包的所有内容，解压释放到这个新建的独立子目录下
       zip.extractAllTo(finalSkillDir, true)
-      console.log(`[ConfigManager] 平铺包解压完成，已自动为其创建合规子目录: ${targetSkillName}`)
-      return { success: true, skillId: targetSkillName }
+      console.log(`[ConfigManager] 平铺包解压完成，已自动为其创建合规子目录: ${target.dirName}`)
+      return { success: true, skillId: target.dirName, version: version ?? undefined }
 
     } catch (err: any) {
       console.error('[ConfigManager] 安装 Skill 包失败:', err)
       return { success: false, error: err.message || '解压安装过程中发生未知错误' }
+    }
+  }
+
+  /**
+   * staging 安全更新：解压到临时目录 → 校验 → 旧目录改名让位 → 新目录改名就位 → 清理。
+   * 与 installSkillZipData(overwrite:true) 的原地覆盖不同：不残留旧文件、失败自动回滚不留残骸。
+   * @param skillKey manifest key（= versions.json key = zip 文件名 stem），仅用于 staging 临时目录命名
+   * @param previousActualDir 上一次安装的实际落盘目录名（manifest.actualDir）；
+   *        与本次目录名不同时按新名落盘，并迁移 openclaw.json 里的 enabled 开关
+   */
+  public updateSkillZipData(
+    data: Buffer,
+    skillKey: string,
+    previousActualDir?: string
+  ): { success: boolean; actualDir?: string; version?: string; error?: string } {
+    // staging 目录名中的 key 按白名单消毒，防注入路径
+    const safeKey = /^[A-Za-z0-9._-]+$/.test(skillKey) ? skillKey : 'skill'
+    const stagingDir = join(this.portableSkillsDir, `.staging-${Date.now()}-${safeKey}`)
+    const trashDir = join(this.portableSkillsDir, `.staging-old-${Date.now()}-${safeKey}`)
+    try {
+      const zip = new AdmZip(data)
+
+      const slipProblem = this._validateZipEntries(zip, this.portableSkillsDir)
+      if (slipProblem) return { success: false, error: `不合法的 Skill 包：${slipProblem}` }
+
+      const target = this._resolveZipTarget(zip, skillKey)
+      if (!target.ok) return { success: false, error: target.error }
+      const { dirName, hasParentFolder, skillMdContent } = target
+
+      mkdirSync(this.portableSkillsDir, { recursive: true })
+      mkdirSync(stagingDir, { recursive: true })
+
+      // 解压到 staging：规范包内容落在 staging/<dirName>/，平铺包直接在 staging 根部
+      zip.extractAllTo(stagingDir, true)
+      const payloadDir = hasParentFolder ? join(stagingDir, dirName) : stagingDir
+      if (!existsSync(join(payloadDir, 'SKILL.md'))) {
+        return { success: false, error: '不合法的 Skill 包：未检测到 SKILL.md 文件！' }
+      }
+
+      const newDir = join(this.portableSkillsDir, dirName)
+      // 旧目录位置：上次目录名与本次不同时，旧内容在 previousActualDir 下
+      const oldDir =
+        previousActualDir && previousActualDir !== dirName && existsSync(join(this.portableSkillsDir, previousActualDir))
+          ? join(this.portableSkillsDir, previousActualDir)
+          : newDir
+
+      // 三段式换目录（Windows 下 renameSync 不能覆盖已存在目录）：
+      // 旧目录 → trash，payload → 原位；payload 就位失败则把 trash 回滚回去
+      let movedOld = false
+      if (existsSync(oldDir)) {
+        renameSync(oldDir, trashDir)
+        movedOld = true
+      }
+      try {
+        renameSync(payloadDir, newDir)
+      } catch (renameErr) {
+        if (movedOld) {
+          try { renameSync(trashDir, oldDir) } catch { /* 回滚失败仅记录，旧数据仍在 trash 目录 */ }
+        }
+        throw renameErr
+      }
+      // 就位成功：清掉 trash 与 staging 残余（规范包 staging 下已空，平铺包 staging 本身已挪走）
+      try { rmSync(trashDir, { recursive: true, force: true }) } catch { /* 清理失败不影响结果 */ }
+      try { if (stagingDir !== payloadDir) rmSync(stagingDir, { recursive: true, force: true }) } catch { /* ignore */ }
+
+      // 目录名变化时迁移 openclaw.json 的 enabled 开关（非致命，失败仅 warn）
+      if (oldDir !== newDir) {
+        this._migrateSkillEnabledState(basename(oldDir), dirName)
+      }
+
+      const version = skillMdContent ? this._parseFrontMatterField(skillMdContent, 'version') : undefined
+      console.log(`[ConfigManager] 技能 [${skillKey}] staging 更新完成，落盘目录: ${dirName}`)
+      return { success: true, actualDir: dirName, version: version ?? undefined }
+
+    } catch (err: any) {
+      console.error('[ConfigManager] staging 更新技能失败:', err)
+      // 尽力清理临时目录，不留残骸
+      try { rmSync(stagingDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      try { rmSync(trashDir, { recursive: true, force: true }) } catch { /* ignore */ }
+      return { success: false, error: err.message || '更新过程中发生未知错误' }
+    }
+  }
+
+  /**
+   * 目录名变化时，把 openclaw.json skills.entries 里旧目录名的开关条目搬到新名下。
+   * 非致命：读失败/写失败仅 warn，绝不影响更新结果。
+   */
+  private _migrateSkillEnabledState(oldName: string, newName: string): void {
+    try {
+      const cfg = this._readOpenClawConfig(null)
+      if (!cfg || !cfg.skills) return
+      const entries = cfg.skills.entries || cfg.skills
+      if (!entries || typeof entries !== 'object' || entries[oldName] === undefined) return
+      entries[newName] = entries[oldName]
+      delete entries[oldName]
+      this._atomicWriteFileSync(this.openClawConfigPath, JSON.stringify(cfg, null, 2))
+      console.log(`[ConfigManager] 技能目录改名 ${oldName} → ${newName}，enabled 状态已迁移`)
+    } catch (err) {
+      console.warn('[ConfigManager] 迁移技能 enabled 状态失败（不影响更新）:', err)
     }
   }
 
