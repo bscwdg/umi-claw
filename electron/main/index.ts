@@ -13,6 +13,7 @@ import { join, parse, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { ClawManager } from './clawManager'
 import { ConfigManager } from './configManager'
+import { SkillSyncService } from './skillSyncService'
 import { DownloadManager, type DownloadProgress } from './downloadManager'
 import { ChannelManager } from './channelManager'
 import { ObsidianManager } from './obsidian/obsidianManager'
@@ -35,6 +36,7 @@ let configManager: ConfigManager
 let downloadManager: DownloadManager
 let channelManager: ChannelManager
 let obsidianManager: ObsidianManager
+let skillSyncService: SkillSyncService
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -511,6 +513,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('skills:importSkillZip', async () => {
     return await configManager.importSkillZip()
   })
+  ipcMain.handle('skills:syncFromRemote', () => skillSyncService.syncFromRemote())
 
   // 外部链接 - 增加简单的协议校验，防止 file:// 等危险协议
   // channels: plugin install for native long-connection channels (e.g. feishu)
@@ -932,6 +935,7 @@ app.whenReady().then(() => {
   })
 
   configManager = new ConfigManager()
+  skillSyncService = new SkillSyncService(configManager)
   clawManager = new ClawManager(configManager)
   downloadManager = new DownloadManager(configManager)
   channelManager =

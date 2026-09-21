@@ -1,5 +1,5 @@
 import { app,dialog } from 'electron'
-import { join, dirname, basename } from 'path'
+import { join, dirname, basename, resolve, sep } from 'path'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync } from 'fs'
 import AdmZip from 'adm-zip'
 import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawProviderRefs, isReservedOpenClawProviderKey } from './modelConfig'
@@ -1028,9 +1028,37 @@ private _archiveLegacyAuthProfiles(): void {
 
       const zipPath = filePaths[0]
       // 获取压缩包本来的文件名（去掉 .zip），作为无根目录时的备用文件夹名
-      const zipFileName = basename(zipPath, '.zip') 
+      const zipFileName = basename(zipPath, '.zip')
 
-      const zip = new AdmZip(zipPath)
+      const result = this.installSkillZipData(readFileSync(zipPath), zipFileName)
+      return { success: result.success, error: result.error }
+
+    } catch (err: any) {
+      console.error('[ConfigManager] 导入 Skill 压缩包失败:', err)
+      return { success: false, error: err.message || '解压安装过程中发生未知错误' }
+    }
+  }
+
+  /**
+   * zip 包安装核心：解析缓冲区中的技能压缩包并解压落盘到便携 skills 目录。
+   * 手动导入（importSkillZip）与云端技能同步（SkillSyncService）共用这一份逻辑。
+   * @param data zip 文件内容
+   * @param fallbackName zip 文件名（去 .zip），平铺包解析不出 name 时作为目录名兜底
+   * @param opts.overwrite 目标技能目录已存在时是否覆盖；云端同步传 false 以保护用户已改过的技能
+   */
+  public installSkillZipData(
+    data: Buffer,
+    fallbackName: string,
+    opts?: { overwrite?: boolean }
+  ): { success: boolean; skillId?: string; exists?: boolean; error?: string } {
+    const overwrite = opts?.overwrite !== false
+    try {
+      const zip = new AdmZip(data)
+
+      // 0. zip-slip 校验：任一 entry 落点越出技能目录即整体拒绝
+      const slipProblem = this._validateZipEntries(zip, this.portableSkillsDir)
+      if (slipProblem) return { success: false, error: `不合法的 Skill 包：${slipProblem}` }
+
       const zipEntries = zip.getEntries()
 
       // 1. 深度扫描：定位 SKILL.md 并摸清它的底层结构
@@ -1055,37 +1083,77 @@ private _archiveLegacyAuthProfiles(): void {
         return { success: false, error: '不合法的 Skill 包：未检测到 SKILL.md 文件！' }
       }
 
+      mkdirSync(this.portableSkillsDir, { recursive: true })
+
       // 2. 智能化分流解压机制
       if (hasParentFolder) {
         // 🔹 情况 A：压缩包本身很规范，里面已经套了文件夹 (如 pdf-helper/SKILL.md)
+        if (!overwrite && existsSync(join(this.portableSkillsDir, detectedFolderName))) {
+          return { success: true, exists: true, skillId: detectedFolderName }
+        }
         // 直接解压释放到父目录，adm-zip 会完整保留 pdf-helper 文件夹
         zip.extractAllTo(this.portableSkillsDir, true)
         console.log(`[ConfigManager] 规范包解压完成，保留了原有目录: ${detectedFolderName}`)
-      } else {
-        // 🔹 情况 B：压缩包不规范，文件全平铺在根部 (如 📂zip根部/SKILL.md)
-        // 我们需要硬核解析出 SKILL.md 里的 name，作为它的专属文件夹名
-        let targetSkillName = zipFileName // 默认用压缩包文件名兜底
-        try {
-          const fileContent = skillMdEntry.getData().toString('utf8')
-          // 精准提取 yaml 里的 name: pdf-helper
-          targetSkillName = this._parseFrontMatterField(fileContent, 'name') ?? targetSkillName
-        } catch (e) {
-          console.warn('[ConfigManager] 从平铺的 SKILL.md 中解析 name 失败，改用压缩包名')
-        }
-
-        // 拼接出它应该去的合规子目录绝对路径：data/config/.openclaw/skills/pdf-helper
-        const finalSkillDir = join(this.portableSkillsDir, targetSkillName)
-        
-        // 强行把整个压缩包的所有内容，解压释放到这个新建的独立子目录下
-        zip.extractAllTo(finalSkillDir, true)
-        console.log(`[ConfigManager] 平铺包解压完成，已自动为其创建合规子目录: ${targetSkillName}`)
+        return { success: true, skillId: detectedFolderName }
       }
 
-      return { success: true }
+      // 🔹 情况 B：压缩包不规范，文件全平铺在根部 (如 📂zip根部/SKILL.md)
+      // 我们需要硬核解析出 SKILL.md 里的 name，作为它的专属文件夹名
+      let targetSkillName = fallbackName // 默认用压缩包文件名兜底
+      try {
+        const fileContent = skillMdEntry.getData().toString('utf8')
+        // 精准提取 yaml 里的 name: pdf-helper
+        targetSkillName = this._parseFrontMatterField(fileContent, 'name') ?? targetSkillName
+      } catch (e) {
+        console.warn('[ConfigManager] 从平铺的 SKILL.md 中解析 name 失败，改用压缩包名')
+      }
+      // 目录名安全合法化：frontmatter 不可信，防 `name: ../../evil` 目录穿越
+      if (targetSkillName === '.' || targetSkillName === '..' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(targetSkillName)) {
+        console.warn(`[ConfigManager] SKILL.md name 非法 (${targetSkillName})，回退为 zip 文件名`)
+        targetSkillName = fallbackName
+      }
+
+      // 拼接出它应该去的合规子目录绝对路径：data/config/.openclaw/skills/pdf-helper
+      const finalSkillDir = join(this.portableSkillsDir, targetSkillName)
+      if (!overwrite && existsSync(finalSkillDir)) {
+        return { success: true, exists: true, skillId: targetSkillName }
+      }
+
+      // 强行把整个压缩包的所有内容，解压释放到这个新建的独立子目录下
+      zip.extractAllTo(finalSkillDir, true)
+      console.log(`[ConfigManager] 平铺包解压完成，已自动为其创建合规子目录: ${targetSkillName}`)
+      return { success: true, skillId: targetSkillName }
 
     } catch (err: any) {
-      console.error('[ConfigManager] 导入 Skill 压缩包失败:', err)
+      console.error('[ConfigManager] 安装 Skill 包失败:', err)
       return { success: false, error: err.message || '解压安装过程中发生未知错误' }
     }
+  }
+
+  /**
+   * zip-slip 纵深防御：遍历全部 entry，任一落点越出 destDir 即拒绝。
+   * 跳过 macOS 打包垃圾项（__MACOSX/、.DS_Store）。返回 null 表示校验通过。
+   */
+  private _validateZipEntries(zip: AdmZip, destDir: string): string | null {
+    const resolvedDest = resolve(destDir)
+    for (const entry of zip.getEntries()) {
+      const name = entry.entryName
+      if (!name || name.startsWith('__MACOSX/') || name === '.DS_Store' || name.endsWith('/.DS_Store')) continue
+      if (name.startsWith('/') || /^[a-zA-Z]:/.test(name) || name.split(/[\\/]/).includes('..')) {
+        return `条目路径越界 (${name})`
+      }
+      const target = resolve(resolvedDest, name)
+      if (target !== resolvedDest && !target.startsWith(resolvedDest + sep)) {
+        return `条目路径越界 (${name})`
+      }
+    }
+    return null
+  }
+
+  /**
+   * 供云端技能同步做跳过预检：本地技能目录是否已存在
+   */
+  public hasLocalSkill(skillId: string): boolean {
+    return existsSync(join(this.portableSkillsDir, skillId))
   }
 }
