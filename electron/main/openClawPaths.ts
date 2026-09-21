@@ -38,6 +38,10 @@ export const openClawPaths = {
   portableSkillsDir: (dataDir: string) =>
     join(dataDir, 'config', '.openclaw', 'skills'),
 
+  /** 技能版本 manifest（config/.openclaw/skill-manifest.json），云端同步/更新时记录已装版本 */
+  skillManifest: (dataDir: string) =>
+    join(dataDir, 'config', '.openclaw', 'skill-manifest.json'),
+
   /** OpenClaw 数据目录（data/） */
   openClawData: (dataDir: string) => join(dataDir, 'data'),
 

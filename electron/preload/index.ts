@@ -89,6 +89,8 @@ const api = {
     toggleSkillStatus: (id: string, enabled: boolean) => ipcRenderer.invoke('skills:toggleSkillStatus', id, enabled),
     importSkillZip: () => ipcRenderer.invoke('skills:importSkillZip'),
     syncFromRemote: () => ipcRenderer.invoke('skills:syncFromRemote'),
+    applyUpdates: (ids: string[]) => ipcRenderer.invoke('skills:applyUpdates', ids),
+    getPendingUpdates: () => ipcRenderer.invoke('skills:getPendingUpdates'),
   },
 
   // 工具
