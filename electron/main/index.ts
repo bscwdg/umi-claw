@@ -18,7 +18,7 @@ import { DownloadManager, type DownloadProgress } from './downloadManager'
 import { ChannelManager } from './channelManager'
 import { ObsidianManager } from './obsidian/obsidianManager'
 import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
-import { openClawPaths, buildOpenClawEnv, GATEWAY_TOKEN } from './openClawPaths'
+import { openClawPaths, buildOpenClawEnv, GATEWAY_TOKEN, toPosix } from './openClawPaths'
 import { DatabaseClient } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
 import {
@@ -60,7 +60,7 @@ import {
 } from './gatewayClient'
 import { AppError, ERROR_CODES } from './database/errors'
 import { resolvePdfjsAssets } from './marketing/parsers/pdfjsAssets'
-import { readFileSync, existsSync } from 'fs'
+import { readFileSync, existsSync, readdirSync } from 'fs'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import type { TerminalRuntime } from '../../src/types/terminal'
 
@@ -602,6 +602,8 @@ function resolveGatewayModels(): Partial<GatewayModels> {
 }
 
 function createMarketingGatewayClient(projectManager: ProjectManager): GatewayClient {
+  const actualPortResolver = (): number | undefined => readActualGatewayPort()
+
   const config = configManager.getConfig()
   const port = Number(config.port) > 0 ? Number(config.port) : 3213
 
@@ -633,12 +635,59 @@ function createMarketingGatewayClient(projectManager: ProjectManager): GatewayCl
       const project = await projectManager.getProject(projectId)
       return project.conversation_key
     },
+    actualPortResolver,
     logger: (message: string) => console.log(message)
   })
   console.log(
     `[gateway] Gateway Client 就绪：${client.baseUrl}（model=${GATEWAY_MODEL_DEFAULT}，多模态=${resolveGatewayModels().multimodal ?? '未配置'}，每请求重读配置）`
   )
   return client
+}
+
+/**
+ * 读 OpenClaw 实际监听端口（配置端口被占时 OpenClaw 自动退让，实测 3213→3214）。
+ *
+ * 锁文件由 OpenClaw 写在 <configDir>/tmp/openclaw/gateway.<hash>.lock，内容含
+ * pid/port/stateDir/startTime。这里只认 hash 段无点的实例锁（排除 gateway.state.lock）、
+ * stateDir 必须对应当前 dataDir（防跨数据目录误读）、PID 必须仍存活（防残留旧锁），
+ * 多份锁取 startTime 最新。任何异常返回 undefined（读锁失败不影响配置端口探活）。
+ */
+function readActualGatewayPort(): number | undefined {
+  try {
+    const dataDir = configManager.getDataDir()
+    const configDir = openClawPaths.configDir(dataDir)
+    const lockDir = join(configDir, 'tmp', 'openclaw')
+    if (!existsSync(lockDir)) return undefined
+    const expectedStateDir = toPosix(configDir)
+    const locks = readdirSync(lockDir)
+      // 负向先行排除 gateway.state.lock（`state` 本身能匹配 [^.]+，不显式排除会漏进来）
+      .filter((file) => /^gateway\.(?!state\.lock$)[^.]+\.lock$/.test(file))
+      .map((file) => {
+        try {
+          return JSON.parse(readFileSync(join(lockDir, file), 'utf8')) as Record<string, unknown>
+        } catch {
+          return null
+        }
+      })
+      .filter((lock): lock is Record<string, unknown> => Boolean(lock))
+      .filter((lock) => Number(lock.pid) > 0 && Number(lock.port) > 0)
+      .filter((lock) => !lock.stateDir || toPosix(String(lock.stateDir)) === expectedStateDir)
+      .filter((lock) => isProcessAlive(Number(lock.pid)))
+      .sort((a, b) => Number(b.startTime ?? 0) - Number(a.startTime ?? 0))
+    return locks.length ? Number(locks[0].port) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** PID 是否存活：EPERM（进程在但无权发信号）也视为存活 */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e: any) {
+    return e?.code === 'EPERM'
+  }
 }
 
 // ─── marketing Advisor wiring（Commit 08） ─────────────────────────────────────

@@ -167,6 +167,18 @@ export interface GatewayStarterResult {
  */
 export type GatewayStarter = () => Promise<GatewayStarterResult> | GatewayStarterResult
 
+/**
+ * 解析网关**实际监听端口**（注入）。
+ *
+ * 为什么需要：OpenClaw 在配置端口（默认 3213）被占用时会自动退让到下一端口（实测退让到
+ * 3214），并把实际 pid/port 写进 tmp/openclaw/gateway.*.lock。客户端若只探配置端口，
+ * 会把「已启动但换了端口」误判成「未启动」。
+ *   - 返回有效端口 → 配置端口不就绪时跟随该端口
+ *   - 返回 null/undefined 或抛错 → 忽略，继续只探配置端口（绝不因读锁失败阻断调用）
+ * 生产实现见 main/index.ts：读锁文件并校验 PID 存活 + stateDir 匹配。
+ */
+export type GatewayActualPortResolver = () => Promise<number | undefined | null> | number | undefined | null
+
 /** `marketing:gateway:status` / `ensureReady` 的只读快照（IPC 面契约） */
 export interface GatewayStatusSnapshot {
   /** 只有「探活通过 **且** OpenAI 兼容面已开启」才算就绪（否则 AI 调用链必失败） */
@@ -221,6 +233,11 @@ export interface GatewayClientOptions {
   modelsResolver?: () => Partial<GatewayModels>
   /** 自动拉起（复用 clawManager 启停）；不给 = 不自动拉起，只探活+轮询 */
   starter?: GatewayStarter
+  /**
+   * 解析网关实际监听端口（配置端口被占时 OpenClaw 自动退让）；不给 = 只探配置端口。
+   * 见 GatewayActualPortResolver。
+   */
+  actualPortResolver?: GatewayActualPortResolver
   /** 会话隔离键解析（主进程用 projectManager 取 conversation_key；硬规则 13） */
   conversationKeyResolver?: (projectId: string) => Promise<string> | string
   /** 日志（默认静默）；探活/拉起/轮询/中止都走这里 */
@@ -492,12 +509,13 @@ function asErrorMessage(e: unknown): string {
 // ── GatewayClient ─────────────────────────────────────────────────────────────
 
 export class GatewayClient {
-  readonly baseUrl: string
-  readonly port: number
+  baseUrl: string
+  port: number
   private readonly token: string
   private readonly models: Partial<GatewayModels>
   private readonly modelsResolver?: () => Partial<GatewayModels>
   private readonly starter?: GatewayStarter
+  private readonly actualPortResolver?: GatewayActualPortResolver
   private readonly conversationKeyResolver?: (projectId: string) => Promise<string> | string
   private readonly logger?: (message: string) => void
   private readonly fetchImpl: GatewayFetch
@@ -526,6 +544,7 @@ export class GatewayClient {
     this.models = options.models ?? { text: GATEWAY_MODEL_DEFAULT }
     this.modelsResolver = options.modelsResolver
     this.starter = options.starter
+    this.actualPortResolver = options.actualPortResolver
     this.conversationKeyResolver = options.conversationKeyResolver
     this.logger = options.logger
     this.fetchImpl = options.fetchImpl ?? ((globalThis.fetch as unknown) as GatewayFetch)
@@ -763,6 +782,20 @@ export class GatewayClient {
    * 绝不触发自动拉起、绝不调 chat。就绪 = 探活通过 **且** 兼容面已开。
    */
   async getStatus(): Promise<GatewayStatusSnapshot> {
+    const first = await this.checkReadyAtCurrentPort()
+    if (first.ready) return first
+    // 配置端口不就绪：OpenClaw 可能因端口被占退让到了别的端口（实测 3213→3214），
+    // 从锁文件解析实际端口并跟随一次；解析不到则维持配置端口的事实快照
+    const actualPort = await this.resolveActualPort()
+    if (actualPort && this.switchPort(actualPort)) {
+      this.log(`[gateway] 配置端口未就绪，跟随锁文件实际端口 ${actualPort}`)
+      return this.checkReadyAtCurrentPort()
+    }
+    return first
+  }
+
+  /** 按当前 baseUrl 探活 + 查兼容面，构造就绪快照 */
+  private async checkReadyAtCurrentPort(): Promise<GatewayStatusSnapshot> {
     const probe = await this.probe()
     if (!probe.ok) {
       this.lastError = probe.error
@@ -772,6 +805,39 @@ export class GatewayClient {
     const ready = models.enabled
     this.lastError = ready ? null : models.error
     return this.snapshot(ready, models.enabled, models.error)
+  }
+
+  /** 读实际端口；解析器缺失/抛错一律视为「解析不到」，绝不阻断调用 */
+  private async resolveActualPort(): Promise<number | null> {
+    if (!this.actualPortResolver) return null
+    try {
+      const port = Number(await this.actualPortResolver())
+      return port > 0 ? port : null
+    } catch (e) {
+      this.log(`[gateway] 实际端口解析失败（忽略）：${asErrorMessage(e)}`)
+      return null
+    }
+  }
+
+  /**
+   * 切换到新端口；同端口或非法值返回 false。
+   * 用 URL 级改写（不是字符串尾匹配）：带路径的 baseUrl 只换端口、路径原样保留；
+   * URL 解析失败或无显式端口 → 不切换，port 与 baseUrl 绝不分叉。
+   */
+  private switchPort(port: number): boolean {
+    const next = Number(port)
+    if (!(next > 0) || next === this.port) return false
+    let parsed: URL
+    try {
+      parsed = new URL(this.baseUrl)
+    } catch {
+      return false
+    }
+    if (!parsed.port) return false
+    parsed.port = String(next)
+    this.baseUrl = parsed.toString().replace(/\/+$/, '')
+    this.port = next
+    return true
   }
 
   private snapshot(

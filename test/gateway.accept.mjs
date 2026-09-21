@@ -14,6 +14,7 @@
 //   - SSE 流式：增量顺序/拼接/usage 透传；**半途 abort：上游连接真断 + aborted:true + 不再产出**
 //   - 截断（无 [DONE]）与流内 error 帧 → 明确错误码
 //   - 自动拉起（starter 只调一次、单飞）；拉起失败 / 轮询超时 → NOT_READY(start-failed) / TIMEOUT
+//   - 端口退让跟随：配置端口被占（health 活但兼容面 404）→ 按 actualPortResolver 跟随实际端口（实测 3213→3214）
 //   - 会话隔离 user=conv:<projectId>:<conversation_key>（key 从库里取）+ 注入防护
 //   - 多模态模型选择与图片部件校验
 //   - SSE→IPC 透传助手：事件序、cancel 后静默、error 事件、渲染进程销毁自动中止
@@ -916,7 +917,61 @@ try {
     return `enabled=false / ready=false / reason=unexpected-response`
   })
 
-  // ── G17 端点开关默认化 ──
+ // ── G17 端点开关默认化 ──
+  // ── G29 端口退让跟随（实测 3213 被占、实例退让 3214） ──
+  await r.check('G29', '配置端口被占（health 活但兼容面 404）→ 跟随 actualPortResolver 的实际端口；解析失败安全', async () => {
+    const oldSrv = createFakeGateway()
+    const actualSrv = createFakeGateway()
+    servers.push(oldSrv, actualSrv)
+    const configuredUrl = await oldSrv.listen()
+    const actualUrl = await actualSrv.listen()
+    oldSrv.state.mode = 'modelsDisabled'
+    actualSrv.state.mode = 'ok'
+    let resolverCalls = 0
+    let starterCalls = 0
+    const client = makeClient(configuredUrl, {
+      actualPortResolver: () => {
+        resolverCalls += 1
+        return actualSrv.state.port
+      },
+      starter: () => {
+        starterCalls += 1
+        return { started: false, reason: 'already-running' }
+      }
+    })
+    const snap = await client.getStatus()
+    assertEq(resolverCalls, 1, '配置端口不就绪时应解析一次实际端口')
+    assertEq(snap.ready, true, '跟随实际端口后应就绪')
+    assertEq(snap.port, actualSrv.state.port, '快照端口应为锁文件实际端口')
+    assertEq(snap.baseUrl, actualUrl, '快照 baseUrl 应指向实际端口')
+    assertEq(starterCalls, 0, '只读 getStatus 绝不调 starter')
+    const ready = await client.ensureReady()
+    assertEq(ready.ready, true, 'ensureReady 应直接拿到跟随结果')
+    assertEq(starterCalls, 0, '跟随便就绪时不应拉起')
+    const reply = await client.chat({
+      projectId: 'p1',
+      conversationKey: 'k',
+      messages: [{ role: 'user', content: 'hi' }]
+    })
+    assertEq(reply.text, '非流式回复', 'chat 应打到实际端口')
+    assertEq(actualSrv.state.chatRequests, 1, '实际端口应收到 1 次 chat')
+    assertEq(oldSrv.state.chatRequests, 0, '旧实例不应收到 chat')
+    // resolver 抛错：忽略并回配置端口事实，不阻断
+    const client2 = makeClient(configuredUrl, {
+      actualPortResolver: () => {
+        throw new Error('lock unreadable')
+      }
+    })
+    const snap2 = await client2.getStatus()
+    assertEq(snap2.ready, false, '解析器抛错时应回配置端口事实（不就绪）')
+    assertEq(snap2.port, oldSrv.state.port, '端口不应被切换')
+    // resolver 给同端口：不切换
+    const client3 = makeClient(configuredUrl, { actualPortResolver: () => oldSrv.state.port })
+    const snap3 = await client3.getStatus()
+    assertEq(snap3.ready, false, '同端口不切换，仍不就绪')
+    return `跟随 ${oldSrv.state.port}→${actualSrv.state.port}：ready + chat 命中实际端口；解析器抛错/同端口均安全`
+  })
+
   await r.check('G17', '端点开关默认化：应用生成的配置里 chatCompletions.enabled = true', async () => {
     const dir = join(runDir, 'cfg-new')
     mkdirSync(dir, { recursive: true })
