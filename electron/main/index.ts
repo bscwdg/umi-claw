@@ -47,6 +47,8 @@ import { createContextManager, type ContextManager } from './work/contextManager
 import { createRouterManager, type RouterManager } from './work/routerManager'
 import { createTodayManager, type TodayManager } from './work/todayManager'
 import { createReportManager, type ReportManager } from './work/reportManager'
+import { createQaManager, type QaManager } from './work/qaManager'
+import { createToolManager, type ToolManager } from './work/toolManager'
 
 // 类型定义
 interface TerminalSession {
@@ -75,6 +77,8 @@ let workContextManager: ContextManager | null = null
 let workRouterManager: RouterManager | null = null
 let workTodayManager: TodayManager | null = null
 let workReportManager: ReportManager | null = null
+let workQaManager: QaManager | null = null
+let workToolManager: ToolManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -306,6 +310,8 @@ function initWorkManagers(): {
   today: TodayManager
   router: RouterManager
   reports: ReportManager
+  qa: QaManager
+  tools: ToolManager
 } {
   if (!workDatabase) throw new Error('DB 客户端尚未初始化')
   workProfileManager = workProfileManager ?? createProfileManager({ database: workDatabase })
@@ -337,6 +343,26 @@ function initWorkManagers(): {
       logger: (m) => console.log(m)
     })
   }
+  // qa（Commit 07）
+  if (!workQaManager) {
+    if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
+    workQaManager = createQaManager({
+      database: workDatabase,
+      contextEngine: engine,
+      gateway: workGatewayClient,
+      logger: (m) => console.log(m)
+    })
+  }
+  // tools（Commit 07）：薄边界，复用 records/todos
+  if (!workToolManager) {
+    if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
+    workToolManager = createToolManager({
+      records: workRecordManager!,
+      todos: workTodoManager!,
+      gateway: workGatewayClient,
+      logger: (m) => console.log(m)
+    })
+  }
   return {
     profile: workProfileManager,
     matters: workMatterManager,
@@ -345,7 +371,9 @@ function initWorkManagers(): {
     context: workContextManager,
     today: workTodayManager,
     router: workRouterManager,
-    reports: workReportManager
+    reports: workReportManager,
+    qa: workQaManager,
+    tools: workToolManager
   }
 }
 

@@ -30,6 +30,8 @@ import type { ContextManager, SnapshotRequest } from '../work/contextManager'
 import type { RouterManager } from '../work/routerManager'
 import type { TodayManager } from '../work/todayManager'
 import type { ReportManager } from '../work/reportManager'
+import type { QaManager } from '../work/qaManager'
+import type { ToolManager } from '../work/toolManager'
 import { forwardGatewayStream } from '../gatewayClient'
 
 /** IPC 统一返回信封（§14.2） */
@@ -103,6 +105,17 @@ export const WORK_REPORTS_CHANNELS = {
   versions: 'work:reports:versions'
 } as const
 
+/** Commit 07：工作问答 + 工具箱（§14 qa/tools） */
+export const WORK_QA_CHANNELS = {
+  ask: 'work:qa:ask',
+  abortAsk: 'work:qa:abortAsk'
+} as const
+export const WORK_TOOLS_CHANNELS = {
+  list: 'work:tools:list',
+  run: 'work:tools:run',
+  abortRun: 'work:tools:abortRun'
+} as const
+
 async function wrap<T>(fn: () => Promise<T>): Promise<WorkIpcResult<T>> {
   try {
     return { ok: true, data: await fn() }
@@ -135,11 +148,13 @@ export interface WorkIpcDeps {
   today: TodayManager
   router: RouterManager
   reports: ReportManager
+  qa: QaManager
+  tools: ToolManager
 }
 
 /** 注册 work 域 IPC（Commit 02：profile / matters / todos） */
 export function registerWorkIpc(deps: WorkIpcDeps): void {
-  const { profile, matters, todos, records, context, today, router, reports } = deps
+  const { profile, matters, todos, records, context, today, router, reports, qa, tools } = deps
 
   // ── profile ──
   handle(WORK_PROFILE_CHANNELS.get, () => wrap(() => profile.get()))
@@ -243,4 +258,31 @@ export function registerWorkIpc(deps: WorkIpcDeps): void {
       return { ok: false, error: toErrorEnvelope(e) }
     }
   })
+
+  // ── qa / tools（Commit 07）──
+  handleEvent(WORK_QA_CHANNELS.ask, async (event, params: { question: string; conversationKey?: string }) => {
+    try {
+      const runHandle = await qa.ask(params ?? { question: '' })
+      forwardGatewayStream(event.sender, runHandle.runId, runHandle.stream)
+      return { ok: true, data: { runId: runHandle.runId, conversationKey: runHandle.conversationKey } }
+    } catch (e) {
+      return { ok: false, error: toErrorEnvelope(e) }
+    }
+  })
+  handle(WORK_QA_CHANNELS.abortAsk, (runId: string) => wrap(() => qa.abortAsk(runId)))
+
+  handle(WORK_TOOLS_CHANNELS.list, () => wrap(async () => tools.list()))
+  handleEvent(WORK_TOOLS_CHANNELS.run, async (event, params: { toolId: string; text: string; conversationKey?: string; instruction?: string }) => {
+    try {
+      const runHandle = tools.run(params ?? { toolId: '', text: '' })
+      forwardGatewayStream(event.sender, runHandle.runId, runHandle.stream)
+      return {
+        ok: true,
+        data: { runId: runHandle.runId, toolId: runHandle.toolId, conversationKey: runHandle.conversationKey }
+      }
+    } catch (e) {
+      return { ok: false, error: toErrorEnvelope(e) }
+    }
+  })
+  handle(WORK_TOOLS_CHANNELS.abortRun, (runId: string) => wrap(() => tools.abortRun(runId)))
 }
