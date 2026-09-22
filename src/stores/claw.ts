@@ -106,6 +106,7 @@ export const useClawStore = defineStore('claw', () => {
     })
     const offStatus = window.api.claw.onStatusChange((data) => {
       running.value = data.running
+      if (data.port) port.value = data.port
       if (data.running) {
         if (!startedAt.value) startedAt.value = Date.now()
       } else {

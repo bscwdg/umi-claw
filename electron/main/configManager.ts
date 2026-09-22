@@ -742,14 +742,36 @@ private _syncOpenClawConfig(): void {
       }
     }
 
-    // ----- 处理激活模型 Primary -----
+    // ----- 处理激活模型 Primary 与可切换范围 -----
     const activeProvider = this.config.providers.find((p) => p.id === this.config.activeProvider)
-    if (activeProvider) {
+    const activeReady =
+      activeProvider && activeProvider.model && activeProvider.apiKey && activeProvider.apiKey.trim() !== ''
+    if (activeReady) {
       const pId = toOpenClawProviderKey(activeProvider.id)
-      const mName = activeProvider.model
-      const fullModelKey = `${pId}/${mName}`
+      const fullModelKey = `${pId}/${activeProvider.model}`
       existingConfig.agents.defaults.model = { primary: fullModelKey }
-      existingConfig.agents.defaults.models[fullModelKey] = {}
+      existingConfig.agents.defaults.models[fullModelKey] =
+        existingConfig.agents.defaults.models[fullModelKey] || {}
+    } else {
+      // 激活方未配置 Key/模型：清掉可能残留的 primary，
+      // OpenClaw 会从已配置 provider 回退解析默认模型
+      delete existingConfig.agents.defaults.model
+    }
+
+    // 切换范围仅限当前激活服务商（产品决策）：modelPolicy.allow 写一条
+    // <safeKey>/* 通配，OpenClaw 内用 /model 即可在该服务商的全部模型
+    // （预设+自定义，见 models.providers）间切换，无需重启——网关会监听
+    // openclaw.json 热加载。若不写 modelPolicy，单条 models 记录会被 OpenClaw
+    // 按 legacy 规则迁移成单模型白名单，/model 切换会被直接拒绝。
+    if (activeReady) {
+      const pId = toOpenClawProviderKey(activeProvider.id)
+      existingConfig.agents.defaults.modelPolicy = {
+        ...(existingConfig.agents.defaults.modelPolicy || {}),
+        allow: [`${pId}/*`]
+      }
+    } else {
+      // 无激活服务商时清掉残留白名单，避免旧限制把 /model 锁死
+      delete existingConfig.agents.defaults.modelPolicy
     }
 
     // ----- 清理累积残留（只写不清会导致 openclaw.json 持续膨胀）-----
@@ -769,11 +791,12 @@ private _syncOpenClawConfig(): void {
         }
       }
     }
-    // 2) agents.defaults.models：只保留当前 activeProvider 的 fullModelKey，
+    // 2) agents.defaults.models：只保留当前激活服务商的模型键，
     //    删除历史切换 provider 累积下来的旧模型键。
-    if (activeProvider) {
-      const pId = toOpenClawProviderKey(activeProvider.id)
-      const keepKey = `${pId}/${activeProvider.model}`
+    {
+      const keepKey = activeReady
+        ? `${toOpenClawProviderKey(activeProvider.id)}/${activeProvider.model}`
+        : null
       const modelsMap = existingConfig.agents?.defaults?.models
       if (modelsMap && typeof modelsMap === 'object') {
         for (const key of Object.keys(modelsMap)) {
