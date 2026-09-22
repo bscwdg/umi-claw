@@ -130,12 +130,13 @@ function initTerm() {
   term.open(termEl.value);
   // 自定义键盘快捷键：复制与粘贴
   term.attachCustomKeyEventHandler((event) => {
-    if (!term) return true;
+    const t = term;
+    if (!t) return true;
     const ctrl = event.ctrlKey || event.metaKey; // 支持 Windows 和 Mac
 
     // ---------- 复制：Ctrl+Shift+C / Cmd+Shift+C ----------
     if (ctrl && event.shiftKey && (event.key === "c" || event.key === "C")) {
-      const selection = term.getSelection();
+      const selection = t.getSelection();
       if (selection) {
         navigator.clipboard?.writeText(selection).catch((err) => {
           console.warn("复制失败:", err);
@@ -150,7 +151,7 @@ function initTerm() {
         ?.readText()
         .then((text) => {
           if (text) {
-            term.paste(text);
+            t.paste(text);
           }
         })
         .catch((err) => {

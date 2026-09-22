@@ -1,6 +1,6 @@
 // migration.ts —— 基于 PRAGMA user_version 的顺序迁移（不另建版本表）
 //
-// 基线：PLAN-2.0.md §四「连接约定」——结构迁移用 PRAGMA user_version（初始 1），
+// 基线：PLAN-3.0.md §三「核心数据模型」——结构迁移用 PRAGMA user_version（初始 1），
 // migration.ts 顺序升级。DDL 的真实来源是 schema.ts，本文件只负责「版本 → 语句」编组。
 //
 // 执行位置：DDL 由主进程侧的 database.ts 通过 `migrate` 方法交给 db-worker.mjs 执行
@@ -24,7 +24,7 @@ export interface MigrationStep {
 export const MIGRATION_STEPS: MigrationStep[] = [
   {
     version: 1,
-    name: 'init: 10 业务表 + app_meta + 索引',
+    name: 'init: 8 表 + 索引',
     statements: [...SCHEMA_STATEMENTS, ...INDEX_STATEMENTS]
   }
 ]

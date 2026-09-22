@@ -1,11 +1,11 @@
-// database.ts —— DB Worker 客户端（PLAN-2.0.md §四「DB Worker 协议」）
+// database.ts —— DB Worker 客户端（PLAN-3.0.md §三 / 硬规则 2）
 //
 // 职责：
-//   - 单例常驻子进程（硬规则 8）：整个应用只有一个 db-worker.mjs 进程
+//   - 单例常驻子进程（硬规则 2）：整个应用只有一个 db-worker.mjs 进程
 //   - 请求队列：id → { resolve, reject, 超时 30s }
 //   - 断线自动重启一次；**读请求自动重试，写请求默认不自动重试**
 //     （例外：Manager 预生成主键的幂等 upsert 显式传 { retryable: true }）
-//   - 惰性初始化：应用启动不建库、不拉 Worker；首次 marketing 调用才 spawn + migrate
+//   - 惰性初始化：应用启动不建库、不拉 Worker；首次 work 域调用才 spawn + migrate
 //   - 便携 Node 不存在 → 抛 SETUP_REQUIRED（前端引导去环境初始化）
 //   - backup()：VACUUM INTO 'data/backup/umi-claw-<ts>.db'，保留最近 5 份
 //
@@ -179,7 +179,7 @@ export class DatabaseClient {
       maxBackups: options.maxBackups ?? DEFAULT_MAX_BACKUPS,
       autoBackupIntervalMs: options.autoBackupIntervalMs ?? DEFAULT_AUTO_BACKUP_INTERVAL_MS,
       gracefulStopTimeoutMs: options.gracefulStopTimeoutMs ?? DEFAULT_GRACEFUL_STOP_MS,
-      subprocessName: options.subprocessName ?? 'marketing-db-worker'
+      subprocessName: options.subprocessName ?? 'work-db-worker'
     }
     this.onSpawn = options.onSpawn
     this.logger = options.logger
@@ -626,7 +626,7 @@ export class DatabaseClient {
     await this.shutdown()
   }
 
-  // ── 面向上层的小接口（Commit 02 的 marketing.system 面） ────────────────────
+  // ── 面向上层的小接口（Commit 02 的 work.system 面） ────────────────────
   async ping(): Promise<{ pong: boolean; pid: number; ts: number }> {
     return this.request('ping', {}, { timeoutMs: 10_000 })
   }

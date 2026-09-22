@@ -1,6 +1,6 @@
-// subprocessRegistry.ts —— 便携 Node 子进程注册表（PLAN-2.0.md §四）
+// subprocessRegistry.ts —— 便携 Node 子进程注册表（PLAN-3.0.md §三 / 硬规则 2）
 //
-// 所有「便携 Node 拉起的常驻/长任务子进程」（marketing db-worker、obsidian indexer…）
+// 所有「便携 Node 拉起的常驻/长任务子进程」（work db-worker、obsidian indexer…）
 // 启动即注册：{ name, pid, gracefulStop() }。
 // downloadManager._stopRuntimeProcesses() 先逐个 gracefulStop（上限 3s），
 // 再按 ExecutablePath 精确 taskkill / pkill —— 保留原 pid 精确匹配逻辑，
@@ -9,7 +9,7 @@
 // Electron 无关（纯 Node 可测）。
 
 export interface RegisteredSubprocess {
-  /** 唯一名字，如 'marketing-db-worker' */
+  /** 唯一名字，如 'work-db-worker' */
   name: string
   /** 子进程 pid */
   pid: number

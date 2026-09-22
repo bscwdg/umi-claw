@@ -1,9 +1,9 @@
-// db-worker.mjs —— Umi Claw 2.0 marketing DB Worker（零依赖，仅 node:sqlite）
+// db-worker.mjs —— Umi Claw 3.0 work DB Worker（零依赖，仅 node:sqlite）
 //
-// 设计基线：PLAN-2.0.md §四「数据层：SQLite（方案 B）」。
+// 设计基线：PLAN-3.0.md §三「核心数据模型」/ 硬规则 2。
 //   - 单例常驻子进程，由 electron/main/database/database.ts 用便携 Node 拉起
 //   - stdio JSONL 协议：
-//       请求  { "id": "req-001", "method": "projects.list", "params": {} }
+//       请求  { "id": "req-001", "method": "matters.list", "params": {} }
 //       成功  { "id": "req-001", "ok": true,  "data": [] }
 //       失败  { "id": "req-001", "ok": false, "error": { "code": "DB_ERROR", "message": "..." } }
 //   - method 白名单分发：前端永远拿不到 SQL；渲染端只能经 IPC → Manager → 本进程
@@ -11,12 +11,12 @@
 //   - 请求按到达顺序串行处理（DatabaseSync 本身同步，写操作天然串行）
 //   - 未捕获异常回结构化 error，**不自杀**（除 shutdown / stdin 关闭 / SIGTERM / SIGINT）
 //
-// 硬规则：8（全局单例）、7（不得引入 better-sqlite3）、13（DB 只在主进程侧）。
+// 硬规则：2（全局单例）、2（不得引入 better-sqlite3）、3（DB 只在主进程侧）。
 //
 // 唯一「接收 SQL」的入口是 migrate：它只由主进程侧的 database.ts 在惰性初始化时
-// 调用，IPC 层（electron/main/ipc/marketing.ts）不转发该方法，且 Worker 侧严格
+// 调用，IPC 层不转发该方法，且 Worker 侧严格
 // 校验形状（version 必须是正整数、statements 必须是字符串数组）。DDL 的真实来源
-// 是 electron/main/database/schema.ts（Commit 02 交付物，单一真相来源）。
+// 是 electron/main/database/schema.ts（Commit 00 交付物，单一真相来源）。
 
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, existsSync, statSync } from 'node:fs'
@@ -87,64 +87,48 @@ try {
 
 // ── 表元数据（列名白名单；与 schema.ts 一一对应） ─────────────────────────────
 // 白名单是硬边界：任何未登记的列名/表名一律拒绝，杜绝拼接注入。
+// 3.0：一期 8 表锁定（硬规则 24）——profile / matters / todos / activity_log /
+// reports / knowledge / conversations / app_meta。
 const TABLES = {
-  projects: {
+  profile: {
     pk: ['id'],
-    columns: ['id', 'name', 'industry', 'description', 'status', 'conversation_key', 'created_at', 'updated_at'],
+    columns: ['id', 'call_name', 'position', 'department', 'company', 'report_to', 'tone', 'report_style', 'industry', 'created_at', 'updated_at'],
     createdAt: 'created_at',
     updatedAt: 'updated_at'
   },
-  businesses: {
+  matters: {
     pk: ['id'],
-    columns: ['id', 'project_id', 'name', 'brand', 'city', 'address', 'phone', 'positioning', 'target_customer', 'tone', 'created_at', 'updated_at'],
+    columns: ['id', 'name', 'status', 'color', 'created_at', 'updated_at'],
     createdAt: 'created_at',
     updatedAt: 'updated_at'
   },
-  knowledge_items: {
+  todos: {
     pk: ['id'],
-    columns: ['id', 'project_id', 'title', 'type', 'source_path', 'source_name', 'content', 'status', 'created_at', 'updated_at'],
+    columns: ['id', 'title', 'due_date', 'matter_id', 'source', 'routine_rule', 'state', 'done_at', 'created_at', 'updated_at'],
     createdAt: 'created_at',
     updatedAt: 'updated_at'
   },
-  knowledge_chunks: {
+  activity_log: {
     pk: ['id'],
-    columns: ['id', 'knowledge_id', 'chunk_index', 'content', 'metadata', 'created_at'],
-    createdAt: 'created_at',
-    updatedAt: null
-  },
-  contents: {
-    pk: ['id'],
-    columns: ['id', 'project_id', 'title', 'platform', 'topic', 'source_topic_id', 'content', 'status', 'published_at', 'effect_note', 'created_at', 'updated_at'],
+    columns: ['id', 'content', 'occurred_date', 'occurred_time', 'source', 'source_ref', 'status', 'matter_id', 'confirmed_at', 'filtered_reason', 'created_at', 'updated_at'],
     createdAt: 'created_at',
     updatedAt: 'updated_at'
   },
-  content_versions: {
+  reports: {
     pk: ['id'],
-    columns: ['id', 'content_id', 'version', 'content', 'source', 'prompt', 'created_at'],
+    columns: ['id', 'type', 'period', 'status', 'content', 'generation_context', 'created_at', 'updated_at'],
     createdAt: 'created_at',
-    updatedAt: null
+    updatedAt: 'updated_at'
   },
-  hot_topics: {
+  knowledge: {
     pk: ['id'],
-    columns: ['id', 'source_platform', 'source', 'origin', 'title', 'url', 'fingerprint', 'heat', 'rank', 'lifecycle', 'first_seen_at', 'last_seen_at'],
-    createdAt: null,
-    updatedAt: null
+    columns: ['id', 'title', 'type', 'source_path', 'source_name', 'content', 'status', 'created_at', 'updated_at'],
+    createdAt: 'created_at',
+    updatedAt: 'updated_at'
   },
-  hot_topic_samples: {
+  conversations: {
     pk: ['id'],
-    columns: ['id', 'topic_id', 'sampled_at', 'heat', 'rank'],
-    createdAt: null,
-    updatedAt: null
-  },
-  project_hot_topics: {
-    pk: ['project_id', 'topic_id', 'platform'],
-    columns: ['project_id', 'topic_id', 'platform', 'match_score', 'platform_fit', 'reason', 'content_angle', 'lifecycle_advice', 'scored_at'],
-    createdAt: null,
-    updatedAt: null
-  },
-  project_watchlist: {
-    pk: ['project_id', 'keyword'],
-    columns: ['project_id', 'keyword', 'type', 'enabled', 'created_at'],
+    columns: ['id', 'conversation_key', 'run_id', 'role', 'content', 'metadata', 'created_at'],
     createdAt: 'created_at',
     updatedAt: null
   },
@@ -549,28 +533,25 @@ function likeEscape(s) {
   return String(s).replace(/[\\%_]/g, (m) => '\\' + m)
 }
 
-/** knowledge_items 的 LIKE 关键词检索（α 阶段策略；FTS5 归 user_version=2） */
+/** knowledge 的 LIKE 关键词检索（预算内全量优先，超预算才裁剪；FTS5 归 user_version=2） */
 function searchKnowledge(params) {
   const p = requireParams(params)
-  if (typeof p.projectId !== 'string' || !p.projectId) {
-    throw new WorkerError('VALIDATION_ERROR', 'knowledge.search 需要 projectId')
-  }
   if (typeof p.query !== 'string' || !p.query.trim()) {
     throw new WorkerError('VALIDATION_ERROR', 'knowledge.search 需要非空 query')
   }
   const limit = clampLimit(p.limit, 20, 200)
   const like = '%' + likeEscape(p.query.trim()) + '%'
-  const where = ['"project_id" = ?', `("title" LIKE ? ESCAPE '\\' OR "content" LIKE ? ESCAPE '\\' OR "source_name" LIKE ? ESCAPE '\\')`]
-  const args = [p.projectId, like, like, like]
+  const where = [`("title" LIKE ? ESCAPE '\\' OR "content" LIKE ? ESCAPE '\\' OR "source_name" LIKE ? ESCAPE '\\')`]
+  const args = [like, like, like]
   if (typeof p.status === 'string' && p.status) {
     where.push('"status" = ?')
     args.push(p.status)
   }
   return db
     .prepare(
-      'SELECT "id", "project_id", "title", "type", "source_name", "status", ' +
+      'SELECT "id", "title", "type", "source_name", "status", ' +
         'substr(coalesce("content", \'\'), 1, 400) AS snippet ' +
-        'FROM "knowledge_items" WHERE ' +
+        'FROM "knowledge" WHERE ' +
         where.join(' AND ') +
         ' ORDER BY "updated_at" DESC LIMIT ?'
     )
@@ -587,7 +568,7 @@ const HANDLERS = {
   'knowledge.search': (p) => searchKnowledge(p)
 }
 
-// 10 张业务表 + app_meta 的统一 CRUD（Commit 03/04/05 的 Manager 直接消费）
+// 8 张业务表 + app_meta 的统一 CRUD（Commit 02+ 的 Manager 直接消费）
 for (const name of TABLE_NAMES) {
   HANDLERS[name + '.list'] = (p) => opList(name, p)
   HANDLERS[name + '.get'] = (p) => opGet(name, p)

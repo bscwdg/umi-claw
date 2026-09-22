@@ -1,9 +1,13 @@
-// errors.ts —— 统一错误码与错误信封（PLAN-2.0.md §五）
+// errors.ts —— 统一错误码与错误信封（PLAN-3.0.md §14.2）
 //
 // 渲染端按 `code` 分支，**禁止**用 `error.message.includes()` 判断。
 // IPC 失败统一信封：{ code, message, details? }
+//
+// 3.0 相对 2.0 的两处差异（§14.2）：
+//   - 去掉与 3.0 无关的 HOT_SOURCE_ERROR（营销热点采集专属）
+//   - 新增 STREAM_TRUNCATED：流式响应体已开始后的传输中断（2.0 v1.21 已从 connect-failed 拆出）
 
-/** §五 错误码表（唯一的 code 真相来源） */
+/** §14.2 错误码表（唯一的 code 真相来源，共 11 项） */
 export const ERROR_CODES = {
   /** 参数不合法 */
   VALIDATION_ERROR: 'VALIDATION_ERROR',
@@ -25,8 +29,8 @@ export const ERROR_CODES = {
   FILE_NOT_FOUND: 'FILE_NOT_FOUND',
   /** 原始文件解析失败 */
   FILE_PARSE_ERROR: 'FILE_PARSE_ERROR',
-  /** Commit 11：热点 collector 子进程失败 / 全部数据源不可用 */
-  HOT_SOURCE_ERROR: 'HOT_SOURCE_ERROR'
+  /** 流式响应体已开始后的传输中断（应保留已得内容 + 提供重试，而非当作连接失败） */
+  STREAM_TRUNCATED: 'STREAM_TRUNCATED'
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]
@@ -59,7 +63,7 @@ export function isAppError(e: unknown): e is AppError {
 }
 
 /**
- * 提取 §五 错误码，**不依赖 `instanceof`**。
+ * 提取 §14.2 错误码，**不依赖 `instanceof`**。
  *
  * `AppError` 的类身份取决于模块实例：生产构建里 rollup 可能把 `errors.ts` 拆进不同 chunk，
  * 测试里各模块也各自 bundle —— 那些情况下 `instanceof` 会**假阴性**，把上游的
