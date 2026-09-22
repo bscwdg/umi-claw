@@ -27,6 +27,8 @@ import type {
   UpdateRecordInput
 } from '../work/recordManager'
 import type { ContextManager, SnapshotRequest } from '../work/contextManager'
+import type { RouterManager } from '../work/routerManager'
+import type { TodayManager } from '../work/todayManager'
 
 /** IPC 统一返回信封（§14.2） */
 export type WorkIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
@@ -78,6 +80,14 @@ export const WORK_CONTEXT_CHANNELS = {
   snapshot: 'work:context:snapshot'
 } as const
 
+/** Commit 05：今日聚合 + 一句话路由（B3 永不失败） */
+export const WORK_TODAY_CHANNELS = {
+  get: 'work:today:get'
+} as const
+export const WORK_ROUTER_CHANNELS = {
+  route: 'work:router:route'
+} as const
+
 async function wrap<T>(fn: () => Promise<T>): Promise<WorkIpcResult<T>> {
   try {
     return { ok: true, data: await fn() }
@@ -98,11 +108,13 @@ export interface WorkIpcDeps {
   todos: TodoManager
   records: RecordManager
   context: ContextManager
+  today: TodayManager
+  router: RouterManager
 }
 
 /** 注册 work 域 IPC（Commit 02：profile / matters / todos） */
 export function registerWorkIpc(deps: WorkIpcDeps): void {
-  const { profile, matters, todos, records, context } = deps
+  const { profile, matters, todos, records, context, today, router } = deps
 
   // ── profile ──
   handle(WORK_PROFILE_CHANNELS.get, () => wrap(() => profile.get()))
@@ -160,4 +172,9 @@ export function registerWorkIpc(deps: WorkIpcDeps): void {
   handle(WORK_CONTEXT_CHANNELS.snapshot, (request: SnapshotRequest) =>
     wrap(() => context.snapshot(request ?? {}))
   )
+
+  // ── today / router（Commit 05）──
+  handle(WORK_TODAY_CHANNELS.get, (date?: string) => wrap(() => today.get(date)))
+  // B3：router 永不失败，但仍包成功信封（错误信封路径走不到）
+  handle(WORK_ROUTER_CHANNELS.route, (input: string) => wrap(async () => router.route(input)))
 }

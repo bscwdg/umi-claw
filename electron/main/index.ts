@@ -44,6 +44,8 @@ import {
   type SnapshotScope
 } from './work/contextEngine'
 import { createContextManager, type ContextManager } from './work/contextManager'
+import { createRouterManager, type RouterManager } from './work/routerManager'
+import { createTodayManager, type TodayManager } from './work/todayManager'
 
 // 类型定义
 interface TerminalSession {
@@ -69,6 +71,8 @@ let workTodoManager: TodoManager | null = null
 let workRecordManager: RecordManager | null = null
 let workContextEngine: ContextEngine | null = null
 let workContextManager: ContextManager | null = null
+let workRouterManager: RouterManager | null = null
+let workTodayManager: TodayManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -297,6 +301,8 @@ function initWorkManagers(): {
   todos: TodoManager
   records: RecordManager
   context: ContextManager
+  today: TodayManager
+  router: RouterManager
 } {
   if (!workDatabase) throw new Error('DB 客户端尚未初始化')
   workProfileManager = workProfileManager ?? createProfileManager({ database: workDatabase })
@@ -314,12 +320,18 @@ function initWorkManagers(): {
       database: workDatabase,
       buildLatestPack: () => engine.buildPack('latest' as SnapshotScope, {})
     })
+  // today / router（Commit 05）
+  workTodayManager =
+    workTodayManager ?? createTodayManager({ database: workDatabase })
+  workRouterManager = workRouterManager ?? createRouterManager()
   return {
     profile: workProfileManager,
     matters: workMatterManager,
     todos: workTodoManager,
     records: workRecordManager,
-    context: workContextManager
+    context: workContextManager,
+    today: workTodayManager,
+    router: workRouterManager
   }
 }
 
