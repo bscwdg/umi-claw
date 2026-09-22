@@ -1,8 +1,13 @@
-# Umi Claw 3.0「工作版」规划基线（v0.3 — 系统设计钉死篇）
+# Umi Claw 3.0「工作版」规划基线（v0.8 — 开工前终检篇）
 
 > 本文档是 3.0 的唯一规划基线，随开发进度持续更新（沿用 `PLAN-2.0.md` 模式）。
-> 状态：**产品骨架已锁定，系统设计评审中** ｜ 更新日期：2026-09-22 ｜ 分支：`release/3.0`（基于 `release/1.0`）
-> v0.3 钉死四件事：①工作记录/待办状态机 ②今日一句话入口路由 ③工作记忆（Context Pack）精确组成与裁剪优先级 ④可追溯快照机制。IPC 契约 + Commit 计划 + 验收设计在 v0.4，本版仍不含估时。
+> 状态：**规划冻结——产品/系统/工程/数据/IPC/合规全部钉死，开工前终检 8 项已清，可直接开 Commit 00** ｜ 更新日期：2026-09-23 ｜ 分支：`release/3.0`（基于 `release/1.0`）
+> v0.3 钉死四件事：①工作记录/待办状态机 ②今日一句话入口路由 ③工作记忆（Context Pack）精确组成与裁剪优先级 ④可追溯快照机制。
+> v0.4 并入第一轮工程评审：①**移植事实核正**（3.0 分支当前 = 1.0 + 文档，2.0 资产全在 `release/2.0`，属跨分支挑选移植而非 merge）②**测试与验收体系成章**（accept 脚本 + 双 typecheck + 「一天」端到端）③**Commit 计划与依赖表**（首次含估时）④知识检索策略退回 2.0 已验证的「全量优先」⑤P0 补最简提醒 / 记录检索 / 依据标注 / 隐私告知 ⑥事实聚合规则表 + 周报去重规则 ⑦硬规则增至 18 条。
+> v0.5 并入第二轮评审（**功能冻结**）：①**双时间语义**（`created_at` / `occurred_date` / `occurred_time` 三线，且允许实际发生日 ≠ 入库日）②**候选质量门槛**（去重治重复、预过滤治噪音，被挡候选留痕）③**依据可视化升级为全局 Context 入口**（复用 Pack 快照 + `dropped[]`）④`generation_context` 不可变 / 可纠错 / 删除语义升为硬规则 ⑤提醒护栏 ⑥Context Engine 提前到 Commit 04 ⑦新增**数据生命线图**（修正版）⑧硬规则 18 → 22 条。
+> v0.6 收口（**规划主体完成**）：①**IPC 契约表**（`window.api.work` 全通道 + 统一错误码 11 项 + 流式事件规范 + 三条边界）②**SPIKE 清单 5 项**（候选密度实测 / 聚合样例集 / 路由误判率 / token 标定 / 首字延迟）③**破例开一条只读 Context 快照通道**（依据可视化需要；2.0 原定「不上面」，3.0 正式改判）④规划冻结，下一步直接 Commit 00。
+> v0.7 开工前消歧（**无新设计，只消歧义**）：①命名空间计数 11 → **12**（v0.6 数错）②candidate 边界表述统一 ③**CRUD 参数钉死**（`update(id, patch)` 风格 + 6 条参数约定）④**统一 `runId`，废弃 `streamId`** ⑤`context.snapshot` 的 `scope` 枚举钉死（`qa`/`report`/`latest`）。
+> v0.8 开工前终检（**规划正式冻结**）：①**快照改为 append-only immutable version**（消除「永不回写」与「追加 versions[]」的语义冲突）②**todos 初始状态由 `source` 决定**（不由 UI 传）③**DB NOT NULL / IPC optional 术语统一** ④**幂等删除不返回 `NOT_FOUND`** ⑤**QA 快照持久化位置钉死**（写进 `conversations` 行内 JSON，不新增表）⑥**隐私表述修正**（「敏感资料全本地」→ 默认本地、主动 AI 操作时上下文会外发）⑦**新增 Electron `filePath` 主进程校验硬规则** ⑧新增 **§二十 开工前终检表**；硬规则 22 → 24 条。
 
 ## 修订记录
 
@@ -11,6 +16,11 @@
 | v0.1 | 2026-09-22 | 初稿：功能清单式调研（7 组 18 场景、复用映射、P0/P1 建议、6 项待拍板） |
 | v0.2 | 2026-09-22 | 评审重构：产品核心收敛为「AI 工作记忆 + 每日工作闭环」；工作记录（来源≠事实）、事项、工作记忆三大概念；首页改「今日」；日报=事实聚合→AI 表达；数据模型草案 + 首页 IA + 一天流程 + 可测 MVP 验收。拍板：工具箱四件套进 P0；验证=团队自用+真实用户并行 |
 | v0.3 | 2026-09-22 | **第二轮评审并入，产品骨架锁定，钉死四项系统设计**：①状态机（candidate/confirmed/ignored 全迁移 + 待办联动 + 例事规则）②今日一句话入口（路由表 + 本地规则优先，改判原「快捷按钮跳转」）③工作记忆组成与裁剪优先级（7 段结构 + 裁剪顺序）④报告快照冗余全量副本（generation_context）。另：「个人知识库」→「工作知识库」；source 枚举简化（ai_output + source_ref）；候选去重规则；完整度卡片降存在感；MVP 指标升四层；岗位差异压缩原则；工具箱薄边界成文 |
+| v0.4 | 2026-09-22 | **第一轮工程评审并入，工程计划钉死**：①**核正移植事实**——`git diff --stat release/1.0 release/3.0` 仅 `PLAN-3.0.md` + `run-shared.bat`，3.0 分支 = 1.0 + 文档；§十二 的可复用资产全在 `release/2.0`，属跨分支挑选移植 + 数据源重写，估时按「新核心按设计量、移植按改造量」重算（一期 **20–26 人天**）②**新增第十四节 测试与验收体系**（accept 脚本先断言后实现 + 双 typecheck + 「一天」端到端 + 打包态冒烟），升为硬规则 13 ③**新增第十五节 Commit 计划与依赖表**（Commit 00–10）④知识检索策略退回 2.0 已验证的「预算内全量打包、超预算才 LIKE 裁剪」（原「LIKE 起步」是相对 2.0 的降级）⑤**P0 补四项**：最简提醒（早上 + 18:30 各一次本地通知）、工作记录 LIKE 检索、工作问答依据标注、冷启动隐私告知 ⑥新增**事实聚合规则表**与**周报去重规则**（确定性，可断言）⑦一句话入口补「误判出路」⑧候选默认勾选「记入」+ 验收看候选处理率 ⑨新增 **6.5 性能契约**（必须流式 + 首字 ≤3s + 打开即预热）⑩硬规则 12 → 18 条（测试先行 / 流式首字 / 隐私告知 / candidate 边界 / 升级共存 / 高级能力折叠） |
+| v0.5 | 2026-09-22 | **第二轮评审并入，系统收口，功能冻结**：①**双时间语义钉死**——`created_at`（入库，系统写）+ `occurred_date`（实际发生日，必填）+ `occurred_time`（可空=时间未记）三线；**允许 `occurred_date` ≠ `created_at` 的日期**（补记/晚上记下午），因此 ⑬ 例事「补记」自动关闭 ②**候选质量门槛**——去重治「重复」、预过滤治「噪音」；被挡候选进「已过滤」留痕（含原因），**不静默丢** ③**依据可视化升级为全局 Context 入口**（不只是问答功能）：复用 Pack 快照 + `dropped[]`，成本近零、直接对应差异化押注 ④新增硬规则：`generation_context` 不可变 / 可纠错 / 删除后不再进 Pack ⑤提醒护栏（不得膨胀成调度系统）⑥**Context Engine 提前到 Commit 04**（消费者是 accept fixture，不是 UI），Router 的 ASK 分支先用 stub ⑦新增**数据生命线图（修正版）**——ASK 不产记录、REPORT 走 candidate ⑧硬规则 18 → 22 条 |
+| v0.6 | 2026-09-22 | **契约冻结，规划收口**：①新增**第十四节 IPC 契约与统一错误规范**——`window.api.work` **十二个**命名空间（profile/matters/todos/records/today/router/reports/qa/tools/knowledge/context/gateway）+ 统一错误码 **11 项**（沿袭 2.0，去 `HOT_SOURCE_ERROR`、增 `STREAM_TRUNCATED`）+ 流式事件规范（`work:stream:chunk/done/error`，无整体超时）+ **三条边界**（B1 Context 快照破例上渲染端 / B2 SSE 增量不注册业务通道 / B3 路由永不失败）②新增**第十五节 SPIKE 清单**（S1 候选密度实测、S2 聚合样例集、S3 路由误判率、S4 token 标定、S5 首字延迟），各自标归属 Commit ③**B1 是正式改判**：2.0 §五 写死「Context Pack 不上面…将来若要『AI 看见什么』预览页，先改本节再动 IPC」，3.0 因 v0.5 把依据可视化升级为全局入口而就是那个「将来」，故开一条**只读**通道 `work:context:snapshot`（只暴露 `memory_snapshot` + `inputs` 副本 + `dropped[]`，**不暴露 prompt 全文与模型参数**）④章节顺延：测试体系 → 十六、Commit 计划 → 十七、待拍板 → 十八、下一步 → 十九 ⑤规划冻结，下一步直接 Commit 00 |
+| v0.7 | 2026-09-22 | **契约细节消歧（无新设计，仅为开工前消掉歧义）**：①**命名空间计数改正**——v0.6 写「十一个」实际列了 12 个（profile/matters/todos/records/today/router/reports/qa/tools/knowledge/context/gateway），现统一为**十二个** ②**candidate 边界表述统一**（硬规则 4 与 4.1 规则 7 口径一致）：明确「**不能进事实段（第 5 段），可作为当前会话临时上下文进第 7 段并标「未确认」**」，消除「到底能不能进 Pack」的歧义 ③**CRUD 参数钉死**——`create/update/delete` 等泛型方法补齐关键输入/输出（matters/todos/records/profile），避免各人各自理解 ④**统一 `runId`，废弃 `streamId`**——一次执行只有一个 ID，同时作流 ID；事件、`abort*`、`forwardGatewayStream` 全走 `runId`，少一个概念 ⑤**`context.snapshot` 的 `scope` 枚举钉死**（`qa` / `report` / `latest`），B1 通道真正闭合 |
+| v0.8 | 2026-09-23 | **开工前终检，规划正式冻结**（无新功能，只堵漏）：①**快照语义修正**——`generation_context` 不再是「可变 JSON 里嵌 `versions[]`」，而是 **append-only 的不可变 generation snapshot 序列**（每次生成 = 一个新 snapshot，旧的水不修改）；7.1 结构重写 ②**todos 初始状态由 `source` 决定**（`manual→confirmed` / `extracted→candidate` / `routine→confirmed`），`state` **不作为 `create` 的自由参数**；4.2 补规则 5 ③**DB 必填 / IPC 可缺省**术语统一（`occurred_date NOT NULL` vs `occurredDate?`），写进参数约定 ④**幂等删除不返回 `NOT_FOUND`**（不存在 → `{deleted:false}` 且 `ok:true`；只有 `get/update/confirm` 才 `NOT_FOUND`）⑤**QA 快照持久化位置钉死**——写进 `conversations` 行内 JSON（不新增表），`runId → Pack snapshot` 可检索 ⑥**隐私表述修正**（硬规则 10/15 与 §8 向导）：删除「敏感资料全本地」的绝对说法，改为「默认仅存本地；用户主动执行 AI 操作时，选中的上下文可能发送至所选模型服务商」⑦**新增硬规则 23（Electron `filePath` 主进程重新校验）与 24（一期 8 表锁定，禁止为「架构完整」新增状态表）** ⑧新增 **§二十 开工前终检表**（8 项，全为已勾）；硬规则 22 → 24 条 |
 
 ---
 
@@ -45,12 +55,20 @@ Umi Claw 3.0 = 一个围绕「个人工作上下文」运行的 AI 工作台。
 1. **岗位差异压缩原则**：核心系统固定（工作记忆/待办/记录/事项/报告/知识库/AI），行业与岗位差异（运营/HR/行政…）只进入**画像字段、模板、提示词、事项预设**四层——扩行业不重新做产品。
 2. **装完即用**：第一天就有价值（手动记一件事/问一句），不强制先填资料；引导性内容（完整度）不占首页视觉中心。
 3. **薄工具边界**：工具箱每个工具 = 「已有文本输入 → 结构化文本输出」；不做音频/转写/说话人识别/时间轴/文件导出（P2+ 再议）。
+4. **可纠错原则（v0.5 新增）**：**所有 AI 参与生成的产物都必须可修改**——记录、待办、日报、周报、候选全部可编辑，不出现「只读的 AI 输出」。信任是从「第一次记错」开始崩的；宁可多给一个编辑入口，也不给一个改不了的结果。
 
 ### 与 2.0 的关系
 
 - 2.0 营销版（给商家用）留在 `release/2.0`；3.0 工作版（给打工人用）在 `release/3.0`。
 - **代码基线**：`release/3.0` 基于 `release/1.0`；2.0 营销模块不带入，框架能力按需**移植**。
 - 1.0 的 OpenClaw 管理器能力一个不删。
+
+> ⚠️ **移植事实（v0.4 核正）**：`release/3.0` 当前 = `release/1.0` + 本文件（+ `run-shared.bat` 一行），`git diff --stat release/1.0 release/3.0` 仅两个文件。2.0 的 `db-worker.mjs` / `gatewayClient.ts` / `contextEngine.ts` / `knowledgeManager` + parsers / `contentManager` / `scanRecognizer` / `test/` 全部 accept 套件，**只存在于 `release/2.0`**。所以这不是 merge，是**跨分支挑选移植 + 数据源重写**：2.0 的 schema 是「商家/项目/热点」，3.0 要的是 8 张全新表，`db-worker.mjs` 的 schema 段是重写而非复制。Commit 00 必须独立验证底座，别按「七成复用」折算工期。
+
+### 升级与共存（v0.4 新增）
+
+- 1.0 / 2.0 / 3.0 **同机共存时 data 目录按版本隔离**（2.0 已踩过 project 目录互相污染的坑），不共享 `data/openclaw`、`data/runtime`。
+- 首启对待既有 1.0/2.0 数据：**不静默迁移、不覆盖、不阻塞**，向导中显式询问（沿用 / 另起 / 稍后决定），**默认停在「稍后决定」**（v0.5 拍板，三分支细节见 §八 Day 1）。
 
 ### 已拍板决策（2026-09-22）
 
@@ -62,6 +80,56 @@ Umi Claw 3.0 = 一个围绕「个人工作上下文」运行的 AI 工作台。
 | MVP 验证方式 | 团队自用 5 个工作日 + 第一轮修复后灰度 3-5 个真实打工人（并行推进） |
 | 核心产品假设 | **一个普通打工人连续使用 5 个工作日后，是否愿意继续每天打开它** |
 | 首页 AI 入口 | **一句话入口**（路由器，非聊天窗）+ 快捷按钮辅助（v0.3 改判拍板） |
+
+---
+
+### 数据生命线（v0.5 新增，修正版）
+
+全系统只有一条数据流。**两处关键纠正**：`ASK`（工作问答）**不产任何工作记录**（只有产出型 AI 动作才产候选）；`REPORT`（日报/周报）**是产出型动作，必须走 candidate**，不直接进 confirmed。
+
+```text
+                       用户输入
+                          │
+        ┌─────────────────┴──────────────────┐
+        ↓                                    ↓
+   一句话入口                           手动记 / 勾完成 / 例事
+        │                                    │
+     Router                                  │
+   ┌────┼──────────┬──────────┐              │
+   ↓    ↓          ↓          ↓              │
+  ASK  CAPTURE    DO        REPORT           │
+   │    │          │          │              │
+   │    ↓          ↓          ↓              │
+   │  结构化提取  工具加工    报告流           │
+   │    │       (加工型:     (产出型)         │
+   │    │        不产候选)      │              │
+   │    ↓                      ↓              │
+   │  candidate ←──────────────┘              │
+   │    │        AI 工具(产出型) ──→ candidate │
+   │    ↓                                     │
+   │  ┌──────────────────────────┐            │
+   │  │ 质量门槛 + 去重 + 留痕    │            │
+   │  └───────────┬──────────────┘            │
+   │              ↓                           │
+   │        候选队列 ──[用户确认]──→ confirmed ←┘
+   │              │                    │
+   │              │(忽略→留库)          │
+   │                                   ↓
+   │                        ┌────────────────────┐
+   │                        │ 工作记忆 Context Pack│
+   │                        │ 7 段 + 裁剪 + 留痕   │
+   │                        └─────────┬──────────┘
+   │                                  │
+   │        ┌──────────────┬──────────┴────────┐
+   └───────→│  工作问答     │      日报/周报     │← 事实聚合(确定性)
+            │  (不产记录)   │   → AI 表达 → 快照 │
+            └──────────────┴───────────────────┘
+                          ↓
+                      AI 输出
+                          ↓
+                    Human Review
+              (人工确认 + 人工复制，永不自动发送)
+```
 
 ---
 
@@ -94,7 +162,22 @@ Umi Claw 3.0 = 一个围绕「个人工作上下文」运行的 AI 工作台。
 - `source_ref`（可空）：指向来源细节（conversation/message id、todo id），保证候选可溯源。
 - **产出型 / 加工型分流**：只有**产出型** AI 动作（生成纪要/日报/邮件草稿等有交付物的）才产生候选；**加工型**（润色/翻译一个片段）不产生。
 - **候选去重（v0.3 新增）**：**同一会话 + 同一产出类型 + 30 分钟内 → 只保留一条候选，后到覆盖更新**；被「忽略」的事件不再重复提议。防止一天 20 次 AI 操作产生 17 条待确认。
+- **候选质量门槛（v0.5 新增）**：去重治的是「重复」，治不了「噪音」——一次会议纪要提取 5 条，默认全选就一次污染 5 条工作事实。因此候选入队前先过**确定性预过滤**：① 内容为空或去空白后 < 4 字 ② 与同批其他候选归一化后重复 ③ 与既有 confirmed 记录高相似（子串或高重合）。被挡的候选进**「已过滤」留痕（含原因）**，不静默丢——既不污染事实层，也不丢掉「AI 产出了什么」这个 Learning 原料（沿用 `dropped[]` 精神）。
 - 一句话入口的自然语言输入 → 结构化结果一律以**候选卡**呈现（预填 + 一键确认）；`[+ 记录一件事]` 结构化显式输入 → 直接 `confirmed`。
+
+#### 2.2.1 时间语义：三线分离（v0.5 钉死）
+
+记录上存在**三条时间线**，绝不合并为单个 timestamp：
+
+| 字段 | 含义 | 约束 |
+|------|------|------|
+| `created_at` | **入库时刻**（系统写） | 永不为空，用户不可改 |
+| `occurred_date` | **实际发生日**（用户填 / 解析出） | 必填；**允许 ≠ `created_at` 的日期** |
+| `occurred_time` | **实际发生时刻** | 可空 = 「时间未记」 |
+
+**为什么不能合并成单个 `occurred_at`**：最常见的情况是用户说「今天完成了客户方案」——知道哪天、不知道几点。单个 timestamp 只能填 00:00，A3「无时间的排在有时间的之后」直接失真，排序与「时间未记」标注全废。
+
+**双时间可分离的价值**：`occurred_date` ≠ `created_at` 的日期，一下接上了「晚上补记下午的事」与「昨天忘勾今天补记」。因此原待拍板 ⑬ 例事「补记」自动关闭：**记录进实际发生日，`occurred_date` 可手改**。
 
 ### 2.3 事项（matter）
 
@@ -113,9 +196,40 @@ Umi Claw 3.0 = 一个围绕「个人工作上下文」运行的 AI 工作台。
 ```
 
 - AI 只负责「**怎么说**」，不负责「**发生了什么**」。
-- 事实聚合层可写**可执行验收**（给定 N 条记录，归集输出可断言）。
-- 周报 = 本周 confirmed 记录 + 已生成日报 → 按事项聚合 → 识别重复/阶段性成果 → 草稿。天然成立，不另设计。
+- 事实聚合层可写**可执行验收**（给定 N 条记录，归集输出可断言）——聚合规则见 2.5。
+- 周报 = 本周 confirmed 记录 + 已生成日报 → 按事项聚合 → **确定性去重**（规则见 2.5）→ 草稿。
 - 可追溯机制见第七节（v0.3 钉死④）。
+
+### 2.5 事实聚合规则表（v0.4 新增，全部确定性、零模型）
+
+**输入**：指定周期内 `status=confirmed` 的工作记录集。**输出**：固定结构，可断言。
+
+```jsonc
+{
+  "sections": [
+    { "matter_id": 7, "matter_name": "Q3活动", "color": "#F59E0B",
+      "items": [ { "id": 123, "time": "09:12", "content": "..." } ],
+      "is_focus": true }
+  ],
+  "other": { "items": [ ... ] },
+  "stats": { "total": 5, "by_matter": { "7": 3, "other": 2 }, "time_missing": 1 }
+}
+```
+
+| # | 规则 | 说明 |
+|---|------|------|
+| A1 | **分组维度 = 事项优先** | 有 `matter_id` 的按事项分组；无事项一律归入 `other`（不猜、不让模型归类） |
+| A2 | **分节顺序** | 有事项组按「组内最新记录时间」倒序（最近在干的在前）；`other` 恒在最后 |
+| A3 | **组内排序** | `occurred_time` 升序；无时间的（`occurred_time IS NULL`）排在同日有时间的之后，且标「时间未记」 |
+| A4 | **0 条记录** | **不调模型**：返回结构化提示「今天还没有记录，先记一件事」+ 手动入口，`reports.content` 留空、`status=draft` |
+| A5 | **1–2 条记录** | 正常生成，但草稿顶部附提示「记录较少，日报可能偏薄」 |
+| A6 | **一条记录只挂一个事项** | 不复制进多组；跨事项内容需用户自己拆成两条 |
+| A7 | **周报去重** | 同事项内：若一条记录文本**归一化后是另一条的子串**（去空白/标点/大小写），保留较早那条，较晚那条降级为「进展」子项；跨日期完全同文本只保留最早 + 标 `×N` |
+| A8 | **阶段性成果判定** | 同事项本周 ≥3 条 confirmed 记录 → 该组 `is_focus=true`，周报里排到最前（纯计数，不用模型判断「重要性」） |
+| A9 | **统计口径** | `stats` 只统计 confirmed；candidate / ignored 一律不进任何数字 |
+| A10 | **聚合按 `occurred_date`，不按 `created_at`**（v0.5 新增） | 补记的场景下两者日期不同；聚合窗口、分组、`stats` 一律以 `occurred_date` 为准，`created_at` 只作审计 |
+
+> A7/A8 就是原 v0.3「识别重复/阶段性成果」的落地：**确定性规则而非 AI 自由发挥**，否则违反硬规则 6。
 
 ---
 
@@ -126,7 +240,7 @@ Umi Claw 3.0 = 一个围绕「个人工作上下文」运行的 AI 工作台。
 | `profile` | 工作画像（单行） | 称呼、岗位、部门、公司、汇报对象、语气偏好、日报风格、行业扩展位 |
 | `matters` | 事项 | `name`、`status(active/archived)`、`color?`（可选 UI 字段） |
 | `todos` | 待办 | `title`、`due_date?`、`matter_id?`、`source(manual/extracted/routine)`、`routine_rule?(daily/weekly)`、`state(candidate→confirmed(open)→done)`、`done_at` |
-| `activity_log` | 工作记录 | `content`、`occurred_date`、`occurred_time?`、`source(manual/todo/routine/ai_output)`、`source_ref?`、`status(candidate/confirmed/ignored)`、`matter_id?`、`confirmed_at` |
+| `activity_log` | 工作记录 | `content`、**`occurred_date`（必填）+ `occurred_time?`（可空）+ `created_at`（系统写）**、`source(manual/todo/routine/ai_output)`、`source_ref?`、`status(candidate/confirmed/ignored)`、`matter_id?`、`confirmed_at`、`filtered_reason?`（被质量门槛挡下的原因，见 2.2） |
 | `reports` | 日报/周报 | `type(daily/weekly)`、`period`、`status(draft/confirmed)`、`content`、`generation_context`(JSON，见第七节) |
 | `knowledge` | 工作知识库 | 复用 2.0 结构（docx/xlsx/pdf/url/faq 解析 + LIKE 检索） |
 | `conversations` | AI 会话 | 复用 2.0（会话键见第六节） |
@@ -135,6 +249,18 @@ Umi Claw 3.0 = 一个围绕「个人工作上下文」运行的 AI 工作台。
 关系：`todos/activity_log → matters` 可空弱关联；`reports.generation_context.inputs` 存记录**冗余全量副本**（不是 id 引用，见第七节）；待办勾完成 → 插入 `source=todo, status=confirmed` 记录（联动规则见第四节）。
 
 二期表：`invoices`、`expense_claims`（独立行政事务流，与工作上下文分离——「完成 Q3 方案」是工作事实，「滴滴 48 元」是财务事实，可关联不混表）、`reminder_settings`。schema 变更走 `user_version` 迁移。
+
+### 3.1 索引与约束（v0.4 新增）
+
+| 表 | 索引 / 约束 | 理由 |
+|----|-------------|------|
+| `activity_log` | `INDEX(occurred_date, status)`、`INDEX(matter_id)`、`INDEX(source_ref)` | 今日页 / 报告聚合 / 候选去重与溯源三条主查询 |
+| `todos` | `INDEX(state, due_date)`、`INDEX(matter_id)` | 待办三来源聚合 |
+| `matters` | `INDEX(status)` | 在跟事项 |
+| `reports` | `UNIQUE(type, period)` | 同一周期只一份（重生成=覆盖 + `generation_context.versions` 追加） |
+| 全表 | `created_at` / `updated_at` | `updated_at` 一期只写入不留历史，但字段先落，免得二期补迁移 |
+
+> `knowledge` / `conversations` / `app_meta` 沿用 2.0 既有索引，不重设计。
 
 ---
 
@@ -166,6 +292,10 @@ Umi Claw 3.0 = 一个围绕「个人工作上下文」运行的 AI 工作台。
 3. `confirmed` 可编辑（覆盖更新，一期不做编辑历史）、可删除（物理删；已生成的报告不受影响，因为快照存的是副本）。
 4. 候选呈现：静默徽标计数 + 批量「全部记入/全部忽略」+ 单条操作，**永不弹窗**。
 5. 去重：同会话 + 同产出类型 + 30 分钟内，后到候选**覆盖更新**未处理的那条；已 ignored 的事件不重新提议。
+6. **默认勾选「记入」（v0.4 拍板）**：候选列表默认全选，按钮呈现为「全部记入 (3)」+「全部忽略」；单条可取消勾选。**理由：漏记的代价高于多记**（多记一条可随时删，漏记一天补不回来）。验收看**候选处理率**（见第十一节），不看候选绝对数量。
+7. **candidate 的上下文边界（v0.4 澄清，v0.7 定稿口径）**：**`candidate` 永不进入工作记忆的事实层（Context Pack 第 5 段）**；但当前会话中的 candidate **可以**作为临时上下文进入**第 7 段对话历史**，且必须带「未确认」标记。一句话：**不能进事实段，可以作为当前会话的临时历史存在**。
+8. **可纠错（v0.5 新增）**：候选卡预填的内容/日期/事项**全部可改**，确认前改、确认后也改（`confirmed` 覆盖更新 + `updated_at`）；不出现「确认了就改不了」。
+9. **删除即遗忘（v0.5 新增）**：用户删除一条记录 → 物理删除 + **不再进入未来任何 Pack**。与「历史报告不受影响（快照存副本）」是一对：报告留住当时的真相，Pack 尊重现在的意愿。缺任一句都会出现「删了又被 AI 提起」。
 
 ### 4.2 todos 状态机
 
@@ -183,6 +313,15 @@ done（routine 来源）──自动生成下一次──→ confirmed(open)
 2. 取消勾选（done→open）：若该自动生成的记录**未被编辑过**则一并撤回；已被编辑则保留记录并断开 `source_ref` 关联。
 3. 例事（routine）：`routine_rule=daily/weekly`，勾完成即自动生成下一条 `confirmed(open)` 待办并落工作记录；一期不做复杂排期。
 4. AI 提取待办（纪要/一句话入口）一律 `candidate`，在待办区带「AI 提取」标记，支持批量确认/忽略。
+5. **初始状态由 `source` 决定，不由调用方传（v0.8 钉死）**：`state` **不是** `todos.create` 的自由参数，避免实现人员各自猜：
+
+| `source` | 初始 `state` |
+|---|---|
+| `manual`（手动新建） | `confirmed`（open） |
+| `extracted`（AI 提取） | `candidate` |
+| `routine`（例事生成） | `confirmed`（open） |
+
+accept 直接断言这三条（C-TODO-01/02/03）。
 
 ---
 
@@ -239,6 +378,7 @@ done（routine 来源）──自动生成下一次──→ confirmed(open)
 2. 一句话入口不做 P0 的 AI 意图识别调用（避免延迟/费用/失败态）；动线验证后再评估。
 3. 输入框支持多行粘贴（长文本 → 工具预填）。
 4. 产出的结构化结果（待办/记录）一律 `candidate`——自然语言解析可能出错，保持来源≠事实。
+5. **误判出路（v0.4 新增）**：本地规则会漏判（已由「默认进问答」兜底），但也会**误判**（想问答却命中「总结」→ 被跳去工具页）。因此路由跳转后，工具页顶部必须显示「识别为：摘要工具 · 不是这个？**转工作问答**」，且一键可转、可撤销。命中结果永远可回退。
 
 ---
 
@@ -255,7 +395,7 @@ done（routine 来源）──自动生成下一次──→ confirmed(open)
 | 3 | 在跟事项 | active 事项列表（仅名称+颜色标记，≤20 条） | 中 |
 | 4 | 待办 | 今日待办优先，其次 7 天内到期 | 中 |
 | 5 | 近期工作记录 | confirmed 记录滚动窗口：日报场景=当日全部；问答场景=近 3 天；周报场景=本周 | 中 |
-| 6 | 知识检索片段 | 按 query 相关度 topK（LIKE 检索 + 关键词匹配起步） | 最先收缩 |
+| 6 | 知识检索片段 | **预算内全量打包**；超预算才按 query 相关度 LIKE 裁剪 topK | 最先收缩 |
 | 7 | 对话历史 | 独立段，按会话隔离 | 独立预算 |
 
 ### 6.2 裁剪顺序（超预算时，从后往前）
@@ -265,9 +405,23 @@ done（routine 来源）──自动生成下一次──→ confirmed(open)
 ```
 
 - 预算按字符估算起步（中文 1 字 ≈ 1 token 粗估），精确标定后置（沿袭 2.0 遗留 #21）。
-- 记录进 Pack 的永远是 `confirmed`——candidate 不进工作记忆（来源≠事实在上下文层的贯彻）。
+- 记录进 Pack 的永远是 `confirmed`——candidate 不进工作记忆（来源≠事实在上下文层的贯彻）。**边界澄清（v0.4）**：指不进**第 5 段事实段**；当前会话产出的 candidate 可进**第 7 段对话历史**，但必须带「未确认」标记（见 4.1 规则 7）。
 
-### 6.3 会话隔离（沿袭 2.0 模式）
+### 6.3 知识检索策略（v0.4 改判，回到 2.0 已验证结论）
+
+v0.3 写的「LIKE 检索 + 关键词匹配起步」是**相对 2.0 的降级**，2.0 的结论恰恰相反：
+
+```text
+预算内（business + 全部 ready knowledge ≤ 模型上下文 60%）→ 全量注入，不做检索
+超预算 → 才退化为 LIKE 关键词裁剪（按 query 命中排序截断并标注截断）
+```
+
+**理由（2.0 原文，直接适用）**：「客户嫌贵怎么回」这类问句与文档标题「价目表」**无字面重合**，LIKE 会漏掉最相关的资料；工作知识库通常**比商家资料库更小**，全量优先更划算，且只有全量注入才验得了「AI 认识你的工作」。
+
+- 其余沿袭 2.0：token 一律**本地估算**（不依赖 Gateway `usage`，2.0 实测恒为 0）；不进包的 ready 条目在 `dropped[]` 留痕（含原因），被截断条目标 `truncated:true`。
+- **不裁剪第 2 段画像**：画像是「AI 认识你」的核心，超预算时记录日志并让知识段让位，而不是把画像砍一半。
+
+### 6.4 会话隔离（沿袭 2.0 模式）
 
 ```text
 conv:work:qa                    # 工作问答（长期，滚动摘要）
@@ -275,41 +429,77 @@ conv:work:tool:{toolId}         # 工具会话（按日滚动，支持「再正�
 conv:work:report:{type}:{period}# 报告会话（按期隔离）
 ```
 
+### 6.5 性能契约（v0.4 新增，可验收）
+
+2.0 实测：首次非流式冷启动 **80.3s**、SSE 首字 1.27s、非流式 120s 整体超时会把整批挂掉。3.0 所有能力都吃更长的 Pack，用户更没耐心，因此：
+
+| 项 | 契约 |
+|----|------|
+| 输出方式 | **所有 AI 输出一律流式**（SSE）；非流式只允许用于后台批处理且必须可中断 |
+| 首字延迟 | **≤ 3s**（打开页面即预热后的稳态）；冷启动不计入但必须有「正在唤醒 AI」可见态 |
+| 预热时机 | 进入「今日」页即预热 Gateway（与 2.0 的 `ensureReady` 同思路）；工具/报告页打开前也预拉 |
+| 超时语义 | 只有 chunk 间空闲超时（如 120s），**不设整体超时**；中断必须能真断上游 |
+| 会话键 | 每次生成用**唯一会话键**（同一 key 并发会在 Gateway 排队导致空转超时，2.0 已踩） |
+
 ---
 
 ## 七、【钉死④】可追溯快照机制
 
 ### 7.1 reports.generation_context（JSON）
 
-**核心决定：inputs 存冗余全量副本，不存 id 引用**——记录后续被编辑/删除，历史报告依然完整可信（报告一经生成即不可变）：
+**核心决定一：inputs 存冗余全量副本，不存 id 引用**——记录后续被编辑/删除，历史报告依然完整可信。
+
+**核心决定二（v0.8 修正）：`generation_context` 不是「一个可变 JSON 里嵌 `versions[]`」，而是 append-only 的不可变 snapshot 序列**——每次生成产生**一个新的 immutable generation**，已存在的 generation **永不修改**。（v0.7 之前既写「永不回写」又写「追加 `versions[]`」，严格说是自相矛盾，本版修正。）
 
 ```jsonc
 {
-  "version": 1,
-  "period": { "type": "daily", "date": "2026-09-22" },
-  "inputs": [                       // 冗余副本，非引用
-    { "id": 123, "content": "完成活动方案第二版", "occurred_date": "2026-09-22", "matter": "Q3活动" }
-  ],
-  "memory_snapshot": {              // 生成时的工作记忆快照（第六节 Pack 快照）
-    "profile": { ... }, "matters": [ ... ], "todos": [ ... ]
-  },
-  "style": { "template_id": "daily_default" },
-  "prompt": "...",                  // 当时的完整 prompt
-  "model": "deepseek-v4-flash",
-  "versions": [ { "prompt": "...", "content": "...", "at": "..." } ]  // 多版本快照
+  "current": 2,                     // 指针：当前版本号（唯一允许变化的字段）
+  "generations": [                  // append-only：只追加，已有元素永不修改
+    {
+      "version": 1,
+      "created_at": "2026-09-22T18:31:02+08:00",
+      "period": { "type": "daily", "date": "2026-09-22" },
+      "inputs": [                   // 冗余副本，非引用
+        { "id": 123, "content": "完成活动方案第二版", "occurred_date": "2026-09-22", "matter": "Q3活动" }
+      ],
+      "memory_snapshot": { ... },   // 生成时的工作记忆快照（第六节 Pack 快照）
+      "style": { "template_id": "daily_default" },
+      "prompt": "...",              // 当时的完整 prompt
+      "model": "deepseek-v4-flash",
+      "content": "..."              // **AI 当时产出的原文**（不被用户编辑改动）
+    }
+  ]
 }
 ```
 
-### 7.2 可追溯链
+**报告正文与 generation 快照是两回事（v0.8 明确，这是「可纠错」与「快照不可变」能同时成立的关键）**：
+
+| 位置 | 内容 | 可变性 |
+|------|------|--------|
+| `reports.content` | **当前正文（工作副本）** | 可编辑（用户改稿、确认后编辑） |
+| `generations[n].content` | **该次 AI 的原始产出** | 永不修改 |
+
+用户改稿改的是 `reports.content`，**不动任何 generation**。因此「日报里这句话 AI 原本怎么说的」永远查得到。
+
+### 7.2 不可变、可纠错、可回看（v0.5 钉死，v0.8 修正）
+
+| 规则 | 内容 |
+|------|------|
+| **快照不可变** | 每个 generation **一经写入永不修改**；唯一可变的是 `current` 指针。后续编辑/删除源记录不影响任何 generation（存的是副本） |
+| **重生成 ≠ 改写** | 重生成 = **追加一个新 generation**（`current` 指向它），不覆盖旧 generation；旧版本必须**在 UI 里可回看/可对比**，否则存了也没人用 |
+| **可纠错** | 改稿改 `reports.content`（工作副本）；确认前任意改，确认后仍可编辑（+`updated_at`），但**永不回头改 generation** |
+| **删除即遗忘** | 源记录被删除后不再进未来 Pack（见 4.1 规则 9）；但历史 generation 的 `inputs` 副本仍在——「报告留住当时的真相，Pack 尊重现在的意愿」 |
+
+### 7.3 可追溯链
 
 ```text
 用户问：「这份日报里这句话哪来的？」
-  → 报告.generation_context.inputs（记录副本）
-  → memory_snapshot（当时 AI 看到的工作记忆）
-  → prompt + model（当时怎么生成的）
+  → 报告.generation_context.generations[n].inputs（记录副本）
+  → 同 generation 的 memory_snapshot（当时 AI 看到的工作记忆）
+  → 同 generation 的 prompt + model（当时怎么生成的）
 ```
 
-### 7.3 记录侧溯源
+### 7.4 记录侧溯源
 
 候选记录与 AI 提取待办保留 `source_ref`（conversation/message/todo id）→ 可追溯到「哪次对话产出的」。candidate → ignored 的历史全留库（Learning 阶段的原料）。
 
@@ -319,9 +509,18 @@ conv:work:report:{type}:{period}# 报告会话（按期隔离）
 
 ### Day 1 冷启动
 
-1. 首启向导（Setup 后接续）：① 画像三步 → ② 导入工作知识库（可跳过）→ ③ 加第一条待办。
+1. 首启向导（Setup 后接续）：① **隐私告知**（必过一页，v0.8 修正表述：「**资料默认仅保存在本地；当你主动执行需要 AI 处理的操作时，被选中的上下文内容可能随请求发送至你所选的模型服务商**」；同意才能继续，可改 provider）→ ② 画像三步 → ③ 导入工作知识库（可跳过）→ ④ 加第一条待办。
 2. 完整度图标持续引导（弱存在感）：「补上 X 可到 Y%」。
 3. 第一天即可用：一句话入口 / 手动记一件事，不空转。
+4. **既有 1.0/2.0 数据的处理（v0.5 拍板，硬规则 17）**：检测到旧库时，在向导中**显式询问三分支**，默认停在「稍后决定」：
+
+| 分支 | 行为 |
+|------|------|
+| **沿用**（用户主动选） | 读旧库做**只读展示**（旧数据仍在旧库），不写入、不改动旧文件；能映射的字段（如称呼/岗位）预填到新库，其余仅展示 |
+| **另起**（用户主动选） | 开全新库，不碰旧数据；旧库原样保留，用户随时可回旧版本打开 |
+| **稍后决定**（**默认**） | 不做任何处理，直接进新库；向导不阻塞，下次启动不再重复追问（可在设置里手动进入） |
+
+> **三条硬约束**：绝不静默迁移、绝不覆盖旧数据、绝不阻塞启动。旧数据始终由旧版本自己拥有，3.0 只读不写。
 
 ### Day N 稳态
 
@@ -329,11 +528,15 @@ conv:work:report:{type}:{period}# 报告会话（按期隔离）
 早上 9:00   打开「今日」→ 待办三来源聚合（遗留 + 截止 + 例事）
 白天        一句话入口随手路由；纪要产出 → 候选记录 + 提取待办进确认队列；
             记流水 / 勾完成待办（自动成记录）；工具箱加工型操作（无候选）
-下班 18:30  「生成今日日报」高亮（托盘提醒 P1）→ 事实聚合 → AI 表达 → 草稿
+下班 18:30  「生成今日日报」高亮（P0 已含本地通知）→ 事实聚合 → AI 表达 → 草稿
             → 人工修改 → 确认 → 复制走；若当日 confirmed < 3 条 → 漏记追问
             「今天还有没记下的事？」（v0.3 新增，同时是覆盖率的日常机制）
-周五 17:00  一键周报：本周记录 + 5 份日报 → 按事项聚合 → 草稿 → 确认
+周五 17:00  一键周报：本周记录 + 5 份日报 → 按事项聚合 → 确定性去重（2.5 A7）→ 草稿 → 确认
 ```
+
+> **P0 提醒（v0.4 上调）**：原「托盘定时提醒」在 P1，但 MVP 假设是「连续 5 个工作日愿意打开」——而第 3–5 天正是掉线高危期。因此 P0 只做**最简两个本地通知**：早上一次（今日待办汇总）+ 18:30 一次（生成日报），可关，不依赖 Gateway。其余提醒（记流水/周五周报）留 P1。
+>
+> ⚠️ **护栏（v0.5，硬规则 22）**：提醒是**两个固定通知**，不是调度系统。不要加自定义规则、重复规则、多提醒、日历同步——想做先重新评估。
 
 ---
 
@@ -350,6 +553,8 @@ OpenClaw    模型配置 / 能力中心 / 渠道 / 终端 / 日志 / 知识库(O
 
 二期新增导航：**报销**（发票/台账/报销单），随功能上线才出现。
 
+> **存在感分层（v0.4 新增）**：对「不会用 AI 的白领」，OpenClaw 组 + 系统组是噪音。默认**折叠进「高级设置」**，能力一个不删、入口不删，只降视觉权重——与「完整度弱存在感」同一原则。
+
 ---
 
 ## 十、修订后的范围
@@ -361,21 +566,36 @@ OpenClaw    模型配置 / 能力中心 / 渠道 / 终端 / 日志 / 知识库(O
 | 工作画像 | 向导 + 完整度（弱存在感）+ 行业扩展位 |
 | 事项 | 轻量 CRUD + 可选 color + AI 建议归属 |
 | 今日待办 | 手动 + 提取（candidate 确认）+ 例事（daily/weekly） |
-| 工作记录 | 三来源 + 状态机（第四节）+ 静默批量确认 + 去重 |
-| 一句话入口 | 本地路由表（第五节）+ 快捷按钮 |
-| 日报/周报 | 事实聚合（确定性）→ AI 表达 → 编辑 → 确认 → 复制；漏记追问 |
-| 工作问答 | grounded 于工作记忆；答不出说明缺什么 |
+| 工作记录 | 三来源 + 状态机（第四节）+ 静默批量确认（默认勾选「记入」）+ 去重 + **LIKE 检索框** |
+| 一句话入口 | 本地路由表（第五节）+ 快捷按钮 + 误判出路（可转问答） |
+| 日报/周报 | 事实聚合（确定性，规则见 2.5）→ AI 表达 → 编辑 → 确认 → 复制；漏记追问 |
+| 工作问答 | grounded 于工作记忆；答不出说明缺什么；**依据可视化入口** |
 | AI 工具箱 | 纪要（产出型+待办提取）+ 润色/翻译/摘要/邮件（加工型四件套），**薄边界** |
-| 工作知识库 | 2.0 解析管线移植 |
-| 冷启动 | 向导 + 完整度图标 |
+| 工作知识库 | 2.0 解析管线移植（**预算内全量优先**，见 6.3） |
+| 冷启动 | 向导 + 完整度图标 + **隐私告知** |
+| **本地提醒** | **最简两个本地通知**（早上今日待办 + 18:30 生成日报），可关，不依赖 Gateway |
+
+> v0.4 新增四项均属「低成本高杠杆」：提醒（护 MVP 连续使用）、记录检索（让用户感知到工作记忆）、依据标注（把差异化押注变成可感知）、隐私告知（合规必需）。
 
 ### P1 二期
 
-发票报销闭环（独立行政流：识别→人工确认→台账→规则合规→报销单）、托盘定时提醒（晨报/记流水/周五周报）、docx/xlsx 生成（报销单至少 xlsx，届时拍板）。
+发票报销闭环（独立行政流：识别→人工确认→台账→规则合规→报销单）、**其余提醒**（记流水 / 周五周报）、docx/xlsx 生成（报销单至少 xlsx，届时拍板）、记录语义检索。
+
+> 架构预留（v0.4）：P0 就把 docx/xlsx **生成路径的接口位**留出（2.0 已有 exceljs/mammoth 依赖），P1 填实现而不改管线。
 
 ### P2 预留
 
 微信随手入口、日历 .ics、月报、语音输入（SPIKE）、PPT 大纲、多工作空间、完整版候选去重（语义级）。
+
+### 补充设计说明：依据可视化的定位（v0.5 改判，跨页面）
+
+原 v0.4 把它当作工作问答的一个附带标注。实际它应该是**整个 3.0 的 Context 可视化入口**，理由是硬的：**数据已经全在**（Pack 快照 + `dropped[]`），不需要新造任何东西，只是把它暴露出来。
+
+- 工作问答：每条回答下方可展开「依据」——命中了哪几条记录 / 哪些资料 / 画像字段。
+- 报告页：可查看该报告生成时 AI 看到的工作记忆（`memory_snapshot`）。
+- 设置/调试区：可看最近一次 Pack 的组成、被裁掉什么（`dropped[]` 含原因）。
+
+用户第一次点开「依据」看到「因为它记住了 Q3 活动 + 你昨天那 3 条记录」——这一刻差异化才被感知。**成本几乎为零，杠杆最高。**
 
 ---
 
@@ -388,12 +608,13 @@ OpenClaw    模型配置 / 能力中心 / 渠道 / 终端 / 日志 / 知识库(O
 | 使用 | 打开应用 | ≥ 1 次/工作日 |
 | 记录 | 新增 confirmed 工作记录（含候选确认） | ≥ 3 条/日 |
 | 输出 | 日报 / 周报 | ≥ 3 次/5 天；≥ 1 次/第一周期末 |
+| **链路** | **候选处理率**（当日被记入/忽略的候选 ÷ 新增候选） | ≥ 80%，且不出现「堆积未处理」（证明来源≠事实链路真在跑） |
 | 价值 | **主观问卷（1-5 分）：「如果明天没有 Umi Claw，我会不会觉得麻烦？」** | 阶段 A/B 结束各测一次，≥ 3.5 分为过线 |
 
 补充机制（v0.3）：
 
 - **覆盖率不做假埋点**（实际做了几件事只有用户知道）：日常靠「漏记追问」机制补全；验证靠周问卷自评题「本周实际做的事，大约多少被记下来了？」（估算百分比，观察趋势而非绝对值）。
-- 候选确认交互使用 ≠ 0（证明来源≠事实链路在跑）。
+- 候选确认交互使用 ≠ 0（证明来源≠事实链路在跑）；**看处理率不看绝对数量**（v0.4）。
 - 执行：阶段 A 团队自用 5 个工作日 → 修复第一轮问题 → 阶段 B 灰度 3-5 个真实打工人（回收标杆样本反哺待拍板⑤）。不达标 → 访谈定位断点，不堆功能。
 
 ---
@@ -402,61 +623,386 @@ OpenClaw    模型配置 / 能力中心 / 渠道 / 终端 / 日志 / 知识库(O
 
 | 2.0 资产 | 挪到 3.0 | 成本 |
 |---|---|---|
-| DB Worker + 子进程注册表 + schema/migration | 原样移植 | 低 |
-| Gateway Client（SSE/停止生成/会话隔离/多模态） | 原样移植 | 低 |
+| DB Worker + 子进程注册表 + schema/migration | 跨分支移植；**schema 段重写**（2.0 商家表 → 3.0 8 表） | 中 |
+| Gateway Client（SSE/停止生成/会话隔离/多模态） | 跨分支移植 + 预热/首字验收（6.5） | 中 |
 | **Context Engine** | → **工作记忆组装器（主体）**，段结构与裁剪见第六节 | 中（重新设计数据源） |
-| 知识库解析管线 + 检索 | 原样移植 → 工作知识库 | 低 |
+| 知识库解析管线 + 检索 | 跨分支移植 → 工作知识库（策略改回全量优先，6.3） | 中 |
 | 扫描件 AI 识别（05b） | → 发票识别底座（P1） | 低 |
 | Content Center（3 版本/审核流/版本快照/AbortController） | → 报告管线 + 工具箱产出流 | 中 |
-| AI Advisor | → 工作问答 + AI 助手底盘 | 低-中 |
+| AI Advisor | → 工作问答 + AI 助手底盘 | 中 |
 | 「今日建议」模式 | → 「今日」页聚合 | 中（新数据模型） |
-| 商家大脑（档案+完整度卡片） | → 工作画像 + 冷启动（弱存在感版） | 低-中 |
+| 商家大脑（档案+完整度卡片） | → 工作画像 + 冷启动（弱存在感版） | 中 |
 | 双平台规则模板 | → 文档风格规则（日报/周报/纪要/邮件） | 低 |
 | 雷达采集框架 | → 工作记录候选管线（本地事件） | 中 |
 | 05b 人工确认流 | → 候选确认交互（来源≠事实落地） | 低 |
 | prompt/版本快照模式 | → generation_context（第七节，冗余副本版） | 低 |
+| **`test/` accept 套件 + `_lib.mjs` 脚手架**（v0.4 新增行） | → 3.0 验收体系（第十四节） | 低（改造数据源） |
 | Project/商家管理 | 不移植；「事项」承接 | — |
 | 1.0 微信渠道 | P2 | 低-中 |
 
-**结论不变：约七成可移植**；新核心（状态机/事实聚合/报告管线/结构化提取/一句话路由）是真正的设计量，不按移植低成本估。
+**结论核正（v0.4）**：代码量约七成可复用，但**没有一条是「原样」**——它们全在 `release/2.0` 分支，需跨分支挑选移植，且数据源/表结构全部要重写。因此估时按 **新核心 = 设计量（约 60%）+ 移植 = 改造量（约 40%）** 拆，一期 **20–26 人天**（对照 2.0 的 27 人天）。§十五 Commit 表按此分配。
 
 ---
 
-## 十三、硬规则（v0.3 定稿，违反任何一条 → 停下来重新评估）
+## 十三、硬规则（v0.8 定稿，违反任何一条 → 停下来重新评估）
 
 1. `data/openclaw`、`data/runtime` 不动；1.0 现有功能一个不删；Obsidian 归 OpenClaw 组。
 2. SQLite 沿袭 2.0 方案 B（`node:sqlite` 子进程）；禁止原生模块工具链；**DB Worker 全局单例**。
 3. `GATEWAY_TOKEN` 与 Gateway HTTP 调用只在主进程；渲染端永不持有 token、永不直连网关，一律 IPC → Manager → Gateway Client。
-4. **来源 ≠ 事实**：AI 产出默认 `candidate`，确认才进事实层；事实聚合与报告输入只读 `confirmed`；candidate 永不进工作记忆。
+4. **来源 ≠ 事实**：AI 产出默认 `candidate`，确认才进事实层；事实聚合与报告输入只读 `confirmed`；**`candidate` 永不进入工作记忆的事实层（Context Pack 第 5 段），但当前会话中的 candidate 可作为临时上下文进入第 7 段对话历史，且必须标记「未确认」**（完整口径见 4.1 规则 7）。
 5. **候选静默**：不弹窗打扰；去重规则（同会话+同类型+30min）生效后才允许上线。
 6. **事实聚合是确定性代码**：归集/统计/合规检查不用模型。
 7. **Human-in-the-loop**：不自动发送、不自动回复；产出一律人工确认 + 人工复制。
 8. **工具箱薄边界**：只收已有文本，不做音视频/转写/说话人/文件导出（P2 前有效）。
 9. **不做 Project 系统**：matters 轻量表，禁止膨胀出空间/成员/权限概念。
-10. 合规红线沿袭 2.0：不登录、不带 Cookie、不绕权限、不碰需登录的数据服务；敏感资料全本地。
-11. 新增 IPC 通道必须先改契约表（v0.4 出 §五 同款）再动代码。
+10. 合规红线沿袭 2.0：不登录、不带 Cookie、不绕权限、不碰需登录的数据服务；**资料默认仅存本地，但用户主动执行 AI 操作时，被选中的上下文会随请求发送至所选模型服务商**（v0.8 修正，见硬规则 15）。
+11. 新增 IPC 通道必须先改契约表（**第十四节**，2.0 §五 同款）再动代码。
 12. Manager 层方法显式收参数，禁止从全局隐式推断（2.0 硬规则 9 的 3.0 版，projectId 由业务参数替代）。
+13. **测试先行**：每个 Commit 必须带 accept 脚本，**先写断言再写实现**；`typecheck:node` / `typecheck:web` 分开跑（2.0 踩过 `npm run typecheck` 空转、掩盖 6 个真错）；每个 Commit 结束必须回归全绿。详见**第十六节**。
+14. **流式 + 首字 ≤3s**：所有 AI 输出一律流式；不设整体超时（只有 chunk 间空闲超时）；打开「今日」页即预热 Gateway；每次生成用唯一会话键。详见 6.5。
+15. **隐私告知（v0.8 修正表述）**：首启必须显式告知——「**资料默认仅保存在本地；当你主动执行需要 AI 处理的操作时，被选中的上下文内容可能随请求发送至你所选的模型服务商**」；同意才能继续。⚠️ 不得使用「敏感资料全本地」这类绝对说法（会与工作知识进 Pack 的事实相矛盾）。
+16. **candidate 边界**：不进事实段；允许在对话历史段作为当前会话的临时上下文，但必须带「未确认」标记。
+17. **升级共存**：1.0/2.0/3.0 同机 data 目录按版本隔离；既有数据不静默迁移、不覆盖。
+18. **高级能力折叠**：OpenClaw / 系统组默认折叠进高级设置；能力与入口一个不删，只降视觉权重。
+19. **快照不可变**：`generation_context` 是 **append-only 的 immutable generation 序列**；已写入的 generation **永不修改**（唯一可变的是 `current` 指针）。重生成 = **追加新 generation** 而非覆盖，且旧版本必须在 UI 里可回看/可对比。报告正文（`reports.content`）可编辑，但**永不回头改 generation**。详见 7.1/7.2。
+20. **可纠错**：所有 AI 参与生成的产物（记录/待办/报告/候选）都可修改，不存在只读的 AI 输出。详见设计原则 4。
+21. **删除即遗忘**：记录被删除后不再进未来任何 Pack；但历史报告的快照副本仍在（报告留住当时的真相，Pack 尊重现在的意愿）。
+22. **提醒护栏**：P0 提醒只做**两个本地通知**（早上 + 18:30），**禁止膨胀成调度系统**（不做自定义规则/重复规则/多提醒/日历同步）——要做先重新评估。
+23. **文件路径不可信（v0.8 新增）**：渲染端传来的 `filePath` 只能来自 `pickFile()` 返回值，主进程必须重新校验（白名单 + 拒绝路径穿越 + 扩展名）后才读盘。详见 14.4。
+24. **一期 8 表锁定（v0.8 新增）**：`profile / matters / todos / activity_log / reports / knowledge / conversations / app_meta`。**禁止为「架构完整」新增状态表**（如 `context_snapshots` / `candidate_queue` / `report_versions` / `work_memory` / `ai_runs`）——这些语义已由 `activity_log.status` / `reports.generation_context` / `conversations` / `app_meta` 承载。3.0 的风险不是表少，而是为架构漂亮不断加表。
 
 ---
 
-## 十四、待拍板事项
+## 十四、IPC 契约与统一错误规范（v0.6 新增，v0.7 消歧，硬规则 11）
+
+沿袭 2.0 §五 模式：**先改本表再动代码**。Manager 层全部显式传参（硬规则 12），不做全局隐式推断。
+
+```ts
+window.api = {
+  claw, config, models, skills, channels,   // 1.0 现有，不动
+  work: {
+    profile:  { get(),
+                update({ callName?, position?, department?, company?, reportTo?,
+                         tone?, reportStyle?, industry? }) },          // 单行；完整度随 get 返回（不单独开通道）
+    matters:  { list({ status? }),
+                create({ name, color? }),
+                update(id, { name?, status?, color? }),
+                delete(id),
+                suggestMatter(recordId) },                            // AI 建议归属，人工确认后才写
+    todos:    { list({ state?, date?, matterId? }),
+                create({ title, dueDate?, matterId?, source? }),
+                update(id, { title?, dueDate?, matterId?, routineRule? }),
+                delete(id),
+                complete(id), uncomplete(id),                          // 勾完成/取消（联动规则见 4.2）
+                confirm(id), ignore(id), confirmBatch(ids), ignoreBatch(ids) },
+    records:  { list({ date?, matterId?, status?, query?, limit? }), get(id),
+                create({ content, occurredDate?, occurredTime?, matterId? }),   // 手动登记 → 直接 confirmed
+                update(id, { content?, occurredDate?, occurredTime?, matterId? }),
+                delete(id),
+                confirm(id, { content?, occurredDate?, occurredTime?, matterId? }),  // 确认时可顺手改（4.1 规则 1）
+                ignore(id), confirmBatch(ids), ignoreBatch(ids),
+                listFiltered({ date? }) },                             // listFiltered = 「已过滤」留痕（2.2 质量门槛）
+    today:    { get(date?) },                                          // 一次拉齐：待办三来源 + 记录 + 候选 + 日报状态
+    router:   { route(input) },                                        // 本地规则路由；**永不失败**（B3）
+    reports:  { list({ type?, period? }), get(id),
+                aggregate({ type, period }),                           // 确定性事实聚合（2.5）；**不调模型**，可单独验
+                generate({ type, period }) → runId, abortGenerate(runId),
+                saveDraft(id, { content }), confirm(id),
+                regenerate(id) → runId, versions(id) },                // 重生成 = 新增版本（硬规则 19）
+    qa:       { ask(question, { conversationKey? }) → runId,
+                abortAsk(runId) },                                     // 流式；吃工作记忆
+    tools:    { list(),
+                run(toolId, { text, conversationKey? }) → runId,
+                abortRun(runId) },                                     // 薄边界：只收已有文本
+    knowledge:{ list({ status? }), get(id),
+                create(data), update(id, patch), delete(id), search(query),
+                import(input), pickFile(),
+                recognize({ filePath, type? }) → taskId, abortRecognize(taskId|null),
+                commitRecognized(input) },                             // 沿袭 2.0 §五（含两路定位 abort）
+    context:  { snapshot({ scope, id? }) },                            // **只读** Context 快照（B1）；scope 枚举见 14.1
+    gateway:  { status, ensureReady }                                  // 沿袭 2.0（零 token：GET /health + /v1/models）
+  }
+}
+// 二期再扩 invoices / expenses（P1），其余不进面
+```
+
+**参数约定（v0.7 钉死，v0.8 补三条）**：
+
+1. **所有 `id` 都是首个位置参数**（`update(id, patch)` / `delete(id)` / `confirm(id)`），不包对象；`create` 只收一个对象，不带 id。
+2. **`update` 一律「局部更新」**：只传要改的字段，未传字段不动；不传即不改（不是置空）。
+3. **`delete` 一律幂等，且不返回 `NOT_FOUND`**（v0.8 明确优先级）：不存在/已删 → `{ ok:true, data:{ deleted:false } }`。**只有 `get` / `update` / `confirm` 这类「对不存在资源无意义」的方法才返回 `NOT_FOUND`**；`delete` 视为成功执行（幂等）。
+4. **`list` 一律「新→旧」**（`occurred_date`/`created_at` 倒序），`limit` 缺省由实现定并在 accept 里断言。
+5. **DB 必填 / IPC 可缺省（v0.8 术语统一）**：`records.create` 不传 `occurredDate` 时默认**今天**；`occurredTime` 不传就是「时间未记」（2.2.1）。
+
+   ```text
+   IPC 层：occurredDate?          ← 可缺省（默认 today）
+          ↓
+   DB 层：occurred_date NOT NULL  ← 必填
+   ```
+
+   ⚠️ **以后不要因为看到「必填」就把前端 API 改成强制要求日期**——两者说的是不同层。
+6. **`→ runId`** 标记该方法返回本次执行的 `runId`（流式方法专用，见 14.1 B2）。
+7. **`state` 不由调用方传（v0.8）**：`todos.create` 不接 `state`，初始状态由 `source` 决定（4.2 规则 5）。
+8. **`knowledge` 的 `filePath` 必须经主进程重新校验（v0.8，硬规则 23）**：渲染端传来的路径**只能来自 `pickFile()` 的返回值**，主进程必须重新校验后才读盘（见 14.4）。
+
+### 14.1 三条边界（B1 是 v0.6 正式改判）
+
+**B1：Context 快照破例上渲染端（只读）**
+
+2.0 §五 写死「Context Pack 不上面」，并留了一句「将来若要『AI 看见什么』预览页，**先改本节再动 IPC**」。v0.5 把依据可视化从「问答的附带标注」升级为**全局 Context 入口**，就是那个「将来」——因此本节正式改判，开一条通道：
+
+- `work:context:snapshot` 只暴露三样：`memory_snapshot`（当时 Pack 组成）、`inputs` 副本、`dropped[]`（含裁剪/过滤原因）。
+- **绝不暴露**：`prompt` 全文、模型参数、`GATEWAY_TOKEN` 或任何网关凭据（硬规则 3）。
+- 只读通道，无写入口；渲染端永远无法通过它改动主进程状态。
+
+**`scope` 枚举（v0.7 钉死，三个使用场景对应三个取值）**：
+
+```ts
+context.snapshot({ scope: "latest" })                    // 最近一次 Pack（设置/调试区）
+context.snapshot({ scope: "qa",     id: runId })         // 某次问答的依据（id = qa.ask 返回的 runId）
+context.snapshot({ scope: "report", id: reportId })      // 某份报告生成时的记忆（id = report id）
+```
+
+| scope | id | 含义 |
+|---|---|---|
+| `latest` | 忽略 | 最近一次 Pack（无论哪种场景产生） |
+| `qa` | **必填** `runId` | 那次问答看到的上下文 |
+| `report` | **必填** `reportId` | 该报告生成时的 `memory_snapshot` |
+
+- `scope=qa/report` 但缺 `id` → `VALIDATION_ERROR`；`id` 存在但快照已不存在 → `NOT_FOUND`（其余错误码不变）。
+
+**QA 快照的持久化位置（v0.8 钉死，否则 `scope:qa` 拿不到数据）**
+
+这是 B1 通道真正能闭合的前提：`qa.ask` 必须把 `runId → Pack 快照` 存下来，否则事后 `context.snapshot({scope:"qa", id:runId})` 无数据可拿。
+
+**不新增表**（遵硬规则 24），直接写在 `conversations` 行的 metadata JSON 里：
+
+```jsonc
+// conversations.metadata（单行 JSON，每个 runId 一条）
+{
+  "runId": "...",
+  "conversationKey": "conv:work:qa",
+  "created_at": "...",
+  "contextSnapshot": {          // = Pack 快照（同 B1 只读口径）
+    "memory_snapshot": { ... },
+    "inputs": [ ... ],
+    "dropped": [ ... ]
+  }
+}
+```
+
+两条溯源路径并列（形状一致，来源不同）：
+
+```text
+QA：      runId      → conversations.metadata.contextSnapshot
+报告：reportId   → reports.generation_context.generations[n]
+```
+
+- 只存**摘要级**快照（`memory_snapshot` + `inputs` + `dropped`），**不存 prompt 全文**（与 B1 暴露面一致）。
+- 保留策略：随会话滚动摘要一并处理，不做独立清理（一期）。
+
+**B2：SSE 增量不注册业务通道（沿袭 2.0；v0.7 统一 `runId`）**
+
+只定事件名与助手，注册归各自业务通道：
+
+```text
+work:stream:chunk   { runId, delta }
+work:stream:done    { runId, content }
+work:stream:error   { runId, error:{code,message} }
+```
+
+- **只用 `runId`，不引入第二个 `streamId` 概念（v0.7 拍板）**：`runId` = 业务层一次执行的唯一 ID，**同时就是本次 SSE 流的 ID**。一次执行 → 一个 `runId` → 一组流事件；这样 IPC、前端状态、AbortController 三处都只需跟踪一个 ID。
+- 主进程导出 `forwardGatewayStream(webContents, runId, iterator)` 唯一转发助手；`qa` / `tools` / `reports` 自己注册消费。
+- `runId` 必须**每次生成唯一**（同一 key 并发会在 Gateway 排队导致空转超时，2.0 已踩）。
+- **不设整体超时**，只有 chunk 间空闲超时（6.5）。
+- `abort*` 三处（`abortAsk` / `abortRun` / `abortGenerate`）全部收 `runId`，与事件同 ID。
+
+**B3：`router.route` 永不失败**
+
+全系统**唯一一条不抛错误信封**的通道：参数非法、规则未命中、文本为空——一律返回 `ASK` 兜底。用户永远不会看到「没反应」或路由报错。
+
+### 14.2 统一错误码（11 项）
+
+沿袭 2.0，去掉与 3.0 无关的 `HOT_SOURCE_ERROR`，新增 `STREAM_TRUNCATED`（2.0 v1.21 已把「流式响应体已开始后的传输中断」从 `connect-failed` 中拆出，3.0 沿用该口径）：
+
+| code | 含义 | 前端典型处理 |
+|---|---|---|
+| `VALIDATION_ERROR` | 参数不合法 | 表单内联提示 |
+| `NOT_FOUND` | 资源不存在 | 返回列表 / 空态 |
+| `CONFLICT` | 冲突 | 冲突提示 |
+| `DB_ERROR` | Worker 查询失败（重试后仍败） | 通用错误 + 日志 |
+| `SETUP_REQUIRED` | 便携 Node 不存在，Worker 无法启动 | 引导去环境初始化 |
+| `OPENCLAW_NOT_READY` | Gateway 探活/拉起失败 | 显示启动引导 |
+| `OPENCLAW_TIMEOUT` | 调用超时 | 重试按钮 |
+| `OPENCLAW_AUTH_ERROR` | Gateway token 鉴权失败 | 配置指引 |
+| `FILE_NOT_FOUND` / `FILE_PARSE_ERROR` | 原始文件缺失 / 解析失败 | 知识条目标红 |
+| `STREAM_TRUNCATED` | 流已开始后中断 | 保留已得内容 + 重试 |
+
+- IPC 失败统一信封：`{ ok:false, error:{ code, message, details? } }`；成功 `{ ok:true, data }`（沿袭 2.0 v1.15 定稿）。
+- 渲染端**按 `code` 分支**，**禁止** `error.message.includes()` 判断。
+- `AppError` 的身份判定**不得依赖 `instanceof`**（生产构建 rollup 可能把 `errors.ts` 拆进不同 chunk → 假阴性），统一走 `errorCodeOf()`（2.0 v1.17 已修）。
+
+### 14.3 预留（不实现）
+
+异步任务事件 `work:task:<id>`（progress/completed/error）只定形状；一期不建任务基础设施，单次生成走 SSE。会话键见 **6.4**，本节不重复。
+
+### 14.4 文件路径安全（v0.8 新增，硬规则 23）
+
+Electron 安全底线：**渲染端传来的 `filePath` 一律不可信**。`knowledge.recognize({filePath})` / `knowledge.import({filePath})` 必须走：
+
+```text
+pickFile()  →  渲染端拿到 path  →  IPC  →  主进程重新校验  →  才允许读盘
+```
+
+**禁止**：
+
+```text
+渲染端 → 任意 filePath → 主进程直接 fs.readFile   ❌
+```
+
+主进程校验至少包含：① 路径来源在白名单内（由 `pickFile` 登记）② 拒绝路径穿越（`..`）③ 拒绝非预期扩展名。校验失败 → `VALIDATION_ERROR`（不是 `FILE_NOT_FOUND`）。
+
+> 这不是产品设计问题，是 Electron 安全底线（与硬规则 3「渲染端永不持有 token」同一类）。
+
+---
+
+## 十五、SPIKE 清单（v0.6 新增）
+
+2.0 的 SPIKE 救过命（Commit 00 实测出「非流式 80.3s 冷启动」「Gateway `usage` 恒为 0」两条，直接改掉了后续设计）。3.0 保留这个习惯，但**每项都绑到具体 Commit**，不做无主 SPIKE。
+
+| # | SPIKE | 要回答的问题 | 判定线 | 归属 |
+|---|-------|--------------|--------|------|
+| S1 | **候选密度实测** | 一次纪要 / 一天真实使用会产生多少候选？「静默徽标 + 批量确认 + 默认全选」够不够用？ | 一天候选 ≤10 条，批量处理耗时 <30s | Commit 03 |
+| S2 | **事实聚合样例集** | A1–A10 是否真能写成无歧义断言？边界（0 条 / 跨事项 / 时间缺失 / 周报重复）覆盖够不够？ | ≥20 组 fixture 全部断言通过，无歧义用例 | Commit 06 |
+| S3 | **路由规则误判率** | 本地关键词规则在真实输入上的漏判 / 误判率 | 误判 ≤10%，且**每条误判都有出路**（转问答可回退） | Commit 05 |
+| S4 | **token 标定** | 中文 1 字 ≈ 1 token 的粗估够不够保守？（Gateway `usage` 恒为 0，只能本地估） | 估算值 **≥** 实际值（宁少塞不多塞） | Commit 04 |
+| S5 | **首字延迟** | 预热后 SSE 首字是否真 ≤3s？冷启动可见态是否够清楚？ | 预热后 ≤3s；冷启动有「正在唤醒 AI」可见态 | Commit 01 |
+
+> **SPIKE 的纪律（沿袭 2.0）**：结论必须**回写基线**（写进本文件对应章节），证据落 `spikes/` 目录且可复跑。不写结论的 SPIKE 等于没做。
+
+---
+
+## 十六、测试与验收体系（v0.4 新增，硬规则 13）
+
+2.0 最值钱的资产不是代码，是那套验收体系：每提交带 accept 脚本 + 双 typecheck + 回归全绿（db 31/31、gateway 27/27、context 22/22、knowledge 23/23、scan 18/18…）。3.0 沿袭并升级。
+
+### 16.1 三层验收
+
+| 层 | 内容 | 要求 |
+|----|------|------|
+| 单模块 accept | 每 Commit 一套 `test/<name>.accept.mjs`，用例编号化（C1/C2…） | 先写断言再写实现；失败必须可复现 |
+| 静态检查 | `typecheck:node` + `typecheck:web` 分开跑 | 0 错误；禁止用 `npm run typecheck` 空转替代 |
+| 端到端「一天」 | 冷启动 → 记 3 条 → 候选确认 → 生成日报 → 确认 → 周报 | 断言产物 + 快照；直接对应 MVP 假设 |
+
+### 16.2 验收脚本必须覆盖的场景
+
+1. **状态机全迁移**：candidate/confirmed/ignored 每条边 + 待办勾完成联动 + 取消勾选回滚（含「已编辑则断开 source_ref」）。
+2. **候选去重**：同会话 + 同类型 + 30min 覆盖更新；已 ignored 不重提议。
+3. **事实聚合**（2.5 A1–A9）：给定记录集断言分组/排序/0 条不调模型/周报去重/`is_focus`。
+4. **Pack 组成与裁剪**：段顺序、裁剪顺序、`dropped[]` 留痕、candidate 不进事实段。
+5. **快照不可变**：生成报告 → 删掉源记录 → 报告仍完整（证明存的是副本）。
+6. **Gateway**：SSE 首字 ≤3s、中断真断上游、chunk 空闲超时、唯一会话键。
+7. **降级**：Gateway 未就绪 / provider 报错时的可见态与不卡死。
+8. **双时间语义**（2.2.1）：`occurred_date` ≠ `created_at` 的补记场景；`occurred_time` 为空时的排序与「时间未记」标注；聚合按 `occurred_date`（A10）。
+9. **候选质量门槛**：被挡候选进「已过滤」且**带原因留痕**（不静默丢）；不误伤正常候选。
+10. **删除即遗忘**：删记录 → 该记录不再出现在下一次 Pack；但历史报告仍完整（与第 5 项对照）。
+11. **重生成版本回看**：重生成后 `generations[]` 递增、`current` 指向新版本，且旧 generation 可读取（含各自的 `content`/`prompt`/`inputs`）。
+12. **快照 append-only**：写入一个 generation 后，任何操作（改稿、确认、删除源记录）都不修改它；只允许追加新 generation。
+12. **IPC 契约**：`router.route` 永不报错（B3）；Context 快照只读且不含 prompt/token（B1）；错误码只用 14.2 表中 11 项。
+
+### 16.3 打包态冒烟
+
+2.0 的教训：真雷在「打包态」。`build:win` 产物必须独立跑一遍关键链路（DB 建库、preload 暴露面、无 token 泄漏、首启向导）。
+
+---
+
+## 十七、Commit 计划与依赖（v0.4 新增，首次含估时）
+
+| Commit | 内容 | 依赖 | 估时 |
+|---|---|---|---|
+| 00 | **2.0 底座移植**：DB Worker + 8 表 schema + errors + ipc 骨架 + accept 脚手架 + 双 typecheck | — | 3–4d |
+| 01 | Gateway Client 移植 + 预热 + SSE 首字验收（6.5）｜**SPIKE S5** | 00 | 2d |
+| 02 | profile / matters / todos CRUD + 待办状态机 | 00 | 2–3d |
+| 03 | activity_log + 候选管线（去重 + 质量门槛 + 默认勾选）｜**SPIKE S1** | 02 | 2–3d |
+| 04 | **Context Engine v3**（Pack 组成 + 裁剪 + 全量优先）；知识段**只留接口**，08 再接；accept 用**固定 fixture**｜**SPIKE S4** | 03 | 3–4d |
+| 05 | 今日页聚合 + 一句话路由表 + 误判出路（ASK 分支先用 stub 顶住）｜**SPIKE S3** | 04 | 2–3d |
+| 06 | 报告流：事实聚合（2.5）→ AI 表达 → 冗余快照｜**SPIKE S2** | 04 | 3d |
+| 07 | 工具箱四件套 + 纪要待办提取 | 04 | 2–3d |
+| 08 | 工作知识库移植（全量优先策略）+ 接入 04 的知识段接口 | 00,04 | 2d |
+| 09 | 冷启动向导 + 完整度 + 隐私告知 + 本地提醒 + **旧库三分支（默认「稍后决定」）** | 02 | 2d |
+| 10 | **「一天」端到端验收** + 打包态冒烟 | 全部 | 2d |
+
+**合计约 20–26 人天**。02–06 是新核心（按设计量估），00/01/08 是移植（按改造量估）。
+
+> **为何 Context Engine 提到 04（v0.5）**：不是因为「被依赖者优先」（那正是 2.0 的教训——没消费者的模块验不了），而是因为**它的消费者是 accept 脚本，不是 UI**：Pack 组成与裁剪顺序完全可以用 fixture 断言，不需要任何页面。所以 04 可立，但必须满足：① 自带 accept 用固定 fixture，不依赖 UI；② 知识段只留接口，08 再接；③ 05 的 Router 的 ASK 分支先用 stub。
+
+> 2.0 的教训：**Commit 00 和「打包态端到端」最容易藏雷**，两者都必须独立验收，不能顺带过。
+
+---
+
+## 十八、待拍板事项
 
 | # | 事项 | 状态 |
 |---|------|------|
 | ① | MVP 圈定 | ✅ 每日闭环 P0；四件套进 P0（薄边界） |
 | ② | 工作记录素材 | ✅ 三来源 + 状态机 + 漏记追问 |
-| ③ | 文件生成 | ⬜ 一期文本+复制；报销单进 P1 时至少 xlsx，届时拍板 |
+| ③ | 文件生成 | ✅ v0.5 拍板：一期**文本 + 复制走**，不生成文件；**P0 先留生成路径接口位**（2.0 已有 exceljs/mammoth 依赖），报销单进 P1 时至少 xlsx |
 | ④ | 微信随手入口 | ✅ P2 |
-| ⑤ | 标杆用户 | ⬜ 默认「互联网职能岗」拍板（岗位差异已压缩到画像/模板层，风险降低）；阶段 B 灰度回收真样本 |
+| ⑤ | 标杆用户 | ✅ v0.4 拍板：**互联网职能岗（运营/产品/HR/行政）**；阶段 B 灰度回收真样本 |
 | ⑥ | 语音输入 | ✅ P2 SPIKE（一期只收已有转写文本） |
 | ⑦ | 首页 AI 入口 | ✅ v0.3 改判拍板：一句话入口（路由器）+ 快捷按钮辅助 |
 | ⑧ | 例事规则 | ✅ 最简：daily/weekly，勾完成即生成下一次 |
 | ⑨ | 事项 color | ✅ 可选 UI 字段，预设 6 色，不阻塞核心模型 |
+| ⑩ | 候选默认勾选 | ✅ v0.4 拍板：默认全选「记入」；验收看候选处理率 |
+| ⑪ | P0 提醒范围 | ✅ v0.4 拍板：只做早上 + 18:30 两个本地通知，其余 P1 |
+| ⑫ | 知识检索策略 | ✅ v0.4 改判：预算内全量优先，超预算才 LIKE 裁剪 |
+| ⑬ | 例事「补记」 | ✅ v0.5 由双时间语义（2.2.1）自动关闭：记录进实际发生日，`occurred_date` 可手改 |
+| ⑭ | 升级共存默认 | ✅ v0.5 拍板：首启遇到既有 1.0/2.0 数据 → 默认**「稍后决定」**，**绝不默认沿用、绝不默认覆盖**；向导三分支见 §八 Day 1 |
 
 ---
 
-## 十五、下一步（v0.4）
+## 十九、下一步（规划冻结 → Commit 00）
 
-1. 本版评审收敛（重点：第四节状态机、第五节路由表、第六节 Pack 组成、第七节快照）。
-2. v0.4：IPC 契约表（2.0 §五 同款：通道/错误码/统一错误规范）+ **Commit 计划与估时** + 每 Commit 可执行验收设计 + SPIKE 清单（候选确认交互密度实测、事实聚合验收样例集、路由规则误判率观察）。
-3. 之后进入开发：Commit 00 类比 2.0，先做「Gateway Client + DB Worker 移植」验证底座，再按依赖顺序推进。
+**功能冻结（v0.5 生效）**：不再新增任何功能项。P2 预留清单已兜住后续想法（微信入口/日历/月报/语音/PPT/多空间）。
+
+**规划到此冻结。** 产品骨架（v0.2–v0.3）+ 系统设计（四项钉死）+ 工程计划（v0.4）+ 数据语义（v0.5）+ 契约与 SPIKE（v0.6）+ 消歧（v0.7）+ 开工前终检（v0.8）已全部成文；待拍板 14 项全绿，硬规则 24 条，§二十 终检 8 项已勾。
+
+1. **直接开 Commit 00**：先做「DB Worker + 8 表 schema + errors + ipc 骨架 + accept 脚手架 + 双 typecheck」并**独立验收**（2.0 的 Commit 00 是最容易藏雷的位置）。
+2. **Commit 00 只做底座，不碰 UI**（v0.8 新增约束）：不做今日页 / AI 聊天 UI / Context UI / 知识库 UI / Router UI / 报告页 / 完整 Setup / OpenClaw 新功能。
+
+   ```text
+   npm run typecheck:node   ✅
+   npm run typecheck:web    ✅
+   node test/db.accept.mjs  ✅
+   node test/ipc.accept.mjs ✅
+   npm run build:win        → 打包/启动/建库/preload/退出 全链路无错
+   ```
+3. 按第十七节依赖顺序推进；每个 Commit 带 accept 脚本（先断言后实现）+ 回归全绿，SPIKE 结论**回写本基线**。
+4. **契约先于代码**：任何新增 IPC 通道先改第十四节，再动实现。
+5. 开发中若发现本基线有错或缺口 → **改基线，不在代码里悄悄绕过**（沿用 2.0 纪律）。
+
+---
+
+## 二十、开工前终检表（v0.8 新增）
+
+Commit 00 开工前的最后一道检查，**全部为已清项**：
+
+| # | 检查项 | 状态 | 落点 |
+|---|--------|------|------|
+| 1 | generation snapshot 改为 append-only immutable version | ✅ | 7.1 / 7.2 / 硬规则 19 |
+| 2 | todos `source` → 初始 `state` 规则明确 | ✅ | 4.2 规则 5 / 参数约定 7 |
+| 3 | DB NOT NULL / IPC optional 语义明确 | ✅ | 参数约定 5 / 2.2.1 |
+| 4 | `delete` 幂等 vs `NOT_FOUND` 优先级明确 | ✅ | 参数约定 3 / 14.2 |
+| 5 | `qa` runId → context snapshot 持久化位置明确 | ✅ | 14.1（写进 `conversations`，不新增表） |
+| 6 | 「敏感资料本地」隐私表述修正 | ✅ | 硬规则 10 / 15 / §8 Day 1 |
+| 7 | `knowledge` filePath 主进程重新校验 | ✅ | 14.4 / 硬规则 23 |
+| 8 | 一期 8 表锁定，禁止新增状态表 | ✅ | 硬规则 24 |
+
+> **检查表本身也是护栏**：后续若有人想在 Commit 00 加第 9 张表或第 9 项功能，先回到本表确认是不是把设计做胖了。
+
+### 保持到底的四条（不在开工前改，但开发中不能丢）
+
+1. **事实层与 AI 表达彻底拆开**：日报错了改表达，事实错了改记录，AI 推测错了它根本没进 confirmed。
+2. **Context Pack 是核心资产**：入口不是「AI 菜单」（QA/日报/纪要/摘要/翻译并列），而是「工作记忆 → QA/Report/Tools」。
+3. **删除即遗忘 + 快照不可变**：报告留住当时的真相，Pack 尊重现在的意愿。
+4. **不为架构完整加表/加层**：当前设计的克制本身就是质量。
