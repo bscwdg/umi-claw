@@ -1,6 +1,6 @@
 # 🦞 Umi Claw
 
-> OpenClaw 便携管理工具（愿景：简单点，无需复杂安装操作让每个人都能享受ai带来的便利） — 基于 Electron + Vue3 + Vite 开发
+> OpenClaw 便携管理工具 + AI 营销工作台（愿景：简单点，无需复杂安装操作让每个人都能享受 AI 带来的便利）— 基于 Electron + Vue3 + Vite 开发
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -10,10 +10,16 @@
 - 🖥️ **原生桌面体验** — 自定义标题栏、系统托盘、原生弹窗
 - ⚙️ **完整管理界面** — 图形化配置 OpenClaw、模型、技能
 - 🧩 **内置中文技能** — 开箱即用的中文 AI 能力
-- 🤖 **多个个模型服务商** — DeepSeek、Kimi、通义千问、OpenAI 等
+- 🤖 **多个模型服务商** — DeepSeek、Kimi、通义千问、OpenAI 等
 - 📋 **实时日志监控** —— 带过滤、导出功能的日志查看器，日志文件：`data/logs/runtime-debug.log`
 - 📩 **多渠道接入** — 内置微信，支持企业微信官方插件（扫码即接入）、飞书自建应用（长连接，界面一键装插件）
 - 📚 **Obsidian 知识库** — 笔记向量化语义检索，以 MCP 工具喂给模型，按需取片段省 token
+- 🏪 **AI 营销工作台（2.0 新增）** — 围绕实体店老板的线上获客动线：商家建模 → 知识库 → AI 顾问 → 内容生成 → 热点雷达
+- 🧠 **商家大脑** — 品牌 / 定位 / 客群 / 语气档案建模，资料完整度提示，关注词只喂 AI、不触发采集
+- 📄 **多格式知识库** — Word / Excel / PDF / 网址 / 纯文本本地解析入库，扫描件可 AI 识别兜底
+- 💬 **AI 顾问** — 基于本商家资料的流式问答，引用商家事实、不编造
+- ✍️ **内容中心** — 一次生成 3 版候选，版本与提示词快照可追溯，草稿到发布的人工审核流
+- 🔥 **热点雷达** — 头条 / B 站等公开榜单多源采集，AI 相关性评分、四档分组与「今日建议」
 - 💾 **便携模式** — 可放置在 U 盘，数据随身带走
 - 🌐 **国内镜像加速** — npmmirror + GitHub 代理，无需翻墙
 
@@ -43,9 +49,25 @@ umi-claw/
 │   │   ├── channelCatalog.ts  # 渠道目录 / 元信息
 │   │   ├── modelConfig.ts     # 模型预设键位/命名避让（预设数据已外置）
 │   │   ├── modelPresets.ts    # 预设加载/校验/「拉取最新」（上游：Gitee awesome-llm-models，快照在 resources/model-presets/）
-│   │   └── obsidian/          # Obsidian 知识库管理
+│   │   ├── obsidian/          # Obsidian 知识库管理
 │   │       ├── obsidianManager.ts  # 配置/索引/检索测试/MCP 配置生成
 │   │       └── types.ts            # 类型定义
+│   │   ├── subprocessRegistry.ts  # 便携 Node 子进程注册表 / 统一优雅关闭
+│   │   ├── database/          # SQLite DB Worker 客户端（2.0 新增）
+│   │   │   ├── database.ts        # 单例常驻 worker 客户端 / 请求队列 / 断线重连
+│   │   │   ├── schema.ts          # 表结构（projects/businesses/knowledge/contents/hot...）
+│   │   │   └── migration.ts       # 迁移版本
+│   │   ├── ipc/               # marketing IPC 面（2.0 新增）
+│   │   │   ├── index.ts
+│   │   │   └── marketing.ts       # project/business/knowledge/content/hot 通道
+│   │   └── marketing/         # AI 营销业务层（2.0 新增，不 import electron）
+│   │       ├── projectManager.ts      # 商家（Project）CRUD / 当前商家
+│   │       ├── businessManager.ts     # 商家档案 1:1 / 关注词
+│   │       ├── knowledgeManager.ts    # 多格式导入解析 / 关键词检索
+│   │       ├── advisorManager.ts      # AI 顾问（流式 SSE）
+│   │       ├── contentManager.ts      # 内容生成 / 版本 / 审核状态
+│   │       ├── hotManager.ts          # 热点采集调度 / 生命周期 / 落榜清理
+│   │       └── hotScoreManager.ts     # AI 相关性懒评分 / 四档分组
 │   └── preload/
 │       ├── index.ts           # Preload / IPC 桥接
 │       └── index.d.ts         # window.api 类型声明
@@ -60,6 +82,12 @@ umi-claw/
 │   │   ├── TerminalPage.vue   # OpenClaw 终端（支持 openclaw/npx 双运行时）
 │   │   ├── ObsidianPage.vue   # 知识库（Obsidian）
 │   │   ├── About.vue          # 关于
+│   │   ├── marketing/        # AI 营销页面（2.0 新增）
+│   │   │   ├── BusinessBrain.vue   # 商家大脑
+│   │   │   ├── KnowledgeBase.vue   # 知识库
+│   │   │   ├── AdvisorPanel.vue    # AI 顾问
+│   │   │   ├── ContentCenter.vue   # 内容中心
+│   │   │   └── HotCenter.vue       # 热点雷达
 │   │   └── components/        # 通用组件
 │   │       ├── ConfirmDialog.vue       # 确认对话框（关闭确认等）
 │   │       └── ModelPickerModal.vue    # 模型选择弹窗
@@ -67,7 +95,8 @@ umi-claw/
 │   │   └── terminal.ts        # 终端运行时类型（TerminalRuntime）
 │   ├── stores/
 │   │   ├── claw.ts            # OpenClaw 状态
-│   │   └── config.ts          # 配置状态
+│   │   ├── config.ts          # 配置状态
+│   │   └── marketing.ts       # 商家 / 知识库 / AI / 内容 / 热点状态（2.0 新增）
 │   ├── composables/
 │   │   └── useToast.ts        # 全局提示
 │   ├── assets/style.css       # 全局样式
@@ -76,6 +105,13 @@ umi-claw/
 │       ├── main.ts            # Vue 入口 / 路由
 │       └── index.html         # 渲染进程 HTML
 ├── resources/                 # 应用图标等静态资源
+│   ├── database/              # DB Worker（2.0 新增，零依赖 node:sqlite / stdio JSON）
+│   │   └── db-worker.mjs
+│   ├── collector/             # 热点采集器（2.0 新增，短命子进程，仅适配公开数据源）
+│   │   ├── index.mjs
+│   │   └── sources/
+│   ├── model-presets/         # 模型预设内置快照
+│   │   └── model-presets.json
 │   └── obsidian/              # 知识库子进程脚本（零依赖，绿色 node 拉起）
 │       ├── indexer.mjs        # 索引器：扫描 vault、切块、embedding、写向量库
 │       ├── mcp-server.mjs     # MCP server（stdio JSON-RPC），OpenClaw 拉起
@@ -95,8 +131,10 @@ umi-claw/
 |------|------|
 | `master` | 稳定主分支（默认分支），只接收经过验证的发布内容，PR 的默认目标 |
 | `release/1.0` | 1.0 版本开发分支，日常开发在此进行，包含最新特性（Obsidian 知识库、企微官方插件、便携模式等），功能稳定后合入 `master` |
+| `release/2.0` | 2.0 版本开发分支：在 1.0 全部能力之上新增 AI 营销工作台（商家大脑 / 知识库 / AI 顾问 / 内容中心 / 热点雷达与 AI 评分），日常开发在此进行 |
 
 > 想体验最新功能请切换到 `release/1.0`：`git checkout release/1.0`
+> 想体验最新功能请切换到 `release/2.0`：`git checkout release/2.0`
 
 ## 快速开始
 
@@ -253,6 +291,24 @@ window.api.obsidian.getEmbeddingPresets()  // embedding 模型预设列表
 window.api.obsidian.testSearch(arg)        // 检索测试（与 MCP search_notes 同链路）
 window.api.obsidian.onIndexProgress(cb)    // 监听索引进度，返回取消订阅函数
 
+// ── AI 营销（2.0）：所有方法返回统一信封 { ok, data | error } ──
+window.api.marketing.project.list()                      // 商家列表
+window.api.marketing.project.create(input)               // 新建商家
+window.api.marketing.project.update(projectId, patch)    // 改名 / 行业 / 简介
+window.api.marketing.project.delete(projectId)           // 物理删除（先目录后行）
+window.api.marketing.context.getCurrentProject()         // 当前商家
+window.api.marketing.context.setCurrentProject(id)       // 切换并持久化
+window.api.marketing.business.get(projectId)             // 商家档案（无行回 null）
+window.api.marketing.business.upsert(projectId, data)    // 保存档案
+window.api.marketing.knowledge.list(projectId)           // 知识库列表
+window.api.marketing.knowledge.import(projectId, input)  // 文件/网址/文本导入
+window.api.marketing.knowledge.search(projectId, q)      // 关键词检索
+window.api.marketing.advisor.ask(input)                  // AI 顾问（流式，onChunk 归并）
+window.api.marketing.content.list(projectId)             // 内容列表
+window.api.marketing.content.generate(projectId, spec)   // 一次生成 3 版（流式）
+window.api.marketing.hot.list(projectId, options)        // 热点榜单（可触发采集）
+window.api.marketing.hot.score(projectId, platform)      // AI 相关性懒评分
+
 // ── 其他工具 ──
 window.api.shell.openExternal(url)    // 用系统默认浏览器打开链接
 window.api.dialog.showMessage(opts)   // 弹出系统原生消息框
@@ -342,6 +398,61 @@ OpenClaw 通过 MCP 工具按需检索片段，不用把整个知识库塞进上
 
 > 切换 embedding 模型后需重新「重建索引」，应用会检测到签名变化自动清掉旧向量库。
 > 代码块内容不参与语义索引（避免污染切块），但 `read_note` 可读取全文。
+
+## AI 营销工作台（2.0）
+
+2.0 在 OpenClaw 管理器之上新增面向实体店老板的 AI 营销工作台，覆盖线上获客动线：**建档 → 喂资料 → 提问 → 写文案 → 追热点**。所有 AI 产出都经人工审核、人工复制发布，应用不自动外发。功能细节见 [docs/FUNCTIONS.md](docs/FUNCTIONS.md)。
+
+### 商家与工作空间
+
+- 可建立多个商家，每个商家 = 独立工作空间：结构化数据按商家隔离，原文文件落在 `data/projects/<id>/`
+- 支持新建 / 重命名 / 删除 / 切换，「当前商家」持久化、重启保持；每个商家独立会话键，AI 记忆互不串味
+- 删除为物理删除：确认后先删文件目录、再删数据库行（级联清空）；目录被占用会中止并提示重试，不会假报成功
+
+### 商家大脑
+
+- 与商家 1:1 的档案：品牌、定位、城市 / 地址、联系方式、目标客群、语气风格
+- 资料完整度即时提示缺什么；关注词（Watchlist，上限 10）只作为 AI 上下文，不触发任何采集
+
+### 知识库
+
+- 本地解析导入 Word（docx）、Excel（xlsx）、PDF、Markdown / 纯文本、网址链接；大文件保留原件、文本入库，支持去重与重新导入
+- 关键词检索（SQLite LIKE，对中文友好）与 Knowledge 维度完整度提示
+- 扫描版 PDF / 纯图片可显式触发 AI 文字识别，结果经人工确认后入库，识别可中止
+
+### AI 顾问
+
+- 基于本商家资料的问答：只引用已有事实（grounded），资料里没有的价格 / 承诺 / 卖点绝不编造，资料不足会提示该补什么
+- 流式逐字输出，可随时停止；支持 AI 扩词生成候选关注词，勾选采纳
+
+### 内容中心
+
+- 输入选题（手填或从热点雷达一键带入），**一次生成 3 个候选版本**（不同角度 / 语气），流式输出、可停止、可编辑
+- 版本管理：历史版本与每次生成的提示词快照一并保存，便于复盘
+- 审核流：草稿 → 提交审核 → 审核通过 → 标记已发布；「已发布」是提醒人工发布的本地状态，不自动外发
+
+### 平台工作流
+
+- 内置小红书、抖音两套平台规则模板，问答与生成时自动注入
+- 抖音一期提供口播脚本 / 标题 / 话题标签等文案层，不做视频成片；均为人工复制发布
+
+### 热点雷达与 AI 评分
+
+- 多源采集头条、B 站等公开免鉴权榜单（不登录、不带 Cookie、不绕风控），支持 24 小时 / 3 天 / 7 天榜单与平台视角切换
+- 生命周期管理（rising / breaking / peak / long_tail）、同源去重、7 天落榜清理（被内容引用的保留），数据源状态逐源可见
+- AI 按「当前商家 × 发布平台」相关性懒评分（分批、24h 缓存，可强制重评），四档分组：🔥 值得跟 / 👀 观察 / ❌ 不建议 / ⏳ 待分析
+- 「今日建议」宁缺毋滥：只有出现足够强的热点时给出 1 条主推 + 理由 + 时机，并可一键带去内容中心
+
+### 数据存储
+
+- 营销数据存本地 SQLite：`data/umi-claw.db`（WAL 模式，自动滚动备份保留 5 份），由全局单例的 DB Worker 子进程（`node:sqlite`，零原生依赖）统一访问
+- 分层 `Vue → Pinia → window.api → IPC → Manager → SQLite`：渲染端不直连数据库、不持有网关凭据
+- 数据目录：开发环境为项目根 `data/`；安装版默认 `%APPDATA%\UmiClaw\data`；可设置 `CLAW_DATA_DIR` 或用 exe 同级 `data/` 进入便携模式
+
+### 明确不做
+
+- 不自动发布、不自动回复；一期不做矩阵 / 多账号、不做视频成片
+- 不登录、不带 Cookie、不绕风控抓取；需登录的指数类数据服务不做
 
 ## 便携模式
 
