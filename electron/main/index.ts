@@ -38,6 +38,12 @@ import { createProfileManager, type ProfileManager } from './work/profileManager
 import { createMatterManager, type MatterManager } from './work/matterManager'
 import { createTodoManager, type TodoManager } from './work/todoManager'
 import { createRecordManager, type RecordManager } from './work/recordManager'
+import {
+  createContextEngine,
+  type ContextEngine,
+  type SnapshotScope
+} from './work/contextEngine'
+import { createContextManager, type ContextManager } from './work/contextManager'
 
 // 类型定义
 interface TerminalSession {
@@ -61,6 +67,8 @@ let workProfileManager: ProfileManager | null = null
 let workMatterManager: MatterManager | null = null
 let workTodoManager: TodoManager | null = null
 let workRecordManager: RecordManager | null = null
+let workContextEngine: ContextEngine | null = null
+let workContextManager: ContextManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -288,17 +296,30 @@ function initWorkManagers(): {
   matters: MatterManager
   todos: TodoManager
   records: RecordManager
+  context: ContextManager
 } {
   if (!workDatabase) throw new Error('DB 客户端尚未初始化')
   workProfileManager = workProfileManager ?? createProfileManager({ database: workDatabase })
   workMatterManager = workMatterManager ?? createMatterManager({ database: workDatabase })
   workTodoManager = workTodoManager ?? createTodoManager({ database: workDatabase })
   workRecordManager = workRecordManager ?? createRecordManager({ database: workDatabase })
+  // ContextEngine 读同一个 DB 单例；latest Pack 用 scope='latest' 当场组
+  workContextEngine =
+    workContextEngine ??
+    createContextEngine({ database: workDatabase, logger: (m) => console.log(m) })
+  const engine = workContextEngine
+  workContextManager =
+    workContextManager ??
+    createContextManager({
+      database: workDatabase,
+      buildLatestPack: () => engine.buildPack('latest' as SnapshotScope, {})
+    })
   return {
     profile: workProfileManager,
     matters: workMatterManager,
     todos: workTodoManager,
-    records: workRecordManager
+    records: workRecordManager,
+    context: workContextManager
   }
 }
 

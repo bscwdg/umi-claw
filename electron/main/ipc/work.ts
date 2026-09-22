@@ -26,6 +26,7 @@ import type {
   RecordManager,
   UpdateRecordInput
 } from '../work/recordManager'
+import type { ContextManager, SnapshotRequest } from '../work/contextManager'
 
 /** IPC 统一返回信封（§14.2） */
 export type WorkIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
@@ -72,6 +73,11 @@ export const WORK_RECORDS_CHANNELS = {
   proposeCandidate: 'work:records:proposeCandidate'
 } as const
 
+/** Commit 04：只读 Context 快照（§14 B1） */
+export const WORK_CONTEXT_CHANNELS = {
+  snapshot: 'work:context:snapshot'
+} as const
+
 async function wrap<T>(fn: () => Promise<T>): Promise<WorkIpcResult<T>> {
   try {
     return { ok: true, data: await fn() }
@@ -91,11 +97,12 @@ export interface WorkIpcDeps {
   matters: MatterManager
   todos: TodoManager
   records: RecordManager
+  context: ContextManager
 }
 
 /** 注册 work 域 IPC（Commit 02：profile / matters / todos） */
 export function registerWorkIpc(deps: WorkIpcDeps): void {
-  const { profile, matters, todos, records } = deps
+  const { profile, matters, todos, records, context } = deps
 
   // ── profile ──
   handle(WORK_PROFILE_CHANNELS.get, () => wrap(() => profile.get()))
@@ -147,5 +154,10 @@ export function registerWorkIpc(deps: WorkIpcDeps): void {
   // 候选入队：产出型 AI 动作调用（去重 + 质量门槛都在 Manager 内）
   handle(WORK_RECORDS_CHANNELS.proposeCandidate, (input: ProposeCandidateInput) =>
     wrap(() => records.proposeCandidate(input))
+  )
+
+  // ── context（Commit 04：只读快照，B1；不暴露 prompt/凭据）──
+  handle(WORK_CONTEXT_CHANNELS.snapshot, (request: SnapshotRequest) =>
+    wrap(() => context.snapshot(request ?? {}))
   )
 }

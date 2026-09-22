@@ -9,8 +9,7 @@
 //
 // 待接（按 Commit 顺序）：
 //   03 → work.records（含候选管线）//   04 → work.context（Context Engine v3，只读快照面）
-//   05 → work.today / work.router
-//   06 → work.reports
+//   05 → work.today / work.router//   06 → work.reports
 //   07 → work.qa / work.tools
 //   08 → work.knowledge
 //   09 → 冷启动向导（渲染端为主，无新通道）
@@ -24,6 +23,7 @@ export {
   WORK_PROFILE_CHANNELS,
   WORK_MATTERS_CHANNELS,
   WORK_TODOS_CHANNELS,
-  WORK_RECORDS_CHANNELS
+  WORK_RECORDS_CHANNELS,
+  WORK_CONTEXT_CHANNELS
 } from './work'
 export type { WorkIpcResult, WorkIpcDeps } from './work'
