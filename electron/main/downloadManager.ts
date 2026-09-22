@@ -9,6 +9,7 @@ import { pipeline } from 'stream/promises'
 import { ConfigManager } from './configManager'
 import { SkillSyncService } from './skillSyncService'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
+import { subprocessRegistry } from './subprocessRegistry'
 
 const execAsync = promisify(exec)
 const execFileAsync = promisify(execFile)
@@ -1101,6 +1102,21 @@ export class DownloadManager extends EventEmitter {
    */
   private async _stopRuntimeProcesses(): Promise<void> {
     const nodePath = this.configManager.getNodePath()
+    // 先逐个优雅停止注册表内的常驻子进程（work DB Worker 需要
+    // wal_checkpoint(TRUNCATE) + close，硬杀会留下 -wal/-shm 残骸）。
+    // 顺序：注册表 gracefulStop（上限 3s）→ 再按 ExecutablePath 精确 taskkill 兜底。
+    try {
+      const stops = await subprocessRegistry.stopAll(3000)
+      for (const s of stops) {
+        if (!s.ok) {
+          this._writeDebugLog(`[UpdateNode] ${s.name}(pid=${s.pid}) 优雅停止未成功: ${s.error}`)
+        } else {
+          this._writeDebugLog(`[UpdateNode] ${s.name}(pid=${s.pid}) 已优雅停止`)
+        }
+      }
+    } catch (e: any) {
+      this._writeDebugLog(`[UpdateNode] 注册表优雅停止出错（可忽略）: ${e.message}`)
+    }
     if (!existsSync(nodePath)) return
     try {
       if (process.platform === 'win32') {
@@ -1472,14 +1488,15 @@ export class DownloadManager extends EventEmitter {
       if (!existsSync(configDir)) {
         mkdirSync(configDir, { recursive: true })
       }
+      // 刻意**不**写 `meta`（待办 #15 的第二处）：`meta` 在 OpenClaw schema 里是
+      // `additionalProperties: false` —— `lastTouchedAt` 根本不是合法字段，`lastTouchedVersion` 也必须是
+      // 真实安装版本而不是字面量 'latest'（旧代码两者都写，会被 schema 拒绝）。
+      // 这份保底配置只在 openclaw.json **缺失**时写；`meta` 由 configManager._syncOpenClawConfig()
+      // 在应用启动时按真实安装版本补上 —— 同一字段只在那一处写，避开两处各写一份的漂移。
       const fullSecureConfig = {
         "gateway": {
           "mode": "local",
           "auth": { "mode": "token", "token": GATEWAY_TOKEN },
-        },
-        "meta": {
-          "lastTouchedVersion": "latest",
-          "lastTouchedAt": new Date().toISOString(),
         },
         "channels": {
           "openclaw-weixin": {

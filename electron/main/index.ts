@@ -17,11 +17,21 @@ import { SkillSyncService } from './skillSyncService'
 import { DownloadManager, type DownloadProgress } from './downloadManager'
 import { ChannelManager } from './channelManager'
 import { ObsidianManager } from './obsidian/obsidianManager'
-import { EMBEDDING_PRESETS } from './modelConfig'
-import { openClawPaths, buildOpenClawEnv } from './openClawPaths'
-import { readFileSync, existsSync } from 'fs'
+import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
+import { openClawPaths, buildOpenClawEnv, toPosix, GATEWAY_TOKEN } from './openClawPaths'
+import { readFileSync, existsSync, readdirSync } from 'fs'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import type { TerminalRuntime } from '../../src/types/terminal'
+import {
+  createGatewayClient,
+  detectMultimodalCapability,
+  GATEWAY_MODEL_DEFAULT,
+  type GatewayClient,
+  type GatewayModels,
+  type GatewayStarterResult
+} from './gatewayClient'
+import { registerGatewayIpc } from './ipc'
+import { AppError, ERROR_CODES } from './database/errors'
 
 // 类型定义
 interface TerminalSession {
@@ -37,6 +47,8 @@ let downloadManager: DownloadManager
 let channelManager: ChannelManager
 let obsidianManager: ObsidianManager
 let skillSyncService: SkillSyncService
+/** Gateway Client 单例（Commit 01）：主进程唯一发 Gateway HTTP 请求的地方（硬规则 3） */
+let workGatewayClient: GatewayClient | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -64,6 +76,138 @@ function getOpenClawRuntimeConfig() {
     env,
     targetConfigDir
   }
+}
+
+// ─── Gateway Client wiring（Commit 01） ───────────────────────────────────────
+
+/** PID 是否存活：EPERM（进程在但无权发信号）也视为存活 */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e: any) {
+    return e?.code === 'EPERM'
+  }
+}
+
+/**
+ * 读 OpenClaw 实际监听端口（配置端口被占时 OpenClaw 自动退让，实测 3213→3214）。
+ *
+ * 锁文件由 OpenClaw 写在 <configDir>/tmp/openclaw/gateway.<hash>.lock，内容含
+ * pid/port/stateDir/startTime。这里只认 hash 段无点的实例锁（排除 gateway.state.lock）、
+ * stateDir 必须对应当前 dataDir（防跨数据目录误读）、PID 必须仍存活（防残留旧锁），
+ * 多份锁取 startTime 最新。任何异常返回 undefined（读锁失败不影响配置端口探活）。
+ */
+function readActualGatewayPort(): number | undefined {
+  try {
+    const dataDir = configManager.getDataDir()
+    const configDir = openClawPaths.configDir(dataDir)
+    const lockDir = join(configDir, 'tmp', 'openclaw')
+    if (!existsSync(lockDir)) return undefined
+    const expectedStateDir = toPosix(configDir)
+    const locks = readdirSync(lockDir)
+      // 负向先行排除 gateway.state.lock（`state` 本身能匹配 [^.]+，不显式排除会漏进来）
+      .filter((file) => /^gateway\.(?!state\.lock$)[^.]+\.lock$/.test(file))
+      .map((file) => {
+        try {
+          return JSON.parse(readFileSync(join(lockDir, file), 'utf8')) as Record<string, unknown>
+        } catch {
+          return null
+        }
+      })
+      .filter((lock): lock is Record<string, unknown> => Boolean(lock))
+      .filter((lock) => Number(lock.pid) > 0 && Number(lock.port) > 0)
+      .filter((lock) => !lock.stateDir || toPosix(String(lock.stateDir)) === expectedStateDir)
+      .filter((lock) => isProcessAlive(Number(lock.pid)))
+      .sort((a, b) => Number(b.startTime ?? 0) - Number(a.startTime ?? 0))
+    return locks.length ? Number(locks[0].port) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 解析当前配置下的 Gateway 模型选择。**每次调用都重读配置**（不做启动快照）：
+ * 全新安装时客户端先于 Setup 构造（providers 为空），用户在 Setup 里选了支持图片的模型后
+ * 只走渲染端 reload（主进程不重启）；启动快照会让 `multimodal` 一直停在 null，
+ * 含图请求会被明确拒掉，直到用户完全重启 App。运行中切 provider / 换模型同理。
+ */
+function resolveGatewayModels(): Partial<GatewayModels> {
+  const config = configManager.getConfig()
+  const activeProvider = (config.providers || []).find((p) => p.id === config.activeProvider) ?? null
+  const preset = activeProvider ? OFFICIAL_MODEL_PRESETS[activeProvider.configName] : null
+  const presetModel = Array.isArray(preset?.models)
+    ? preset.models.find((m: any) => m?.id === activeProvider?.model) ?? null
+    : null
+  return {
+    text: GATEWAY_MODEL_DEFAULT,
+    multimodal: detectMultimodalCapability(presetModel) ? GATEWAY_MODEL_DEFAULT : null
+  }
+}
+
+/**
+ * 构造 Gateway Client（Commit 01）：探活 / 自动拉起 / 就绪轮询 / SSE 的**唯一**实现。
+ *
+ * 依赖注入（不 import electron 的模块才好测）：
+ *   - `baseUrl` / `port`：来自 `configManager.getConfig().port`（实测只绑 127.0.0.1）
+ *   - `token`：`openClawPaths.GATEWAY_TOKEN`（**硬规则 3：只留在主进程**）
+ *   - `models`：`text` = `openclaw`；`multimodal` 仅当当前 provider 声明了图片输入能力
+ *   - `starter`：**复用 clawManager 的启停**（不另起炉灶）；已在跑就不重复 start
+ *   - `conversationKeyResolver`：3.0 无 Project 概念，会话键由调用方按 §6.4 显式给
+ *     （`conv:work:qa` / `conv:work:tool:{id}` / `conv:work:report:{type}:{period}`）
+ * 本函数零 IO 副作用；真正的 HTTP 请求发生在 probe / ensureReady / chat。
+ */
+function createWorkGatewayClient(): GatewayClient {
+  const config = configManager.getConfig()
+  const port = Number(config.port) > 0 ? Number(config.port) : 3213
+
+  const starter = async (): Promise<GatewayStarterResult> => {
+    const status = clawManager.getStatus()
+    if (status.running) {
+      // 进程已在跑（可能还在冷启动）：不要重复 start，直接交给就绪轮询
+      return { started: false, reason: 'already-running' }
+    }
+    const result = await clawManager.start()
+    if (!result.success) {
+      throw new AppError(
+        ERROR_CODES.OPENCLAW_NOT_READY,
+        `自动拉起 OpenClaw 失败：${result.error || '未知错误'}`,
+        { reason: 'start-failed' }
+      )
+    }
+    // 拉起成功≠就绪：clawManager.start() 返回时进程往往还在冷启动（实测首次非流式 80.3s），
+    // 所以这里只回「我拉过了」，就绪判定交给客户端的轮询
+    return { started: true, reason: 'started' }
+  }
+
+  const client = createGatewayClient({
+    baseUrl: `http://127.0.0.1:${port}`,
+    port,
+    token: GATEWAY_TOKEN,
+    // 模型选择**按次解析**（不做启动快照）：Setup 完成 / 换 provider 后无需重启主进程即生效
+    modelsResolver: resolveGatewayModels,
+    starter,
+    actualPortResolver: () => readActualGatewayPort(),
+    logger: (message: string) => console.log(message)
+  })
+  console.log(
+    `[gateway] Gateway Client 就绪：${client.baseUrl}（model=${GATEWAY_MODEL_DEFAULT}，多模态=${resolveGatewayModels().multimodal ?? '未配置'}，每请求重读配置）`
+  )
+  return client
+}
+
+/**
+ * 取 Gateway Client 单例（Commit 01）。
+ *
+ * 后续 Commit 的消费者（qa / tools / reports）调 `createChatStream()` 拿 SSE 增量，
+ * 再交给 `forwardGatewayStream(webContents, runId, handle)` 推给渲染进程。
+ * **不要**在别处 `new GatewayClient(...)`——token 与超时参数必须来自同一处配置。
+ */
+export function getWorkGatewayClient(): GatewayClient {
+  if (!workGatewayClient) {
+    throw new Error('Gateway Client 尚未初始化（应在 app.whenReady 之后取用）')
+  }
+  return workGatewayClient
 }
 
 /**
@@ -957,7 +1101,13 @@ app.whenReady().then(() => {
     }
   })
 
+  // ── work Gateway Client（Commit 01）：零 IO 副作用；starter 复用 clawManager 启停 ──
+  workGatewayClient = createWorkGatewayClient()
+
   registerIpcHandlers()
+  // ── work.gateway（Commit 01：只读快照 + 探活/自动拉起/就绪轮询）──
+  // 只注册两条通道；业务流（qa/tools/reports 的 SSE 增量）归各自 Commit
+  registerGatewayIpc(workGatewayClient)
   createWindow()
   createTray()
   setupLogForwarding()

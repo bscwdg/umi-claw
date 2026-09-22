@@ -149,6 +149,17 @@ const api = {
       ipcRenderer.on('obsidian:index-progress', handler)
       return () => ipcRenderer.off('obsidian:index-progress', handler)
     }
+  },
+
+  // ── work 域（3.0，PLAN-3.0.md §14）─────────────────────────────────────────
+  // 硬规则 3：渲染端永不持有 GATEWAY_TOKEN、永不直连网关；一律 IPC → Manager → Gateway Client。
+  // 流式增量统一走 work:stream:{chunk,done,error}，按 runId 归并（§14.1 B2）。
+  work: {
+    // Commit 01：只读就绪面 + 幂等拉起（零 token：只发 GET /health + GET /v1/models）
+    gateway: {
+      status: () => ipcRenderer.invoke('work:gateway:status'),
+      ensureReady: () => ipcRenderer.invoke('work:gateway:ensureReady')
+    }
   }
 }
 

@@ -1,0 +1,22 @@
+// electron/main/ipc/index.ts —— IPC 注册聚合入口（PLAN-3.0.md §14）
+//
+// 现有 1.0 的 IPC 处理器仍平铺在 electron/main/index.ts 的 registerIpcHandlers() 里
+// （1.0 能力一个不删）；3.0 新代码从这里聚合注册。
+//
+// 已注册：
+//   Commit 01 → work.gateway（status / ensureReady 两条只读面，见 ipc/gateway.ts）
+//
+// 待接（按 Commit 顺序）：
+//   02 → work.profile / work.matters / work.todos
+//   03 → work.records（含候选管线）
+//   04 → work.context（Context Engine v3，只读快照面）
+//   05 → work.today / work.router
+//   06 → work.reports
+//   07 → work.qa / work.tools
+//   08 → work.knowledge
+//   09 → 冷启动向导（渲染端为主，无新通道）
+//
+// 契约先于代码（硬规则 11）：任何新增通道先改 PLAN-3.0.md §14，再动实现。
+
+export { registerGatewayIpc, WORK_GATEWAY_CHANNELS } from './gateway'
+export type { GatewayIpcResult } from './gateway'

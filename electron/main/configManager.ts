@@ -480,6 +480,26 @@ export class ConfigManager {
   }
 
   /**
+   * 读取当前安装的 OpenClaw 版本（`data/openclaw/node_modules/openclaw/package.json`）。
+   *
+   * 用途：写 `meta.lastTouchedVersion`（待办 #15）。该字段语义是「最后写这份配置的
+   * OpenClaw 版本」，写 'latest' 会被 schema 拒绝；读不到（未安装/文件损坏）返回 null，
+   * 调用方据此不写该字段。**只读**，绝不修改 data/openclaw（硬规则 1）。
+   */
+  private _readInstalledOpenClawVersion(): string | null {
+    try {
+      const pkgPath = join(this.dataDir, 'openclaw', 'node_modules', 'openclaw', 'package.json')
+      if (!existsSync(pkgPath)) return null
+      const version = JSON.parse(readFileSync(pkgPath, 'utf-8'))?.version
+      if (typeof version !== 'string') return null
+      const trimmed = version.trim()
+      return trimmed && trimmed !== 'latest' ? trimmed : null
+    } catch {
+      return null
+    }
+  }
+
+  /**
    * 从 SKILL.md 的 YAML Front Matter 中解析指定字段
    * 支持 name: xxx、name: "xxx"、name: 'xxx' 三种写法
    * 只在前置 front-matter 区块（文件开头的 --- ... ---）内匹配：
@@ -661,6 +681,23 @@ private _syncOpenClawConfig(): void {
       ...existingConfig.gateway.auth,
       mode: "token",
       token: GATEWAY_TOKEN
+    }
+
+    // ----- Gateway HTTP 端点开关（Commit 01：默认化 + 老用户迁移）-----
+    // 实测：`gateway.http.endpoints.chatCompletions.enabled` 是 OpenAI 兼容面
+    // （`GET /v1/models` / `POST /v1/chat/completions`）的总开关，默认 **false**
+    // （关闭时 `/v1/models` → 404），且 `reloadKind = hot`（改完无需重启网关）。
+    // 3.0 的 AI 调用链全部依赖它，所以由应用自己在这里写默认值——
+    // 这正是配置生成与同步的唯一入口，新装与老用户（原本没有 http 段）同一条路径覆盖。
+    // 幂等：只写这一个叶子键；`gateway` 段其余字段（含用户自加的）一律保留。
+    existingConfig.gateway.http = existingConfig.gateway.http || {}
+    existingConfig.gateway.http.endpoints = existingConfig.gateway.http.endpoints || {}
+    const existingChatCompletions = existingConfig.gateway.http.endpoints.chatCompletions
+    existingConfig.gateway.http.endpoints.chatCompletions = {
+      ...(existingChatCompletions && typeof existingChatCompletions === 'object'
+        ? existingChatCompletions
+        : {}),
+      enabled: true
     }
 
     existingConfig.models = existingConfig.models || {}
@@ -874,11 +911,20 @@ private _syncOpenClawConfig(): void {
       delete existingConfig.channels.feishu
     }
 
-    existingConfig.meta = {
-      ...(existingConfig.meta || {}),
-      lastTouchedVersion: 'latest',
-      lastTouchedAt: new Date().toISOString()
-    }
+    // ----- meta：兼容元数据（待办 #15 修复）-----
+    // 现象：旧代码写 `lastTouchedVersion: 'latest'` + `lastTouchedAt` 会被 OpenClaw schema 拒绝。
+    // 实测（本机安装版 2026.9.4，读 dist/schema-*.mjs 的 lookupConfigSchema）：
+    //   `meta` 是 `additionalProperties: false` 的对象 → `lastTouchedAt` **根本不是合法字段**（lookup 返回 null）；
+    //   `lastTouchedVersion` 是合法字段，但语义是「最后写这份配置的 OpenClaw 版本」，不是字面量 'latest'。
+    // 修法：① 删掉 `lastTouchedAt`；② `lastTouchedVersion` 写**真实安装版本**（读 openclaw/package.json），
+    // 读不到就整键删掉——宁可没有该字段，也不写非法值。meta 以外的字段一概不动。
+    const meta = existingConfig.meta && typeof existingConfig.meta === 'object' ? { ...existingConfig.meta } : {}
+    delete meta.lastTouchedAt
+    const touchedVersion = this._readInstalledOpenClawVersion()
+    if (touchedVersion) meta.lastTouchedVersion = touchedVersion
+    else delete meta.lastTouchedVersion
+    if (Object.keys(meta).length > 0) existingConfig.meta = meta
+    else delete existingConfig.meta
 
     // 注入 Obsidian MCP server 配置（由 ObsidianManager 提供）
     this._injectObsidianMcp(existingConfig)
