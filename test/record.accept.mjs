@@ -121,10 +121,11 @@ try {
   await r.check('C1', '产出型/加工型分流表：产出型才产候选，加工型不产', async () => {
     assertEq(isProductiveOutputType('minutes'), true, '会议纪要是产出型')
     assertEq(isProductiveOutputType('report'), true, '日报/周报是产出型')
-    assertEq(isProductiveOutputType('email_draft'), true, '邮件草稿是产出型')
+    assertEq(isProductiveOutputType('email_draft'), true, '邮件起草是产出型（从无到有生成）')
     assertEq(isProductiveOutputType('polish'), false, '润色是加工型（不产候选）')
     assertEq(isProductiveOutputType('translate'), false, '翻译是加工型')
     assertEq(isProductiveOutputType('summary'), false, '摘要是加工型')
+    assertEq(isProductiveOutputType('email_polish'), false, '邮件润色是加工型（已有草稿只变形）')
     assertEq(isProductiveOutputType('nope'), false, '未知类型不算产出型')
 
     // 加工型调用 proposeCandidate → 不产生候选、也不留痕

@@ -45,21 +45,24 @@ export const DIRECT_CONFIRM_SOURCES: Record<RecordSource, boolean> = {
  * 产出型 / 加工型分流（§2.2）。
  *
  * ⚠️ **基线存在措辞冲突，此处按 §2.2 的更具体表述实现**：
- *   - §2.2 原文：「产出型 AI 动作（生成纪要/日报/邮件草稿等有交付物的）才产生候选；
+ *   - §2.2：「产出型 AI 动作（生成纪要/日报/邮件草稿等有交付物的）才产生候选；
  *     加工型（润色/翻译一个片段）不产生」
- *   - §十 P0 表却把「邮件」列入「润色/翻译/摘要/邮件（加工型四件套）」
- * 两者对「邮件草稿」归类不一致。本实现按 §2.2（邮件草稿有交付物 → 产出型），
- * 并把该冲突登记为待确认项；若最终判定邮件为加工型，只改这一张表即可。
+ *   - §十 P0 表却笼统把「邮件」列入「润色/翻译/摘要/邮件（加工型四件套）」
+ *
+ * 基线两处对「邮件」归类冲突，2026-09-23 按方案 1 解决：**邮件不再一刀切**——
+ * 区分「邮件起草」（从无到有生成 → 产出型）与「邮件润色」（已有文本只变形 → 加工型）。
+ * 判断依据是「这次动作有没有产生关于『干了什么活』的新事实」，与 §2.2 本意一致。
  */
 export const OUTPUT_TYPE_CLASSIFICATION = {
   /** 产出型：有交付物，产生候选 */
   minutes: 'productive', // 会议纪要
   report: 'productive', // 日报 / 周报
-  email_draft: 'productive', // 邮件草拟
+  email_draft: 'productive', // 邮件起草（从无到有生成）
   /** 加工型：加工一个片段，不产生候选 */
   polish: 'processing', // 润色
   translate: 'processing', // 翻译
-  summary: 'processing' // 摘要
+  summary: 'processing', // 摘要
+  email_polish: 'processing' // 邮件润色（已有草稿只改语气）
 } as const
 
 export type OutputType = keyof typeof OUTPUT_TYPE_CLASSIFICATION
