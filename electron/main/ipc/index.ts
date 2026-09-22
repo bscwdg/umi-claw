@@ -8,8 +8,7 @@
 //   Commit 02 → work.profile / work.matters / work.todos（见 ipc/work.ts）
 //
 // 待接（按 Commit 顺序）：
-//   03 → work.records（含候选管线）
-//   04 → work.context（Context Engine v3，只读快照面）
+//   03 → work.records（含候选管线）//   04 → work.context（Context Engine v3，只读快照面）
 //   05 → work.today / work.router
 //   06 → work.reports
 //   07 → work.qa / work.tools
@@ -24,6 +23,7 @@ export {
   registerWorkIpc,
   WORK_PROFILE_CHANNELS,
   WORK_MATTERS_CHANNELS,
-  WORK_TODOS_CHANNELS
+  WORK_TODOS_CHANNELS,
+  WORK_RECORDS_CHANNELS
 } from './work'
 export type { WorkIpcResult, WorkIpcDeps } from './work'

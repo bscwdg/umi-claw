@@ -19,6 +19,13 @@ import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
 import type { ProfileManager, UpdateProfileInput } from '../work/profileManager'
 import type { CreateMatterInput, MatterManager, UpdateMatterInput } from '../work/matterManager'
 import type { CreateTodoInput, ListTodosParams, TodoManager, UpdateTodoInput } from '../work/todoManager'
+import type {
+  CreateRecordInput,
+  ListRecordsParams,
+  ProposeCandidateInput,
+  RecordManager,
+  UpdateRecordInput
+} from '../work/recordManager'
 
 /** IPC 统一返回信封（§14.2） */
 export type WorkIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
@@ -49,6 +56,22 @@ export const WORK_TODOS_CHANNELS = {
   ignoreBatch: 'work:todos:ignoreBatch'
 } as const
 
+/** Commit 03：工作记录 + 候选管线（§2.2 / §4.1） */
+export const WORK_RECORDS_CHANNELS = {
+  list: 'work:records:list',
+  get: 'work:records:get',
+  create: 'work:records:create',
+  update: 'work:records:update',
+  delete: 'work:records:delete',
+  confirm: 'work:records:confirm',
+  ignore: 'work:records:ignore',
+  restore: 'work:records:restore',
+  confirmBatch: 'work:records:confirmBatch',
+  ignoreBatch: 'work:records:ignoreBatch',
+  listFiltered: 'work:records:listFiltered',
+  proposeCandidate: 'work:records:proposeCandidate'
+} as const
+
 async function wrap<T>(fn: () => Promise<T>): Promise<WorkIpcResult<T>> {
   try {
     return { ok: true, data: await fn() }
@@ -67,11 +90,12 @@ export interface WorkIpcDeps {
   profile: ProfileManager
   matters: MatterManager
   todos: TodoManager
+  records: RecordManager
 }
 
 /** 注册 work 域 IPC（Commit 02：profile / matters / todos） */
 export function registerWorkIpc(deps: WorkIpcDeps): void {
-  const { profile, matters, todos } = deps
+  const { profile, matters, todos, records } = deps
 
   // ── profile ──
   handle(WORK_PROFILE_CHANNELS.get, () => wrap(() => profile.get()))
@@ -101,4 +125,27 @@ export function registerWorkIpc(deps: WorkIpcDeps): void {
   handle(WORK_TODOS_CHANNELS.ignore, (id: string) => wrap(() => todos.ignore(id)))
   handle(WORK_TODOS_CHANNELS.confirmBatch, (ids: string[]) => wrap(() => todos.confirmBatch(ids)))
   handle(WORK_TODOS_CHANNELS.ignoreBatch, (ids: string[]) => wrap(() => todos.ignoreBatch(ids)))
+
+  // ── records（Commit 03）──
+  handle(WORK_RECORDS_CHANNELS.list, (params: ListRecordsParams) => wrap(() => records.list(params ?? {})))
+  handle(WORK_RECORDS_CHANNELS.get, (id: string) => wrap(() => records.get(id)))
+  handle(WORK_RECORDS_CHANNELS.create, (input: CreateRecordInput) => wrap(() => records.create(input)))
+  handle(WORK_RECORDS_CHANNELS.update, (id: string, patch: UpdateRecordInput) =>
+    wrap(() => records.update(id, patch))
+  )
+  handle(WORK_RECORDS_CHANNELS.delete, (id: string) => wrap(() => records.delete(id)))
+  handle(WORK_RECORDS_CHANNELS.confirm, (id: string, patch: UpdateRecordInput) =>
+    wrap(() => records.confirm(id, patch ?? {}))
+  )
+  handle(WORK_RECORDS_CHANNELS.ignore, (id: string) => wrap(() => records.ignore(id)))
+  handle(WORK_RECORDS_CHANNELS.restore, (id: string) => wrap(() => records.restore(id)))
+  handle(WORK_RECORDS_CHANNELS.confirmBatch, (ids: string[]) => wrap(() => records.confirmBatch(ids)))
+  handle(WORK_RECORDS_CHANNELS.ignoreBatch, (ids: string[]) => wrap(() => records.ignoreBatch(ids)))
+  handle(WORK_RECORDS_CHANNELS.listFiltered, (params: { date?: string; limit?: number }) =>
+    wrap(() => records.listFiltered(params ?? {}))
+  )
+  // 候选入队：产出型 AI 动作调用（去重 + 质量门槛都在 Manager 内）
+  handle(WORK_RECORDS_CHANNELS.proposeCandidate, (input: ProposeCandidateInput) =>
+    wrap(() => records.proposeCandidate(input))
+  )
 }

@@ -37,6 +37,7 @@ import { subprocessRegistry } from './subprocessRegistry'
 import { createProfileManager, type ProfileManager } from './work/profileManager'
 import { createMatterManager, type MatterManager } from './work/matterManager'
 import { createTodoManager, type TodoManager } from './work/todoManager'
+import { createRecordManager, type RecordManager } from './work/recordManager'
 
 // 类型定义
 interface TerminalSession {
@@ -59,6 +60,7 @@ let workDatabase: DatabaseClient | null = null
 let workProfileManager: ProfileManager | null = null
 let workMatterManager: MatterManager | null = null
 let workTodoManager: TodoManager | null = null
+let workRecordManager: RecordManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -285,12 +287,19 @@ function initWorkManagers(): {
   profile: ProfileManager
   matters: MatterManager
   todos: TodoManager
+  records: RecordManager
 } {
   if (!workDatabase) throw new Error('DB 客户端尚未初始化')
   workProfileManager = workProfileManager ?? createProfileManager({ database: workDatabase })
   workMatterManager = workMatterManager ?? createMatterManager({ database: workDatabase })
   workTodoManager = workTodoManager ?? createTodoManager({ database: workDatabase })
-  return { profile: workProfileManager, matters: workMatterManager, todos: workTodoManager }
+  workRecordManager = workRecordManager ?? createRecordManager({ database: workDatabase })
+  return {
+    profile: workProfileManager,
+    matters: workMatterManager,
+    todos: workTodoManager,
+    records: workRecordManager
+  }
 }
 
 /**
