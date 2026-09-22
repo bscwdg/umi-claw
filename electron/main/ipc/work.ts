@@ -33,6 +33,8 @@ import type { ReportManager } from '../work/reportManager'
 import type { QaManager } from '../work/qaManager'
 import type { ToolManager } from '../work/toolManager'
 import type { KnowledgeManager } from '../work/knowledgeManager'
+import type { WizardManager } from '../work/wizardManager'
+import type { ReminderManager, ReminderId } from '../work/reminderManager'
 import { forwardGatewayStream } from '../gatewayClient'
 
 /** IPC 统一返回信封（§14.2） */
@@ -128,6 +130,19 @@ export const WORK_KNOWLEDGE_CHANNELS = {
   import: 'work:knowledge:import'
 } as const
 
+/** Commit 09：冷启动向导 + 本地提醒（§八 / §14；无渲染端新增读通道之外的东西） */
+export const WORK_WIZARD_CHANNELS = {
+  status: 'work:wizard:status',
+  grantConsent: 'work:wizard:grantConsent',
+  complete: 'work:wizard:complete',
+  decide: 'work:wizard:decide',
+  readMapping: 'work:wizard:readMapping'
+} as const
+export const WORK_REMINDER_CHANNELS = {
+  setEnabled: 'work:reminder:setEnabled',
+  check: 'work:reminder:check'
+} as const
+
 async function wrap<T>(fn: () => Promise<T>): Promise<WorkIpcResult<T>> {
   try {
     return { ok: true, data: await fn() }
@@ -163,11 +178,13 @@ export interface WorkIpcDeps {
   qa: QaManager
   tools: ToolManager
   knowledge: KnowledgeManager
+  wizard: WizardManager
+  reminder: ReminderManager
 }
 
 /** 注册 work 域 IPC（Commit 02：profile / matters / todos） */
 export function registerWorkIpc(deps: WorkIpcDeps): void {
-  const { profile, matters, todos, records, context, today, router, reports, qa, tools, knowledge } = deps
+  const { profile, matters, todos, records, context, today, router, reports, qa, tools, knowledge, wizard, reminder } = deps
 
   // ── profile ──
   handle(WORK_PROFILE_CHANNELS.get, () => wrap(() => profile.get()))
@@ -315,4 +332,17 @@ export function registerWorkIpc(deps: WorkIpcDeps): void {
   handle(WORK_KNOWLEDGE_CHANNELS['import'], (input: unknown) =>
     wrap(() => knowledge.importKnowledge(input as never))
   )
+
+  // ── wizard（Commit 09：冷启动状态 + 旧库三分支）──
+  handle(WORK_WIZARD_CHANNELS.status, () => wrap(() => wizard.status()))
+  handle(WORK_WIZARD_CHANNELS.grantConsent, () => wrap(() => wizard.grantConsent()))
+  handle(WORK_WIZARD_CHANNELS.complete, () => wrap(() => wizard.complete()))
+  handle(WORK_WIZARD_CHANNELS.decide, (decision: string) => wrap(() => wizard.decide(decision as never)))
+  handle(WORK_WIZARD_CHANNELS.readMapping, () => wrap(() => wizard.readMapping()))
+
+  // ── reminder（Commit 09：两个固定通知开关 + 手动检查）──
+  handle(WORK_REMINDER_CHANNELS.setEnabled, (id: ReminderId, enabled: boolean) =>
+    wrap(() => reminder.setEnabled(id, enabled))
+  )
+  handle(WORK_REMINDER_CHANNELS.check, () => wrap(() => reminder.check()))
 }

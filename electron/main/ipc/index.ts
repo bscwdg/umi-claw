@@ -12,9 +12,10 @@
 //   Commit 06 → work.reports
 //   Commit 07 → work.qa / work.tools
 //   Commit 08 → work.knowledge
+//   Commit 09 → work.wizard / work.reminder（冷启动 + 两个固定通知）
 //
 // 待接（按 Commit 顺序）：
-//   09 → 冷启动向导（渲染端为主，无新通道）
+//   10 → 「一天」端到端（仅验收，无新业务通道）
 //
 // 契约先于代码（硬规则 11）：任何新增通道先改 PLAN-3.0.md §14，再动实现。
 
@@ -32,6 +33,8 @@ export {
   WORK_REPORTS_CHANNELS,
   WORK_QA_CHANNELS,
   WORK_TOOLS_CHANNELS,
-  WORK_KNOWLEDGE_CHANNELS
+  WORK_KNOWLEDGE_CHANNELS,
+  WORK_WIZARD_CHANNELS,
+  WORK_REMINDER_CHANNELS
 } from './work'
 export type { WorkIpcResult, WorkIpcDeps } from './work'

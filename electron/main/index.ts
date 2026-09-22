@@ -7,7 +7,8 @@ import {
   Tray,
   Menu,
   nativeImage,
-  protocol
+  protocol,
+  Notification
 } from 'electron'
 import { join, parse, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -20,7 +21,7 @@ import { ObsidianManager } from './obsidian/obsidianManager'
 import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv, toPosix, GATEWAY_TOKEN } from './openClawPaths'
 import { readFileSync, existsSync, readdirSync } from 'fs'
-import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
+import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process'
 import type { TerminalRuntime } from '../../src/types/terminal'
 import {
   createGatewayClient,
@@ -36,7 +37,7 @@ import { DatabaseClient } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
 import { createProfileManager, type ProfileManager } from './work/profileManager'
 import { createMatterManager, type MatterManager } from './work/matterManager'
-import { createTodoManager, type TodoManager } from './work/todoManager'
+import { createTodoManager, dateOf, type TodoManager } from './work/todoManager'
 import { createRecordManager, type RecordManager } from './work/recordManager'
 import {
   createContextEngine,
@@ -50,6 +51,8 @@ import { createReportManager, type ReportManager } from './work/reportManager'
 import { createQaManager, type QaManager } from './work/qaManager'
 import { createToolManager, type ToolManager } from './work/toolManager'
 import { createKnowledgeManager, type KnowledgeManager } from './work/knowledgeManager'
+import { createWizardManager, type WizardManager } from './work/wizardManager'
+import { createReminderManager, type ReminderManager } from './work/reminderManager'
 import { resolvePdfjsAssets } from './work/parsers/pdfjsAssets'
 
 // 类型定义
@@ -82,6 +85,8 @@ let workReportManager: ReportManager | null = null
 let workQaManager: QaManager | null = null
 let workToolManager: ToolManager | null = null
 let workKnowledgeManager: KnowledgeManager | null = null
+let workWizardManager: WizardManager | null = null
+let workReminderManager: ReminderManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -298,6 +303,102 @@ function createWorkDatabase(): DatabaseClient {
   })
 }
 
+/** resources/ 根（dev / 打包双路径，与 createWorkDatabase 同口径） */
+function resourcesRoot(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'resources')
+    : join(app.getAppPath(), 'resources')
+}
+
+/**
+ * 定位旧版本库（硬规则 17：只读检测，不写旧库）。
+ *
+ * 版本隔离：1.0 = %APPDATA%/umi-claw/data；2.0 = %APPDATA%/<2.0 dir>/data；
+ * 便携态旧库在各自安装目录的 data/。这里只判断 db 文件是否存在，不打开。
+ */
+function locateLegacyDbs(currentDataDir: string): import('./work/wizardManager').OldDbInfo[] {
+  const out: import('./work/wizardManager').OldDbInfo[] = []
+
+  const candidates: Array<{ version: '1.0' | '2.0'; dir: string }> = []
+  // 1.0 固定 appData 名
+  const appDataDir = app.getPath('appData')
+  candidates.push({ version: '1.0', dir: join(appDataDir, 'umi-claw', 'data') })
+
+  // 便携/同机共存：当前 dataDir 的同级或上级可能有旧版本（同目录隔离名不同）
+  // 这里保守地只查 %APPDATA% 下的已知目录，避免任意扫描用户磁盘（最小出站面）
+  for (const dirName of ['UmiClaw2', 'umi-claw-2']) {
+    candidates.push({ version: '2.0', dir: join(appDataDir, dirName, 'data') })
+  }
+
+  for (const c of candidates) {
+    if (join(c.dir, 'umi-claw.db') === join(currentDataDir, 'umi-claw.db')) continue // 跳过当前库自身
+    const dbPath = join(c.dir, 'umi-claw.db')
+    if (existsSync(dbPath)) {
+      out.push({ version: c.version, dbPath, present: true })
+    }
+  }
+  return out
+}
+
+/**
+ * 调用便携 Node 跑 read-old-db.mjs（只读），返回映射字段。
+ * 失败（退出码非0）一律抛错，绝不静默当成功（硬规则 17）。
+ */
+function readLegacyDb(
+  info: import('./work/wizardManager').OldDbInfo
+): Promise<import('./work/wizardManager').OldDbMapping> {
+  return new Promise((resolve, reject) => {
+    const nodePath = configManager.getNodePath()
+    const script = join(resourcesRoot(), 'database', 'read-old-db.mjs')
+    execFile(
+      nodePath,
+      [script, '--dbPath', info.dbPath, '--version', info.version],
+      { timeout: 15_000, maxBuffer: 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) {
+          reject(
+            new AppError(ERROR_CODES.FILE_PARSE_ERROR, `旧库只读映射失败: ${stderr || err.message}`, {
+              reason: 'legacy-read-failed'
+            })
+          )
+          return
+        }
+        try {
+          const parsed = JSON.parse(String(stdout)) as {
+            mapping: Record<string, unknown>
+            displayOnlyCount: number
+          }
+          resolve({
+            callName: asString(parsed.mapping.callName),
+            position: asString(parsed.mapping.position),
+            department: asString(parsed.mapping.department),
+            company: asString(parsed.mapping.company),
+            tone: asString(parsed.mapping.tone),
+            displayOnlyCount: Number(parsed.displayOnlyCount ?? 0)
+          })
+        } catch (e) {
+          reject(new AppError(ERROR_CODES.DB_ERROR, `旧库映射输出损坏: ${(e as Error).message}`))
+        }
+      }
+    )
+  })
+}
+
+function asString(v: unknown): string | undefined {
+  return typeof v === 'string' && v.trim() ? v : undefined
+}
+
+/** 发两个固定本地通知之一（硬规则 22：仅此两个，无其他通知） */
+function showReminderNotification(
+  id: string,
+  payload: import('./work/reminderManager').ReminderPayload
+): void {
+  const n = new Notification({ title: payload.title, body: payload.body })
+  // 点击 morning → 打开/聚焦今日页；具体路由由渲染端处理，这里只展示
+  void id
+  n.show()
+}
+
 /**
  * 取 work 域各 Manager 单例（Commit 02）。
  *
@@ -316,6 +417,8 @@ function initWorkManagers(): {
   qa: QaManager
   tools: ToolManager
   knowledge: KnowledgeManager
+  wizard: WizardManager
+  reminder: ReminderManager
 } {
   if (!workDatabase) throw new Error('DB 客户端尚未初始化')
   workProfileManager = workProfileManager ?? createProfileManager({ database: workDatabase })
@@ -381,6 +484,28 @@ function initWorkManagers(): {
       logger: (m) => console.log(m)
     })
   }
+  // wizard / reminder（Commit 09）
+  workWizardManager =
+    workWizardManager ??
+    createWizardManager({
+      database: workDatabase,
+      locateOldDbs: () => locateLegacyDbs(configManager.getDataDir()),
+      readOldDb: (info) => readLegacyDb(info),
+      logger: (m) => console.log(m)
+    })
+  workReminderManager =
+    workReminderManager ??
+    createReminderManager({
+      database: workDatabase,
+      notifier: (id, payload) => showReminderNotification(id, payload),
+      getMorningSummary: async () => {
+        const todos = await workTodoManager!.list({ state: 'confirmed' })
+        const today = dateOf(Date.now())
+        const relevant = todos.filter((t) => t.due_date === null || String(t.due_date) <= today)
+        return { count: relevant.length, titles: relevant.map((t) => t.title) }
+      },
+      logger: (m) => console.log(m)
+    })
   return {
     profile: workProfileManager,
     matters: workMatterManager,
@@ -392,7 +517,9 @@ function initWorkManagers(): {
     reports: workReportManager,
     qa: workQaManager,
     tools: workToolManager,
-    knowledge: workKnowledgeManager
+    knowledge: workKnowledgeManager,
+    wizard: workWizardManager,
+    reminder: workReminderManager
   }
 }
 
@@ -1267,6 +1394,8 @@ app.whenReady().then(() => {
   registerGatewayIpc(workGatewayClient)
   // ── work.profile / work.matters / work.todos（Commit 02）──
   registerWorkIpc(workManagers)
+  // ── 两个固定本地通知的轻量定时检查（硬规则22；不是调度系统）──
+  workManagers.reminder.start()
   createWindow()
   createTray()
   setupLogForwarding()
