@@ -4,7 +4,7 @@
       <div>
         <h1>模型配置</h1>
         <p class="text-muted text-sm" style="margin-top: 4px">
-          配置 AI 服务商和 API Key
+          配置 AI 服务商和 API Key，保存后在 OpenClaw 聊天里输入 /model 可随时切换当前服务商的模型（无需重启）
         </p>
       </div>
       <div class="flex gap-2">
@@ -40,6 +40,9 @@
             </button>
           </div>
         </div>
+        <p class="text-sm text-muted" style="margin: -6px 0 12px">
+          💡 保存后可在 OpenClaw 聊天里输入 /model 随时切换当前服务商的模型，无需重启；如需更换服务商，点选上方卡片后保存即可
+        </p>
         <div class="provider-grid">
           <div
             v-for="p in config.providers"
@@ -471,7 +474,7 @@ async function saveConfig() {
     }
     await configStore.save(formatValue);
     // 去读取修改配置
-    showToast("配置已保存", "success");
+    showToast("配置已保存，已同步至 OpenClaw（无需重启），可用 /model 切换当前服务商的模型", "success");
   } catch {
     showToast("保存失败", "error");
   } finally {

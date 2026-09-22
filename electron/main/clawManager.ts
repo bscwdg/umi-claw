@@ -264,10 +264,15 @@ export class ClawManager extends EventEmitter {
   }
 
   getStatus(): ClawStatus {
+    // 端口以当前配置为准（服务可能在 App 重启前就已启动、未走 start()，
+    // this.port 会停留在陈旧默认值）；配置缺失才退回最近一次启动用端口
+    const currentPort = Number(this.configManager.getConfig().port) > 0
+      ? Number(this.configManager.getConfig().port)
+      : this.port
     return {
       running: !!this.process,
       pid: this.process?.pid,
-      port: this.port,
+      port: currentPort,
       uptime: this.startedAt ? Date.now() - this.startedAt : undefined,
       startedAt: this.startedAt
     }
