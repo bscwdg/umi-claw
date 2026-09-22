@@ -46,6 +46,7 @@ import {
 import { createContextManager, type ContextManager } from './work/contextManager'
 import { createRouterManager, type RouterManager } from './work/routerManager'
 import { createTodayManager, type TodayManager } from './work/todayManager'
+import { createReportManager, type ReportManager } from './work/reportManager'
 
 // 类型定义
 interface TerminalSession {
@@ -73,6 +74,7 @@ let workContextEngine: ContextEngine | null = null
 let workContextManager: ContextManager | null = null
 let workRouterManager: RouterManager | null = null
 let workTodayManager: TodayManager | null = null
+let workReportManager: ReportManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -303,6 +305,7 @@ function initWorkManagers(): {
   context: ContextManager
   today: TodayManager
   router: RouterManager
+  reports: ReportManager
 } {
   if (!workDatabase) throw new Error('DB 客户端尚未初始化')
   workProfileManager = workProfileManager ?? createProfileManager({ database: workDatabase })
@@ -324,6 +327,16 @@ function initWorkManagers(): {
   workTodayManager =
     workTodayManager ?? createTodayManager({ database: workDatabase })
   workRouterManager = workRouterManager ?? createRouterManager()
+  // reports（Commit 06）：注入同一个 ContextEngine + Gateway Client
+  if (!workReportManager) {
+    if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
+    workReportManager = createReportManager({
+      database: workDatabase,
+      contextEngine: engine,
+      gateway: workGatewayClient,
+      logger: (m) => console.log(m)
+    })
+  }
   return {
     profile: workProfileManager,
     matters: workMatterManager,
@@ -331,7 +344,8 @@ function initWorkManagers(): {
     records: workRecordManager,
     context: workContextManager,
     today: workTodayManager,
-    router: workRouterManager
+    router: workRouterManager,
+    reports: workReportManager
   }
 }
 

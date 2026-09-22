@@ -29,6 +29,8 @@ import type {
 import type { ContextManager, SnapshotRequest } from '../work/contextManager'
 import type { RouterManager } from '../work/routerManager'
 import type { TodayManager } from '../work/todayManager'
+import type { ReportManager } from '../work/reportManager'
+import { forwardGatewayStream } from '../gatewayClient'
 
 /** IPC 统一返回信封（§14.2） */
 export type WorkIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
@@ -88,6 +90,19 @@ export const WORK_ROUTER_CHANNELS = {
   route: 'work:router:route'
 } as const
 
+/** Commit 06：报告流（§14 reports；generate/regenerate 走 SSE） */
+export const WORK_REPORTS_CHANNELS = {
+  list: 'work:reports:list',
+  get: 'work:reports:get',
+  aggregate: 'work:reports:aggregate',
+  generate: 'work:reports:generate',
+  abortGenerate: 'work:reports:abortGenerate',
+  saveDraft: 'work:reports:saveDraft',
+  confirm: 'work:reports:confirm',
+  regenerate: 'work:reports:regenerate',
+  versions: 'work:reports:versions'
+} as const
+
 async function wrap<T>(fn: () => Promise<T>): Promise<WorkIpcResult<T>> {
   try {
     return { ok: true, data: await fn() }
@@ -102,6 +117,15 @@ function handle(channel: string, fn: (...args: any[]) => Promise<WorkIpcResult<u
   ipcMain.handle(channel, (_e, ...args) => fn(...args))
 }
 
+/** 需要 IpcMainInvokeEvent（拿 sender 转发 SSE）的 handle */
+function handleEvent(
+  channel: string,
+  fn: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => Promise<WorkIpcResult<unknown>>
+): void {
+  ipcMain.removeHandler(channel)
+  ipcMain.handle(channel, (event, ...args) => fn(event, ...args))
+}
+
 export interface WorkIpcDeps {
   profile: ProfileManager
   matters: MatterManager
@@ -110,11 +134,12 @@ export interface WorkIpcDeps {
   context: ContextManager
   today: TodayManager
   router: RouterManager
+  reports: ReportManager
 }
 
 /** 注册 work 域 IPC（Commit 02：profile / matters / todos） */
 export function registerWorkIpc(deps: WorkIpcDeps): void {
-  const { profile, matters, todos, records, context, today, router } = deps
+  const { profile, matters, todos, records, context, today, router, reports } = deps
 
   // ── profile ──
   handle(WORK_PROFILE_CHANNELS.get, () => wrap(() => profile.get()))
@@ -177,4 +202,45 @@ export function registerWorkIpc(deps: WorkIpcDeps): void {
   handle(WORK_TODAY_CHANNELS.get, (date?: string) => wrap(() => today.get(date)))
   // B3：router 永不失败，但仍包成功信封（错误信封路径走不到）
   handle(WORK_ROUTER_CHANNELS.route, (input: string) => wrap(async () => router.route(input)))
+
+  // ── reports（Commit 06）──
+  handle(WORK_REPORTS_CHANNELS.list, (params) => wrap(() => reports.list(params ?? {})))
+  handle(WORK_REPORTS_CHANNELS.get, (id: string) => wrap(() => reports.get(id)))
+  // 确定性事实聚合（不调模型）
+  handle(WORK_REPORTS_CHANNELS.aggregate, (params: { type: 'daily' | 'weekly'; period?: string }) =>
+    wrap(() => reports.aggregate(params?.type, params?.period))
+  )
+  handle(WORK_REPORTS_CHANNELS.saveDraft, (id: string, content: string) =>
+    wrap(() => reports.saveDraft(id, content))
+  )
+  handle(WORK_REPORTS_CHANNELS.confirm, (id: string) => wrap(() => reports.confirm(id)))
+  handle(WORK_REPORTS_CHANNELS.versions, (id: string) => wrap(() => reports.versions(id)))
+  handle(WORK_REPORTS_CHANNELS.abortGenerate, (runId: string) =>
+    wrap(() => reports.abortGenerate(runId))
+  )
+  // generate：返回 runId，同时把 SSE 转发给渲染端（B2：runId 即流 ID）
+  handleEvent(WORK_REPORTS_CHANNELS.generate, async (event, params: { type: 'daily' | 'weekly'; period?: string }) => {
+    try {
+      const runHandle = await reports.generate(params ?? { type: 'daily' })
+      forwardGatewayStream(event.sender, runHandle.runId, runHandle.stream)
+      return {
+        ok: true,
+        data: { runId: runHandle.runId, reportId: runHandle.reportId, version: runHandle.version }
+      }
+    } catch (e) {
+      return { ok: false, error: toErrorEnvelope(e) }
+    }
+  })
+  handleEvent(WORK_REPORTS_CHANNELS.regenerate, async (event, id: string) => {
+    try {
+      const runHandle = await reports.regenerate(id)
+      forwardGatewayStream(event.sender, runHandle.runId, runHandle.stream)
+      return {
+        ok: true,
+        data: { runId: runHandle.runId, reportId: runHandle.reportId, version: runHandle.version }
+      }
+    } catch (e) {
+      return { ok: false, error: toErrorEnvelope(e) }
+    }
+  })
 }
