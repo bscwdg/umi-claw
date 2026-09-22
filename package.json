@@ -15,7 +15,18 @@
     "typecheck:node": "tsc -p tsconfig.node.json --noEmit --composite false",
     "typecheck:web": "tsc -p tsconfig.web.json --noEmit --composite false",
     "accept:db": "node test/db-worker.accept.mjs",
-    "accept:gateway": "node test/gateway.accept.mjs"
+    "accept:gateway": "node test/gateway.accept.mjs",
+    "accept:work": "node test/work.accept.mjs",
+    "accept:record": "node test/record.accept.mjs",
+    "accept:context": "node test/context.accept.mjs",
+    "accept:today": "node test/today.accept.mjs",
+    "accept:report": "node test/report.accept.mjs",
+    "accept:qatool": "node test/qatool.accept.mjs",
+    "accept:knowledge": "node test/knowledge.accept.mjs",
+    "accept:wizard": "node test/wizard.accept.mjs",
+    "e2e:day": "node test/one-day.e2e.mjs",
+    "smoke": "node test/packaged.smoke.mjs",
+    "accept": "node scripts/run-all-accept.mjs"
   },
   "dependencies": {
     "@vueuse/core": "^10.9.0",
