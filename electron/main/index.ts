@@ -30,8 +30,13 @@ import {
   type GatewayModels,
   type GatewayStarterResult
 } from './gatewayClient'
-import { registerGatewayIpc } from './ipc'
+import { registerGatewayIpc, registerWorkIpc } from './ipc'
 import { AppError, ERROR_CODES } from './database/errors'
+import { DatabaseClient } from './database/database'
+import { subprocessRegistry } from './subprocessRegistry'
+import { createProfileManager, type ProfileManager } from './work/profileManager'
+import { createMatterManager, type MatterManager } from './work/matterManager'
+import { createTodoManager, type TodoManager } from './work/todoManager'
 
 // 类型定义
 interface TerminalSession {
@@ -49,6 +54,11 @@ let obsidianManager: ObsidianManager
 let skillSyncService: SkillSyncService
 /** Gateway Client 单例（Commit 01）：主进程唯一发 Gateway HTTP 请求的地方（硬规则 3） */
 let workGatewayClient: GatewayClient | null = null
+/** DB Worker 客户端单例（Commit 02 起被各 Manager 消费；硬规则 2：全局单例） */
+let workDatabase: DatabaseClient | null = null
+let workProfileManager: ProfileManager | null = null
+let workMatterManager: MatterManager | null = null
+let workTodoManager: TodoManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -240,6 +250,47 @@ function resolveTerminalRuntime(runtime?: TerminalRuntime): { entryJs: string; e
       npm_config_cache: join(dataDir, 'config', '.npm-cache')
     }
   }
+}
+
+/**
+ * 构造 DB Worker 客户端（Commit 02）：把 Electron 专属的路径解析（dev / 安装包 resources、
+ * 便携 Node、数据目录）注入 database.ts，后者保持纯 Node 可测。
+ * 惰性：构造时不建库、不 spawn（首次 work 域调用才拉 Worker）。
+ */
+function createWorkDatabase(): DatabaseClient {
+  const dataDir = configManager.getDataDir()
+  const isDev = !app.isPackaged
+  const resRoot = isDev
+    ? join(app.getAppPath(), 'resources')
+    : join(process.resourcesPath, 'resources')
+  return new DatabaseClient({
+    dbPath: join(dataDir, 'umi-claw.db'),
+    backupDir: join(dataDir, 'backup'),
+    workerScriptPath: join(resRoot, 'database', 'db-worker.mjs'),
+    nodePath: configManager.getNodePath(),
+    subprocessName: 'work-db-worker',
+    // 启动即注册（子进程注册表）：_stopRuntimeProcesses / 退出清理先优雅停
+    onSpawn: (info) => subprocessRegistry.register(info),
+    logger: (message) => console.log(message)
+  })
+}
+
+/**
+ * 取 work 域各 Manager 单例（Commit 02）。
+ *
+ * 全部共用同一个 DatabaseClient 单例（硬规则 2：DB Worker 全局单例）。
+ * 消费者是 IPC 层（ipc/work.ts）；渲染端拿不到 Manager 本身。
+ */
+function initWorkManagers(): {
+  profile: ProfileManager
+  matters: MatterManager
+  todos: TodoManager
+} {
+  if (!workDatabase) throw new Error('DB 客户端尚未初始化')
+  workProfileManager = workProfileManager ?? createProfileManager({ database: workDatabase })
+  workMatterManager = workMatterManager ?? createMatterManager({ database: workDatabase })
+  workTodoManager = workTodoManager ?? createTodoManager({ database: workDatabase })
+  return { profile: workProfileManager, matters: workMatterManager, todos: workTodoManager }
 }
 
 /**
@@ -1103,11 +1154,16 @@ app.whenReady().then(() => {
 
   // ── work Gateway Client（Commit 01）：零 IO 副作用；starter 复用 clawManager 启停 ──
   workGatewayClient = createWorkGatewayClient()
+  // ── work DB 客户端 + Manager（Commit 02）：构造不建库、不 spawn（首次调用才拉 Worker）──
+  workDatabase = createWorkDatabase()
+  const workManagers = initWorkManagers()
 
   registerIpcHandlers()
   // ── work.gateway（Commit 01：只读快照 + 探活/自动拉起/就绪轮询）──
   // 只注册两条通道；业务流（qa/tools/reports 的 SSE 增量）归各自 Commit
   registerGatewayIpc(workGatewayClient)
+  // ── work.profile / work.matters / work.todos（Commit 02）──
+  registerWorkIpc(workManagers)
   createWindow()
   createTray()
   setupLogForwarding()

@@ -274,18 +274,33 @@ function opList(name, params) {
 
   let orderSql = ''
   const order = p.order === undefined ? t.pk : p.order
-  if (typeof order === 'string') {
-    orderSql = ' ORDER BY ' + qi(assertColumn(t, order)) + ' ASC'
-  } else if (Array.isArray(order)) {
-    const parts = []
-    for (const o of order) {
-      if (typeof o !== 'string') throw new WorkerError('VALIDATION_ERROR', 'order 元素必须是列名')
-      parts.push(qi(assertColumn(t, o)) + ' ASC')
+  // 参数约定 4（PLAN-3.0.md §14）：list 一律「新→旧」，因此必须支持方向。
+  // 兼容两种写法：字符串/字符串数组（默认 ASC，2.0 旧口径）与
+  // { column, direction } 对象/对象数组（3.0 新增，direction: 'asc' | 'desc'）。
+  const orderParts = []
+  const pushOrder = (spec) => {
+    if (typeof spec === 'string') {
+      orderParts.push(qi(assertColumn(t, spec)) + ' ASC')
+      return
     }
-    orderSql = parts.length ? ' ORDER BY ' + parts.join(', ') : ''
-  } else {
-    throw new WorkerError('VALIDATION_ERROR', 'order 必须是列名或列名数组')
+    if (spec && typeof spec === 'object' && typeof spec.column === 'string') {
+      const dir = String(spec.direction ?? 'asc').toLowerCase()
+      if (dir !== 'asc' && dir !== 'desc') {
+        throw new WorkerError('VALIDATION_ERROR', `order.direction 只能是 asc/desc: ${spec.direction}`)
+      }
+      orderParts.push(qi(assertColumn(t, spec.column)) + ' ' + dir.toUpperCase())
+      return
+    }
+    throw new WorkerError('VALIDATION_ERROR', 'order 元素必须是列名或 { column, direction }')
   }
+  if (typeof order === 'string' || (order && typeof order === 'object' && !Array.isArray(order))) {
+    pushOrder(order)
+  } else if (Array.isArray(order)) {
+    for (const o of order) pushOrder(o)
+  } else {
+    throw new WorkerError('VALIDATION_ERROR', 'order 必须是列名/列名数组/{column,direction} 或其数组')
+  }
+  orderSql = orderParts.length ? ' ORDER BY ' + orderParts.join(', ') : ''
 
   const limit = clampLimit(p.limit, 500, 5000)
   const offset = Math.max(0, Math.floor(Number(p.offset) || 0))
