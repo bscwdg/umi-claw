@@ -11,9 +11,9 @@
 //   Commit 05 → work.today / work.router
 //   Commit 06 → work.reports
 //   Commit 07 → work.qa / work.tools
+//   Commit 08 → work.knowledge
 //
 // 待接（按 Commit 顺序）：
-//   08 → work.knowledge
 //   09 → 冷启动向导（渲染端为主，无新通道）
 //
 // 契约先于代码（硬规则 11）：任何新增通道先改 PLAN-3.0.md §14，再动实现。
@@ -31,6 +31,7 @@ export {
   WORK_ROUTER_CHANNELS,
   WORK_REPORTS_CHANNELS,
   WORK_QA_CHANNELS,
-  WORK_TOOLS_CHANNELS
+  WORK_TOOLS_CHANNELS,
+  WORK_KNOWLEDGE_CHANNELS
 } from './work'
 export type { WorkIpcResult, WorkIpcDeps } from './work'

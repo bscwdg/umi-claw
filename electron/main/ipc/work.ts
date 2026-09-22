@@ -32,6 +32,7 @@ import type { TodayManager } from '../work/todayManager'
 import type { ReportManager } from '../work/reportManager'
 import type { QaManager } from '../work/qaManager'
 import type { ToolManager } from '../work/toolManager'
+import type { KnowledgeManager } from '../work/knowledgeManager'
 import { forwardGatewayStream } from '../gatewayClient'
 
 /** IPC 统一返回信封（§14.2） */
@@ -116,6 +117,17 @@ export const WORK_TOOLS_CHANNELS = {
   abortRun: 'work:tools:abortRun'
 } as const
 
+/** Commit 08：工作知识库（§14 knowledge） */
+export const WORK_KNOWLEDGE_CHANNELS = {
+  list: 'work:knowledge:list',
+  get: 'work:knowledge:get',
+  create: 'work:knowledge:create',
+  update: 'work:knowledge:update',
+  delete: 'work:knowledge:delete',
+  search: 'work:knowledge:search',
+  import: 'work:knowledge:import'
+} as const
+
 async function wrap<T>(fn: () => Promise<T>): Promise<WorkIpcResult<T>> {
   try {
     return { ok: true, data: await fn() }
@@ -150,11 +162,12 @@ export interface WorkIpcDeps {
   reports: ReportManager
   qa: QaManager
   tools: ToolManager
+  knowledge: KnowledgeManager
 }
 
 /** 注册 work 域 IPC（Commit 02：profile / matters / todos） */
 export function registerWorkIpc(deps: WorkIpcDeps): void {
-  const { profile, matters, todos, records, context, today, router, reports, qa, tools } = deps
+  const { profile, matters, todos, records, context, today, router, reports, qa, tools, knowledge } = deps
 
   // ── profile ──
   handle(WORK_PROFILE_CHANNELS.get, () => wrap(() => profile.get()))
@@ -285,4 +298,21 @@ export function registerWorkIpc(deps: WorkIpcDeps): void {
     }
   })
   handle(WORK_TOOLS_CHANNELS.abortRun, (runId: string) => wrap(() => tools.abortRun(runId)))
+
+  // ── knowledge（Commit 08）──
+  handle(WORK_KNOWLEDGE_CHANNELS.list, (params: { status?: string; limit?: number }) =>
+    wrap(() => knowledge.list(params ?? {}))
+  )
+  handle(WORK_KNOWLEDGE_CHANNELS.get, (id: string) => wrap(() => knowledge.get(id)))
+  handle(WORK_KNOWLEDGE_CHANNELS.create, (input: unknown) => wrap(() => knowledge.create(input as never)))
+  handle(WORK_KNOWLEDGE_CHANNELS.update, (id: string, patch: unknown) =>
+    wrap(() => knowledge.update(id, patch as never))
+  )
+  handle(WORK_KNOWLEDGE_CHANNELS.delete, (id: string) => wrap(() => knowledge.delete(id)))
+  handle(WORK_KNOWLEDGE_CHANNELS.search, (query: string, limit?: number) =>
+    wrap(() => knowledge.search(query, limit))
+  )
+  handle(WORK_KNOWLEDGE_CHANNELS['import'], (input: unknown) =>
+    wrap(() => knowledge.importKnowledge(input as never))
+  )
 }

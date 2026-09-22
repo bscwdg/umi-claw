@@ -49,6 +49,8 @@ import { createTodayManager, type TodayManager } from './work/todayManager'
 import { createReportManager, type ReportManager } from './work/reportManager'
 import { createQaManager, type QaManager } from './work/qaManager'
 import { createToolManager, type ToolManager } from './work/toolManager'
+import { createKnowledgeManager, type KnowledgeManager } from './work/knowledgeManager'
+import { resolvePdfjsAssets } from './work/parsers/pdfjsAssets'
 
 // 类型定义
 interface TerminalSession {
@@ -79,6 +81,7 @@ let workTodayManager: TodayManager | null = null
 let workReportManager: ReportManager | null = null
 let workQaManager: QaManager | null = null
 let workToolManager: ToolManager | null = null
+let workKnowledgeManager: KnowledgeManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -312,6 +315,7 @@ function initWorkManagers(): {
   reports: ReportManager
   qa: QaManager
   tools: ToolManager
+  knowledge: KnowledgeManager
 } {
   if (!workDatabase) throw new Error('DB 客户端尚未初始化')
   workProfileManager = workProfileManager ?? createProfileManager({ database: workDatabase })
@@ -363,6 +367,20 @@ function initWorkManagers(): {
       logger: (m) => console.log(m)
     })
   }
+  // knowledge（Commit 08）：解析 pdfjs 资产 + dataDir
+  if (!workKnowledgeManager) {
+    const pdfjsAssets = resolvePdfjsAssets({
+      isPackaged: app.isPackaged,
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath
+    })
+    workKnowledgeManager = createKnowledgeManager({
+      database: workDatabase,
+      dataDir: configManager.getDataDir(),
+      pdfjsAssets,
+      logger: (m) => console.log(m)
+    })
+  }
   return {
     profile: workProfileManager,
     matters: workMatterManager,
@@ -373,7 +391,8 @@ function initWorkManagers(): {
     router: workRouterManager,
     reports: workReportManager,
     qa: workQaManager,
-    tools: workToolManager
+    tools: workToolManager,
+    knowledge: workKnowledgeManager
   }
 }
 
