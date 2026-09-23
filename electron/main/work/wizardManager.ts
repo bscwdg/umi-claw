@@ -17,6 +17,7 @@ import type { DatabaseClient } from '../database/database'
 // ── app_meta 键（本模块唯一读写这些键；app_meta 无 worker 白名单）──
 const META = {
   CONSENT: 'wizard_consent',
+  CONSENT_AT: 'wizard_consent_at',
   COMPLETED: 'wizard_completed',
   OLDDB_DECISION: 'wizard_olddb_decision',
   OLDDB_VERSION: 'wizard_olddb_version'
@@ -54,6 +55,8 @@ export interface OldDbMapping {
 export interface WizardStatus {
   /** 是否已同意隐私告知 */
   consent: boolean
+  /** 同意时间（毫秒；未同意为 null）——设置页「反显之前填的」用 */
+  consentAt: number | null
   /** 向导是否完成（false = 首启需走向导） */
   completed: boolean
   /** 检测到的旧库（无则 null） */
@@ -72,6 +75,7 @@ export interface WizardManagerOptions {
   database: DatabaseClient
   locateOldDbs?: OldDbLocator
   readOldDb?: OldDbReader
+  now?: () => number
   logger?: (message: string) => void
 }
 
@@ -79,6 +83,7 @@ export class WizardManager {
   private readonly database: DatabaseClient
   private readonly locateOldDbs: OldDbLocator
   private readonly readOldDb?: OldDbReader
+  private readonly now: () => number
   private readonly logger?: (message: string) => void
 
   constructor(options: WizardManagerOptions) {
@@ -91,6 +96,7 @@ export class WizardManager {
     this.database = options.database
     this.locateOldDbs = options.locateOldDbs ?? (() => [])
     this.readOldDb = options.readOldDb
+    this.now = options.now ?? (() => Date.now())
     this.logger = options.logger
   }
 
@@ -101,6 +107,7 @@ export class WizardManager {
   /** 向导首屏状态（不阻塞；旧库检测失败也不抛——检测不到视为无旧库） */
   async status(): Promise<WizardStatus> {
     const consentRaw = await this.database.metaGet(META.CONSENT)
+    const consentAtRaw = await this.database.metaGet(META.CONSENT_AT)
     const completedRaw = await this.database.metaGet(META.COMPLETED)
     const decisionRaw = (await this.database.metaGet(META.OLDDB_DECISION)) as OldDbDecision | null
 
@@ -115,16 +122,46 @@ export class WizardManager {
 
     return {
       consent: consentRaw === CONSENT_GRANTED,
+      consentAt: consentRaw === CONSENT_GRANTED ? Number(consentAtRaw ?? 0) || null : null,
       completed: completedRaw === '1',
       oldDb,
       oldDbDecision: isValidDecision(decisionRaw) ? decisionRaw : null
     }
   }
 
-  /** 记录隐私告知同意（必过；只接受 granted） */
-  async grantConsent(): Promise<{ consent: true }> {
-    await this.database.metaSet(META.CONSENT, CONSENT_GRANTED)
+  /**
+   * 启动 OpenClaw 前的同意校验（硬性闸门）。
+   * 未同意 → 拒绝启动，让前端弹回用户协议弹窗。
+   */
+  async ensureConsent(): Promise<{ consent: true }> {
+    const raw = await this.database.metaGet(META.CONSENT)
+    if (raw !== CONSENT_GRANTED) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, '请先同意用户协议，再启动 OpenClaw', {
+        reason: 'consent-required'
+      })
+    }
     return { consent: true }
+  }
+
+  /** 记录隐私告知同意（必过；只接受 granted）。重复同意保留首次时间。 */
+  async grantConsent(): Promise<{ consent: true; consentAt: number }> {
+    const prev = await this.database.metaGet(META.CONSENT_AT)
+    const at = Number(prev ?? 0) || this.now()
+    await this.database.metaSet(META.CONSENT, CONSENT_GRANTED)
+    await this.database.metaSet(META.CONSENT_AT, String(at))
+    return { consent: true, consentAt: at }
+  }
+
+  /**
+   * 撤销同意（北 2026-09-24：同意只弹一次，得有一条能重新测的路径）。
+   *
+   * 只清同意标记与时间，**不动** `completed`：向导完成是另一回事，
+   * 撤销后下次启动会重新弹阻断式协议弹窗（且启动闸门重新生效）。
+   */
+  async revokeConsent(): Promise<{ consent: false }> {
+    await this.database.metaSet(META.CONSENT, null)
+    await this.database.metaSet(META.CONSENT_AT, null)
+    return { consent: false }
   }
 
   /**

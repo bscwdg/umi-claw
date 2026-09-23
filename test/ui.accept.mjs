@@ -10,7 +10,7 @@
 //   U6 工作设置页挂载：调 profile.get + reminder.isEnabled×2 + wizard.status，
 //      渲染出完整度与提醒开关状态
 //   U7 Context 页挂载：调 context.snapshot，渲染出资料组成与 dropped
-//   U8 向导页挂载：调 wizard.status，渲染出隐私说明必过页
+//   U8 向导弹窗挂载：调 wizard.status，渲染出隐私说明必过页
 //   U9 挂载全程无 Vue 警告（能抓到模板引用不存在字段这类真 bug）
 //   U10 流式归并（useWorkStream）：chunk 累积 / done 收口 / 早期 chunk 缓冲
 //
@@ -219,15 +219,15 @@ try {
     return 'Context 页渲染 ✓'
   })
 
-  // ── U8 向导页 ──
-  await r.check('U8', '向导页挂载：调 wizard.status，渲染隐私说明必过页', async () => {
-    const res = await mount('src/views/work/WizardPage.vue', 'ui-wizard', {
+  // ── U8 向导弹窗 ──
+  await r.check('U8', '向导弹窗挂载：调 wizard.status，渲染隐私说明必过页', async () => {
+    const res = await mount('src/views/components/WizardModal.vue', 'ui-wizard', {
       'work:wizard:status': { consent: false, completed: false, oldDb: null, oldDbDecision: null }
     })
     assert(calls().some((c) => c.channel === 'work:wizard:status'), '应调 wizard.status')
     assert(res.html.includes('资料默认仅保存在本地'), '渲染隐私告知原文表述')
     assert(res.html.includes('我已阅读并同意'), '渲染同意勾选')
-    return '向导页渲染 ✓'
+    return '向导弹窗渲染 ✓'
   })
 
   // ── U9 无 Vue 警告/错误 ──

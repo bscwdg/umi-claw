@@ -225,6 +225,8 @@ export interface ContextEngineOptions {
   database: DatabaseClient
   logger?: (message: string) => void
   defaultContextWindowTokens?: number
+  /** 当前时间（毫秒）；不传用 Date.now()。与其它 Manager 同一注入约定，便于确定性验收 */
+  now?: () => number
 }
 
 // ── 画像摘要 ──────────────────────────────────────────────────────────────────
@@ -256,6 +258,7 @@ export class ContextEngine {
   private readonly database: DatabaseClient
   private readonly logger?: (message: string) => void
   private readonly defaultContextWindowTokens: number
+  private readonly now: () => number
 
   constructor(options: ContextEngineOptions) {
     if (!options || typeof options !== 'object') {
@@ -264,8 +267,12 @@ export class ContextEngine {
     if (!options.database || typeof options.database.request !== 'function') {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, 'ContextEngine 缺少依赖: database')
     }
+    if (options.now !== undefined && typeof options.now !== 'function') {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, 'ContextEngine 的 now 必须是函数')
+    }
     this.database = options.database
     this.logger = options.logger
+    this.now = options.now ?? (() => Date.now())
     this.defaultContextWindowTokens =
       options.defaultContextWindowTokens === undefined || options.defaultContextWindowTokens === null
         ? DEFAULT_CONTEXT_WINDOW_TOKENS
@@ -290,7 +297,7 @@ export class ContextEngine {
     const task = normalizeTask(options.task)
     const query = normalizeQuery(options.query)
     const window = this.resolveWindow(options.contextWindowTokens)
-    const now = Date.now()
+    const now = this.now()
     const anchorDate = options.anchorDate ? normalizeDate(options.anchorDate) : dateOf(now)
 
     // ── 2 画像（惰性建行后读；§八 装完即用）──
@@ -520,7 +527,7 @@ export class ContextEngine {
       },
       dropped: dedupeDropped(dropped),
       retrieval,
-      builtAt: Date.now()
+      builtAt: this.now()
     }
     const usedTokens = estimateTokens(renderContextPackText(pack))
     pack.budget.usedTokens = usedTokens

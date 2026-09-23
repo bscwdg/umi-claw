@@ -22,7 +22,6 @@ const router = createRouter({
     { path: '/work', redirect: '/work/today' },
     { path: '/work/today', component: () => import('../views/work/TodayPage.vue') },
     { path: '/work/records', component: () => import('../views/work/RecordsPage.vue') },
-    { path: '/work/wizard', component: () => import('../views/work/WizardPage.vue') },
     { path: '/work/qa', component: () => import('../views/work/QaPage.vue') },
     { path: '/work/reports', component: () => import('../views/work/ReportsPage.vue') },
     { path: '/work/tools', component: () => import('../views/work/ToolsPage.vue') },

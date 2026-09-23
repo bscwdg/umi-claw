@@ -343,6 +343,7 @@
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import ConfirmDialog from "@/views/components/ConfirmDialog.vue";
+import { openWizard } from "@/composables/useWizardGate";
 
 const router = useRouter();
 const envInfo = ref<any>(null);
@@ -524,11 +525,12 @@ function openDataDir() {
 }
 
 async function goToDashboard() {
-  // §八：首启向导「Setup 后接续」——向导未完成先走向导，否则进控制台
+  // §八：首启向导「Setup 后接续」——向导未完成先开向导弹窗，否则进控制台
   try {
     const s = await window.api.work.wizard.status()
     if (!s.completed) {
-      router.push("/work/wizard")
+      // 向导已改为弹窗（北 2026-09-24）：不跳路由，开弹窗即可
+      openWizard()
       return
     }
   } catch {

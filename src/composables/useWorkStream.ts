@@ -34,10 +34,15 @@ export function useWorkStream() {
   const pending = new Map<string, string[]>()
   let resolveDone: ((v: StreamDonePayload) => void) | null = null
   let rejectDone: ((e: NonNullable<typeof error.value>) => void) | null = null
-  const donePromise = new Promise<StreamDonePayload>((res, rej) => {
-    resolveDone = res
-    rejectDone = rej
-  })
+  // Promise settle 不可逆：每次 bind（新一轮运行）必须重建 done，
+  // 否则第二次 await 会立即拿到上一轮的旧结果
+  let donePromise = makeDonePromise()
+  function makeDonePromise(): Promise<StreamDonePayload> {
+    return new Promise<StreamDonePayload>((res, rej) => {
+      resolveDone = res
+      rejectDone = rej
+    })
+  }
   let settled = false
 
   const onChunk = (e: { runId: string; delta: string }): void => {
@@ -89,6 +94,7 @@ export function useWorkStream() {
     // 先取出缓冲：reset() 会清空 pending，顺序反了则缓冲永远拿不到
     const buffered = pending.get(runIdValue) ?? []
     reset()
+    donePromise = makeDonePromise()
     currentRunId = runIdValue
     runId.value = runIdValue
     running.value = true
@@ -119,7 +125,10 @@ export function useWorkStream() {
     running,
     error,
     aborted,
-    done: donePromise,
+    // getter：bind 会重建 donePromise，这里必须读最新值（值拷贝会永远指向旧 promise）
+    get done() {
+      return donePromise
+    },
     bind,
     reset,
     unsubscribe

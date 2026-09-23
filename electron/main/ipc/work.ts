@@ -34,7 +34,7 @@ import type { QaManager } from '../work/qaManager'
 import type { ToolManager } from '../work/toolManager'
 import type { KnowledgeManager } from '../work/knowledgeManager'
 import type { WizardManager } from '../work/wizardManager'
-import type { ReminderManager, ReminderId } from '../work/reminderManager'
+import type { ReminderManager, ReminderId, PushChannel } from '../work/reminderManager'
 import { forwardGatewayStream } from '../gatewayClient'
 
 /** IPC 统一返回信封（§14.2） */
@@ -135,6 +135,8 @@ export const WORK_KNOWLEDGE_CHANNELS = {
 export const WORK_WIZARD_CHANNELS = {
   status: 'work:wizard:status',
   grantConsent: 'work:wizard:grantConsent',
+  revokeConsent: 'work:wizard:revokeConsent',
+  ensureConsent: 'work:wizard:ensureConsent',
   complete: 'work:wizard:complete',
   decide: 'work:wizard:decide',
   readMapping: 'work:wizard:readMapping'
@@ -142,6 +144,14 @@ export const WORK_WIZARD_CHANNELS = {
 export const WORK_REMINDER_CHANNELS = {
   isEnabled: 'work:reminder:isEnabled',
   setEnabled: 'work:reminder:setEnabled',
+  getTimes: 'work:reminder:getTimes',
+  setTime: 'work:reminder:setTime',
+  getPushConfig: 'work:reminder:getPushConfig',
+  setPushConfig: 'work:reminder:setPushConfig',
+  availablePushChannels: 'work:reminder:availablePushChannels',
+  availablePushTargets: 'work:reminder:availablePushTargets',
+  testPush: 'work:reminder:testPush',
+  getPushStatus: 'work:reminder:getPushStatus',
   check: 'work:reminder:check'
 } as const
 
@@ -370,11 +380,29 @@ export function registerWorkIpc(deps: WorkIpcDeps): void {
   handle(WORK_WIZARD_CHANNELS.complete, () => wrap(() => wizard.complete()))
   handle(WORK_WIZARD_CHANNELS.decide, (decision: string) => wrap(() => wizard.decide(decision as never)))
   handle(WORK_WIZARD_CHANNELS.readMapping, () => wrap(() => wizard.readMapping()))
+  handle(WORK_WIZARD_CHANNELS.ensureConsent, () => wrap(() => wizard.ensureConsent()))
+  handle(WORK_WIZARD_CHANNELS.revokeConsent, () => wrap(() => wizard.revokeConsent()))
 
   // ── reminder（Commit 09：两个固定通知开关 + 手动检查）──
   handle(WORK_REMINDER_CHANNELS.isEnabled, (id: ReminderId) => wrap(() => reminder.isEnabled(id)))
   handle(WORK_REMINDER_CHANNELS.setEnabled, (id: ReminderId, enabled: boolean) =>
     wrap(() => reminder.setEnabled(id, enabled))
   )
+  handle(WORK_REMINDER_CHANNELS.getTimes, () => wrap(() => reminder.getTimes()))
+  handle(WORK_REMINDER_CHANNELS.setTime, (id: ReminderId, hour: number, minute: number) =>
+    wrap(() => reminder.setTime(id, hour, minute))
+  )
+  handle(WORK_REMINDER_CHANNELS.getPushConfig, () => wrap(() => reminder.getPushConfig()))
+  handle(WORK_REMINDER_CHANNELS.setPushConfig, (patch: Parameters<ReminderManager['setPushConfig']>[0]) =>
+    wrap(() => reminder.setPushConfig(patch))
+  )
+  handle(WORK_REMINDER_CHANNELS.availablePushChannels, () =>
+    wrap(() => reminder.availablePushChannels())
+  )
+  handle(WORK_REMINDER_CHANNELS.availablePushTargets, (channel: PushChannel) =>
+    wrap(() => reminder.availablePushTargets(channel))
+  )
+  handle(WORK_REMINDER_CHANNELS.testPush, () => wrap(() => reminder.testPush()))
+  handle(WORK_REMINDER_CHANNELS.getPushStatus, () => wrap(() => reminder.getPushStatus()))
   handle(WORK_REMINDER_CHANNELS.check, () => wrap(() => reminder.check()))
 }

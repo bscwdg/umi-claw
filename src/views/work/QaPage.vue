@@ -43,7 +43,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onActivated, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useWorkStream } from '@/composables/useWorkStream'
 import { useToast } from '@/composables/useToast'
@@ -116,6 +116,13 @@ async function stop(): Promise<void> {
   }
 }
 
+// 路由切走：在途流先中止（避免白烧 token），再移除 IPC 监听器
+onBeforeUnmount(() => {
+  const rid = stream.runId.value
+  if (rid) void window.api.work.qa.abortAsk(rid)
+  stream.unsubscribe()
+})
+
 onMounted(async () => {
   // 从今日页/路由带过来的预填问题
   const pre = route.query.q
@@ -124,7 +131,6 @@ onMounted(async () => {
     await ask()
   }
 })
-onActivated(() => {})
 </script>
 
 <style scoped>

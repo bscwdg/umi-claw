@@ -136,14 +136,63 @@ try {
     const blocked = await outcome(wizard.complete())
     assertEq(blocked.code, 'VALIDATION_ERROR', '不能跳过 consent')
     assertEq(blocked.details?.reason, 'consent-required', '原因可分支')
-    await wizard.grantConsent()
+    // 启动闸门：未同意时 ensureConsent 必须拒（北：启动 OpenClaw 前要校验）
+    const gateBlocked = await outcome(wizard.ensureConsent())
+    assertEq(gateBlocked.code, 'VALIDATION_ERROR', '未同意不得启动')
+    assertEq(gateBlocked.details?.reason, 'consent-required', '闸门原因可分支')
+    const before = await wizard.status()
+    assertEq(before.consentAt, null, '未同意时无同意时间')
+
+    const g = await wizard.grantConsent()
     assertEq(CONSENT_GRANTED, 'granted', '常量')
+    assert(g.consentAt > 0, '同意时间被记录（设置页反显用）')
     const s2 = await wizard.status()
     assertEq(s2.consent, true, '已同意')
+    assertEq(s2.consentAt, g.consentAt, 'status 回读同意时间')
+    // 同意后闸门放行
+    const gateOk = await wizard.ensureConsent()
+    assertEq(gateOk.consent, true, '同意后闸门放行')
+    // 重复同意保留首次时间（不刷新）
+    const g2 = await wizard.grantConsent()
+    assertEq(g2.consentAt, g.consentAt, '重复同意保留首次时间')
+
     await wizard.complete()
     const s3 = await wizard.status()
     assertEq(s3.completed, true, '向导完成')
-    return 'consent 必过 ✓'
+    return 'consent 必过 + 启动闸门 ✓'
+  })
+
+  // ── 撤销同意（北：同意只弹一次，得能重新测）──
+  await r.check('Z6', '撤销同意：清标记与时间；启动闸门重新生效；可再次同意；不动 completed', async () => {
+    // 前置：Z2 已同意且已完成向导
+    const pre = await wizard.status()
+    assertEq(pre.consent, true, '前置：已同意')
+    assertEq(pre.completed, true, '前置：向导已完成')
+
+    const rv = await wizard.revokeConsent()
+    assertEq(rv.consent, false, '撤销返回未同意')
+
+    const after = await wizard.status()
+    assertEq(after.consent, false, '撤销后 consent=false')
+    assertEq(after.consentAt, null, '撤销后同意时间清空')
+    // 关键：向导完成状态**不受影响**（撤销只针对协议，不是重置向导）
+    assertEq(after.completed, true, '撤销不动 completed')
+
+    // 启动闸门重新生效
+    const gate = await outcome(wizard.ensureConsent())
+    assertEq(gate.code, 'VALIDATION_ERROR', '撤销后不得启动 OpenClaw')
+    assertEq(gate.details?.reason, 'consent-required', '闸门原因可分支')
+
+    // 可再次同意，且拿到**新的**同意时间（不是旧的）
+    const again = await wizard.grantConsent()
+    assertEq(again.consent, true, '可再次同意')
+    assert(again.consentAt > 0, '再次同意有时间')
+    const s2 = await wizard.status()
+    assertEq(s2.consent, true, 'status 回读已同意')
+    assertEq(s2.consentAt, again.consentAt, '回读新时间')
+    const gateOk = await wizard.ensureConsent()
+    assertEq(gateOk.consent, true, '再次同意后闸门放行')
+    return '撤销/重同意 ✓'
   })
 
   // ── 三分支 ──
@@ -289,6 +338,412 @@ try {
     return 'morning 通知 ✓'
   })
 
+  await r.check('M5', '提醒时刻可改：默认 09:00/18:30；setTime 持久化并驱动触发；非法值拒', async () => {
+    const subDir4 = join(runDir, 'sub4', 'data')
+    mkdirSync(subDir4, { recursive: true })
+    const db4 = new DatabaseClient({
+      dbPath: join(subDir4, 'umi-claw.db'), backupDir: join(subDir4, 'backup'),
+      workerScriptPath, nodePath, subprocessName: 'work-db-wz-sub4', requestTimeoutMs: 30_000, logger
+    })
+    await db4.dbStatus({ initialize: true })
+
+    const notes = []
+    const rem = createReminderManager({
+      database: db4, notifier: (id, p) => notes.push({ id, p }),
+      getMorningSummary: morningSummary,
+      now: () => reportNow // 18:30
+    })
+
+    // 未设置 → 默认值
+    const defaults = await rem.getTimes()
+    assertEq(defaults.report.hour, 18, 'report 默认 18 时')
+    assertEq(defaults.report.minute, 30, 'report 默认 30 分')
+    assertEq(defaults.morning.hour, 9, 'morning 默认 9 时')
+
+    // 改到 21:15 → 原 18:30 窗口不再触发
+    await rem.setTime(REMINDERS.REPORT, 21, 15)
+    const moved = await rem.getTimes()
+    assertEq(moved.report.hour, 21, 'setTime 持久化（读回）')
+    assertEq(moved.report.minute, 15, 'setTime 持久化分钟')
+    const noFire = await rem.check()
+    assertEq(noFire.length, 0, '改时刻后原窗口不发')
+
+    // 改回 18:30 → 按新时刻触发
+    await rem.setTime(REMINDERS.REPORT, 18, 30)
+    const fired = await rem.check()
+    assert(fired.includes(REMINDERS.REPORT), '改回后按新时刻触发')
+
+    // 非法值拒
+    const badHour = await outcome(rem.setTime(REMINDERS.REPORT, 24, 0))
+    assertEq(badHour.code, 'VALIDATION_ERROR', 'hour 越界拒')
+    const badMinute = await outcome(rem.setTime(REMINDERS.MORNING, 9, 60))
+    assertEq(badMinute.code, 'VALIDATION_ERROR', 'minute 越界拒')
+    const badId2 = await outcome(rem.setTime('lunch', 9, 0))
+    assertEq(badId2.code, 'VALIDATION_ERROR', '非法 id 拒')
+
+    await db4.dispose()
+    return '时刻可改 OK'
+  })
+
+  await r.check('M6', '本地闭环：report 通知先自动生成草稿再发（不自动外发）；无依赖时退回提醒文案', async () => {
+    const subDir5 = join(runDir, 'sub5', 'data')
+    mkdirSync(subDir5, { recursive: true })
+    const db5 = new DatabaseClient({
+      dbPath: join(subDir5, 'umi-claw.db'), backupDir: join(subDir5, 'backup'),
+      workerScriptPath, nodePath, subprocessName: 'work-db-wz-sub5', requestTimeoutMs: 30_000, logger
+    })
+    await db5.dbStatus({ initialize: true })
+
+    // 有 generateDailyDraft：到点先调它，正文说明草稿已就绪
+    const calls = []
+    const notes = []
+    const rem = createReminderManager({
+      database: db5, notifier: (id, p) => notes.push({ id, p }),
+      getMorningSummary: morningSummary,
+      generateDailyDraft: async () => { calls.push(Date.now()); return { status: 'generated', reportId: 'r1' } },
+      now: () => reportNow
+    })
+    const fired = await rem.check()
+    assert(fired.includes(REMINDERS.REPORT), 'report 触发')
+    assertEq(calls.length, 1, '自动生成草稿被调用一次')
+    const body = notes.find((n) => n.id === REMINDERS.REPORT).p.body
+    assert(body.includes('草稿已就绪'), '正文指向草稿就绪')
+    assert(!body.includes('http'), '不外发：正文无链接')
+
+    // 0 条记录 → 空态文案
+    const notes2 = []
+    const remEmpty = createReminderManager({
+      database: db5, notifier: (id, p) => notes2.push({ id, p }),
+      getMorningSummary: morningSummary,
+      generateDailyDraft: async () => ({ status: 'empty' }),
+      now: () => new Date(2026, 8, 24, 18, 30, 0).getTime() // 换一天重置去重
+    })
+    await remEmpty.check()
+    assert(notes2[0].p.body.includes('还没有记录'), '空记录兜底文案')
+
+    // 生成失败 → 告知失败且指向报告页（不静默）
+    const notes3 = []
+    const remFail = createReminderManager({
+      database: db5, notifier: (id, p) => notes3.push({ id, p }),
+      getMorningSummary: morningSummary,
+      generateDailyDraft: async () => ({ status: 'error', message: '模型超时' }),
+      now: () => new Date(2026, 8, 25, 18, 30, 0).getTime()
+    })
+    await remFail.check()
+    assert(notes3[0].p.body.includes('模型超时'), '失败原因透出')
+    assert(notes3[0].p.body.includes('报告'), '指向报告页可手动生成')
+
+    // 无依赖 → 退回旧提醒文案（既有行为不变）
+    const notes4 = []
+    const remPlain = createReminderManager({
+      database: db5, notifier: (id, p) => notes4.push({ id, p }),
+      getMorningSummary: morningSummary,
+      now: () => new Date(2026, 8, 26, 18, 30, 0).getTime()
+    })
+    await remPlain.check()
+    assert(notes4[0].p.body.includes('点一下即可'), '无依赖退回提醒文案')
+
+    // 非函数依赖直接拒（构造函数同步抛 → 用 IIFE 包成 promise 给 outcome）
+    const badDep = await outcome(
+      (async () =>
+        createReminderManager({
+          database: db5, notifier: () => {}, getMorningSummary: morningSummary,
+          generateDailyDraft: 'nope', now: () => reportNow
+        }))()
+    )
+    assertEq(badDep.code, 'VALIDATION_ERROR', '非法 generateDailyDraft 拒')
+
+    await db5.dispose()
+    return '本地闭环 OK'
+  })
+
+  await r.check('M7', '外发（方案 A）：默认关；未配齐不得开；只推短提示不含正文；失败不阻断本地通知', async () => {
+    const subDir6 = join(runDir, 'sub6', 'data')
+    mkdirSync(subDir6, { recursive: true })
+    const db6 = new DatabaseClient({
+      dbPath: join(subDir6, 'umi-claw.db'), backupDir: join(subDir6, 'backup'),
+      workerScriptPath, nodePath, subprocessName: 'work-db-wz-sub6', requestTimeoutMs: 30_000, logger
+    })
+    await db6.dbStatus({ initialize: true })
+
+    const notes = []
+    const pushed = []
+    const rem = createReminderManager({
+      database: db6,
+      notifier: (id, p) => notes.push({ id, p }),
+      getMorningSummary: morningSummary,
+      generateDailyDraft: async () => ({ status: 'generated', reportId: 'r1' }),
+      pusher: async (id, p) => { pushed.push({ id, p }); return { ok: true } },
+      now: () => reportNow
+    })
+
+    // 默认关（装了不自动外发）
+    const cfg0 = await rem.getPushConfig()
+    assertEq(cfg0.enabled, false, '外发默认关')
+    assertEq(cfg0.channel, null, '通道默认空')
+    assertEq(cfg0.target, null, '目标默认空')
+
+    // 未配齐就开 → 拒（不给「开了但不知道发哪」）
+    const notReady = await outcome(rem.setPushConfig({ enabled: true }))
+    assertEq(notReady.code, 'VALIDATION_ERROR', '未配齐不得开')
+
+    // 非法通道拒
+    const badCh = await outcome(rem.setPushConfig({ channel: 'wechat' }))
+    assertEq(badCh.code, 'VALIDATION_ERROR', '非法通道拒')
+
+    // 默认关时 check 不外发（但仍发本地通知）
+    const fired1 = await rem.check()
+    assert(fired1.includes(REMINDERS.REPORT), '本地通知照发')
+    assertEq(pushed.length, 0, '未开启不外发')
+
+    // 配齐并开启 → 外发同一段短提示
+    await rem.setPushConfig({ channel: 'feishu', target: 'user:ou_probe' })
+    const on = await rem.setPushConfig({ enabled: true })
+    assertEq(on.enabled, true, '可开启')
+    assertEq(on.channel, 'feishu', '通道持久化')
+
+    // 换一天重置去重后再 check → 外发一次
+    const rem2 = createReminderManager({
+      database: db6,
+      notifier: (id, p) => notes.push({ id, p }),
+      getMorningSummary: morningSummary,
+      generateDailyDraft: async () => ({ status: 'generated', reportId: 'r1' }),
+      pusher: async (id, p) => { pushed.push({ id, p }); return { ok: true } },
+      now: () => new Date(2026, 8, 24, 18, 30, 0).getTime()
+    })
+    await rem2.check()
+    assertEq(pushed.length, 1, '开启后外发一次')
+    assertEq(pushed[0].id, REMINDERS.REPORT, '外发 id 对齐')
+    // 方案 A 的关键约束：外发内容就是那条短提示，不含正文
+    assertEq(pushed[0].p.body, notes[notes.length - 1].p.body, '外发=本地同一段短提示')
+    assert(pushed[0].p.body.length < 200, '短提示（不含正文）')
+
+    // 外发失败不抛、不影响本地通知（尽力而为）
+    const notes3 = []
+    const rem3 = createReminderManager({
+      database: db6,
+      notifier: (id, p) => notes3.push({ id, p }),
+      getMorningSummary: morningSummary,
+      generateDailyDraft: async () => ({ status: 'generated', reportId: 'r1' }),
+      pusher: async () => ({ ok: false, message: '通道不可用' }),
+      now: () => new Date(2026, 8, 25, 18, 30, 0).getTime()
+    })
+    const fired3 = await rem3.check()
+    assert(fired3.includes(REMINDERS.REPORT), '外发失败仍发本地通知')
+    assertEq(notes3.length, 1, '本地通知已送达')
+
+    // 非法 pusher 拒
+    const badPusher = await outcome(
+      (async () =>
+        createReminderManager({
+          database: db6, notifier: () => {}, getMorningSummary: morningSummary,
+          pusher: 'nope', now: () => reportNow
+        }))()
+    )
+    assertEq(badPusher.code, 'VALIDATION_ERROR', '非法 pusher 拒')
+
+    await db6.dispose()
+    return '方案 A 外发 OK'
+  })
+
+  await r.check('M8', '外发扩展：只列已配置渠道；首选失败自动走次选；全失败记失败提示', async () => {
+    const subDir7 = join(runDir, 'sub7', 'data')
+    mkdirSync(subDir7, { recursive: true })
+    const db7 = new DatabaseClient({
+      dbPath: join(subDir7, 'umi-claw.db'), backupDir: join(subDir7, 'backup'),
+      workerScriptPath, nodePath, subprocessName: 'work-db-wz-sub7', requestTimeoutMs: 30_000, logger
+    })
+    await db7.dbStatus({ initialize: true })
+
+    // 渠道清单：只 feishu 已配置；钉钉 supported=false（OpenClaw 无实现）
+    let options = [
+      { channel: 'feishu', label: '飞书', configured: true, supported: true },
+      { channel: 'wecom', label: '企业微信', configured: false, supported: true },
+      { channel: 'openclaw-weixin', label: '微信', configured: false, supported: true },
+      { channel: 'dingtalk', label: '钉钉', configured: true, supported: false }
+    ]
+
+    const attempts = []
+    const rem = createReminderManager({
+      database: db7,
+      notifier: () => {},
+      getMorningSummary: morningSummary,
+      generateDailyDraft: async () => ({ status: 'generated', reportId: 'r1' }),
+      listPushChannels: async () => options,
+      pusher: async (_id, _p, dest) => {
+        attempts.push(dest.channel)
+        return dest.channel === 'feishu'
+          ? { ok: false, message: '飞书 401' }
+          : { ok: true }
+      },
+      now: () => reportNow
+    })
+
+    // 清单原样透出（UI 据此只渲染已配置项）
+    const list = await rem.availablePushChannels()
+    assertEq(list.length, 4, '四个渠道都在清单里')
+    assertEq(list.find((o) => o.channel === 'dingtalk').supported, false, '钉钉不支持')
+    assertEq(list.find((o) => o.channel === 'wecom').configured, false, 'wecom 未配置')
+
+    // 未配置的渠道不能选（北：没配置肯定不能推）
+    const notCfg = await outcome(rem.setPushConfig({ channel: 'wecom' }))
+    assertEq(notCfg.code, 'VALIDATION_ERROR', '未配置渠道拒')
+
+    // 钉钉：OpenClaw 无实现，拒
+    const dt = await outcome(rem.setPushConfig({ channel: 'dingtalk' }))
+    assertEq(dt.code, 'VALIDATION_ERROR', '钉钉不支持拒')
+
+    // 首选=次选 拒
+    const same = await outcome(rem.setPushConfig({ channel: 'feishu', fallbackChannel: 'feishu' }))
+    assertEq(same.code, 'VALIDATION_ERROR', '首选次选不得相同')
+
+    // 选次选就必须填次选目标
+    await rem.setPushConfig({ channel: 'feishu', target: 'user:ou_x' })
+    options = options.map((o) => (o.channel === 'wecom' ? { ...o, configured: true } : o))
+    await rem.setPushConfig({ fallbackChannel: 'wecom' })
+    const noFbTarget = await outcome(rem.setPushConfig({ enabled: true }))
+    assertEq(noFbTarget.code, 'VALIDATION_ERROR', '次选缺目标不得开')
+
+    await rem.setPushConfig({ fallbackTarget: 'user:wx_y', enabled: true })
+
+    // 首选失败 → 自动试次选 → 成功
+    const fired = await rem.check()
+    assert(fired.includes(REMINDERS.REPORT), 'report 触发')
+    assertEq(attempts.join('>'), 'feishu>wecom', '首选失败自动走次选')
+    const st1 = await rem.getPushStatus()
+    assertEq(st1.ok, true, '最终成功')
+    assertEq(st1.channel, 'wecom', '成功渠道=次选')
+
+    // 全失败 → 记失败提示（UI 可见）
+    const remFail = createReminderManager({
+      database: db7,
+      notifier: () => {},
+      getMorningSummary: morningSummary,
+      generateDailyDraft: async () => ({ status: 'generated', reportId: 'r1' }),
+      listPushChannels: async () => options,
+      pusher: async () => ({ ok: false, message: '两个都挂了' }),
+      now: () => new Date(2026, 8, 25, 18, 30, 0).getTime()
+    })
+    await remFail.check()
+    const st2 = await remFail.getPushStatus()
+    assertEq(st2.ok, false, '全失败 ok=false')
+    assertEq(st2.message, '两个都挂了', '失败原因被记下')
+
+    // 无 provider 时 availablePushChannels 返回空清单（不报错）
+    const remPlain = createReminderManager({
+      database: db7, notifier: () => {}, getMorningSummary: morningSummary, now: () => reportNow
+    })
+    assertEq((await remPlain.availablePushChannels()).length, 0, '无 provider → 空清单')
+
+    await db7.dispose()
+    return '清单/兜底/失败提示 OK'
+  })
+
+  await r.check('M9', '目标自动发现 + 推送测试：目标由 OpenClaw 给出；测试按首选→次选；成败都入状态', async () => {
+    const subDir8 = join(runDir, 'sub8', 'data')
+    mkdirSync(subDir8, { recursive: true })
+    const db8 = new DatabaseClient({
+      dbPath: join(subDir8, 'umi-claw.db'), backupDir: join(subDir8, 'backup'),
+      workerScriptPath, nodePath, subprocessName: 'work-db-wz-sub8', requestTimeoutMs: 30_000, logger
+    })
+    await db8.dbStatus({ initialize: true })
+
+    // OpenClaw 自己记录的目标（模拟 conversations 表）
+    const KNOWN = [
+      { target: 'ou_5d4e197a5b7b37ecf59d935d429df5f0', label: '私聊', kind: 'direct', updatedAt: 1790179305774 },
+      { target: 'chat:oc_3d0272ab3416f46a2e71b457e62962f2', label: '群聊', kind: 'group', updatedAt: 1784795918477 }
+    ]
+    const options = [
+      { channel: 'feishu', label: '飞书', configured: true, supported: true },
+      { channel: 'wecom', label: '企业微信', configured: true, supported: true }
+    ]
+
+    const calls = []
+    const rem = createReminderManager({
+      database: db8,
+      notifier: () => {},
+      getMorningSummary: morningSummary,
+      listPushChannels: async () => options,
+      listPushTargets: async (ch) => (ch === 'feishu' ? KNOWN : []),
+      pusher: async (_id, _p, dest) => {
+        calls.push(dest.channel)
+        return dest.channel === 'feishu' ? { ok: true } : { ok: false, message: 'wecom 挂了' }
+      },
+      now: () => reportNow
+    })
+
+    // 目标不需要用户手填：由 provider 给出
+    const targets = await rem.availablePushTargets('feishu')
+    assertEq(targets.length, 2, '拿到 2 个已知目标')
+    assertEq(targets[0].target, KNOWN[0].target, '目标值透出')
+    assertEq(targets[0].kind, 'direct', 'kind 透出')
+
+    // 非法渠道拒
+    const badCh = await outcome(rem.availablePushTargets('nope'))
+    assertEq(badCh.code, 'VALIDATION_ERROR', '非法渠道拒')
+
+    // 未配置时测试推送 → 明确提示，不静默
+    const noCfg = await rem.testPush()
+    assertEq(noCfg.ok, false, '未配置不能测')
+    assert(noCfg.message.includes('渠道'), '提示要选渠道')
+
+    // 配置首选 feishu（测试只调首选，不碰 check 的当天去重）
+    await rem.setPushConfig({ channel: 'feishu', target: KNOWN[0].target, enabled: true })
+    const t1 = await rem.testPush()
+    assertEq(t1.ok, true, '测试推送成功')
+    assertEq(t1.channel, 'feishu', '成功渠道')
+    const st1 = await rem.getPushStatus()
+    assertEq(st1.ok, true, '成功写入状态')
+
+    // 首选失败 → 自动走次选（测试与正式外发同一套兜底逻辑）
+    const calls2 = []
+    const rem2 = createReminderManager({
+      database: db8,
+      notifier: () => {},
+      getMorningSummary: morningSummary,
+      listPushChannels: async () => options,
+      listPushTargets: async (ch) => (ch === 'feishu' ? KNOWN : [{ target: 'user:wx_y', label: '私聊', kind: 'direct', updatedAt: 1 }]),
+      pusher: async (_id, _p, dest) => {
+        calls2.push(dest.channel)
+        return dest.channel === 'feishu' ? { ok: false, message: '飞书 401' } : { ok: true }
+      },
+      now: () => reportNow
+    })
+    await rem2.setPushConfig({ channel: 'feishu', target: KNOWN[0].target })
+    await rem2.setPushConfig({ fallbackChannel: 'wecom', fallbackTarget: 'user:wx_y', enabled: true })
+    const t2 = await rem2.testPush()
+    assertEq(calls2.join('>'), 'feishu>wecom', '测试也走兜底')
+    assertEq(t2.ok, true, '兜底后成功')
+    assertEq(t2.channel, 'wecom', '成功渠道=次选')
+
+    // 全失败 → 测试返回失败 + 入状态
+    const rem3 = createReminderManager({
+      database: db8,
+      notifier: () => {},
+      getMorningSummary: morningSummary,
+      listPushChannels: async () => options,
+      listPushTargets: async () => [],
+      pusher: async () => ({ ok: false, message: '两个都不可用' }),
+      now: () => reportNow
+    })
+    await rem3.setPushConfig({ channel: 'feishu', target: 'user:ou_x' })
+    await rem3.setPushConfig({ enabled: true })
+    const t3 = await rem3.testPush()
+    assertEq(t3.ok, false, '全失败')
+    assertEq(t3.message, '两个都不可用', '失败原因透出给 UI')
+    assertEq((await rem3.getPushStatus()).ok, false, '失败也入状态')
+
+    // 未接入 pusher → 明确拒绝
+    const remNoPusher = createReminderManager({
+      database: db8, notifier: () => {}, getMorningSummary: morningSummary, now: () => reportNow
+    })
+    const t4 = await remNoPusher.testPush()
+    assertEq(t4.ok, false, '未接入不假成功')
+
+    await db8.dispose()
+    return '目标发现 + 测试推送 OK'
+  })
+
   await r.check('M4', '关闭开关后 check 不发；IPC 静态核对（wizard/reminder 通道）', async () => {
     const subDir3 = join(runDir, 'sub3', 'data')
     mkdirSync(subDir3, { recursive: true })
@@ -310,9 +765,14 @@ try {
     // IPC 静态核对
     const src = readFileSync(join(__dirname, '..', 'electron', 'main', 'ipc', 'work.ts'), 'utf-8')
     const channels = [
-      'work:wizard:status', 'work:wizard:grantConsent', 'work:wizard:complete',
-      'work:wizard:decide', 'work:wizard:readMapping',
-      'work:reminder:setEnabled', 'work:reminder:check'
+      'work:wizard:status', 'work:wizard:grantConsent', 'work:wizard:ensureConsent',
+      'work:wizard:revokeConsent',
+      'work:wizard:complete', 'work:wizard:decide', 'work:wizard:readMapping',
+      'work:reminder:setEnabled', 'work:reminder:getTimes', 'work:reminder:setTime',
+      'work:reminder:getPushConfig', 'work:reminder:setPushConfig',
+      'work:reminder:availablePushChannels', 'work:reminder:availablePushTargets',
+      'work:reminder:testPush', 'work:reminder:getPushStatus',
+      'work:reminder:check'
     ]
     const missing = channels.filter((c) => !src.includes(`'${c}'`))
     assertEq(missing.length, 0, '缺失: ' + missing.join(','))

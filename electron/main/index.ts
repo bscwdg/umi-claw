@@ -10,7 +10,7 @@ import {
   protocol,
   Notification
 } from 'electron'
-import { join, parse, dirname } from 'path'
+import { join, parse, dirname, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { ClawManager } from './clawManager'
 import { ConfigManager } from './configManager'
@@ -204,6 +204,16 @@ function createWorkGatewayClient(): GatewayClient {
     if (status.running) {
       // 进程已在跑（可能还在冷启动）：不要重复 start，直接交给就绪轮询
       return { started: false, reason: 'already-running' }
+    }
+    // 硬性闸门（北 2026-09-24）：未同意用户协议不得拉起 OpenClaw
+    try {
+      await workWizardManager?.ensureConsent()
+    } catch (e) {
+      throw new AppError(
+        ERROR_CODES.OPENCLAW_NOT_READY,
+        (e as Error)?.message ?? '请先同意用户协议，再启动 OpenClaw',
+        { reason: 'consent-required' }
+      )
     }
     const result = await clawManager.start()
     if (!result.success) {
@@ -408,6 +418,169 @@ function showReminderNotification(
 }
 
 /**
+ * 外发短提示（**方案 A**）：spawn OpenClaw 渠道 CLI 发一条消息。
+ *
+ * - 只发 payload.title + payload.body（构造上不可能带日报正文）
+ * - 走与 gateway 启动同一套便携环境（buildOpenClawEnv），不另造一套路径
+ * - 失败返回 { ok:false }，不抛——本地通知已送达，外发尽力而为
+ */
+function pushReminderMessage(
+  dest: { channel: string; target: string },
+  payload: import('./work/reminderManager').ReminderPayload
+): Promise<import('./work/reminderManager').PushResult> {
+  return new Promise((resolve) => {
+    const dataDir = configManager.getDataDir()
+    const nodePath = configManager.getNodePath()
+    const clawJsPath = openClawPaths.clawJs(dataDir)
+    if (!existsSync(nodePath) || !existsSync(clawJsPath)) {
+      resolve({ ok: false, message: '未找到 OpenClaw 运行时' })
+      return
+    }
+    const env = buildOpenClawEnv(dataDir, nodePath, { OPENCLAW_DISABLE_BONJOUR: '1' })
+    const text = `${payload.title}\n${payload.body}`
+    execFile(
+      nodePath,
+      [clawJsPath, 'message', 'send', '--channel', dest.channel, '--target', dest.target, '--message', text],
+      { cwd: openClawPaths.installDir(dataDir), env, windowsHide: true, timeout: 60_000, maxBuffer: 4 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) {
+          const detail = (stderr || stdout || err.message || '').toString().trim().slice(0, 300)
+          resolve({ ok: false, message: detail || '外发命令失败' })
+          return
+        }
+        resolve({ ok: true })
+      }
+    )
+  })
+}
+
+/**
+ * 列出可推送渠道及其配置状态（供外发下拉）。
+ *
+ * 「已配置」的判定依据：
+ * - feishu / wecom：app.json 里 `channels.<key>` 必填凭证已填齐（与渠道页同口径）
+ * - openclaw-weixin：插件已装 **且** 已有登录账号（走终端登录，不存 app.json）
+ * - dingtalk：OpenClaw 无实现，永远 supported=false（仅用于提示）
+ */
+async function listPushChannelOptions(): Promise<
+  import('./work/reminderManager').PushChannelOption[]
+> {
+  const appCfg = configManager.getConfig()
+  const uiChannels = (appCfg.channels ?? {}) as Record<string, Record<string, unknown> | undefined>
+  const filled = (key: string, fields: string[]): boolean => {
+    const cfg = uiChannels[key]
+    if (!cfg) return false
+    return fields.every((f) => String(cfg[f] ?? '').trim() !== '')
+  }
+
+  // 微信：插件 + 登录账号双条件
+  let weixinReady = false
+  try {
+    const accountsFile = join(configManager.getDataDir(), 'config', '.openclaw', 'openclaw-weixin', 'accounts.json')
+    if (existsSync(accountsFile)) {
+      const list = JSON.parse(readFileSync(accountsFile, 'utf-8')) as unknown
+      weixinReady = Array.isArray(list) && list.length > 0
+    }
+  } catch {
+    weixinReady = false
+  }
+
+  return [
+    { channel: 'feishu', label: '飞书', configured: filled('feishu', ['appId', 'appSecret']), supported: true },
+    { channel: 'wecom', label: '企业微信', configured: filled('wecom', ['corpId', 'agentId', 'secret']), supported: true },
+    { channel: 'openclaw-weixin', label: '微信', configured: weixinReady, supported: true },
+    { channel: 'dingtalk', label: '钉钉', configured: filled('dingtalk', ['appKey', 'appSecret']), supported: false }
+  ]
+}
+
+/**
+ * 列出某渠道下 OpenClaw **已经知道**的推送目标（用户不需手填）。
+ *
+ * 来源：OpenClaw 的 agent 库 `conversations` 表——它记住「谁跟它说过话」，
+ * 每条含 `channel` / `delivery_target` / `kind`。取最近若干条，新→旧。
+ *
+ * 用便携 node 子进程读（同 clawManager 先例）：Electron 30 内置 node 未必启用 `node:sqlite`。
+ * 只读打开，绝不写入。
+ */
+async function listPushTargetOptions(
+  channel: string
+): Promise<import('./work/reminderManager').PushTargetOption[]> {
+  const dataDir = configManager.getDataDir()
+  const nodePath = configManager.getNodePath()
+  if (!existsSync(nodePath)) return []
+
+  // agent 库路径：config/.openclaw/agents/<agentId>/agent/openclaw-agent.sqlite
+  const agentsDir = join(dataDir, 'config', '.openclaw', 'agents')
+  if (!existsSync(agentsDir)) return []
+  const dbPaths: string[] = []
+  try {
+    for (const agentId of readdirSync(agentsDir)) {
+      const p = join(agentsDir, agentId, 'agent', 'openclaw-agent.sqlite')
+      if (existsSync(p)) dbPaths.push(toPosix(p))
+    }
+  } catch {
+    return []
+  }
+  if (!dbPaths.length) return []
+
+  const script = [
+    'const { DatabaseSync } = require("node:sqlite");',
+    'const out = [];',
+    'for (const dbPath of process.argv.slice(1)) {',
+    '  try {',
+    '    const db = new DatabaseSync(dbPath, { readOnly: true });',
+    '    const rows = db.prepare("SELECT channel, delivery_target, kind, label, updated_at FROM conversations WHERE channel = ? ORDER BY updated_at DESC LIMIT 20").all(process.env.UCLawChannel);',
+    '    for (const r of rows) out.push(r);',
+    '    db.close();',
+    '  } catch (e) {}',
+    '}',
+    'process.stdout.write(JSON.stringify(out));'
+  ].join('\n')
+
+  return new Promise((resolve) => {
+    execFile(
+      nodePath,
+      ['-e', script, ...dbPaths],
+      {
+        windowsHide: true,
+        timeout: 15_000,
+        maxBuffer: 4 * 1024 * 1024,
+        env: { ...process.env, UCLawChannel: channel }
+      },
+      (err, stdout) => {
+        if (err) {
+          console.log(`[push] 读取目标失败: ${err.message}`)
+          resolve([])
+          return
+        }
+        try {
+          const raw = JSON.parse(String(stdout || '[]')) as Array<Record<string, unknown>>
+          // 去重（同一目标可能出现在多个 agent 库），保留最新
+          const seen = new Set<string>()
+          const out: import('./work/reminderManager').PushTargetOption[] = []
+          for (const r of raw) {
+            const target = String(r.delivery_target ?? '').trim()
+            if (!target || seen.has(target)) continue
+            seen.add(target)
+            const kind = r.kind === 'group' ? 'group' : 'direct'
+            const label = typeof r.label === 'string' && r.label.trim() ? r.label.trim() : ''
+            out.push({
+              target,
+              label: label || (kind === 'group' ? '群聊' : '私聊'),
+              kind,
+              updatedAt: Number(r.updated_at ?? 0)
+            })
+          }
+          resolve(out)
+        } catch {
+          resolve([])
+        }
+      }
+    )
+  })
+}
+
+/**
  * 取 work 域各 Manager 单例（Commit 02）。
  *
  * 全部共用同一个 DatabaseClient 单例（硬规则 2：DB Worker 全局单例）。
@@ -511,6 +684,29 @@ function initWorkManagers(): {
         const today = dateOf(Date.now())
         const relevant = todos.filter((t) => t.due_date === null || String(t.due_date) <= today)
         return { count: relevant.length, titles: relevant.map((t) => t.title) }
+      },
+      // 方案 A（v0.9 拍板）：按配置外发**短提示**（不含正文），正文仍需人工确认
+      pusher: async (_id, payload, dest) => pushReminderMessage(dest, payload),
+      // 外发下拉只展示已配置的渠道（北：没配置肯定不能推）
+      listPushChannels: () => listPushChannelOptions(),
+      // 目标由 OpenClaw 自己给出（北：不需要填，openclaw 自己知道）
+      listPushTargets: (channel) => listPushTargetOptions(channel),
+      // 本地闭环（硬规则 22 重评估后拍板）：到点**先自动生成日报草稿**，再发通知。
+      // 仍**不自动外发正文**——草稿进「报告」页等人工确认（硬规则 5）。
+      generateDailyDraft: async () => {
+        const rm = workReportManager
+        if (!rm) return { status: 'error', message: '报告模块未就绪' }
+        try {
+          const handle = await rm.generate({ type: 'daily' })
+          // 等流结束：草稿正文落 reports.content 后再发通知，避免「通知说好了但点进去是空的」
+          const result = await handle.stream.result
+          if (result.aborted) return { status: 'error', message: '生成已中止' }
+          return { status: 'generated', reportId: handle.reportId }
+        } catch (e) {
+          const err = e as { details?: { reason?: string }; message?: string }
+          if (err?.details?.reason === 'no-records') return { status: 'empty' }
+          return { status: 'error', message: err?.message ?? '未知错误' }
+        }
       },
       logger: (m) => console.log(m)
     })
@@ -755,7 +951,13 @@ function createTray(): void {
           if (running) {
             await clawManager.stop()
           } else {
-            await clawManager.start()
+            // 硬性闸门：未同意用户协议不得启动（与 IPC 同口径）
+            try {
+              await workWizardManager?.ensureConsent()
+              await clawManager.start()
+            } catch (e) {
+              console.error('[Tray] 启动被拒:', (e as Error)?.message)
+            }
           }
         }
       },
@@ -812,13 +1014,34 @@ function registerIpcHandlers(): void {
   })
 
   // OpenClaw 进程管理
+  // 硬性闸门（北 2026-09-24）：启动前必须已同意用户协议，否则拒绝并让前端弹回协议弹窗。
+  const ensureConsentGate = async (): Promise<{ ok: true } | { ok: false; result: unknown }> => {
+    try {
+      await workWizardManager?.ensureConsent()
+      return { ok: true }
+    } catch (e) {
+      return {
+        ok: false,
+        result: {
+          success: false,
+          reason: 'consent-required',
+          error: (e as Error)?.message ?? '请先同意用户协议'
+        }
+      }
+    }
+  }
+
   ipcMain.handle('claw:start', async () => {
+    const gate = await ensureConsentGate()
+    if (!gate.ok) return gate.result
     return clawManager.start()
   })
   ipcMain.handle('claw:stop', async () => {
     return clawManager.stop()
   })
   ipcMain.handle('claw:restart', async () => {
+    const gate = await ensureConsentGate()
+    if (!gate.ok) return gate.result
     await clawManager.stop()
     return clawManager.start()
   })
@@ -1340,8 +1563,13 @@ app.whenReady().then(() => {
     urlPath = urlPath.split('?')[0].split('#')[0]
 
     // 精准拼出磁盘绝对路径（此时大家都统一在 dist-electron 目录下）
-    const outDir = join(__dirname, '..')
-    const filePath = join(outDir, urlPath)
+    // resolve 规范化并做边界检查：URL 里的字面反斜杠不被浏览器当分隔符折叠，
+    // 但 Windows 下 path 会解析它——不检查即可用 app://x/..\..\.. 逃出目录读任意文件
+    const outDir = resolve(join(__dirname, '..'))
+    const filePath = resolve(outDir, urlPath)
+    if (filePath !== outDir && !filePath.startsWith(outDir + sep)) {
+      return new Response('Forbidden', { status: 403 })
+    }
 
     try {
       // 1. 同步读取文件二进制数据
@@ -1412,11 +1640,14 @@ app.whenReady().then(() => {
   const startupConfig = configManager.getConfig()
   applyLoginItemSettings(startupConfig.launchOnBoot)
 
-  // 自动启动服务：应用启动时自动运行 OpenClaw
+  // 自动启动服务：应用启动时自动运行 OpenClaw（同样受用户协议闸门约束）
   if (startupConfig.autoStart) {
-    clawManager.start().catch((err) => {
-      console.error('[Main] 自动启动 OpenClaw 失败:', err)
-    })
+    workWizardManager
+      ?.ensureConsent()
+      .then(() => clawManager.start())
+      .catch((err) => {
+        console.error('[Main] 自动启动 OpenClaw 失败:', err)
+      })
   }
 
   app.on('activate', () => {

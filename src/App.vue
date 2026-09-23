@@ -64,6 +64,18 @@
       </main>
     </div>
 
+    <!-- 用户协议弹窗（全局唯一实例）：首启为阻断模式，设置页打开为复核模式 -->
+    <UserAgreementModal
+      v-model:visible="agreementVisible"
+      :blocking="agreementBlocking"
+      :agreed="consentGranted"
+      :agreed-at="consentAt"
+      @agreed="onAgreementAgreed"
+    />
+
+    <!-- 冷启动向导（弹窗形态；走完或逐步跳过才关，只出现一次） -->
+    <WizardModal v-model:visible="wizardVisible" @done="onWizardDone" />
+
     <!-- 关闭窗口确认 -->
     <ConfirmDialog
       v-model:visible="showCloseConfirm"
@@ -86,25 +98,37 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useClawStore } from '@/stores/claw'
 import { useConfigStore } from '@/stores/config'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
+import UserAgreementModal from '@/views/components/UserAgreementModal.vue'
+import WizardModal from '@/views/components/WizardModal.vue'
+import { wizardVisible } from '@/composables/useWizardGate'
+import {
+  agreementVisible,
+  agreementBlocking,
+  consentGranted,
+  consentAt,
+  openAgreementBlocking,
+  syncConsent
+} from '@/composables/useAgreementGate'
 
 const api = window.api
+const router = useRouter()
 const clawStore = useClawStore()
 const configStore = useConfigStore()
 const version = ref('')
 
 const workNavItems = [
-  { to: '/work/today', icon: '☀️', label: '今日' },
+  { to: '/work/today', icon: '☀️', label: '今天' },
   { to: '/work/records', icon: '🗂', label: '工作记录' },
   { to: '/work/qa', icon: '💬', label: '工作问答' },
   { to: '/work/reports', icon: '📊', label: '报告' },
   { to: '/work/tools', icon: '🧰', label: '工具箱' },
   { to: '/work/knowledge', icon: '📚', label: '工作知识库' },
-  { to: '/work/context', icon: '🔍', label: 'AI 看见什么' },
-  { to: '/work/settings', icon: '⚙️', label: '工作设置' },
-  { to: '/work/wizard', icon: '🚀', label: '开始向导' }
+  { to: '/work/context', icon: '🔍', label: 'AI的世界' },
+  { to: '/work/settings', icon: '⚙️', label: '工作设置' }
 ]
 
 const navItems = [
@@ -126,6 +150,9 @@ let closeCleanup: (() => void) | null = null
 const showCloseConfirm = ref(false)
 const rememberCloseChoice = ref(false)
 
+// 首启用户协议（阻断式）—— 状态在 useAgreementGate 里共享（设置页也读同一份）
+const agreementBusy = ref(false)
+
 function onCloseConfirmExit() {
   api.window.resolveClose('exit', rememberCloseChoice.value)
 }
@@ -135,6 +162,9 @@ function onCloseConfirmTray() {
 }
 
 onMounted(async () => {
+  // §八 Day1：首启先过用户协议（阻断式，只出现一次）。
+  // 不 await：弹窗在状态回来后自己弹，绝不阻塞应用启动（硬规则 17）。
+  void ensureFirstRunWizard()
   await Promise.all([configStore.load(), clawStore.fetchStatus()])
   version.value = await api.app.getVersion()
   cleanup = clawStore.setupListeners()
@@ -149,6 +179,54 @@ onUnmounted(() => {
   cleanup?.()
   closeCleanup?.()
 })
+
+/**
+ * 首启流程（北 2026-09-24 定）：
+ * 1. 未同意用户协议 → 弹**阻断式**弹窗，必须同意才能用应用（只出现一次）
+ * 2. 已同意但向导未完成 → 进向导补齐其余可选步骤
+ *
+ * 硬规则 17：读取失败不阻断启动（按已同意处理，绝不把用户锁在门外）。
+ */
+async function ensureFirstRunWizard(): Promise<void> {
+  try {
+    const status = await api.work.wizard.status()
+    syncConsent(status.consent, status.consentAt ?? null)
+    if (!status.consent) {
+      // 阻断：不同意就不能用
+      openAgreementBlocking()
+      return
+    }
+    if (!status.completed) {
+      // 向导改为弹窗（北 2026-09-24）：不再跳路由，只开弹窗
+      wizardVisible.value = true
+    }
+  } catch {
+    // 读取失败不阻断：按原流程进控制台
+  }
+}
+
+/** 向导弹窗关闭（完成态）：进「今日」 */
+function onWizardDone(): void {
+  router.push('/work/today')
+}
+
+/** 同意用户协议：落库 → 关弹窗 → 继续首启向导（如未完成） */
+async function onAgreementAgreed(): Promise<void> {
+  if (agreementBusy.value) return
+  agreementBusy.value = true
+  try {
+    const res = await api.work.wizard.grantConsent()
+    syncConsent(true, res?.consentAt ?? Date.now())
+    agreementVisible.value = false
+    // 同意后继续走完向导其余步骤（弹窗，不跳路由）
+    const status = await api.work.wizard.status()
+    if (!status.completed) wizardVisible.value = true
+  } catch {
+    // 保存失败：弹窗保持打开，用户可重试
+  } finally {
+    agreementBusy.value = false
+  }
+}
 </script>
 
 <style scoped>

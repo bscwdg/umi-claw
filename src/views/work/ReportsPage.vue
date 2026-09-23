@@ -108,7 +108,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { ReportDetail, ReportSummary } from '../../electron/main/work/reportManager'
 import { useWorkStream } from '@/composables/useWorkStream'
@@ -185,6 +185,13 @@ async function generate(type: 'daily' | 'weekly'): Promise<void> {
 async function abort(): Promise<void> {
   if (stream.runId.value) await window.api.work.reports.abortGenerate(stream.runId.value)
 }
+
+// 路由切走：在途流先中止（避免白烧 token），再移除 IPC 监听器
+onBeforeUnmount(() => {
+  const rid = stream.runId.value
+  if (rid) void window.api.work.reports.abortGenerate(rid)
+  stream.unsubscribe()
+})
 
 async function saveDraft(): Promise<void> {
   if (!detail.value) return

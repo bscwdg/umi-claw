@@ -128,28 +128,34 @@ try {
   gates.push(gate)
   const baseUrl = await gate.listen()
   const gateway = gwMod.createGatewayClient({ baseUrl, token: 't', logger, sleepImpl: async () => {} })
-  const engine = engineMod.createContextEngine({ database, logger })
+  // 受控时钟：必须与 TODAY 对齐。
+  // 否则跨午夜后「真实今天」≠ TODAY，而候选/联动记录走真实 now → 日期断言必炸（实测 00:0x 后 D4/D5 红）。
+  const DAY_TS = new Date(2026, 8, 23, 10, 0, 0).getTime()
+  const now = () => DAY_TS
+  const pad2 = (n) => String(n).padStart(2, '0')
+  const _d0 = new Date(DAY_TS)
+  const TODAY = `${_d0.getFullYear()}-${pad2(_d0.getMonth() + 1)}-${pad2(_d0.getDate())}`
+
+  const engine = engineMod.createContextEngine({ database, logger, now })
 
   const profile = profileMod.createProfileManager({ database, logger })
-  const matters = matterMod.createMatterManager({ database, logger })
-  const todos = todoMod.createTodoManager({ database, logger })
-  const records = recordMod.createRecordManager({ database, logger })
+  const matters = matterMod.createMatterManager({ database, logger, now })
+  const todos = todoMod.createTodoManager({ database, logger, now })
+  const records = recordMod.createRecordManager({ database, logger, now })
   const ctxMgr = ctxMgrMod.createContextManager({
     database, buildLatestPack: () => engine.buildPack('latest', {})
   })
-  const reports = reportMod.createReportManager({ database, contextEngine: engine, gateway, logger })
-  const qa = qaMod.createQaManager({ database, contextEngine: engine, gateway, logger })
+  const reports = reportMod.createReportManager({ database, contextEngine: engine, gateway, logger, now })
+  const qa = qaMod.createQaManager({ database, contextEngine: engine, gateway, logger, now })
   const tools = toolMod.createToolManager({ records, todos, gateway, logger })
   const wizard = wizardMod.createWizardManager({ database, logger })
   const reminder = reminderMod.createReminderManager({
     database, notifier: () => {},
     getMorningSummary: async () => ({ count: 0, titles: [] }),
-    logger
+    logger, now
   })
   // 全部实例可构造（冒烟：依赖注入图闭合）
   assert([profile, matters, todos, records, reports, qa, tools, ctxMgr, wizard, reminder].every(Boolean), '全 Manager 构造')
-
-  const TODAY = '2026-09-23'
 
   // ── 1. 早上：画像 + 今日聚合 ──
   await r.check('D1', '早上：画像填写；今日页聚合（例事/无日期/逾期）', async () => {

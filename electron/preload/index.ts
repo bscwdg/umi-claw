@@ -300,6 +300,8 @@ const api = {
     wizard: {
       status: () => call('work:wizard:status'),
       grantConsent: () => call('work:wizard:grantConsent'),
+      revokeConsent: () => call('work:wizard:revokeConsent'),
+      ensureConsent: () => call('work:wizard:ensureConsent'),
       complete: () => call('work:wizard:complete'),
       decide: (decision: string) => call('work:wizard:decide', decision),
       readMapping: () => call('work:wizard:readMapping')
@@ -309,6 +311,22 @@ const api = {
       isEnabled: (id: 'morning' | 'report') => call('work:reminder:isEnabled', id),
       setEnabled: (id: 'morning' | 'report', enabled: boolean) =>
         call('work:reminder:setEnabled', id, enabled),
+      getTimes: () => call('work:reminder:getTimes'),
+      setTime: (id: 'morning' | 'report', hour: number, minute: number) =>
+        call('work:reminder:setTime', id, hour, minute),
+      getPushConfig: () => call('work:reminder:getPushConfig'),
+      setPushConfig: (patch: {
+        enabled?: boolean
+        channel?: 'feishu' | 'wecom' | 'openclaw-weixin' | 'dingtalk' | null
+        fallbackChannel?: 'feishu' | 'wecom' | 'openclaw-weixin' | 'dingtalk' | null
+        target?: string | null
+        fallbackTarget?: string | null
+      }) => call('work:reminder:setPushConfig', patch),
+      availablePushChannels: () => call('work:reminder:availablePushChannels'),
+      availablePushTargets: (channel: 'feishu' | 'wecom' | 'openclaw-weixin' | 'dingtalk') =>
+        call('work:reminder:availablePushTargets', channel),
+      testPush: () => call('work:reminder:testPush'),
+      getPushStatus: () => call('work:reminder:getPushStatus'),
       check: () => call('work:reminder:check')
     }
   }

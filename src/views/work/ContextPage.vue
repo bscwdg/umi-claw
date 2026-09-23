@@ -2,7 +2,7 @@
   <div class="context-page">
     <header class="cx-header">
       <div>
-        <h1>🔍 AI 看见什么</h1>
+        <h1>🔍 AI的世界</h1>
         <span class="text-sm text-muted">
           只读预览：AI 处理时实际用到的资料组成。不含提示词全文与任何凭据。
         </span>

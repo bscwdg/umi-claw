@@ -6,7 +6,7 @@
 //   - vue-router 用桩替换（页面只用到 useRouter/useRoute）
 //   - 用 @vue/server-renderer 渲染，捕获渲染期 Vue 警告（能抓到模板/引用类真 bug）
 
-import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
@@ -134,12 +134,48 @@ export function writeStubs() {
   return { routerStub, electronStub, toolkitStub }
 }
 
-/** 页面用到的 '@/' 别名（仅这两个 composable，显式列出比前缀猜测稳） */
+/**
+ * 页面用到的 '@/' 别名。
+ *
+ * composables **自动扫描目录**（不再硬编码白名单）：单页验收只编译被挂载的那个页面，
+ * esbuild 不认 '@/' 前缀，必须逐个映射到真实文件。此前写死两个名字，
+ * 每次新增 composable 都会以「Could not resolve」的形式挂掉 U6（已踩三次）。
+ * 扫描目录后新增文件无需改测试。
+ */
 export function aliasForComposables() {
-  return [
-    `@/composables/useToast=${posix(join(repoRoot, 'src', 'composables', 'useToast.ts'))}`,
-    `@/composables/useWorkStream=${posix(join(repoRoot, 'src', 'composables', 'useWorkStream.ts'))}`
-  ]
+  const dir = join(repoRoot, 'src', 'composables')
+  const list = existsSync(dir)
+    ? readdirSync(dir)
+        .filter((f) => f.endsWith('.ts'))
+        .map((f) => `@/composables/${f.slice(0, -3)}=${posix(join(dir, f))}`)
+    : []
+  return [...list, `@/stub-component=${posix(ensureComponentStub())}`]
+}
+
+/**
+ * 通用子组件桩。
+ *
+ * 单页验收只编译**被挂载的那个页面**；页面里 import 的其他 .vue 子组件
+ * esbuild 无法解析（不会递归编译 SFC）。统一换成无渲染桩：
+ * 验收目标是「页面自己调对了通道、渲染出该有的东西」，子组件内部不属于本层。
+ */
+const COMPONENT_STUB = join(STUB_DIR, 'stub-component.mjs')
+
+function ensureComponentStub() {
+  mkdirSync(STUB_DIR, { recursive: true })
+  writeFileSync(
+    COMPONENT_STUB,
+    [
+      '// 子组件桩：无渲染，仅吸收 props/emits（单页验收用）',
+      'export default {',
+      '  name: "StubComponent",',
+      '  props: ["visible", "agreed", "agreedAt", "blocking", "message", "title", "icon", "confirmText", "cancelText", "danger"],',
+      '  emits: ["update:visible", "confirm", "cancel", "agreed"],',
+      '  render() { return null }',
+      '}'
+    ].join('\n')
+  )
+  return COMPONENT_STUB
 }
 
 /**
@@ -171,6 +207,11 @@ export function compileVuePage(fileRelPath, outName, { routerStub }) {
 
   // 把 script 的 default 导出改名，挂上 render，再作为 default 导出
   let code = script.content.replace(/export\s+default\s+/, 'const __component = ')
+  // 子组件（.vue）统一换桩：esbuild 不递归编译 SFC，页面内的子组件不属于本层验收目标
+  code = code.replace(
+    /from\s+(['"])@\/views\/components\/[^'"]+\.vue\1/g,
+    "from '@/stub-component'"
+  )
   const tplBody = tpl.code.replace(/export\s+function\s+render/, 'function render')
   const assembled = `${code}\n${tplBody}\n__component.render = render\nexport default __component\n`
 

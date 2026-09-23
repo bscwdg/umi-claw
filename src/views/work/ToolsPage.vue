@@ -84,7 +84,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useWorkStream } from '@/composables/useWorkStream'
 import { useToast } from '@/composables/useToast'
@@ -152,6 +152,13 @@ async function run(): Promise<void> {
 async function abort(): Promise<void> {
   if (stream.runId.value) await window.api.work.tools.abortRun(stream.runId.value)
 }
+
+// 路由切走：在途流先中止（避免白烧 token），再移除 IPC 监听器
+onBeforeUnmount(() => {
+  const rid = stream.runId.value
+  if (rid) void window.api.work.tools.abortRun(rid)
+  stream.unsubscribe()
+})
 
 async function copy(): Promise<void> {
   try {
