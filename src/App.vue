@@ -101,7 +101,8 @@ const workNavItems = [
   { to: '/work/qa', icon: '💬', label: '工作问答' },
   { to: '/work/reports', icon: '📊', label: '报告' },
   { to: '/work/tools', icon: '🧰', label: '工具箱' },
-  { to: '/work/knowledge', icon: '📚', label: '工作知识库' }
+  { to: '/work/knowledge', icon: '📚', label: '工作知识库' },
+  { to: '/work/wizard', icon: '🚀', label: '开始向导' }
 ]
 
 const navItems = [
