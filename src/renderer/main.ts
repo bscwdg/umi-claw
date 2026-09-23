@@ -17,7 +17,14 @@ const router = createRouter({
     { path: '/channelsPage', component: () => import('../views/ChannelsPage.vue') },
     { path: '/terminal', component: () => import('../views/TerminalPage.vue') },
     { path: '/about', component: () => import('../views/About.vue') },
-    { path: '/obsidian', component: () => import('../views/ObsidianPage.vue') }
+    { path: '/obsidian', component: () => import('../views/ObsidianPage.vue') },
+    // ── work 域（3.0 UI）──
+    { path: '/work', redirect: '/work/today' },
+    { path: '/work/today', component: () => import('../views/work/TodayPage.vue') },
+    { path: '/work/qa', component: () => import('../views/work/QaPage.vue') },
+    { path: '/work/reports', component: () => import('../views/work/ReportsPage.vue') },
+    { path: '/work/tools', component: () => import('../views/work/ToolsPage.vue') },
+    { path: '/work/knowledge', component: () => import('../views/work/KnowledgePage.vue') }
   ]
 })
 

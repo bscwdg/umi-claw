@@ -293,7 +293,8 @@ const api = {
       update: (id: string, patch) => call('work:knowledge:update', id, patch),
       delete: (id: string) => call('work:knowledge:delete', id),
       search: (query: string, limit?: number) => call('work:knowledge:search', query, limit),
-      import: (input) => call('work:knowledge:import', input)
+      import: (input) => call('work:knowledge:import', input),
+      pickFile: (expectedType?: string) => call('work:knowledge:pickFile', expectedType)
     },
 
     wizard: {

@@ -14,7 +14,7 @@
 //
 // 本模块只做参数透传与信封包装；业务规则全在 Manager 层（可纯 Node 测）。
 
-import { ipcMain } from 'electron'
+import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
 import type { ProfileManager, UpdateProfileInput } from '../work/profileManager'
 import type { CreateMatterInput, MatterManager, UpdateMatterInput } from '../work/matterManager'
@@ -127,7 +127,8 @@ export const WORK_KNOWLEDGE_CHANNELS = {
   update: 'work:knowledge:update',
   delete: 'work:knowledge:delete',
   search: 'work:knowledge:search',
-  import: 'work:knowledge:import'
+  import: 'work:knowledge:import',
+  pickFile: 'work:knowledge:pickFile'
 } as const
 
 /** Commit 09：冷启动向导 + 本地提醒（§八 / §14；无渲染端新增读通道之外的东西） */
@@ -332,6 +333,35 @@ export function registerWorkIpc(deps: WorkIpcDeps): void {
   handle(WORK_KNOWLEDGE_CHANNELS['import'], (input: unknown) =>
     wrap(() => knowledge.importKnowledge(input as never))
   )
+  // pickFile：主进程原生文件选择（硬规则 23：渲染端只能拿这里的返回路径）
+  handle(WORK_KNOWLEDGE_CHANNELS.pickFile, async (expectedType?: string) => {
+    const win = BrowserWindow.getFocusedWindow() ?? undefined
+    const filters =
+      expectedType === 'docx'
+        ? [{ name: 'Word', extensions: ['docx'] }]
+        : expectedType === 'xlsx'
+          ? [{ name: 'Excel', extensions: ['xlsx'] }]
+          : expectedType === 'pdf'
+            ? [{ name: 'PDF', extensions: ['pdf'] }]
+            : [
+                { name: '可导入文件', extensions: ['docx', 'xlsx', 'pdf', 'txt', 'md'] }
+              ]
+    const result = await (win
+      ? dialog.showOpenDialog(win, {
+          title: '选择要导入的文件',
+          properties: ['openFile'],
+          filters
+        })
+      : dialog.showOpenDialog({
+          title: '选择要导入的文件',
+          properties: ['openFile'],
+          filters
+        }))
+    if (result.canceled || !result.filePaths.length) return { canceled: true } as never
+    const filePath = result.filePaths[0]
+    const name = filePath.split(/[\\/]/).pop() ?? ''
+    return { canceled: false, filePath, name } as never
+  })
 
   // ── wizard（Commit 09：冷启动状态 + 旧库三分支）──
   handle(WORK_WIZARD_CHANNELS.status, () => wrap(() => wizard.status()))

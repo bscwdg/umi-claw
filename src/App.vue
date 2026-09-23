@@ -31,7 +31,15 @@
 
         <!-- 导航 -->
         <nav class="nav">
-          <router-link v-for="item in navItems" :key="item.to" :to="item.to" class="nav-item">
+          <!-- 工作域导航（3.0） -->
+        <div class="nav-group-label">工作</div>
+        <router-link v-for="item in workNavItems" :key="item.to" :to="item.to" class="nav-item">
+          <span class="nav-icon">{{ item.icon }}</span>
+          <span class="nav-label">{{ item.label }}</span>
+        </router-link>
+
+        <div class="nav-group-label">管理</div>
+        <router-link v-for="item in navItems" :key="item.to" :to="item.to" class="nav-item">
             <span class="nav-icon">{{ item.icon }}</span>
             <span class="nav-label">{{ item.label }}</span>
           </router-link>
@@ -86,6 +94,14 @@ const api = window.api
 const clawStore = useClawStore()
 const configStore = useConfigStore()
 const version = ref('')
+
+const workNavItems = [
+  { to: '/work/today', icon: '☀️', label: '今日' },
+  { to: '/work/qa', icon: '💬', label: '工作问答' },
+  { to: '/work/reports', icon: '📊', label: '报告' },
+  { to: '/work/tools', icon: '🧰', label: '工具箱' },
+  { to: '/work/knowledge', icon: '📚', label: '工作知识库' }
+]
 
 const navItems = [
   { to: '/dashboard', icon: '🏠', label: '控制台' },
@@ -220,6 +236,10 @@ onUnmounted(() => {
 
 /* Nav */
 .nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.nav-group-label {
+  font-size: 11px; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 10px 12px 4px;
+}
 .nav-item {
   display: flex;
   align-items: center;
