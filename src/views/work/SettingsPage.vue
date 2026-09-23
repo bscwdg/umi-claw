@@ -117,8 +117,8 @@
       <p class="text-sm text-muted">只读预览：AI 处理时实际用到的资料组成，以及被裁剪/过滤的条目。</p>
     </section>
 
-    <div v-if="toast.toast.value" class="toast" :class="toast.toast.value.type">
-      {{ toast.toast.value.msg }}
+    <div v-if="toast" class="toast" :class="toast.type">
+      {{ toast.msg }}
     </div>
   </div>
 </template>

@@ -93,8 +93,8 @@
       </div>
     </div>
 
-    <div v-if="toast.toast.value" class="toast" :class="toast.toast.value.type">
-      {{ toast.toast.value.msg }}
+    <div v-if="toast" class="toast" :class="toast.type">
+      {{ toast.msg }}
     </div>
   </div>
 </template>

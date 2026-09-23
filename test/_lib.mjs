@@ -86,6 +86,27 @@ export function bundleEntry(entryRelPath, outName, options = {}) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 export { sleep }
 
+/**
+ * 轮询等待条件成立（替代固定 sleep）。
+ *
+ * 固定 sleep 在并发/负载下会偶发假失败：被测代码在 `await stream.result` **之后**
+ * 才落库，sleep 时长无法保证覆盖写入延迟。轮询到条件成立才继续。
+ * 返回最后一次 fn 的返回值（真值）；超时抛错（带 label 便于定位）。
+ */
+export async function waitFor(fn, { timeout = 5000, interval = 25, label = '条件' } = {}) {
+  const t0 = Date.now()
+  for (;;) {
+    try {
+      const v = await fn()
+      if (v) return v
+    } catch {
+      // 瞬时错误（如行尚未写入导致的读取异常）不应中断轮询
+    }
+    if (Date.now() - t0 >= timeout) throw new Error(`waitFor 超时（${timeout}ms）：${label}`)
+    await sleep(interval)
+  }
+}
+
 /** 结果记录器：每个 check 独立捕获异常，绝不因单点失败中断整轮 */
 export class Recorder {
   constructor(suite) {

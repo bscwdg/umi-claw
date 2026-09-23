@@ -24,6 +24,7 @@
     "accept:qatool": "node test/qatool.accept.mjs",
     "accept:knowledge": "node test/knowledge.accept.mjs",
     "accept:wizard": "node test/wizard.accept.mjs",
+    "accept:ui": "node test/ui.accept.mjs",
     "e2e:day": "node test/one-day.e2e.mjs",
     "smoke": "node test/packaged.smoke.mjs",
     "accept": "node scripts/run-all-accept.mjs"

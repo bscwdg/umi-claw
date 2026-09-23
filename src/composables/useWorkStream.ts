@@ -86,12 +86,13 @@ export function useWorkStream() {
 
   /** 绑定本次 runId（invoke 返回后立刻调；flush 已缓冲 chunk） */
   function bind(runIdValue: string): void {
+    // 先取出缓冲：reset() 会清空 pending，顺序反了则缓冲永远拿不到
+    const buffered = pending.get(runIdValue) ?? []
     reset()
     currentRunId = runIdValue
     runId.value = runIdValue
     running.value = true
-    const buffered = pending.get(runIdValue)
-    if (buffered?.length) text.value = buffered.join('')
+    if (buffered.length) text.value = buffered.join('')
     pending.delete(runIdValue)
   }
 

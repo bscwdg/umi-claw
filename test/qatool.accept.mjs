@@ -33,6 +33,7 @@ import {
   sleep,
   tmpDir,
   workerScriptPath,
+  waitFor,
   writeJson
 } from './_lib.mjs'
 
@@ -157,14 +158,22 @@ try {
     qaRunId = h.runId
     // system prompt 含 grounding（记录事实）
     await h.stream.result
-    await sleep(150)
+    // 等 assistant 行落库（qaManager 在 stream.result 之后才写，固定 sleep 会偶发假失败）
+    await waitFor(async () => {
+      const rows = await database.request('conversations.list', { where: { conversation_key: 'conv:work:qa' } })
+      return rows.filter((x) => x.role === 'assistant').length >= 1
+    }, { label: '第 1 次 ask 的 assistant 行' })
     // 两次 runId 不同
     const h2 = await qa.ask({ question: '再问一个' })
     assert(h2.runId !== qaRunId, 'runId 每次唯一')
     await h2.stream.result
-    await sleep(150)
     // user + assistant 对话行都落了
-    const rows = await database.request('conversations.list', { where: { conversation_key: 'conv:work:qa' } })
+    const rows = await waitFor(async () => {
+      const list = await database.request('conversations.list', { where: { conversation_key: 'conv:work:qa' } })
+      const u = list.filter((x) => x.role === 'user').length
+      const a = list.filter((x) => x.role === 'assistant').length
+      return u === 2 && a === 2 ? list : null
+    }, { label: '2 user + 2 assistant 行' })
     const users = rows.filter((x) => x.role === 'user')
     const assistants = rows.filter((x) => x.role === 'assistant')
     assertEq(users.length, 2, '2 user 行')
@@ -243,16 +252,21 @@ try {
     const beforeCand = (await records.list({ status: 'candidate' })).length
     const h = tools2.run({ toolId: 'minutes', text: '一大段会议原始转写文字，内容足够长' })
     await h.stream.result
-    await sleep(150)
 
-    // 结果进候选
+    // 结果进候选 + 待办提取（都在 finishRun 内：先 proposeCandidate，再逐条建待办）
+    // 等待条件必须与断言一致：等到「候选 1 条 **且** 待办 2 条」才算收尾完成，
+    // 只等候选会读到尚未建完的待办（实测 1 条）。
+    const extractedTodos = await waitFor(async () => {
+      const cands = await records.list({ status: 'candidate' })
+      const tds = await todos.list({ state: 'candidate' })
+      return cands.length === beforeCand + 1 && tds.length === 2 ? tds : null
+    }, { label: 'minutes 候选 1 条 + 待办 2 条' })
     const afterCand = (await records.list({ status: 'candidate' })).length
     assertEq(afterCand, beforeCand + 1, 'minutes 结果新增 1 候选')
     const cand = (await records.list({ status: 'candidate' })).find((c) => c.content.includes('会议纪要'))
     assert(cand, '候选是纪要内容')
 
     // 待办提取 2 条（source=extracted，state=candidate）
-    const extractedTodos = await todos.list({ state: 'candidate' })
     assertEq(extractedTodos.length, 2, `提取 2 条待办（实际 ${extractedTodos.length}）`)
     const t1 = extractedTodos.find((t) => t.title.includes('修改方案'))
     const t2 = extractedTodos.find((t) => t.title.includes('同步给'))
@@ -272,8 +286,10 @@ try {
     const before = (await records.list({ status: 'candidate' })).length
     const h = tools3.run({ toolId: 'email_draft', text: '邮件要点：汇报项目进展' })
     await h.stream.result
-    await sleep(150)
-    const after = (await records.list({ status: 'candidate' })).length
+    const after = await waitFor(async () => {
+      const n = (await records.list({ status: 'candidate' })).length
+      return n === before + 1 ? n : null
+    }, { label: 'email_draft 新增候选' })
     assertEq(after, before + 1, 'email_draft 新增候选')
     return 'email_draft 候选 ✓'
   })
