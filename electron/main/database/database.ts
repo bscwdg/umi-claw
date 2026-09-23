@@ -18,6 +18,20 @@ import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:f
 import { dirname, join } from 'node:path'
 import { AppError, ERROR_CODES, type ErrorCode } from './errors'
 import { TARGET_USER_VERSION, pendingSteps } from './migration'
+import { SCHEMA_TABLES } from './schema'
+
+/**
+ * 3.0 工作库文件名（与 2.0 的 `umi-claw.db` 区分开）。
+ *
+ * 为什么必须区分：2.0 与 3.0 曾用**同一目录同名文件**（`data/umi-claw.db`）
+ * 且**同一 `user_version=1`**。于是 3.0 启动时读到 2.0 的库：
+ * `from(1) < TARGET(1)` 为假 → 迁移整体跳过 → 3.0 的 8 张表一张没建，
+ * 一调 todos 就 `no such table: todos`。
+ *
+ * 改名是硬规则 17（绝不写旧库）的要求：往 2.0 的文件里补建 3.0 的表
+ * 同样属于「写旧库」，且会污染旧版本的数据目录。
+ */
+export const WORK_DB_FILENAME = 'work.db'
 
 export interface DatabaseClientOptions {
   /** SQLite 文件路径（约定 data/umi-claw.db） */
@@ -120,7 +134,8 @@ function isReadMethod(method: string): boolean {
 
 function statusFiles(dir: string): string[] {
   try {
-    return readdirSync(dir).filter((f) => /^umi-claw-.*\.db$/.test(f))
+    // 只认 3.0 自己的备份前缀，避免把 2.0 的备份当自己的滚动删除
+    return readdirSync(dir).filter((f) => /^work-.*\.db$/.test(f))
   } catch {
     return []
   }
@@ -317,6 +332,30 @@ export class DatabaseClient {
     }
   }
 
+  /**
+   * 校验库确实是 3.0 的形状（8 表齐全）。
+   *
+   * 防的是「版本号撞车」：库的 user_version 已等于 TARGET，但表结构是别的东西
+   * （实测 2.0 的库 user_version 也是 1）。此前这种情况下迁移被整体跳过，
+   * 直到某个业务查询才报 `no such table: todos`——错误点离病因很远，很难查。
+   * 这里在初始化阶段就把病因报出来。
+   */
+  private async assertSchemaShape(): Promise<void> {
+    const info = (await this.sendRaw('schema.info', {}, this.opts.requestTimeoutMs)) as {
+      tables?: string[]
+    }
+    if (!Array.isArray(info?.tables)) return
+    const tables = info.tables
+    const missing = SCHEMA_TABLES.filter((t) => !tables.includes(t))
+    if (!missing.length) return
+    throw new AppError(
+      ERROR_CODES.DB_ERROR,
+      `库结构与 3.0 不符，缺少表: ${missing.join(', ')}` +
+        `（疑似旧版本同名库；3.0 的库文件应为 ${WORK_DB_FILENAME}，旧库请交给向导的「沿用/另起」处理）`,
+      { missing, dbPath: this.opts.dbPath }
+    )
+  }
+
   /** 启动时把 user_version 推到 TARGET_USER_VERSION（DDL 来自 schema.ts） */
   private async runMigrations(): Promise<void> {
     const info = (await this.sendRaw('schema.info', {}, this.opts.requestTimeoutMs)) as {
@@ -370,6 +409,9 @@ export class DatabaseClient {
       // 已是最新：按需滚动快照（距上次 >24h），失败不阻断
       void this.maybeAutoBackup()
     }
+
+    // 无论走了哪条路径，都确认库是 3.0 的形状（防版本号撞车，见方法注释）
+    await this.assertSchemaShape()
   }
 
   private async maybeAutoBackup(): Promise<void> {
@@ -682,7 +724,7 @@ export class DatabaseClient {
   /** VACUUM INTO 在线一致性快照；保留最近 maxBackups 份，超出删最旧 */
   async backup(reason = 'manual'): Promise<BackupResult> {
     await this.ensureReady()
-    const target = join(this.opts.backupDir, `umi-claw-${backupStamp()}.db`)
+    const target = join(this.opts.backupDir, `work-${backupStamp()}.db`)
     const res = (await this.request(
       'maintenance.vacuumInto',
       { path: target },

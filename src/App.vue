@@ -203,6 +203,8 @@ onUnmounted(() => {
   padding: 16px 12px;
   gap: 16px;
   flex-shrink: 0;
+  /* 让内部 .nav 自己滚，状态胶囊与底部按钮固定可见 */
+  overflow: hidden;
 }
 .status-pill {
   display: flex;
@@ -239,7 +241,19 @@ onUnmounted(() => {
 }
 
 /* Nav */
-.nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+/* 导航项多于一屏时必须可滚动：父级 .app-body 是 overflow:hidden，
+   缺 overflow-y 会被直接裁掉（无滚动条）。min-height:0 是 flex 子项能收缩出
+   滚动区的前提（默认 min-height:auto 会撑破容器）。 */
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* 滚动条不挤压内容，避免导航文字在出现滚动条时换行 */
+  scrollbar-gutter: stable;
+}
 .nav-group-label {
   font-size: 11px; color: var(--text-muted); text-transform: uppercase;
   letter-spacing: 0.06em; padding: 10px 12px 4px;

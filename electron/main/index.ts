@@ -33,7 +33,7 @@ import {
 } from './gatewayClient'
 import { registerGatewayIpc, registerWorkIpc } from './ipc'
 import { AppError, ERROR_CODES } from './database/errors'
-import { DatabaseClient } from './database/database'
+import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
 import { createProfileManager, type ProfileManager } from './work/profileManager'
 import { createMatterManager, type MatterManager } from './work/matterManager'
@@ -292,7 +292,9 @@ function createWorkDatabase(): DatabaseClient {
     ? join(app.getAppPath(), 'resources')
     : join(process.resourcesPath, 'resources')
   return new DatabaseClient({
-    dbPath: join(dataDir, 'umi-claw.db'),
+    // 3.0 用自己的库文件：2.0 的 umi-claw.db 与之同目录同名且 user_version 也=1，
+    // 沿用会让迁移被跳过、3.0 的表建不出来（见 WORK_DB_FILENAME 注释）
+    dbPath: join(dataDir, WORK_DB_FILENAME),
     backupDir: join(dataDir, 'backup'),
     workerScriptPath: join(resRoot, 'database', 'db-worker.mjs'),
     nodePath: configManager.getNodePath(),
@@ -324,6 +326,11 @@ function locateLegacyDbs(currentDataDir: string): import('./work/wizardManager')
   const appDataDir = app.getPath('appData')
   candidates.push({ version: '1.0', dir: join(appDataDir, 'umi-claw', 'data') })
 
+  // 2.0：与 3.0 **同目录同名**（%APPDATA%/UmiClaw/data/umi-claw.db）。
+  // 3.0 已改用 work.db，所以同目录下的 umi-claw.db 就是 2.0 的库——
+  // 必须作为候选暴露给向导，否则用户旧数据永远不可见（硬规则 17）。
+  candidates.push({ version: '2.0', dir: currentDataDir })
+
   // 便携/同机共存：当前 dataDir 的同级或上级可能有旧版本（同目录隔离名不同）
   // 这里保守地只查 %APPDATA% 下的已知目录，避免任意扫描用户磁盘（最小出站面）
   for (const dirName of ['UmiClaw2', 'umi-claw-2']) {
@@ -331,8 +338,9 @@ function locateLegacyDbs(currentDataDir: string): import('./work/wizardManager')
   }
 
   for (const c of candidates) {
-    if (join(c.dir, 'umi-claw.db') === join(currentDataDir, 'umi-claw.db')) continue // 跳过当前库自身
     const dbPath = join(c.dir, 'umi-claw.db')
+    // 跳过当前库自身（3.0 现用 work.db，正常不会命中；防的是历史配置指回旧名）
+    if (dbPath === join(currentDataDir, 'work.db')) continue
     if (existsSync(dbPath)) {
       out.push({ version: c.version, dbPath, present: true })
     }

@@ -335,7 +335,7 @@ try {
       await main.backup(`manual-${i}`)
       await sleep(3)
     }
-    const files = readdirSync(backupDir).filter((f) => /^umi-claw-.*\.db$/.test(f)).sort()
+    const files = readdirSync(backupDir).filter((f) => /^work-.*\.db$/.test(f)).sort()
     assertEq(files.length, 5, `应只保留 5 份（实际 ${files.length}: ${files.join(',')}）`)
     assert(!files.includes(first.path.replace(/^.*[\\/]/, '')), '最旧的一份应被清理')
     // 快照里的数据是完整库
@@ -474,6 +474,103 @@ try {
     clients.delete(client)
     await client.dispose().catch(() => {})
     return `spawned=${spawned.length} 全部已回收；code=${outcome.code} unregistered=${unregistered}`
+  })
+
+  // ── C14 版本号撞车回归（2026-09-23 实测事故） ──
+  //
+  // 真实事故：2.0 的库与 3.0 同目录同名（data/umi-claw.db），且 user_version 也是 1。
+  // 迁移判断 `from(1) < TARGET(1)` 为假 → 迁移整体跳过 → 3.0 的 8 表一张没建，
+  // 直到某个业务查询才报 `no such table: todos`（错误点离病因很远）。
+  // 本用例锁住：初始化阶段就要把这种库识别出来并明确报错，绝不静默通过。
+  await r.check('C14', '版本号撞车：user_version 相同但表结构是外来库 → 初始化明确报错', async () => {
+    const foreignDir = join(altDir, 'foreign')
+    mkdirSync(foreignDir, { recursive: true })
+    const foreignDb = join(foreignDir, 'umi-claw.db')
+    // 复刻 2.0 的形状：user_version=1（与 3.0 相同）+ 营销域表，但没有 3.0 的 8 表
+    direct(foreignDb, (db) => {
+      db.exec('CREATE TABLE businesses (id INTEGER PRIMARY KEY, name TEXT)')
+      db.exec('CREATE TABLE projects (id INTEGER PRIMARY KEY, industry TEXT)')
+      db.exec('PRAGMA user_version = 1')
+    })
+
+    const client = new DatabaseClient({
+      dbPath: foreignDb,
+      backupDir: join(foreignDir, 'backup'),
+      workerScriptPath,
+      nodePath,
+      subprocessName: 'work-db-worker-foreign',
+      onSpawn: () => () => {}
+    })
+    clients.add(client)
+
+    const outcome = await client.dbStatus({ initialize: true }).then(
+      () => ({ ok: true }),
+      (e) => ({ ok: false, code: e.code, message: e.message })
+    )
+    assertEq(outcome.ok, false, '外来库不得静默通过初始化')
+    assertEq(outcome.code, 'DB_ERROR', '应报 DB_ERROR')
+    assert(String(outcome.message).includes('todos'), `错误应点名缺表（实际: ${outcome.message}）`)
+    // 关键：不得往旧库里补建 3.0 的表（硬规则 17 绝不写旧库）
+    const tables = direct(foreignDb, (db) =>
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((t) => t.name)
+    )
+    assert(!tables.includes('todos'), '不得向旧库写入 3.0 的表')
+    assert(!tables.includes('profile'), '不得向旧库写入 3.0 的表')
+
+    clients.delete(client)
+    await client.dispose().catch(() => {})
+    return `外来库被识别并拒绝；旧库未被写入（tables=${tables.join(',')}）`
+  })
+
+  // ── C15 真实场景正向：2.0 旧库同目录共存 → 3.0 用 work.db 正常建表 ──
+  //
+  // 复刻用户实际数据目录：里面有 2.0 的 umi-claw.db。index.ts 现在指向 work.db，
+  // 因此 3.0 应当在自己的新库里正常建出 8 表，且旧库分毫不动。
+  await r.check('C15', '2.0 旧库同目录共存：3.0 用 work.db 正常建表，旧库不动，todos 可查', async () => {
+    const coexistDir = join(altDir, 'coexist')
+    mkdirSync(coexistDir, { recursive: true })
+    const legacyDb = join(coexistDir, 'umi-claw.db') // 2.0 的库（同名）
+    const workDb = join(coexistDir, 'work.db') // 3.0 的库（新名）
+    direct(legacyDb, (db) => {
+      db.exec('CREATE TABLE businesses (id INTEGER PRIMARY KEY, name TEXT)')
+      db.exec("INSERT INTO businesses (name) VALUES ('拾光摄影')")
+      db.exec('PRAGMA user_version = 1')
+    })
+    const legacyBefore = statSync(legacyDb).size
+
+    const client = new DatabaseClient({
+      dbPath: workDb,
+      backupDir: join(coexistDir, 'backup'),
+      workerScriptPath,
+      nodePath,
+      subprocessName: 'work-db-worker-coexist',
+      onSpawn: () => () => {}
+    })
+    clients.add(client)
+
+    const st = await client.dbStatus({ initialize: true })
+    assertEq(st.ready, true, '应就绪')
+    assertEq(st.userVersion, 1, 'user_version=1')
+    assertEq(st.tables.length, 8, `应建出 8 表（实际 ${st.tables.length}: ${st.tables.join(',')}）`)
+    assert(st.tables.includes('todos'), '应含 todos')
+    assertEq(st.migrated, true, '本次应执行过迁移')
+    assert(existsSync(workDb), 'work.db 应已创建')
+
+    // 关键：曾报 `no such table: todos` 的那张表现在真能查
+    const rows = await client.request('todos.list', { where: {} })
+    assert(Array.isArray(rows), 'todos.list 应返回数组（不再 no such table）')
+    assertEq(rows.length, 0, '新库无待办')
+
+    // 旧库分毫未动
+    assertEq(statSync(legacyDb).size, legacyBefore, '旧库文件大小不得变化')
+    const legacyTables = direct(legacyDb, (db) =>
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((t) => t.name)
+    )
+    assert(!legacyTables.includes('todos'), '不得往旧库写 3.0 的表')
+
+    clients.delete(client)
+    await client.dispose().catch(() => {})
+    return `work.db 8 表就绪、todos 可查；旧库未动（tables=${legacyTables.join(',')}）`
   })
 } catch (e) {
   console.error('验收脚本自身异常:', e)
