@@ -26,7 +26,9 @@ const router = createRouter({
     { path: '/work/qa', component: () => import('../views/work/QaPage.vue') },
     { path: '/work/reports', component: () => import('../views/work/ReportsPage.vue') },
     { path: '/work/tools', component: () => import('../views/work/ToolsPage.vue') },
-    { path: '/work/knowledge', component: () => import('../views/work/KnowledgePage.vue') }
+    { path: '/work/knowledge', component: () => import('../views/work/KnowledgePage.vue') },
+    { path: '/work/context', component: () => import('../views/work/ContextPage.vue') },
+    { path: '/work/settings', component: () => import('../views/work/SettingsPage.vue') }
   ]
 })
 

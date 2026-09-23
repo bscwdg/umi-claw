@@ -140,6 +140,7 @@ export const WORK_WIZARD_CHANNELS = {
   readMapping: 'work:wizard:readMapping'
 } as const
 export const WORK_REMINDER_CHANNELS = {
+  isEnabled: 'work:reminder:isEnabled',
   setEnabled: 'work:reminder:setEnabled',
   check: 'work:reminder:check'
 } as const
@@ -371,6 +372,7 @@ export function registerWorkIpc(deps: WorkIpcDeps): void {
   handle(WORK_WIZARD_CHANNELS.readMapping, () => wrap(() => wizard.readMapping()))
 
   // ── reminder（Commit 09：两个固定通知开关 + 手动检查）──
+  handle(WORK_REMINDER_CHANNELS.isEnabled, (id: ReminderId) => wrap(() => reminder.isEnabled(id)))
   handle(WORK_REMINDER_CHANNELS.setEnabled, (id: ReminderId, enabled: boolean) =>
     wrap(() => reminder.setEnabled(id, enabled))
   )

@@ -306,6 +306,7 @@ const api = {
     },
 
     reminder: {
+      isEnabled: (id: 'morning' | 'report') => call('work:reminder:isEnabled', id),
       setEnabled: (id: 'morning' | 'report', enabled: boolean) =>
         call('work:reminder:setEnabled', id, enabled),
       check: () => call('work:reminder:check')
