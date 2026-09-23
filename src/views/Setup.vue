@@ -523,8 +523,18 @@ function openDataDir() {
   window.api.config.openDataDir();
 }
 
-function goToDashboard() {
-  router.push("/dashboard");
+async function goToDashboard() {
+  // §八：首启向导「Setup 后接续」——向导未完成先走向导，否则进控制台
+  try {
+    const s = await window.api.work.wizard.status()
+    if (!s.completed) {
+      router.push("/work/wizard")
+      return
+    }
+  } catch {
+    // 读取失败不阻断：按原流程进控制台（绝不阻塞启动）
+  }
+  router.push("/dashboard")
 }
 
 // ---- Node 运行时更新 ----
