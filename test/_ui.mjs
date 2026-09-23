@@ -99,11 +99,25 @@ export function writeStubs() {
       '    if (data && typeof data === "object" && "ok" in data) return data',
       '    return { ok: true, data }',
       '  },',
-      '  on() {}, off() {}, once() {}, removeListener() {}, removeAllListeners() {}',
+      '  // 订阅类通道也记下来（通道对齐验收要拿渲染端真实订阅的名字）',
+      '  on(channel) { (globalThis.__onChannels || (globalThis.__onChannels = [])).push(channel) },',
+      '  off() {}, once() {}, removeListener() {}, removeAllListeners() {}',
+      '}',
+      '// 主进程侧：注册/注销 handler 都记入 globalThis.__handlers（通道对齐验收用）',
+      'export const ipcMain = {',
+      '  handle(channel) {',
+      '    const m = globalThis.__handlers || (globalThis.__handlers = new Map())',
+      '    m.set(channel, true)',
+      '  },',
+      '  removeHandler(channel) {',
+      '    const m = globalThis.__handlers || (globalThis.__handlers = new Map())',
+      '    m.delete(channel)',
+      '  },',
+      '  on() {}, off() {}, once() {}',
       '}',
       'export const app = {}',
       'export const dialog = {}',
-      'export const BrowserWindow = {}'
+      'export const BrowserWindow = { getFocusedWindow: () => null }'
     ].join('\n')
   )
 
@@ -197,6 +211,83 @@ export async function importPreloadApi({ electronStub, toolkitStub }) {
   const api = globalThis.window.api
   if (!api) throw new Error('preload 未暴露 api（检查 contextIsolated 分支）')
   return api
+}
+
+/**
+ * 遍历 `api.work` 的叶子函数，实际调一次并收集它们发出的通道名。
+ *
+ * 为什么要真调：通道名写在闭包里的 `call('work:xxx')`，静态扫源码很脆；
+ * 真调一次就能拿到渲染端**实际会发的**通道（IPC 桩会把 invoke 记下来）。
+ * 订阅类（onChunk/onDone/onError）走 `ipcRenderer.on`，另用 `__onChannels` 收集。
+ */
+export async function collectRendererChannels(api) {
+  const invoked = new Set()
+  const subscribed = new Set()
+  const walk = async (node, depth) => {
+    if (!node || depth > 3) return
+    for (const [key, value] of Object.entries(node)) {
+      if (typeof value === 'function') {
+        const before = (globalThis.__invokes || []).length
+        const beforeOn = (globalThis.__onChannels || []).length
+        try {
+          await value('__probe__', '__probe__')
+        } catch {
+          // 参数不合法等异常不重要：call() 已在抛错前记录了通道
+        }
+        const inv = globalThis.__invokes || []
+        for (let i = before; i < inv.length; i++) invoked.add(inv[i].channel)
+        const ons = globalThis.__onChannels || []
+        for (let i = beforeOn; i < ons.length; i++) subscribed.add(ons[i])
+      } else if (value && typeof value === 'object') {
+        await walk(value, depth + 1)
+      }
+    }
+  }
+  await walk(api.work, 0)
+  return { invoked: [...invoked], subscribed: [...subscribed] }
+}
+
+/**
+ * 打包真实 work 域 IPC 注册器（ipc/work.ts + ipc/gateway.ts），
+ * 调用后返回**主进程真实注册的通道集合**。
+ *
+ * 这是「通道对齐」验收的基础：mock IPC 能测「页面调了 A」，但测不出
+ * 「主进程根本没注册 A」——那是运行时才炸的 bug（Invoke 无 handler）。
+ * 这里用真源码注册、真桩件收集，两边对齐才算通过。
+ *
+ * 两个模块都要装：work 域 IPC 面横跨 work.ts（业务）与 gateway.ts（只读就绪面）。
+ */
+export async function loadWorkIpcChannels({ electronStub }) {
+  const stub = {}
+  // work.ts：业务通道（只包闭包、不立即调 Manager，空对象即可）
+  const workBundle = esbuildBundle(
+    join(repoRoot, 'electron', 'main', 'ipc', 'work.ts'),
+    'ui-work-ipc.bundle.mjs',
+    { externals: ['vue'], alias: [`electron=${posix(electronStub)}`] }
+  )
+  const workMod = await import(pathToFileURL(workBundle).href)
+  if (typeof workMod.registerWorkIpc !== 'function') {
+    throw new Error('ipc/work.ts 未导出 registerWorkIpc')
+  }
+  workMod.registerWorkIpc({
+    profile: stub, matters: stub, todos: stub, records: stub, context: stub,
+    today: stub, router: stub, reports: stub, qa: stub, tools: stub,
+    knowledge: stub, wizard: stub, reminder: stub
+  })
+
+  // gateway.ts：只读就绪面（gateway 桩只需方法存在）
+  const gwBundle = esbuildBundle(
+    join(repoRoot, 'electron', 'main', 'ipc', 'gateway.ts'),
+    'ui-gateway-ipc.bundle.mjs',
+    { externals: ['vue'], alias: [`electron=${posix(electronStub)}`] }
+  )
+  const gwMod = await import(pathToFileURL(gwBundle).href)
+  if (typeof gwMod.registerGatewayIpc === 'function') {
+    gwMod.registerGatewayIpc({ getStatus: async () => ({}), ensureReady: async () => ({}) })
+  }
+
+  const registered = globalThis.__handlers ? [...globalThis.__handlers.keys()] : []
+  return { registered, mod: workMod }
 }
 
 // ── 轻量宿主渲染器（Node 侧真挂载，无 DOM 依赖） ──────────────────────────────

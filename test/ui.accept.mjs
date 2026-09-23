@@ -22,7 +22,8 @@
 import { pathToFileURL } from 'node:url'
 import { Recorder, assert, assertEq, printResult, writeJson, __dirname, repoRoot } from './_lib.mjs'
 import {
-  writeStubs, compileVuePage, importPreloadApi, mountPage, esbuildBundle
+  writeStubs, compileVuePage, importPreloadApi, mountPage, esbuildBundle,
+  collectRendererChannels, loadWorkIpcChannels
 } from './_ui.mjs'
 
 const r = new Recorder('UI · work 域页面组件级验收')
@@ -286,6 +287,41 @@ try {
     assertEq(s.running.value, false, 'done 后 running=false')
     assertEq(s.aborted.value, false, '未中止')
     return '流式归并 ✓'
+  })
+
+  // ── U11 通道对齐（mock IPC 测不出的 bug 类型） ──
+  //
+  // 渲染端调的通道名 vs 主进程真注册的通道名。两者不一致时，mock 验收全绿、
+  // typecheck/build 也全绿，但真机一调就报「No handler registered」——
+  // 本用例把两边真实集合拉出来对齐。
+  await r.check('U11', '通道对齐：渲染端发的通道全部有主进程 handler（反向无孤儿）', async () => {
+    // 渲染端：真 preload 桥，逐个叶子函数真调一次，收集实际发出的通道
+    globalThis.__invokes = []
+    globalThis.__onChannels = []
+    setIpc({})
+    const { invoked, subscribed } = await collectRendererChannels(api)
+
+    // 主进程：真 ipc/work.ts 注册，收集真实 handler 集合
+    globalThis.__handlers = new Map()
+    const { registered } = await loadWorkIpcChannels({ electronStub: stubs.electronStub })
+
+    assert(invoked.length >= 55, `渲染端应发出 55+ 通道（实际 ${invoked.length}）`)
+    assert(registered.length >= 55, `主进程应注册 55+ handler（实际 ${registered.length}）`)
+
+    // 正向：渲染端会发的，主进程必须都有 handler
+    const missing = invoked.filter((ch) => !registered.includes(ch))
+    assertEq(missing.length, 0, `渲染端发但主进程未注册: ${missing.join(', ')}`)
+
+    // 订阅通道：主进程推送的必须与渲染端订阅的一致
+    for (const ch of ['work:stream:chunk', 'work:stream:done', 'work:stream:error']) {
+      assert(subscribed.includes(ch), `渲染端应订阅 ${ch}（实际订阅: ${subscribed.join(',')}）`)
+    }
+
+    // 反向：主进程注册的 handler，渲染端应都能触达（防「注册了但没人用」的孤儿通道）
+    const orphan = registered.filter((ch) => !invoked.includes(ch))
+    assertEq(orphan.length, 0, `主进程注册但渲染端无法触达（孤儿）: ${orphan.join(', ')}`)
+
+    return `渲染端 ${invoked.length} 通道 = 主进程 ${registered.length} handler，全对齐 ✓`
   })
 } catch (e) {
   console.error('UI 验收脚本自身异常:', e)
