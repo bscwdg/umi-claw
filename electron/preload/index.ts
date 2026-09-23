@@ -1,7 +1,28 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { TerminalRuntime } from '../../src/types/terminal'
+
 console.log('✅ preload loaded')
+
+// ── work 域信封解包：IPC 返回 {ok,data} / {ok,error} ────────────────────────
+// 失败抛带 code/details 的错误，渲染端按 err.code 分支（不读 message）。
+class WorkError extends Error {
+  code: string
+  details?: unknown
+  constructor(code: string, message: string, details?: unknown) {
+    super(message)
+    this.name = 'WorkError'
+    this.code = code
+    this.details = details
+  }
+}
+
+async function call<T = unknown>(channel: string, ...args: unknown[]): Promise<T> {
+  const res = await ipcRenderer.invoke(channel, ...args)
+  if (res && res.ok) return res.data as T
+  throw new WorkError(res?.error?.code ?? 'UNKNOWN', res?.error?.message ?? `IPC ${channel} 失败`, res?.error?.details)
+}
+
 // 完整类型化的 API
 const api = {
   // 窗口控制
@@ -9,16 +30,13 @@ const api = {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),
     close: () => ipcRenderer.invoke('window:close'),
-    // 关闭确认：接收主进程发来的关闭请求
     onCloseRequest: (cb: () => void) => {
       const handler = () => cb()
       ipcRenderer.on('window:close-request', handler)
       return () => ipcRenderer.off('window:close-request', handler)
     },
-    // 关闭确认：回传用户选择（tray=最小化到托盘，exit=退出）
     resolveClose: (action: 'tray' | 'exit', remember?: boolean) =>
       ipcRenderer.invoke('window:close-resolve', { action, remember }),
-    // 关闭确认：用户取消
     cancelClose: () => ipcRenderer.invoke('window:close-cancel')
   },
 
@@ -29,7 +47,6 @@ const api = {
     restart: () => ipcRenderer.invoke('claw:restart'),
     status: () => ipcRenderer.invoke('claw:status'),
     openWeb: () => ipcRenderer.invoke('claw:openWeb'),
-    // 事件监听
     onLog: (cb: (data: { line: string; type: string; time: number }) => void) => {
       const handler = (_: unknown, data: any) => cb(data)
       ipcRenderer.on('claw:log', handler)
@@ -40,8 +57,7 @@ const api = {
       ipcRenderer.on('claw:statusChange', handler)
       return () => ipcRenderer.off('claw:statusChange', handler)
     },
-    // 获取token
-    getToken: () => ipcRenderer.invoke('claw:get-token'),
+    getToken: () => ipcRenderer.invoke('claw:get-token')
   },
 
   // 配置
@@ -86,11 +102,12 @@ const api = {
     install: (id: string) => ipcRenderer.invoke('skills:install', id),
     uninstall: (id: string) => ipcRenderer.invoke('skills:uninstall', id),
     getInstalledSkills: () => ipcRenderer.invoke('skills:getInstalledSkills'),
-    toggleSkillStatus: (id: string, enabled: boolean) => ipcRenderer.invoke('skills:toggleSkillStatus', id, enabled),
+    toggleSkillStatus: (id: string, enabled: boolean) =>
+      ipcRenderer.invoke('skills:toggleSkillStatus', id, enabled),
     importSkillZip: () => ipcRenderer.invoke('skills:importSkillZip'),
     syncFromRemote: () => ipcRenderer.invoke('skills:syncFromRemote'),
     applyUpdates: (ids: string[]) => ipcRenderer.invoke('skills:applyUpdates', ids),
-    getPendingUpdates: () => ipcRenderer.invoke('skills:getPendingUpdates'),
+    getPendingUpdates: () => ipcRenderer.invoke('skills:getPendingUpdates')
   },
 
   // 工具
@@ -106,6 +123,7 @@ const api = {
   dialog: {
     showMessage: (options: any) => ipcRenderer.invoke('dialog:showMessage', options)
   },
+
   // 渠道
   channels: {
     isPluginInstalled: (pluginId: string) =>
@@ -113,6 +131,7 @@ const api = {
     installPlugin: (pluginPkg: string) =>
       ipcRenderer.invoke('channels:installPlugin', pluginPkg)
   },
+
   // 终端
   terminal: {
     runCommand: (args: string[], runtime?: TerminalRuntime) =>
@@ -120,12 +139,11 @@ const api = {
     startPty: (args: string[], cols: number, rows: number, runtime?: TerminalRuntime) =>
       ipcRenderer.invoke('term:pty-start', args, cols, rows, runtime),
     inputPty: (sid: string, data: string) => ipcRenderer.invoke('term:pty-input', sid, data),
-    resizePty: (sid: string, cols: number, rows: number) => ipcRenderer.invoke('term:pty-resize', sid, cols, rows),
+    resizePty: (sid: string, cols: number, rows: number) =>
+      ipcRenderer.invoke('term:pty-resize', sid, cols, rows),
     stopPty: (sid: string) => ipcRenderer.invoke('term:pty-stop', sid),
-    // 监听主进程推过来的终端流数据
     onPtyChunk: (callback: any) => ipcRenderer.on('term:pty-chunk', (_, data) => callback(data)),
     onPtyExit: (callback: any) => ipcRenderer.on('term:pty-exit', (_, data) => callback(data)),
-    // 组件卸载时移除监听，防止内存泄漏
     removeListeners: () => {
       ipcRenderer.removeAllListeners('term:pty-chunk')
       ipcRenderer.removeAllListeners('term:pty-exit')
@@ -151,17 +169,150 @@ const api = {
     }
   },
 
-  // ── work 域（3.0，PLAN-3.0.md §14）─────────────────────────────────────────
-  // 硬规则 3：渲染端永不持有 GATEWAY_TOKEN、永不直连网关；一律 IPC → Manager → Gateway Client。
-  // 流式增量统一走 work:stream:{chunk,done,error}，按 runId 归并（§14.1 B2）。
+  // ── work 域（3.0，PLAN-3.0.md §14）────────────────────────────────────────
+  // 硬规则 3：渲染端不持有 GATEWAY_TOKEN、不直连网关；一律 IPC → Manager → Gateway。
   work: {
-    // Commit 01：只读就绪面 + 幂等拉起（零 token：只发 GET /health + GET /v1/models）
+    // 流式增量：统一 work:stream:{chunk,done,error}，按 runId 归并（B2）。
+    // 渲染端用 composable 订阅并过滤自己的 runId。
+    stream: {
+      onChunk: (cb: (e: { runId: string; index: number; delta: string }) => void) => {
+        const h = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('work:stream:chunk', h)
+        return () => ipcRenderer.off('work:stream:chunk', h)
+      },
+      onDone: (
+        cb: (e: { runId: string; chunks: number; text: string | null; aborted: boolean }) => void
+      ) => {
+        const h = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('work:stream:done', h)
+        return () => ipcRenderer.off('work:stream:done', h)
+      },
+      onError: (cb: (e: { runId: string; error: any }) => void) => {
+        const h = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('work:stream:error', h)
+        return () => ipcRenderer.off('work:stream:error', h)
+      },
+      removeAll: () => {
+        ipcRenderer.removeAllListeners('work:stream:chunk')
+        ipcRenderer.removeAllListeners('work:stream:done')
+        ipcRenderer.removeAllListeners('work:stream:error')
+      }
+    },
+
     gateway: {
-      status: () => ipcRenderer.invoke('work:gateway:status'),
-      ensureReady: () => ipcRenderer.invoke('work:gateway:ensureReady')
+      status: () => call('work:gateway:status'),
+      ensureReady: () => call('work:gateway:ensureReady')
+    },
+
+    profile: {
+      get: () => call('work:profile:get'),
+      update: (input) => call('work:profile:update', input)
+    },
+
+    matters: {
+      list: (params?) => call('work:matters:list', params ?? {}),
+      create: (input) => call('work:matters:create', input),
+      update: (id: string, patch) => call('work:matters:update', id, patch),
+      delete: (id: string) => call('work:matters:delete', id),
+      suggestMatter: (recordText: string) => call('work:matters:suggestMatter', recordText)
+    },
+
+    todos: {
+      list: (params?) => call('work:todos:list', params ?? {}),
+      create: (input) => call('work:todos:create', input),
+      update: (id: string, patch) => call('work:todos:update', id, patch),
+      delete: (id: string) => call('work:todos:delete', id),
+      complete: (id: string) => call('work:todos:complete', id),
+      uncomplete: (id: string) => call('work:todos:uncomplete', id),
+      confirm: (id: string) => call('work:todos:confirm', id),
+      ignore: (id: string) => call('work:todos:ignore', id),
+      confirmBatch: (ids: string[]) => call('work:todos:confirmBatch', ids),
+      ignoreBatch: (ids: string[]) => call('work:todos:ignoreBatch', ids)
+    },
+
+    records: {
+      list: (params?) => call('work:records:list', params ?? {}),
+      get: (id: string) => call('work:records:get', id),
+      create: (input) => call('work:records:create', input),
+      update: (id: string, patch) => call('work:records:update', id, patch),
+      delete: (id: string) => call('work:records:delete', id),
+      confirm: (id: string, patch?) => call('work:records:confirm', id, patch ?? {}),
+      ignore: (id: string) => call('work:records:ignore', id),
+      restore: (id: string) => call('work:records:restore', id),
+      confirmBatch: (ids: string[]) => call('work:records:confirmBatch', ids),
+      ignoreBatch: (ids: string[]) => call('work:records:ignoreBatch', ids),
+      listFiltered: (params?) => call('work:records:listFiltered', params ?? {}),
+      proposeCandidate: (input) => call('work:records:proposeCandidate', input)
+    },
+
+    context: {
+      snapshot: (request: { scope: string; id?: string }) =>
+        call('work:context:snapshot', request)
+    },
+
+    today: {
+      get: (date?: string) => call('work:today:get', date)
+    },
+
+    router: {
+      route: (input: string) => call('work:router:route', input)
+    },
+
+    reports: {
+      list: (params?) => call('work:reports:list', params ?? {}),
+      get: (id: string) => call('work:reports:get', id),
+      aggregate: (params: { type: 'daily' | 'weekly'; period?: string }) =>
+        call('work:reports:aggregate', params),
+      generate: (params: { type: 'daily' | 'weekly'; period?: string }) =>
+        call('work:reports:generate', params),
+      abortGenerate: (runId: string) => call('work:reports:abortGenerate', runId),
+      saveDraft: (id: string, content: string) => call('work:reports:saveDraft', id, content),
+      confirm: (id: string) => call('work:reports:confirm', id),
+      regenerate: (id: string) => call('work:reports:regenerate', id),
+      versions: (id: string) => call('work:reports:versions', id)
+    },
+
+    qa: {
+      ask: (params: { question: string; conversationKey?: string }) =>
+        call('work:qa:ask', params),
+      abortAsk: (runId: string) => call('work:qa:abortAsk', runId)
+    },
+
+    tools: {
+      list: () => call('work:tools:list'),
+      run: (params: { toolId: string; text: string; conversationKey?: string; instruction?: string }) =>
+        call('work:tools:run', params),
+      abortRun: (runId: string) => call('work:tools:abortRun', runId)
+    },
+
+    knowledge: {
+      list: (params?: { status?: string; limit?: number }) =>
+        call('work:knowledge:list', params ?? {}),
+      get: (id: string) => call('work:knowledge:get', id),
+      create: (input) => call('work:knowledge:create', input),
+      update: (id: string, patch) => call('work:knowledge:update', id, patch),
+      delete: (id: string) => call('work:knowledge:delete', id),
+      search: (query: string, limit?: number) => call('work:knowledge:search', query, limit),
+      import: (input) => call('work:knowledge:import', input)
+    },
+
+    wizard: {
+      status: () => call('work:wizard:status'),
+      grantConsent: () => call('work:wizard:grantConsent'),
+      complete: () => call('work:wizard:complete'),
+      decide: (decision: string) => call('work:wizard:decide', decision),
+      readMapping: () => call('work:wizard:readMapping')
+    },
+
+    reminder: {
+      setEnabled: (id: 'morning' | 'report', enabled: boolean) =>
+        call('work:reminder:setEnabled', id, enabled),
+      check: () => call('work:reminder:check')
     }
   }
 }
+
+export type Api = typeof api
 
 if (process.contextIsolated) {
   try {
@@ -171,10 +322,8 @@ if (process.contextIsolated) {
     console.error(error)
   }
 } else {
-  // @ts-ignore
+  // @ts-ignore non-contextIsolation fallback
   window.electron = electronAPI
   // @ts-ignore
   window.api = api
 }
-
-export type Api = typeof api
