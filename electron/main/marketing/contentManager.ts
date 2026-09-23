@@ -28,12 +28,27 @@
 //
 // §五 扩面（09 新增，汇报注明）：`content:` 的枚举里补 `delete` 与 `generate:abort`
 // （先例：05a import/pickFile、05b recognize/abort/commitRecognized）。
+//
+// 二阶段（content_type 扩面）：`post` 维持三路角度；`shooting_script` = 单路 SSE 流 + 严格 JSON
+// 契约（temp 0.4）——版本行存原始 JSON、正文由「采用」写回渲染文本；解析失败不落版本行、
+// 原始流文本保留可复制。content_type 创建后不可改；businessLine（摄影/服饰）只进 prompt 快照。
 
 import { randomUUID } from 'node:crypto'
 import { AppError, ERROR_CODES } from '../database/errors'
 import type { DatabaseClient } from '../database/database'
 import { PLATFORMS, renderContextPackText, type ContextEngine, type ContextPack, type Platform } from './contextEngine'
 import { renderPackRuleSection } from './platformRules'
+import {
+  parseShootingScript,
+  serializeShootingScript,
+  renderScriptText,
+  shootingScriptContractText,
+  businessLineText,
+  normalizeContentType,
+  normalizeBusinessLine,
+  type ContentType,
+  type BusinessLine
+} from './shootingScript'
 import {
   textPart,
   type GatewayClient,
@@ -72,8 +87,8 @@ export const DEFAULT_LIST_LIMIT = 500
 /** 一次生成固定 3 个角度（§七 v1.12「3 个版本供选」；改数量要连 UI 文案一起动，故不设参数） */
 export const CONTENT_GENERATION_VERSIONS = 3 as const
 export interface GenerationAngle {
-  /** 稳定标识（preload/accept 断言用） */
-  key: 'direct' | 'story' | 'objection'
+  /** 稳定标识（preload/accept 断言用）；shooting_script 是脚本单槽的伪角度键 */
+  key: 'direct' | 'story' | 'objection' | 'shooting_script'
   label: string
   /** 写给模型的指令（进 user 消息，也进 prompt 快照） */
   instruction: string
@@ -100,6 +115,13 @@ export const CONTENT_GENERATION_ANGLES: GenerationAngle[] = [
   }
 ]
 
+/** shooting_script 的槽位伪角度（面板 v-for 通用：angles 数组只放 1 个元素） */
+export const SCRIPT_ANGLE: GenerationAngle = {
+  key: 'shooting_script',
+  label: '分镜脚本',
+  instruction: '单路严格 JSON 契约产物。'
+}
+
 /** 内容生成护栏（§一「不硬编」+ 硬规则 10；与 08 同源但面向「成稿」） */
 export const CONTENT_GUARDRAILS = [
   '你是这位老板的文案撰稿人。任务：为指定平台写一篇可直接使用的营销内容。',
@@ -112,12 +134,27 @@ export const CONTENT_GUARDRAILS = [
   '4) 只输出文案成品本身，不要解释、不要代码块围栏、不要多个版本混排。'
 ].join('\n')
 
+/** 分镜脚本护栏（shooting_script 专用；单路 JSON 契约，产出的是脚本文案不是视频） */
+export const SHOOTING_SCRIPT_GUARDRAILS = [
+  '你是这位老板的短视频分镜导演。任务：产出一份可直接照着拍的分镜脚本（JSON 格式）。',
+  '',
+  '硬性规则：',
+  '1) 价格、套餐、优惠、承诺、卖点、案例——只能引用下面商家资料里出现过的信息；资料里没有的不编，',
+  '   宁可给「到店咨询」这类诚实表述。',
+  '2) 不虚构客户、效果、资质；你产出的是**脚本文案**（画面建议 + 口播稿），不是视频本身，',
+  '   也不代表账号做任何发布动作；发布由老板人工完成。',
+  '3) 严格按约定的 JSON 契约输出：只输出一个 JSON 对象，不要 markdown 围栏、不要解释、不要多个对象。',
+  '4) 分镜数量与时长守契约上限（shots ≤ 30、durationSec 1-300 秒）；口播短句口语化，念着不绕口。'
+].join('\n')
+
 // ── 类型 ──────────────────────────────────────────────────────────────────────
 
 /** `contents` 表一行 */
 export interface ContentRow {
   id: string
   project_id: string
+  /** 产物类型：post=图文文案（默认，三路角度）/ shooting_script=分镜脚本（单路 JSON）；创建后不可改 */
+  content_type: string
   title: string | null
   platform: string | null
   topic: string | null
@@ -141,6 +178,11 @@ export interface ContentVersionRow {
   created_at: number
 }
 
+/** 版本展示行：shooting_script 的 AI 版本行带 best-effort 重渲染文本（由版本 JSON 派生） */
+export type ContentVersionView = ContentVersionRow & {
+  rendered_content?: string | null
+}
+
 /** 检索/列表命中（UI 展示列） */
 export interface ContentListOptions {
   status?: string | null
@@ -149,6 +191,8 @@ export interface ContentListOptions {
 }
 
 export interface CreateContentInput {
+  /** 产物类型（空/缺省=post）；创建后不可改 */
+  contentType?: string
   title?: string | null
   platform?: string | null
   topic?: string | null
@@ -181,6 +225,10 @@ export interface SaveVersionInput {
 export interface GenerateContentSpec {
   /** 为既有草稿再生成（不给 = 自动新建一条 draft） */
   contentId?: string | null
+  /** 产物类型：post（三路角度，默认）/ shooting_script（单路 JSON 契约） */
+  contentType?: string
+  /** 业务线预设（photography/fashion/空=通用）；不落 schema，进 prompt 快照 */
+  businessLine?: string | null
   /** 发布平台（必填：内容总得是给某个平台的） */
   platform: string
   /** 选题/主题（老板输入或热点 payload 带入） */
@@ -206,6 +254,10 @@ export interface GenerationStreamInfo {
 export interface ContentGenerationRun {
   genTaskId: string
   projectId: string
+  /** 产物类型：post=三路共写一条草稿；shooting_script=单路一条 */
+  contentType: ContentType
+  /** 业务线预设（shooting_script 用；不落 schema） */
+  businessLine: BusinessLine | null
   /** 三路共写这一条草稿 */
   contentId: string
   platform: Platform
@@ -302,10 +354,12 @@ export class ContentManager {
     await assertProjectExists(this.database, pid)
     const platform = optionalPlatform(input?.platform)
     const sourceTopicId = await assertSourceTopic(this.database, input?.sourceTopicId)
+    const contentType = normalizeContentType(input?.contentType)
     const now = Date.now()
     const row: ContentRow = {
       id: randomUUID(),
       project_id: pid,
+      content_type: contentType,
       title: normalizeTitle(input?.title),
       platform,
       topic: normalizeTopic(input?.topic),
@@ -319,7 +373,7 @@ export class ContentManager {
     }
     const res = await this.database.request<{ row: ContentRow }>('contents.create', { data: row })
     const saved = res?.row ?? (await this.getContent(pid, row.id))
-    this.log(`[content] 新建草稿 ${saved.id}（project=${pid} platform=${platform ?? '-'} topic=${String(saved.topic ?? '').slice(0, 30)}）`)
+    this.log(`[content] 新建草稿 ${saved.id}（project=${pid} type=${saved.content_type} platform=${platform ?? '-'} topic=${String(saved.topic ?? '').slice(0, 30)}）`)
     return saved
   }
 
@@ -335,6 +389,7 @@ export class ContentManager {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, 'updateContent 需要一个 patch 对象', { field: 'patch' })
     }
+    // content_type 与 source_topic_id 同为创建时身份：白名单不含 → 不可改（09 的 source_topic_id 先例）
     const allowed = ['title', 'platform', 'topic', 'content', 'status', 'published_at', 'effect_note']
     const unknown = Object.keys(patch).filter((k) => !allowed.includes(k))
     if (unknown.length) {
@@ -395,7 +450,7 @@ export class ContentManager {
   // ── 版本 ───────────────────────────────────────────────────────────────────
 
   /** 该内容的版本清单（version 升序；UI 历史面板直接渲染） */
-  async listVersions(projectId: string, id: string): Promise<ContentVersionRow[]> {
+  async listVersions(projectId: string, id: string): Promise<ContentVersionView[]> {
     const pid = requireId(projectId, 'listVersions')
     const content = await this.getContent(pid, id)
     const rows = await this.database.request<ContentVersionRow[]>('content_versions.list', {
@@ -404,7 +459,10 @@ export class ContentManager {
       limit: 5000
     })
     const list = Array.isArray(rows) ? rows : []
-    return list.slice().sort((a, b) => a.version - b.version)
+    return list
+      .slice()
+      .sort((a, b) => a.version - b.version)
+      .map((row) => attachRenderedContent(row, content.content_type))
   }
 
   /**
@@ -442,6 +500,12 @@ export class ContentManager {
     const pid = requireId(projectId, 'generate')
     const platform = requirePlatform(spec?.platform)
     const topic = normalizeTopic(spec?.topic)
+    // 显式传了才认（非法值不静默归一）；没传时留 null，给下面「按草稿行上类型兜底」留口子
+    const rawType = spec?.contentType
+    const declaredType =
+      rawType === undefined || rawType === null || rawType === '' ? null : normalizeContentType(rawType)
+    let contentType: ContentType = declaredType ?? 'post'
+    const businessLine = normalizeBusinessLine(spec?.businessLine)
     await assertProjectExists(this.database, pid)
 
     // 草稿先行：三路共写一条，生成前就有 contentId（中止时老板至少能看到「生成到一半的草稿」载体）
@@ -449,8 +513,21 @@ export class ContentManager {
     if (contentId) {
       const existing = await this.getContent(pid, contentId)
       contentId = existing.id
+      // 行上的 content_type 是**读取侧的唯一真相**（listVersions 按它决定要不要 parseShootingScript），
+      // 生成侧必须与它一致：显式传了别的类型 → 报错，而不是把图文版本写进脚本草稿（反之亦然）。
+      // 两个真相来源一旦漂移，版本行里的 JSON/纯文本就永远拿不到 rendered_content。
+      const rowType = normalizeContentType(existing.content_type)
+      if (declaredType && declaredType !== rowType) {
+        throw new AppError(
+          ERROR_CODES.VALIDATION_ERROR,
+          `产物类型与草稿不一致：草稿是 ${rowType}，本次请求是 ${declaredType}`,
+          { field: 'contentType', contentId, expected: rowType, actual: declaredType }
+        )
+      }
+      contentType = rowType
     } else {
       const created = await this.createContent(pid, {
+        contentType,
         title: spec?.title ?? null,
         platform,
         topic,
@@ -462,11 +539,11 @@ export class ContentManager {
     // Context Pack（06）：task 固定 + query 用选题（超预算 LIKE 裁剪，§六）
     const pack = await this.contextEngine.buildContextPack(pid, {
       platform,
-      task: 'content-draft',
+      task: contentType === 'shooting_script' ? 'shooting-script' : 'content-draft',
       customer: normalizeOptionalText(spec?.customer, 1_000, 'customer'),
       query: normalizeOptionalText(spec?.query ?? topic, 200, 'query')
     })
-    const promptSnapshot = buildPromptSnapshot(pack, platform, topic)
+    const promptSnapshot = buildPromptSnapshot(pack, platform, topic, { contentType, businessLine })
 
     const genTaskId = `content-${++genTaskSeq}-${Date.now().toString(36)}`
     const controller = new AbortController()
@@ -494,22 +571,39 @@ export class ContentManager {
     this.activeGenerations.set(genTaskId, { cancel, projectId: pid })
 
     try {
-      for (let i = 0; i < CONTENT_GENERATION_ANGLES.length; i++) {
-        const angle = CONTENT_GENERATION_ANGLES[i]
+      if (contentType === 'shooting_script') {
+        // 单路 SSE 流 + 严格 JSON 契约（结构化产物不走三角度；temp 0.4 收稳输出）
         const raw = this.gateway.createChatStream({
           projectId: pid,
-          // 每角度独立会话键：三路并行不共用 sticky user（并发写会互相穿插），
-          // 也不进商家 Advisor 的历史（05b 同口径）
-          conversationKey: `content-${genTaskId}-a${i}`,
-          messages: buildGenerationMessages(pack, platform, topic, angle, promptSnapshot),
-          temperature: 0.8, // 创作允许发挥；护栏在 system 里兜底（08 的 0 是给「忠实转录/回答」的）
+          // 唯一会话键：单路同样不进商家 sticky 历史，也不与其它任务并发穿插
+          conversationKey: `content-${genTaskId}-script`,
+          messages: buildShootingScriptMessages(pack, platform, topic, businessLine),
+          temperature: 0.4,
           signal: controller.signal
         })
         handles.push(raw)
         streams.push(wrapHandleSaveVersion(raw, {
           isCancelled: () => cancelled || controller.signal.aborted,
-          persist: (text) => this.persistAiVersion(contentId, text, angle, promptSnapshot)
+          persist: (text) => this.persistShootingScriptVersion(contentId, text, promptSnapshot)
         }))
+      } else {
+        for (let i = 0; i < CONTENT_GENERATION_ANGLES.length; i++) {
+          const angle = CONTENT_GENERATION_ANGLES[i]
+          const raw = this.gateway.createChatStream({
+            projectId: pid,
+            // 每角度独立会话键：三路并行不共用 sticky user（并发写会互相穿插），
+            // 也不进商家 Advisor 的历史（05b 同口径）
+            conversationKey: `content-${genTaskId}-a${i}`,
+            messages: buildGenerationMessages(pack, platform, topic, angle, promptSnapshot),
+            temperature: 0.8, // 创作允许发挥；护栏在 system 里兜底（08 的 0 是给「忠实转录/回答」的）
+            signal: controller.signal
+          })
+          handles.push(raw)
+          streams.push(wrapHandleSaveVersion(raw, {
+            isCancelled: () => cancelled || controller.signal.aborted,
+            persist: (text) => this.persistAiVersion(contentId, text, angle, promptSnapshot)
+          }))
+        }
       }
     } catch (e) {
       this.activeGenerations.delete(genTaskId)
@@ -517,25 +611,31 @@ export class ContentManager {
       throw e
     }
 
+    const runAngles: GenerationStreamInfo[] =
+      contentType === 'shooting_script'
+        ? [{ streamId: `${genTaskId}-script`, angle: SCRIPT_ANGLE }]
+        : CONTENT_GENERATION_ANGLES.map((angle) => ({
+            streamId: `${genTaskId}-${angle.key}`,
+            angle
+          }))
     const run: ContentGenerationRun = {
       genTaskId,
       projectId: pid,
+      contentType,
+      businessLine,
       contentId,
       platform,
       topic,
       pack,
       promptSnapshot,
-      angles: CONTENT_GENERATION_ANGLES.map((angle) => ({
-        streamId: `${genTaskId}-${angle.key}`,
-        angle
-      })),
+      angles: runAngles,
       streams,
       cancel: () => {
         cancel()
       }
     }
     this.log(
-      `[content] generate ${genTaskId} → ${contentId}（platform=${platform}，3 路并行，knowledge=${pack.knowledge.length}）`
+      `[content] generate ${genTaskId} → ${contentId}（type=${contentType} platform=${platform}，${runAngles.length} 路，knowledge=${pack.knowledge.length}）`
     )
     // 三路全部落定后注销（版本行在各流 resolve 里已各自落库）
     void Promise.allSettled(streams.map((s) => s.result)).finally(() => {
@@ -604,6 +704,24 @@ export class ContentManager {
     // §四：source='ai' 的 prompt 必带快照（角度差异也在快照里体现）
     const prompt = truncatePrompt(promptSnapshot + `\n【本版角度】${angle.label}：${angle.instruction}`)
     return this.appendVersion(contentId, body, 'ai', prompt)
+  }
+
+  /**
+   * 分镜脚本生成文本 → 版本行：
+   * - 先按严格 JSON 契约解析：解析失败直接抛 VALIDATION_ERROR → **不落版本行**
+   *   （已上屏的原始流文本由渲染端保留可复制，软失败）；
+   * - 版本行 content = 规范化 JSON（忠实快照、可重渲染）；
+   * - 返回渲染文本，聚合句柄挂到 result.deliverable（「采用」写回 contents.content）。
+   */
+  private async persistShootingScriptVersion(
+    contentId: string,
+    text: string,
+    promptSnapshot: string
+  ): Promise<{ version: ContentVersionRow; deliverable: string }> {
+    const script = parseShootingScript(text)
+    const body = truncateContent(serializeShootingScript(script))
+    const version = await this.appendVersion(contentId, body, 'ai', truncatePrompt(promptSnapshot))
+    return { version, deliverable: renderScriptText(script) }
   }
 
   /**
@@ -682,7 +800,16 @@ export function wrapHandleSaveVersion(
   const result = raw.result.then(
     async (r: GatewayStreamResult): Promise<GatewayStreamResult> => {
       if (hooks.isCancelled() || r.aborted) return r
-      if (r.text.trim()) await hooks.persist(r.text)
+      if (!r.text.trim()) return r
+      const persisted = await hooks.persist(r.text)
+      // 结构化产物（shooting_script）：persist 返回渲染文本 → 挂 deliverable，随 done 给渲染端
+      if (
+        persisted &&
+        typeof persisted === 'object' &&
+        typeof (persisted as { deliverable?: unknown }).deliverable === 'string'
+      ) {
+        return { ...r, deliverable: (persisted as { deliverable: string }).deliverable }
+      }
       return r
     }
   )
@@ -727,16 +854,66 @@ export function buildGenerationMessages(
   ]
 }
 
-/** prompt 快照正文（§四：source=ai 必存）：平台 + 选题 + Context Pack 全文 */
-export function buildPromptSnapshot(pack: ContextPack, platform: Platform, topic: string | null): string {
+/** 分镜脚本请求消息（单路 JSON；平台规则走 pack 同源注入，口径写明「产出脚本不是视频」） */
+export function buildShootingScriptMessages(
+  pack: ContextPack,
+  platform: Platform,
+  topic: string | null,
+  businessLine: BusinessLine | null
+): GatewayChatMessage[] {
+  const instruction = [
+    `发布平台：${platform}。`,
+    topic ? `选题/主题：${topic}。` : '选题：由你从商家资料里挑一个最适合拍短视频的点。',
+    businessLineText(businessLine),
+    '',
+    shootingScriptContractText(),
+    '',
+    '——— 商家资料（唯一事实来源） ———',
+    renderContextPackText(pack),
+    '',
+    renderPackRuleSection(platform, pack.platformRule)
+  ]
+    .filter(Boolean)
+    .join('\n')
   return [
-    `【任务】content-draft（平台=${platform}）`,
-    `【选题】${topic || '（由模型自选）'}`,
+    { role: 'system', content: SHOOTING_SCRIPT_GUARDRAILS },
+    { role: 'user', content: [textPart(instruction)] }
+  ]
+}
+
+/** prompt 快照正文（§四：source=ai 必存）：任务 + 平台 + 选题 +（业务线/JSON 契约）+ Context Pack */
+export function buildPromptSnapshot(
+  pack: ContextPack,
+  platform: Platform,
+  topic: string | null,
+  options: { contentType?: ContentType; businessLine?: BusinessLine | null } = {}
+): string {
+  const contentType = normalizeContentType(options.contentType)
+  const taskLabel =
+    contentType === 'shooting_script' ? 'shooting-script（分镜脚本，单路 JSON）' : 'content-draft'
+  const head: string[] = [`【任务】${taskLabel}（平台=${platform}）`, `【选题】${topic || '（由模型自选）'}`]
+  if (contentType === 'shooting_script') {
+    // 业务线是 shooting_script 专有概念：post 路径从不消费它，快照里也就不能出现「业务线：通用…」，
+    // 否则复盘会把一个根本没参与生成的参数当成真实参数。
+    head.push(businessLineText(normalizeBusinessLine(options.businessLine)), '', shootingScriptContractText())
+  }
+  return [
+    ...head,
     '',
     renderContextPackText(pack),
     '',
     renderPackRuleSection(platform, pack.platformRule)
   ].join('\n')
+}
+
+/** shooting_script AI 版本行 → best-effort 挂重渲染文本（解析失败给 null，不拖垮版本列表） */
+function attachRenderedContent(row: ContentVersionRow, contentType: string): ContentVersionView {
+  if (contentType !== 'shooting_script' || row.source !== 'ai') return row
+  try {
+    return { ...row, rendered_content: renderScriptText(parseShootingScript(row.content)) }
+  } catch {
+    return { ...row, rendered_content: null }
+  }
 }
 
 /** 生成文本整理：剥围栏 + 压多余空行（与 05b normalizeRecognizedText 同思路，成稿导向） */

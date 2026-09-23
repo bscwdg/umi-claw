@@ -7,8 +7,9 @@
 // v1.14 结论 A：`project_messages` 已作废（对话历史由 OpenClaw sticky user 会话承载），
 // 本 Schema **不建**该表，业务表就是 10 张。
 
-/** 第一版 Schema 版本号（PRAGMA user_version） */
-export const SCHEMA_VERSION = 1
+/** Schema 版本号（PRAGMA user_version） */
+// v2：contents 增 content_type（post/shooting_script）；DDL 见 migration.ts（CREATE TABLE 保持 v1 形状）
+export const SCHEMA_VERSION = 2
 
 /** 表清单（与 schema.ts 的 DDL、db-worker.mjs 的 TABLES 白名单一一对应） */
 export const SCHEMA_TABLES = [

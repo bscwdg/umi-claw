@@ -22,6 +22,7 @@
 //     的 LEFT 关联会自动读到这里写的分数，渲染端评分后 skipCollect 重读即可看到分组。
 
 import { AppError, ERROR_CODES } from '../database/errors'
+import { extractJsonArray } from './jsonExtract'
 import { randomUUID } from 'node:crypto'
 import type { DatabaseClient } from '../database/database'
 import type { ContextEngine, Platform } from './contextEngine'
@@ -145,17 +146,10 @@ function cleanText(value: unknown, max: number): string | null {
 }
 
 /**
- * 从模型输出抽 JSON 数组文本。裸数组 / markdown 围栏 / 解释文字里夹数组均可
- * （与 08 parseWatchCandidates 同口径）：方括号是 JSON 数组的天然定界，围栏本身
- * 包裹在一对方括号之外，indexOf/lastIndexOf 在三种脏输出下都能取到数组体。抽不到返回 null。
+ * 从模型输出抽 JSON 数组文本（裸数组 / markdown 围栏 / 解释文字里夹数组均可）。
+ * 实现收在 jsonExtract.ts：平衡扫描，解释文字里带方括号也不会切错（与 08/09 同口径）。
  */
-export function extractJsonArray(text: string): string | null {
-  const start = text.indexOf('[')
-  if (start < 0) return null
-  const end = text.lastIndexOf(']')
-  if (end <= start) return null
-  return text.slice(start, end + 1)
-}
+export { extractJsonArray } from './jsonExtract'
 
 interface ParsedScoreItem {
   idx: number

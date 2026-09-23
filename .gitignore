@@ -15,6 +15,13 @@ config
 # 便携数据目录与本地临时测试产物，不入库
 /data/
 /test/
+# 验收/探测**结果产物**：每次跑测试都会重写（时间戳、耗时、本机绝对路径），只写不读。
+# 单独列出是显式说明意图——`/test/` 已经覆盖它们，但 test/ 下的源码与 fixtures 是
+# 刻意 force-add 入库的，这里再点一遍，防后人以为结果产物也该入库。
+/test/accept-result*.json
+/test/e2e-result.json
+/test/packaged-smoke-*.json
+/test/probe-*.json
 
 # build artifacts
 *.tsbuildinfo

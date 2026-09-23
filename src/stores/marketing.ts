@@ -329,6 +329,8 @@ export const CONTENT_STATUS_LABELS: Record<string, string> = {
 export interface ContentItem {
   id: string
   project_id: string
+  /** post=图文文案 / shooting_script=分镜脚本（默认 post；创建后不可改） */
+  content_type: string
   title: string | null
   platform: string | null
   topic: string | null
@@ -350,6 +352,8 @@ export interface ContentVersion {
   source: string | null
   prompt: string | null
   created_at: number
+  /** shooting_script AI 版本行的重渲染文本（主进程 best-effort 派生；其它情况缺省） */
+  rendered_content?: string | null
 }
 
 export interface ContentListQuery {
@@ -380,6 +384,8 @@ export interface UpdateContentPayload {
 /** 生成入参（与主进程 GenerateContentSpec 一致；platform 必填） */
 export interface ContentGenerateSpec {
   contentId?: string | null
+  contentType?: string
+  businessLine?: string | null
   platform: string
   topic?: string | null
   title?: string | null
@@ -394,6 +400,8 @@ export interface ContentAngleSlot {
   angleKey: string
   label: string
   text: string
+  /** shooting_script：版本 JSON 的可读渲染文本（「采用」写回它；其它类型缺省） */
+  deliverable: string | null
   streaming: boolean
   done: boolean
   aborted: boolean
@@ -405,6 +413,8 @@ export interface ContentGenState {
   genTaskId: string
   contentId: string
   projectId: string
+  contentType: string
+  businessLine: string | null
   platform: string
   topic: string | null
   pack: AdvisorPackSummary | null
@@ -422,6 +432,7 @@ function toContentItem(row: any): ContentItem {
   return {
     id: String(row?.id ?? ''),
     project_id: String(row?.project_id ?? ''),
+    content_type: String(row?.content_type ?? 'post'),
     title: row?.title ?? null,
     platform: row?.platform ?? null,
     topic: row?.topic ?? null,
@@ -443,6 +454,8 @@ function toContentVersion(row: any): ContentVersion {
     content: String(row?.content ?? ''),
     source: row?.source ?? null,
     prompt: row?.prompt ?? null,
+    rendered_content:
+      row?.rendered_content === null || row?.rendered_content === undefined ? null : String(row.rendered_content),
     created_at: Number(row?.created_at ?? 0)
   }
 }
@@ -1482,6 +1495,8 @@ export const useMarketingStore = defineStore('marketing', () => {
         slot.aborted = payload?.aborted === true
         // 主进程 done 携带完整文本；中止态也带已收到部分（展示用，版本不落）
         if (typeof payload?.text === 'string' && payload.text) slot.text = payload.text
+        // shooting_script：结构化产物的可读交付文本（「采用」写回 contents.content）
+        slot.deliverable = typeof payload?.deliverable === 'string' ? payload.deliverable : null
         slot.done = true
       }),
       stream.onError((payload) => {
@@ -1649,6 +1664,8 @@ export const useMarketingStore = defineStore('marketing', () => {
         genTaskId: String(res.data?.genTaskId ?? ''),
         contentId: String(res.data?.contentId ?? ''),
         projectId,
+        contentType: String(res.data?.contentType ?? 'post'),
+        businessLine: res.data?.businessLine ?? null,
         platform: String(res.data?.platform ?? ''),
         topic: res.data?.topic ?? null,
         pack: (res.data?.pack ?? null) as AdvisorPackSummary | null,
@@ -1657,6 +1674,7 @@ export const useMarketingStore = defineStore('marketing', () => {
           angleKey: String(a?.angle?.key ?? ''),
           label: String(a?.angle?.label ?? ''),
           text: '',
+          deliverable: null,
           streaming: true,
           done: false,
           aborted: false,

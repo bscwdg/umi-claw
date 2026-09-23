@@ -26,6 +26,11 @@ export const MIGRATION_STEPS: MigrationStep[] = [
     version: 1,
     name: 'init: 10 业务表 + app_meta + 索引',
     statements: [...SCHEMA_STATEMENTS, ...INDEX_STATEMENTS]
+  },
+  {
+    version: 2,
+    name: 'contents: add content_type (post/shooting_script)',
+    statements: [`ALTER TABLE contents ADD COLUMN content_type TEXT NOT NULL DEFAULT 'post'`]
   }
 ]
 

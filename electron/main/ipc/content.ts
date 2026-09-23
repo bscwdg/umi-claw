@@ -52,9 +52,13 @@ export interface ContentGenerateResult {
   genTaskId: string
   contentId: string
   projectId: string
+  /** 产物类型：post（angles=3）/ shooting_script（angles=1 单槽） */
+  contentType: string
+  /** 业务线预设（shooting_script 用；post 恒 null）—— 不落 schema，只回传供面板复盘 */
+  businessLine: string | null
   platform: string
   topic: string | null
-  /** 三路流式面板的骨架：streamId + 角度（面板按 streamId 归并 chunk） */
+  /** 流式面板骨架：streamId + 角度（面板按 streamId 归并 chunk；脚本只有 1 个） */
   angles: Array<{ streamId: string; angle: { key: string; label: string } }>
   /** 「AI 看见了什么」摘要（复用 08 的形状，正文不出主进程） */
   pack: AdvisorPackSummary
@@ -119,6 +123,8 @@ export function registerContentIpc(manager: ContentManager): void {
         genTaskId: run.genTaskId,
         contentId: run.contentId,
         projectId: run.projectId,
+        contentType: run.contentType,
+        businessLine: run.businessLine ?? null,
         platform: run.platform,
         topic: run.topic,
         angles: run.angles.map((a) => ({ streamId: a.streamId, angle: { key: a.angle.key, label: a.angle.label } })),

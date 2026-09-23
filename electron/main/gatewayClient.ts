@@ -143,6 +143,11 @@ export interface GatewayStreamResult {
   /** 客户端主动中止（用户点「停止生成」）时为 true */
   aborted: boolean
   ms: number
+  /**
+   * 结构化产物的可读交付文本（shooting_script：版本行 JSON 渲染出的分镜清单，
+   * 「采用」由渲染端写回 contents.content）；其它流为缺省/null。
+   */
+  deliverable?: string | null
 }
 
 export interface GatewayStreamHandle {
@@ -1245,13 +1250,18 @@ export function forwardGatewayStream(
         })
       }
       if (cancelled) return
-      const res = handle ? await handle.result.catch(() => null) : null
+      // `handle.result` 的拒绝**不能吞**：落版本/解析失败（如 shooting_script 非契约 JSON）发生在
+      // done 之前，吞掉会让渲染端收到一次「成功 done」，把未解析的原始输出当正文「采用为正文」。
+      // 让它落到下面的 catch → error 事件；渲染端已累积的 chunk 仍在，可走「复制原文」兜底。
+      // （中止引起的拒绝由下方 catch 的 `cancelled` 守卫拦下，不会误报成错误。）
+      const res = handle ? await handle.result : null
       if (cancelled) return
       webContents.send(GATEWAY_STREAM_EVENTS.done, {
         streamId: id,
         chunks: res?.chunks ?? chunks,
         text: res?.text ?? null,
-        aborted: res?.aborted ?? false
+        aborted: res?.aborted ?? false,
+        deliverable: res?.deliverable ?? null
       })
     } catch (e) {
       if (cancelled) return

@@ -43,11 +43,35 @@
       <!-- 生成 -->
       <div class="card">
         <div class="flex items-center justify-between" style="margin-bottom: 12px">
-          <h3>AI 生成（一次 3 版供选）</h3>
+          <h3>AI 生成{{ contentType === 'post' ? '（一次 3 版供选）' : '（分镜脚本）' }}</h3>
           <span class="text-sm text-muted">产出一律人工采纳，永不自动发布</span>
         </div>
 
         <div class="gen-form">
+          <div class="gen-row">
+            <span class="gen-label">产物类型</span>
+            <div class="tabs">
+              <button class="tab" :class="{ on: contentType === 'post' }" @click="setContentType('post')">
+                图文文案
+              </button>
+              <button
+                class="tab"
+                :class="{ on: contentType === 'shooting_script' }"
+                @click="setContentType('shooting_script')"
+              >
+                分镜脚本
+              </button>
+            </div>
+          </div>
+          <div v-if="contentType === 'shooting_script'" class="gen-row">
+            <span class="gen-label">业务线</span>
+            <div class="tabs">
+              <button class="tab" :class="{ on: businessLine === '' }" @click="businessLine = ''">通用</button>
+              <button class="tab" :class="{ on: businessLine === 'photography' }" @click="businessLine = 'photography'">摄影</button>
+              <button class="tab" :class="{ on: businessLine === 'fashion' }" @click="businessLine = 'fashion'">服饰</button>
+            </div>
+            <span class="text-sm text-muted">按商家行业预选，可改；只影响本次生成</span>
+          </div>
           <div class="gen-row">
             <span class="gen-label">发布平台</span>
             <div class="tabs">
@@ -85,7 +109,7 @@
               :disabled="marketing.contentGenStreaming || !platform"
               @click="doGenerate()"
             >
-              {{ marketing.contentGenStreaming ? '生成中…' : '生成 3 个版本' }}
+              {{ marketing.contentGenStreaming ? '生成中…' : contentType === 'post' ? '生成 3 个版本' : '生成分镜脚本' }}
             </button>
             <button v-if="marketing.contentGenStreaming" class="btn" @click="marketing.stopGenerate()">停止生成</button>
             <span v-if="genError" class="err" style="margin-top: 0">{{ genError }}</span>
@@ -114,6 +138,9 @@
                 @click="adoptSlot(slot)"
               >
                 采用为正文
+              </button>
+              <button v-if="slot.errorCode && slot.text.trim()" class="btn btn-sm" @click="copySlotText(slot)">
+                复制原文
               </button>
               <span v-if="adopted[slot.streamId] === true" class="text-sm" style="color: var(--green)">已采用 ✓</span>
             </div>
@@ -157,6 +184,9 @@
             @click="openEditor(c)"
           >
             <span class="badge">{{ CONTENT_STATUS_LABELS[c.status] || c.status }}</span>
+            <span class="badge" :class="c.content_type === 'shooting_script' ? 'badge-ai' : 'badge-plain'">
+              {{ c.content_type === 'shooting_script' ? '分镜脚本' : '图文' }}
+            </span>
             <span class="badge badge-plain">{{ PLATFORM_LABELS[c.platform || ''] || '未选平台' }}</span>
             <span class="item-title">{{ c.title || c.topic || '（无标题草稿）' }}</span>
             <span v-if="c.published_at" class="text-sm text-muted">发布于 {{ formatTime(c.published_at) }}</span>
@@ -203,7 +233,9 @@
           <button v-if="editor.status === 'review'" class="btn" :disabled="saving" @click="setStatus('approved')">审核通过</button>
           <button v-if="editor.status === 'approved' || editor.status === 'draft'" class="btn" :disabled="saving" @click="markPublished()">标记已发布</button>
           <button v-if="editor.status !== 'archived'" class="btn btn-sm" :disabled="saving" @click="setStatus('archived')">归档</button>
-          <button class="btn btn-sm" @click="regenOnEditor()" :disabled="marketing.contentGenStreaming">在此草稿上再生成 3 版</button>
+          <button class="btn btn-sm" @click="regenOnEditor()" :disabled="marketing.contentGenStreaming">
+            {{ editor.content_type === 'shooting_script' ? '在此草稿上重新生成脚本' : '在此草稿上再生成 3 版' }}
+          </button>
         </div>
         <div v-if="editor.status === 'published'" class="gen-row" style="margin-top: 10px">
           <span class="gen-label">效果</span>
@@ -232,7 +264,7 @@
               <button class="btn btn-sm" @click="useVersion(v)">用这版</button>
               <button class="btn btn-sm" @click="showPrompt(v)" v-if="v.source === 'ai'">当时提示词</button>
             </div>
-            <pre v-if="expandedVersion === v.id" class="ver-body">{{ v.content }}</pre>
+            <pre v-if="expandedVersion === v.id" class="ver-body">{{ v.rendered_content || v.content }}</pre>
           </div>
           <pre v-if="promptText" class="ver-body prompt-box">{{ promptText }}</pre>
         </div>
@@ -294,6 +326,24 @@ const platformHint = computed(() => PLATFORM_WORKFLOW_HINTS[platform.value] ?? '
 const platform = ref<string>('xiaohongshu')
 const topic = ref('')
 const customer = ref('')
+/** 产物类型（post=三路图文；shooting_script=单路分镜脚本） */
+const contentType = ref<'post' | 'shooting_script'>('post')
+/** 业务线预选：''=通用 / photography / fashion（从 project.industry 推导，UI 可改） */
+const businessLine = ref('')
+
+function setContentType(type: 'post' | 'shooting_script'): void {
+  contentType.value = type
+  // 分镜脚本本质是抖音口播场景：切过去带选抖音（老板仍可手动切回小红书）
+  if (type === 'shooting_script' && platform.value !== 'douyin') platform.value = 'douyin'
+}
+
+/** 从行业推导业务线预选（与主进程 deriveBusinessLine 同口径，渲染端本地副本） */
+function deriveBusinessLine(industry: string | null | undefined): string {
+  const s = String(industry ?? '')
+  if (s.includes('摄')) return 'photography'
+  if (s.includes('服') || s.includes('衣')) return 'fashion'
+  return ''
+}
 const genError = ref('')
 const adopted = reactive<Record<string, boolean>>({})
 const prefill = ref<HotTopicPayload | null>(null)
@@ -305,6 +355,7 @@ const listLoading = computed(() => marketing.contentsLoading)
 // ── 编辑器 ──
 interface EditorState {
   id: string
+  content_type: string
   title: string
   topic: string
   platform: string
@@ -359,13 +410,20 @@ async function doGenerate() {
   try {
     const res = await marketing.generateContent(pid, {
       platform: platform.value,
+      contentType: contentType.value,
+      businessLine: contentType.value === 'shooting_script' ? businessLine.value || null : null,
       topic: topic.value.trim() || null,
       customer: customer.value.trim() || null,
       // 热点 payload 只跟第一次生成（新建草稿）绑定
       sourceTopicId: prefill.value?.topicId ?? null
     })
     prefill.value = null
-    if (res) showToast('3 个版本生成中，完成一个可用一个', 'success')
+    if (res) {
+      showToast(
+        contentType.value === 'shooting_script' ? '分镜脚本生成中，完成后可采用' : '3 个版本生成中，完成一个可用一个',
+        'success'
+      )
+    }
   } catch (e) {
     genError.value = e instanceof MarketingIpcError ? humanize(e) : (e as Error)?.message || '生成失败'
   }
@@ -389,7 +447,9 @@ async function adoptSlot(slot: ContentAngleSlot) {
   if (!pid) return
   try {
     // 只发 content：带 title:undefined 会被白名单层的 hasOwnProperty 当成「显式要改」→ 抹成 null
-    await marketing.updateContent(pid, gen.contentId, { content: slot.text })
+    // shooting_script：版本 JSON 已在主进程渲染为分镜清单，正文写回渲染文本（不是原始 JSON）
+    const body = gen.contentType === 'shooting_script' ? slot.deliverable || slot.text : slot.text
+    await marketing.updateContent(pid, gen.contentId, { content: body })
     adopted[slot.streamId] = true
     showToast('已采用为正文（草稿），可继续编辑与审核', 'success')
     await reload()
@@ -399,12 +459,23 @@ async function adoptSlot(slot: ContentAngleSlot) {
   }
 }
 
+/** 解析失败软兜底：原始流文本已上屏删不掉，给复制入口（不落版本行） */
+async function copySlotText(slot: ContentAngleSlot): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(slot.text)
+    showToast('原文已复制', 'success')
+  } catch {
+    showToast('复制失败，请手动选择槽位内文本', 'error')
+  }
+}
+
 // ── 列表 → 编辑 ──
 async function openEditor(c: ContentItem) {
   const pid = marketing.currentProjectId
   if (!pid) return
   editor.value = {
     id: c.id,
+    content_type: c.content_type,
     title: c.title ?? '',
     topic: c.topic ?? '',
     platform: c.platform ?? '',
@@ -548,7 +619,8 @@ async function saveAsUserVersion() {
 function useVersion(v: ContentVersion) {
   const e = editor.value
   if (!e) return
-  e.content = v.content
+  // shooting_script AI 版本行存的是 JSON：优先载入主进程的重渲染文本
+  e.content = v.rendered_content || v.content
   editError.value = ''
   showToast('已载入该版本到编辑框（保存修改后生效）', 'success')
 }
@@ -564,13 +636,24 @@ async function regenOnEditor() {
   genError.value = ''
   for (const k of Object.keys(adopted)) delete adopted[k]
   try {
+    // 类型取编辑器自己带着的 content_type —— 不去列表里反查：列表受 filterStatus 过滤，
+    // 草稿一旦被过滤掉（如刚「标记已发布」）反查就会落空、退化成 'post'，对脚本草稿发起三路图文。
+    const type = e.content_type === 'shooting_script' ? 'shooting_script' : 'post'
+    contentType.value = type
     await marketing.generateContent(pid, {
       contentId: e.id,
+      contentType: type,
+      businessLine: type === 'shooting_script' ? businessLine.value || null : null,
       platform: e.platform || platform.value,
       topic: e.topic.trim() || null,
       customer: null
     })
-    showToast('3 个新版本生成中（同角度并行，完成一个可用一个）', 'success')
+    showToast(
+      type === 'shooting_script'
+        ? '新分镜脚本生成中，完成后可采用'
+        : '3 个新版本生成中（同角度并行，完成一个可用一个）',
+      'success'
+    )
   } catch (err) {
     genError.value = err instanceof MarketingIpcError ? humanize(err) : (err as Error)?.message || '生成失败'
   }
@@ -590,6 +673,7 @@ async function removeItem(c: ContentItem) {
 
 onMounted(async () => {
   if (!marketing.projects.length) await marketing.load()
+  businessLine.value = deriveBusinessLine(marketing.currentProject?.industry ?? null)
   // 热点 payload 一次性消费（11 未上线前不会有真值；路径先行）
   const p = consumeContentPrefill()
   if (p) {
@@ -609,6 +693,8 @@ watch(
     marketing.clearGenerate()
     closeEditor()
     prefill.value = null
+    contentType.value = 'post'
+    businessLine.value = deriveBusinessLine(marketing.currentProject?.industry ?? null)
     reload()
   }
 )

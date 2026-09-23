@@ -38,6 +38,10 @@ mkdirSync(runDir, { recursive: true })
 
 const bundledPath = bundleEntry('electron/main/database/database.ts', 'database.mjs')
 const registryPath = bundleEntry('electron/main/subprocessRegistry.ts', 'subprocessRegistry.mjs')
+const migrationPath = bundleEntry('electron/main/database/migration.ts', 'migration.mjs')
+const migrationMod = await import(pathToFileURL(migrationPath).href)
+// 版本号从源码取，不写死：追加迁移时（PLAN-2.0 的 FTS5 → v3）这里自动跟随
+const TARGET = migrationMod.TARGET_USER_VERSION
 const mod = await import(pathToFileURL(bundledPath).href)
 const registryMod = await import(pathToFileURL(registryPath).href)
 const DatabaseClient = mod.DatabaseClient
@@ -153,13 +157,13 @@ try {
   })
 
   // ── C3 首次请求拉起 worker 并建库 ──
-  await r.check('C3', '首次请求拉起 worker → 建库 + user_version=1 + 11 表', async () => {
+  await r.check('C3', `首次请求拉起 worker → 建库 + user_version=${TARGET} + 11 表`, async () => {
     const pong = await main.ping()
     assertEq(pong.pong, true, 'ping 应成功')
     assert(existsSync(dbPath), '首次请求后应建库')
     const st = await main.dbStatus()
     assertEq(st.ready, true, 'ready 应为 true')
-    assertEq(st.userVersion, 1, 'user_version 应为 1')
+    assertEq(st.userVersion, TARGET, `user_version 应为 ${TARGET}`)
     assertEq(st.tables.length, 11, `应有 11 张表（实际 ${st.tables.length}）`)
     assert(st.tables.includes('app_meta'), '应含 app_meta')
     assertEq(st.journalMode, 'wal', 'journal_mode 应为 wal')
@@ -357,7 +361,7 @@ try {
     assertEq(back, 'v1', '重启后数据应仍在')
     assert(main.workerPid !== null && main.workerPid !== pidBefore, '应重新拉起新 worker')
     const st = await main.dbStatus()
-    assertEq(st.userVersion, 1, '重启后 user_version 仍为 1')
+    assertEq(st.userVersion, TARGET, `重启后 user_version 仍为 ${TARGET}`)
     assertEq(st.migrated, false, '重启不应再触发迁移')
     return `pid ${pidBefore} → ${main.workerPid}，persist_probe=${back}`
   })

@@ -114,7 +114,7 @@ const TABLES = {
   },
   contents: {
     pk: ['id'],
-    columns: ['id', 'project_id', 'title', 'platform', 'topic', 'source_topic_id', 'content', 'status', 'published_at', 'effect_note', 'created_at', 'updated_at'],
+    columns: ['id', 'project_id', 'content_type', 'title', 'platform', 'topic', 'source_topic_id', 'content', 'status', 'published_at', 'effect_note', 'created_at', 'updated_at'],
     createdAt: 'created_at',
     updatedAt: 'updated_at'
   },
@@ -549,7 +549,7 @@ function likeEscape(s) {
   return String(s).replace(/[\\%_]/g, (m) => '\\' + m)
 }
 
-/** knowledge_items 的 LIKE 关键词检索（α 阶段策略；FTS5 归 user_version=2） */
+/** knowledge_items 的 LIKE 关键词检索（α 阶段策略；FTS5 归 user_version=3——v2 已用于 contents.content_type） */
 function searchKnowledge(params) {
   const p = requireParams(params)
   if (typeof p.projectId !== 'string' || !p.projectId) {

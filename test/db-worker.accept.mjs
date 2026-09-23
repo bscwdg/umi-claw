@@ -193,8 +193,8 @@ try {
     return `db=${dbPath} pid=${pong.data.pid}`
   })
 
-  // ── W2 user_version 0 → 1 迁移 ──
-  await r.check('W2', 'migrate 0 → 1，user_version=1', async () => {
+  // ── W2 user_version 0 → TARGET 迁移（v1 建表 → v2 ALTER） ──
+  await r.check('W2', `migrate 0 → ${TARGET}，user_version=${TARGET}`, async () => {
     const before = await main.call('schema.info')
     assertEq(before.data.userVersion, 0, '空库 user_version 应为 0')
     const res = await main.call('migrate', { steps: MIGRATION_STEPS })
@@ -203,7 +203,9 @@ try {
     assertEq(res.data.to, TARGET, `to 应为 ${TARGET}`)
     assertEq(res.data.applied.length, MIGRATION_STEPS.length, 'applied 数量应等于步骤数')
     const after = await main.call('schema.info')
-    assertEq(after.data.userVersion, 1, '迁移后 user_version 应为 1')
+    assertEq(after.data.userVersion, TARGET, `迁移后 user_version 应为 ${TARGET}`)
+    const cols = direct((db) => db.prepare("PRAGMA table_info(contents)").all().map((c) => c.name))
+    assert(cols.includes('content_type'), 'v2 应迁移出 contents.content_type')
     return `applied=${res.data.applied.map((a) => 'v' + a.version).join(',')}`
   })
 
@@ -212,7 +214,7 @@ try {
     const res = await main.call('migrate', { steps: MIGRATION_STEPS })
     assertEq(res.ok, true, '重复 migrate 应成功')
     assertEq(res.data.applied.length, 0, '不应重复执行任何 step')
-    assertEq(res.data.from, 1, 'from 应为 1')
+    assertEq(res.data.from, TARGET, `from 应为 ${TARGET}`)
     return 'applied=[]'
   })
 
@@ -434,7 +436,7 @@ try {
     const rows = direct((db) => db.prepare('SELECT COUNT(*) AS c FROM projects').get().c)
     assert(rows >= 2, `已提交数据应仍在（实际 ${rows} 行）`)
     const uv = direct((db) => db.prepare('PRAGMA user_version').get().user_version)
-    assertEq(uv, 1, 'user_version 应保持 1')
+    assertEq(uv, TARGET, `user_version 应保持 ${TARGET}`)
     main.dispose()
     main = null
     return `integrity_check=ok projects=${rows} user_version=${uv}`

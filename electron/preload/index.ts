@@ -273,7 +273,14 @@ const api = {
         return () => ipcRenderer.off('marketing:gateway:chunk', handler)
       },
       onDone: (
-        cb: (payload: { streamId: string; chunks: number; text: string | null; aborted: boolean }) => void
+        cb: (payload: {
+          streamId: string
+          chunks: number
+          text: string | null
+          aborted: boolean
+          /** shooting_script：版本 JSON 的可读渲染文本（其它流为 null） */
+          deliverable?: string | null
+        }) => void
       ) => {
         const handler = (_: unknown, data: any) => cb(data)
         ipcRenderer.on('marketing:gateway:done', handler)
@@ -294,7 +301,7 @@ const api = {
       get: (projectId: string, id: string) => ipcRenderer.invoke('marketing:content:get', projectId, id),
       create: (
         projectId: string,
-        data: { title?: string | null; platform?: string | null; topic?: string | null; content?: string | null; sourceTopicId?: string | null }
+        data: { contentType?: string; title?: string | null; platform?: string | null; topic?: string | null; content?: string | null; sourceTopicId?: string | null }
       ) => ipcRenderer.invoke('marketing:content:create', projectId, data),
       update: (
         projectId: string,
@@ -314,7 +321,7 @@ const api = {
       // 一次生成 3 版供选（三路并行流式；硬规则 10：产出一律人工采纳，永不自动发）
       generate: (
         projectId: string,
-        spec: { contentId?: string | null; platform: string; topic?: string | null; title?: string | null; customer?: string | null; sourceTopicId?: string | null; query?: string | null }
+        spec: { contentId?: string | null; contentType?: string; businessLine?: string | null; platform: string; topic?: string | null; title?: string | null; customer?: string | null; sourceTopicId?: string | null; query?: string | null }
       ) => ipcRenderer.invoke('marketing:content:generate', projectId, spec),
       // 停止生成：两路定位（同 05b 口径）；幂等
       abortGenerate: (genTaskId?: string | null, projectId?: string | null) =>

@@ -19,6 +19,7 @@
 //     事件名沿用 07 的 `forwardGatewayStream` 约定（见 ipc/advisor.ts）。
 
 import { AppError, ERROR_CODES } from '../database/errors'
+import { extractJsonArray } from './jsonExtract'
 import { WATCHLIST_MAX, WATCHLIST_KEYWORD_MAX_LENGTH, WATCHLIST_TYPES, type WatchlistManager } from './businessManager'
 import {
   renderContextPackText,
@@ -306,32 +307,6 @@ export function parseWatchCandidates(
   const usable = out.filter((c) => !c.existing).slice(0, Math.min(max, room))
   // 已存在的候选随结果一起回（UI 可展示「已在列表里」），但排在可用候选之后
   return [...usable, ...out.filter((c) => c.existing)]
-}
-
-/** 取第一段平衡的 JSON 数组（剥掉 ``` 围栏与前后解释文字） */
-function extractJsonArray(text: string): string | null {
-  const cleaned = text.replace(/```(?:json)?/gi, '')
-  const start = cleaned.indexOf('[')
-  if (start < 0) return null
-  let depth = 0
-  let inString = false
-  let escaped = false
-  for (let i = start; i < cleaned.length; i++) {
-    const ch = cleaned[i]
-    if (inString) {
-      if (escaped) escaped = false
-      else if (ch === '\\') escaped = true
-      else if (ch === '"') inString = false
-      continue
-    }
-    if (ch === '"') inString = true
-    else if (ch === '[') depth += 1
-    else if (ch === ']') {
-      depth -= 1
-      if (depth === 0) return cleaned.slice(start, i + 1)
-    }
-  }
-  return null
 }
 
 function normalizeCandidateType(value: unknown): string | null {
