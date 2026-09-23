@@ -4,6 +4,12 @@
     <header class="today-header">
       <div>
         <h1>{{ view.greeting }}<span class="date-text"> · {{ view.date }} · {{ weekdayName }}</span></h1>
+        <!-- 完整度弱存在感引导（§八 Day1 第2条）：不弹窗、不阻断，点一下去补 -->
+        <button
+          v-if="completenessHint"
+          class="completeness-nudge"
+          @click="router.push('/work/settings')"
+        >{{ completenessHint }}</button>
       </div>
       <!-- 日报入口 -->
       <div class="report-entry">
@@ -133,6 +139,20 @@ const view = ref<TodayView>({
 const weekdayName = computed(() => ['周日','周一','周二','周三','周四','周五','周六'][view.value.weekday])
 const quickText = ref('')
 
+// 完整度弱存在感引导（§八 Day1）
+const completeness = ref<{ filled: number; total: number; percent: number; missing: string[] } | null>(null)
+const FIELD_LABELS: Record<string, string> = {
+  call_name: '称呼', position: '岗位', department: '部门',
+  company: '公司', report_to: '汇报对象', tone: '偏好语气'
+}
+const completenessHint = computed(() => {
+  const c = completeness.value
+  if (!c || !c.missing.length) return ''
+  const next = Math.round(((c.filled + 1) / c.total) * 100)
+  const label = FIELD_LABELS[c.missing[0]] ?? c.missing[0]
+  return `补上「${label}」可到 ${next}%`
+})
+
 const reportLabel = computed(() => {
   if (view.value.report.exists) {
     return view.value.report.status === 'confirmed' ? '查看日报' : '日报草稿'
@@ -145,6 +165,16 @@ async function refresh(): Promise<void> {
     view.value = await window.api.work.today.get()
   } catch (e: any) {
     showToast(`加载失败：${e.message}`, 'error')
+  }
+}
+
+/** 读完整度（失败不影响今日页主流程） */
+async function loadCompleteness(): Promise<void> {
+  try {
+    const v = await window.api.work.profile.get()
+    completeness.value = v?.completeness ?? null
+  } catch {
+    completeness.value = null
   }
 }
 
@@ -221,13 +251,27 @@ function openReport(): void {
   }
 }
 
-onMounted(refresh)
+onMounted(() => {
+  void refresh()
+  void loadCompleteness()
+})
 </script>
 
 <style scoped>
 .today-page { display: flex; flex-direction: column; gap: 16px; }
 .today-header { display: flex; align-items: center; justify-content: space-between; }
 .date-text { font-size: 13px; color: var(--text-secondary); font-weight: 400; }
+
+/* 完整度弱存在感引导：低调不打扰，点一下去补 */
+.completeness-nudge {
+  margin-top: 6px; padding: 0;
+  background: none; border: none; cursor: pointer;
+  font-size: 12px; color: var(--text-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  transition: color 0.15s;
+}
+.completeness-nudge:hover { color: var(--accent); }
 
 .quick-input { display: flex; gap: 10px; padding: 12px 16px; align-items: center; }
 
