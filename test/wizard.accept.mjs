@@ -37,13 +37,16 @@ mkdirSync(legacyDir, { recursive: true })
 const dbB = bundleEntry('electron/main/database/database.ts', 'wz-database.mjs')
 const wizardB = bundleEntry('electron/main/work/wizardManager.ts', 'wz-wizard.mjs')
 const reminderB = bundleEntry('electron/main/work/reminderManager.ts', 'wz-reminder.mjs')
+const todoB = bundleEntry('electron/main/work/todoManager.ts', 'wz-todo.mjs')
 
 const { DatabaseClient } = await import(pathToFileURL(dbB).href)
 const wizardMod = await import(pathToFileURL(wizardB).href)
 const reminderMod = await import(pathToFileURL(reminderB).href)
+const todoMod = await import(pathToFileURL(todoB).href)
 
 const { createWizardManager, OLDDB, CONSENT_GRANTED } = wizardMod
 const { createReminderManager, REMINDERS, REMINDER_TIMES } = reminderMod
+const { TodoManager } = todoMod
 
 const logger = () => {}
 const r = new Recorder('Commit 09 · 冷启动向导 + 本地提醒')
@@ -777,6 +780,200 @@ try {
     const missing = channels.filter((c) => !src.includes(`'${c}'`))
     assertEq(missing.length, 0, '缺失: ' + missing.join(','))
     return '开关拦截 + IPC ✓'
+  })
+
+  // ── M10 待办到点提醒（v2 起，v0.17 口径）──────────────────────────────────────
+  //
+  // 口径（reminderManager 注释钉死）：**本机通知必达**（不看外发总开关、不看通道配置、
+  // 甚至不需要 pusher）+ **外发是加成**（总开关开 + 通道配齐才投）+ **到点即消费**
+  // （弹过就写 reminded_at，不补发）+ 改期重新排队 + 逐条兜底 + 失败可见可归因。
+  await r.check('M10', '待办到点提醒：本机必达·外发受总开关·到点即消费·改期重排·单条异常不连累·失败可见', async () => {
+    const subDir9 = join(runDir, 'sub9', 'data')
+    mkdirSync(subDir9, { recursive: true })
+    const db9 = new DatabaseClient({
+      dbPath: join(subDir9, 'umi-claw.db'), backupDir: join(subDir9, 'backup'),
+      workerScriptPath, nodePath, subprocessName: 'work-db-wz-sub9', requestTimeoutMs: 30_000, logger
+    })
+    await db9.dbStatus({ initialize: true })
+
+    // 可控时钟：起点 14:00 避开 09:00 / 18:30 两个固定通知窗口，隔离出待办提醒
+    let clock = new Date(2026, 8, 24, 14, 0, 0).getTime()
+    const now = () => clock
+    const todos = new TodoManager({ database: db9, now })
+
+    const pushed = []
+    const notes = []
+    let markImpl = (id, ts) => todos.markReminded(id, ts)
+    const rem = createReminderManager({
+      database: db9,
+      notifier: (id, p) => notes.push({ id, p }),
+      getMorningSummary: morningSummary,
+      pusher: async (_id, p, dest) => {
+        pushed.push({ title: p.title, body: p.body, channel: dest.channel })
+        return { ok: true }
+      },
+      listPushChannels: async () => [
+        { channel: 'feishu', label: '飞书', configured: true, supported: true }
+      ],
+      listDueTodoReminders: async () =>
+        (await todos.listDueReminders()).map((t) => ({
+          id: t.id, title: t.title, dueDate: t.due_date, dueAt: t.due_at
+        })),
+      markTodoReminded: (id, ts) => markImpl(id, ts),
+      now
+    })
+    await rem.setPushConfig({ channel: 'feishu', target: 'user:ou_x' })
+    assertEq((await rem.getPushConfig()).enabled, false, '前置：外发总开关默认关')
+
+    // 0) 总开关关着：到点**仍弹本机通知**，只是不外发；弹过即消费（不补发）
+    const g = await todos.create({ title: '开关关着那条', remindAt: clock + 60_000 })
+    clock += 61_000
+    await rem.check()
+    assertEq(notes.length, 1, '总开关关着也要弹本机通知（本地必达）')
+    assertEq(notes[0].id, 'todo', '来源标识 todo（不是 ReminderId，不进 REMINDER_IDS）')
+    assertEq(notes[0].p.title, '待办提醒', '通知标题')
+    assert(notes[0].p.body.includes('开关关着那条'), '通知正文含待办标题')
+    assertEq(pushed.length, 0, '总开关关着不外发')
+    assert((await todos.get(g.id)).reminded_at !== null, '弹过即消费（写 reminded_at）')
+    assertEq((await todos.listDueReminders()).length, 0, '不补发：队列已空')
+    await rem.check()
+    assertEq(notes.length, 1, '再 check 不重复弹')
+
+    // 1) 打开总开关：到点 = 本机通知 + 外发各一次；之后都不重复
+    await rem.setPushConfig({ enabled: true })
+    const sent = pushed.length
+    const noted = notes.length
+    const a = await todos.create({
+      title: '提醒客户回款', dueAt: clock + 30 * 60_000, remindAt: clock + 60_000
+    })
+    await rem.check()
+    assertEq(pushed.length, sent, '未到点不得外发')
+    assertEq(notes.length, noted, '未到点不得弹通知')
+    assertEq((await todos.listDueReminders()).length, 0, '未到点不在队列')
+
+    clock += 61_000
+    await rem.check()
+    assertEq(notes.length, noted + 1, '到点弹一次本机通知')
+    assertEq(pushed.length, sent + 1, '到点外发一次')
+    assertEq(pushed[sent].channel, 'feishu', '投到已配置渠道')
+    assert(pushed[sent].body.includes('提醒客户回款'), '外发正文含待办标题')
+    assert(pushed[sent].body.includes('到期'), '外发正文含到期时刻')
+    assert((await todos.get(a.id)).reminded_at !== null, '投递后标记 reminded_at')
+    clock += 61_000
+    await rem.check()
+    assertEq(pushed.length, sent + 1, '已消费不重复外发（不重试）')
+    assertEq(notes.length, noted + 1, '已消费不重复弹通知')
+
+    // 2) 改期 = 重新排队（回归点：不清 reminded_at 就永不再提醒）
+    await todos.update(a.id, { remindAt: clock + 60_000 })
+    assertEq((await todos.get(a.id)).reminded_at, null, '改期应清掉已投递标记')
+    clock += 61_000
+    await rem.check()
+    assertEq(notes.length, noted + 2, '改期后到点应再弹一次')
+    assertEq(pushed.length, sent + 2, '改期后到点应再外发一次')
+
+    // 3) 单条异常不连累同轮其它到点待办
+    const c = await todos.create({ title: '会炸的那条', remindAt: clock + 60_000 })
+    const d = await todos.create({ title: '正常那条', remindAt: clock + 60_000 })
+    clock += 61_000
+    markImpl = async (id, ts) => {
+      if (id === c.id) throw new Error('NOT_FOUND（模拟：列表与标记之间被删）')
+      return todos.markReminded(id, ts)
+    }
+    const baseN = notes.length
+    const baseP = pushed.length
+    await rem.check()
+    assertEq(notes.length - baseN, 2, '两条都弹了本机通知（异常不截断本轮）')
+    assertEq(pushed.length - baseP, 1, '只有标记成功那条继续外发')
+    assert((await todos.get(d.id)).reminded_at !== null, '正常那条已标记')
+    assertEq((await todos.get(c.id)).reminded_at, null, '异常那条不标记（留给下一轮）')
+    assertEq(
+      (await todos.listDueReminders()).map((t) => t.id).join(','), c.id,
+      '队列里只剩异常那条'
+    )
+    markImpl = (id, ts) => todos.markReminded(id, ts)
+    await db9.dispose()
+
+    // 4) 外发失败：本机通知照弹，失败写 pushStatus 且点名待办（不静默、不重试）
+    const subDir10 = join(runDir, 'sub10', 'data')
+    mkdirSync(subDir10, { recursive: true })
+    const db10 = new DatabaseClient({
+      dbPath: join(subDir10, 'umi-claw.db'), backupDir: join(subDir10, 'backup'),
+      workerScriptPath, nodePath, subprocessName: 'work-db-wz-sub10', requestTimeoutMs: 30_000, logger
+    })
+    await db10.dbStatus({ initialize: true })
+    const todos2 = new TodoManager({ database: db10, now })
+    const pushed2 = []
+    const notes2 = []
+    const dueOf = (mgr) => async () =>
+      (await mgr.listDueReminders()).map((t) => ({
+        id: t.id, title: t.title, dueDate: t.due_date, dueAt: t.due_at
+      }))
+    const rem2 = createReminderManager({
+      database: db10,
+      notifier: (id, p) => notes2.push({ id, p }),
+      getMorningSummary: morningSummary,
+      pusher: async (_id, p) => {
+        pushed2.push(p.body)
+        return { ok: false, message: '飞书 401' }
+      },
+      listPushChannels: async () => [
+        { channel: 'feishu', label: '飞书', configured: true, supported: true }
+      ],
+      listDueTodoReminders: dueOf(todos2),
+      markTodoReminded: (id, ts) => todos2.markReminded(id, ts),
+      now
+    })
+    await rem2.setPushConfig({ channel: 'feishu', target: 'user:ou_x' })
+    await rem2.setPushConfig({ enabled: true })
+    const b = await todos2.create({ title: '投递失败那条', remindAt: clock + 60_000 })
+    clock += 61_000
+    await rem2.check()
+    assertEq(notes2.length, 1, '外发失败也要弹本机通知')
+    assertEq(pushed2.length, 1, '按首选通道尝试投递一次')
+    let st = await rem2.getPushStatus()
+    assert(st !== null, '失败必须写 pushStatus（不得静默）')
+    assertEq(st.ok, false, '记为失败')
+    assert(String(st.message).includes('投递失败那条'), `状态点名是哪条待办（实际 ${st.message}）`)
+    assert(String(st.message).includes('飞书 401'), `状态带渠道侧原因（实际 ${st.message}）`)
+    assert((await todos2.get(b.id)).reminded_at !== null, '按口径消费，不无限重试')
+    assertEq((await todos2.listDueReminders()).length, 0, '不再重复排队')
+
+    // 4b) 兜底分支：通道 meta 被清空（UI 走不到——setPushConfig 不允许未配齐就开；
+    //     这里模拟手工改库/降级留下的脏 meta）→ 本机通知照弹 + 状态仍可见
+    await db10.metaSet('reminder_push_channel', '')
+    await db10.metaSet('reminder_push_target', '')
+    const b2 = await todos2.create({ title: '通道被清空那条', remindAt: clock + 60_000 })
+    clock += 61_000
+    await rem2.check()
+    assertEq(notes2.length, 2, '没通道也弹本机通知')
+    assertEq(pushed2.length, 1, '没有通道自然一次都投不出去')
+    st = await rem2.getPushStatus()
+    assertEq(st.ok, false, '仍记为失败')
+    assert(String(st.message).includes('通道未配置'), `写明原因（实际 ${st.message}）`)
+    assert(String(st.message).includes('通道被清空那条'), `点名待办（实际 ${st.message}）`)
+    assert((await todos2.get(b2.id)).reminded_at !== null, '按口径消费，不无限重试')
+
+    // 5) 压根没接 pusher（没装渠道 CLI 的机器）：本机通知仍必达
+    const notes3 = []
+    const rem3 = createReminderManager({
+      database: db10,
+      notifier: (id, p) => notes3.push({ id, p }),
+      getMorningSummary: morningSummary,
+      listDueTodoReminders: dueOf(todos2),
+      markTodoReminded: (id, ts) => todos2.markReminded(id, ts),
+      now
+    })
+    const b3 = await todos2.create({ title: '没有外发能力那条', remindAt: clock + 60_000 })
+    clock += 61_000
+    await rem3.check()
+    assertEq(notes3.length, 1, '无 pusher 也要弹本机通知')
+    assertEq(notes3[0].id, 'todo', '来源标识仍是 todo')
+    assert(notes3[0].p.body.includes('没有外发能力那条'), '通知正文正确')
+    assert((await todos2.get(b3.id)).reminded_at !== null, '同样消费掉，不重复弹')
+    await db10.dispose()
+
+    return '本机必达（含无 pusher）· 外发受总开关 · 到点即消费 · 改期重排 · 单条异常不连累 · 失败可见 ✓'
   })
 } catch (e) {
   console.error('验收脚本自身异常:', e)

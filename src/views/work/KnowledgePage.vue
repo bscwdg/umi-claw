@@ -32,7 +32,7 @@
           <div class="row-preview">{{ preview(r.content) }}</div>
           <div class="row-actions">
             <button class="btn btn-sm" @click="view(r.id)">查看</button>
-            <button class="btn btn-sm btn-danger" @click="remove(r.id)">删除</button>
+            <button class="btn btn-sm btn-danger" @click="askRemove(r)">删除</button>
           </div>
         </li>
       </ul>
@@ -93,6 +93,16 @@
       </div>
     </div>
 
+    <ConfirmDialog
+      v-model:visible="confirmVisible"
+      icon="⚠️"
+      title="删除这条知识资料？"
+      :message="`将删除「${pendingTitle}」。此操作不可撤销。`"
+      confirm-text="删除"
+      danger
+      @confirm="doRemove"
+    />
+
     <div v-if="toast" class="toast" :class="toast.type">
       {{ toast.msg }}
     </div>
@@ -102,6 +112,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useToast } from '@/composables/useToast'
+import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 
 interface KRow {
   id: string
@@ -253,10 +264,31 @@ async function saveEditor(): Promise<void> {
   }
 }
 
-async function remove(id: string): Promise<void> {
-  await window.api.work.knowledge.delete(id)
-  showToast('已删除', 'success')
-  await load()
+// 删除二次确认：点删除只弹窗，确认后才真正删
+const confirmVisible = ref(false)
+const pendingId = ref<string | null>(null)
+const pendingTitle = ref('')
+
+function askRemove(r: KRow): void {
+  pendingId.value = r.id
+  // 标题可能为空（旧数据），兜底用内容摘要
+  pendingTitle.value = r.title?.trim()
+    || (r.content.length > 30 ? r.content.slice(0, 30) + '…' : r.content)
+    || '未命名资料'
+  confirmVisible.value = true
+}
+
+async function doRemove(): Promise<void> {
+  const id = pendingId.value
+  pendingId.value = null
+  if (!id) return
+  try {
+    await window.api.work.knowledge.delete(id)
+    showToast('已删除', 'success')
+    await load()
+  } catch (e: any) {
+    showToast(`删除失败：${e.message}`, 'error')
+  }
 }
 
 function closeEditor(): void {

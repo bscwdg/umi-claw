@@ -169,7 +169,15 @@ const schemaMod = await import(
 )
 const MIGRATION_STEPS = migrationMod.MIGRATION_STEPS
 const EXPECTED_TABLES = [...schemaMod.SCHEMA_TABLES].sort()
-const EXPECTED_INDEXES = schemaMod.INDEX_STATEMENTS.map((s) => s.match(/idx_[a-z_]+/)[0]).sort()
+// 期望索引 = v1 冻结索引 ∪ 各迁移步骤追加的索引（如 v2 的 idx_todos_remind）
+const EXPECTED_INDEXES = [
+  ...new Set([
+    ...schemaMod.INDEX_STATEMENTS.map((s) => s.match(/idx_[a-z_]+/)[0]),
+    ...MIGRATION_STEPS.flatMap((s) =>
+      s.statements.map((sql) => sql.match(/idx_[a-z_]+/)?.[0]).filter(Boolean)
+    )
+  ])
+].sort()
 const TARGET = migrationMod.TARGET_USER_VERSION
 
 const r = new Recorder('db-worker（Worker 半边）')
@@ -189,8 +197,8 @@ try {
     return `db=${dbPath} pid=${pong.data.pid}`
   })
 
-  // ── W2 user_version 0 → 1 ──
-  await r.check('W2', 'migrate 0 → 1，user_version=1', async () => {
+  // ── W2 user_version 0 → TARGET ──
+  await r.check('W2', `migrate 0 → ${TARGET}，user_version=${TARGET}`, async () => {
     const before = await main.call('schema.info')
     assertEq(before.data.userVersion, 0, '空库 user_version 应为 0')
     const res = await main.call('migrate', { steps: MIGRATION_STEPS })
@@ -199,7 +207,7 @@ try {
     assertEq(res.data.to, TARGET, `to 应为 ${TARGET}`)
     assertEq(res.data.applied.length, MIGRATION_STEPS.length, 'applied 数量应等于步骤数')
     const after = await main.call('schema.info')
-    assertEq(after.data.userVersion, 1, '迁移后 user_version 应为 1')
+    assertEq(after.data.userVersion, TARGET, `迁移后 user_version 应为 ${TARGET}`)
     return `applied=${res.data.applied.map((a) => 'v' + a.version).join(',')}`
   })
 
@@ -208,7 +216,7 @@ try {
     const res = await main.call('migrate', { steps: MIGRATION_STEPS })
     assertEq(res.ok, true, '重复 migrate 应成功')
     assertEq(res.data.applied.length, 0, '不应重复执行任何 step')
-    assertEq(res.data.from, 1, 'from 应为 1')
+    assertEq(res.data.from, TARGET, `from 应为 ${TARGET}`)
     return 'applied=[]'
   })
 
@@ -500,7 +508,7 @@ try {
     const rows = direct((db) => db.prepare('SELECT COUNT(*) AS c FROM matters').get().c)
     assert(rows >= 1, `已提交数据应仍在（实际 ${rows} 行）`)
     const uv = direct((db) => db.prepare('PRAGMA user_version').get().user_version)
-    assertEq(uv, 1, 'user_version 应保持 1')
+    assertEq(uv, TARGET, `user_version 应保持 ${TARGET}`)
     main.dispose()
     main = null
     return `integrity_check=ok matters=${rows} user_version=${uv}`

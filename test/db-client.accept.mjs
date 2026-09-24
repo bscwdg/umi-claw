@@ -41,6 +41,10 @@ const registryPath = bundleEntry('electron/main/subprocessRegistry.ts', 'subproc
 const mod = await import(pathToFileURL(bundledPath).href)
 const registryMod = await import(pathToFileURL(registryPath).href)
 const DatabaseClient = mod.DatabaseClient
+const schemaMod2 = await import(
+  pathToFileURL(bundleEntry('electron/main/database/schema.ts', 'schema.mjs')).href
+)
+const TARGET_VERSION = schemaMod2.SCHEMA_VERSION
 const subprocessRegistry = registryMod.subprocessRegistry
 const clients = new Set()
 
@@ -127,6 +131,26 @@ function direct(dbFile, fn) {
   }
 }
 
+/**
+ * 直连读表清单，worker 刚被杀时轮询重试。
+ *
+ * Windows 上进程 pid 消失后，文件句柄/锁还会滞留几十毫秒，此时打开库报
+ * disk I/O error；这是 OS 回收时序，不是数据问题。最多等 3 秒。
+ */
+async function readTablesPolling(dbFile) {
+  const deadline = Date.now() + 3000
+  for (;;) {
+    try {
+      return direct(dbFile, (db) =>
+        db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((t) => t.name)
+      )
+    } catch (e) {
+      if (Date.now() >= deadline) throw e
+      await sleep(50)
+    }
+  }
+}
+
 const r = new Recorder('db-client（客户端半边，打真 database.ts）')
 let main = null
 
@@ -153,13 +177,13 @@ try {
   })
 
   // ── C3 首次请求拉起 worker 并建库 ──
-  await r.check('C3', '首次请求拉起 worker → 建库 + user_version=1 + 8 表', async () => {
+  await r.check('C3', `首次请求拉起 worker → 建库 + user_version=${TARGET_VERSION} + 8 表`, async () => {
     const pong = await main.ping()
     assertEq(pong.pong, true, 'ping 应成功')
     assert(existsSync(dbPath), '首次请求后应建库')
     const st = await main.dbStatus()
     assertEq(st.ready, true, 'ready 应为 true')
-    assertEq(st.userVersion, 1, 'user_version 应为 1')
+    assertEq(st.userVersion, TARGET_VERSION, `user_version 应为 ${TARGET_VERSION}`)
     assertEq(st.tables.length, 8, `应有 8 张表（硬规则 24，实际 ${st.tables.length}）`)
     assert(st.tables.includes('app_meta'), '应含 app_meta')
     assertEq(st.journalMode, 'wal', 'journal_mode 应为 wal')
@@ -357,7 +381,7 @@ try {
     assertEq(back, 'v1', '重启后数据应仍在')
     assert(main.workerPid !== null && main.workerPid !== pidBefore, '应重新拉起新 worker')
     const st = await main.dbStatus()
-    assertEq(st.userVersion, 1, '重启后 user_version 仍为 1')
+    assertEq(st.userVersion, TARGET_VERSION, `重启后 user_version 仍为 ${TARGET_VERSION}`)
     assertEq(st.migrated, false, '重启不应再触发迁移')
     return `pid ${pidBefore} → ${main.workerPid}，persist_probe=${back}`
   })
@@ -478,19 +502,20 @@ try {
 
   // ── C14 版本号撞车回归（2026-09-23 实测事故） ──
   //
-  // 真实事故：2.0 的库与 3.0 同目录同名（data/umi-claw.db），且 user_version 也是 1。
-  // 迁移判断 `from(1) < TARGET(1)` 为假 → 迁移整体跳过 → 3.0 的 8 表一张没建，
+  // 真实事故：2.0 的库与 3.0 同目录同名（data/umi-claw.db），且 user_version 相同。
+  // 迁移判断 `from == TARGET` → 迁移整体跳过 → 3.0 的 8 表一张没建，
   // 直到某个业务查询才报 `no such table: todos`（错误点离病因很远）。
   // 本用例锁住：初始化阶段就要把这种库识别出来并明确报错，绝不静默通过。
   await r.check('C14', '版本号撞车：user_version 相同但表结构是外来库 → 初始化明确报错', async () => {
     const foreignDir = join(altDir, 'foreign')
     mkdirSync(foreignDir, { recursive: true })
     const foreignDb = join(foreignDir, 'umi-claw.db')
-    // 复刻 2.0 的形状：user_version=1（与 3.0 相同）+ 营销域表，但没有 3.0 的 8 表
+    // 复刻外来库形状：user_version 与 3.0 TARGET 相同 + 营销域表，但没有 3.0 的 8 表
+    let foreignPid = null
     direct(foreignDb, (db) => {
       db.exec('CREATE TABLE businesses (id INTEGER PRIMARY KEY, name TEXT)')
       db.exec('CREATE TABLE projects (id INTEGER PRIMARY KEY, industry TEXT)')
-      db.exec('PRAGMA user_version = 1')
+      db.exec(`PRAGMA user_version = ${TARGET_VERSION}`)
     })
 
     const client = new DatabaseClient({
@@ -499,7 +524,10 @@ try {
       workerScriptPath,
       nodePath,
       subprocessName: 'work-db-worker-foreign',
-      onSpawn: () => () => {}
+      onSpawn: (info) => {
+        foreignPid = info.pid
+        return () => {}
+      }
     })
     clients.add(client)
 
@@ -510,10 +538,10 @@ try {
     assertEq(outcome.ok, false, '外来库不得静默通过初始化')
     assertEq(outcome.code, 'DB_ERROR', '应报 DB_ERROR')
     assert(String(outcome.message).includes('todos'), `错误应点名缺表（实际: ${outcome.message}）`)
-    // 关键：不得往旧库里补建 3.0 的表（硬规则 17 绝不写旧库）
-    const tables = direct(foreignDb, (db) =>
-      db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((t) => t.name)
-    )
+    if (foreignPid) assertEq(await waitPidGone(foreignPid), true, '失败 worker 应已回收')
+    // 关键：不得往旧库里补建 3.0 的表（硬规则 17 绝不写旧库）。
+    // pid 消失后 Windows 还会短暂持有文件句柄（实测约 60ms），直连读需轮询。
+    const tables = await readTablesPolling(foreignDb)
     assert(!tables.includes('todos'), '不得向旧库写入 3.0 的表')
     assert(!tables.includes('profile'), '不得向旧库写入 3.0 的表')
 
@@ -550,7 +578,7 @@ try {
 
     const st = await client.dbStatus({ initialize: true })
     assertEq(st.ready, true, '应就绪')
-    assertEq(st.userVersion, 1, 'user_version=1')
+    assertEq(st.userVersion, TARGET_VERSION, `user_version=${TARGET_VERSION}`)
     assertEq(st.tables.length, 8, `应建出 8 表（实际 ${st.tables.length}: ${st.tables.join(',')}）`)
     assert(st.tables.includes('todos'), '应含 todos')
     assertEq(st.migrated, true, '本次应执行过迁移')
@@ -571,6 +599,93 @@ try {
     clients.delete(client)
     await client.dispose().catch(() => {})
     return `work.db 8 表就绪、todos 可查；旧库未动（tables=${legacyTables.join(',')}）`
+  })
+
+  // ── C16 真实升级路径 v1 → TARGET（2026-09-24 迁移前快照死锁回归） ──
+  //
+  // 事故：迁移前快照走公共 backup()，而 backup() 内部 await ensureReady() —— 此刻
+  // startWorker() 的 readyPromise 尚未兑现 → 自己等自己，永久挂住。**只有「已有 v1 库
+  // 升到更高版本」这条真实升级路径才会走到**（空库建库 from=0 不备份），所以此前全绿。
+  // 本用例锁住：真 v1 库 + 真数据 → 升级不挂 / 迁移前留快照 / 老数据完好 / 新列可写。
+  await r.check('C16', `真实升级：v1 库（带数据）→ v${TARGET_VERSION}，迁移前快照 + 老数据完好`, async () => {
+    const upDir = join(altDir, 'upgrade-v1')
+    mkdirSync(upDir, { recursive: true })
+    const upDb = join(upDir, 'work.db')
+    const upBackup = join(upDir, 'backup')
+
+    // 1) 用「已发布的 v1 建表语句」造一个真 v1 库，并塞一条真实待办
+    const migMod = await import(
+      pathToFileURL(bundleEntry('electron/main/database/migration.ts', 'migration.mjs')).href
+    )
+    const v1 = migMod.MIGRATION_STEPS.find((s) => s.version === 1)
+    assert(!!v1, 'MIGRATION_STEPS 应含 v1 建表步骤')
+    direct(upDb, (db) => {
+      for (const sql of v1.statements) db.exec(sql)
+      db.exec('PRAGMA user_version = 1')
+      db.prepare(
+        `INSERT INTO todos (id,title,due_date,matter_id,source,routine_rule,state,done_at,created_at,updated_at)
+         VALUES ('t-old','升级前的老待办','2026-09-01',NULL,'manual',NULL,'confirmed',NULL,1,1)`
+      ).run()
+    })
+    assertEq(
+      direct(upDb, (db) => db.prepare('PRAGMA user_version').get().user_version),
+      1,
+      '前置：库应为 v1'
+    )
+
+    // 2) 生产客户端打开 → 若死锁回归，这里会一直挂住（本用例失败）
+    const client = new DatabaseClient({
+      dbPath: upDb,
+      backupDir: upBackup,
+      workerScriptPath,
+      nodePath,
+      subprocessName: 'work-db-worker-upgrade',
+      onSpawn: () => () => {}
+    })
+    clients.add(client)
+    const t0 = Date.now()
+    // 死锁的表现是「永远不返回」，所以这里用超时兜住：宁可本用例红，也不要把整套验收挂死
+    const st = await Promise.race([client.dbStatus({ initialize: true }), sleep(15_000).then(() => null)])
+    const elapsed = Date.now() - t0
+    if (st === null) {
+      // 别连累 finally 里的 dispose（它同样要等 readyPromise）：就地摘掉并有界回收
+      clients.delete(client)
+      await Promise.race([client.dispose().catch(() => {}), sleep(3_000)])
+      throw new Error(`升级挂住 >15s（迁移前快照自等死锁回归），elapsed=${elapsed}ms`)
+    }
+    assertEq(st.ready, true, '升级后应就绪')
+    assertEq(st.userVersion, TARGET_VERSION, `user_version 应升到 ${TARGET_VERSION}`)
+    assertEq(st.migrated, true, '本次应执行过迁移')
+    assertEq(st.tables.length, 8, '仍是 8 表（升级不新增表，硬规则 24）')
+
+    // 3) 迁移前快照必须留下（§四 备份触发时机：Schema 迁移前）
+    const snaps = existsSync(upBackup) ? readdirSync(upBackup).filter((f) => f.endsWith('.db')) : []
+    assert(snaps.length >= 1, `应留下迁移前快照（实际 ${snaps.length} 份）`)
+    const snapVersion = direct(join(upBackup, snaps[0]), (db) =>
+      db.prepare('PRAGMA user_version').get().user_version
+    )
+    assertEq(snapVersion, 1, '快照应是升级前的 v1 形状')
+
+    // 4) 老数据完好、新列为 NULL，且新列升级后真能写
+    const rows = await client.request('todos.list', { where: {} })
+    assertEq(rows.length, 1, '老待办应仍在')
+    assertEq(rows[0].title, '升级前的老待办', '老数据未被改')
+    assertEq(rows[0].due_date, '2026-09-01', '老 due_date 保留')
+    assertEq(rows[0].due_at, null, 'v3 新列 due_at 默认 NULL')
+    assertEq(rows[0].remind_at, null, 'v2 新列 remind_at 默认 NULL')
+    assertEq(rows[0].reminded_at, null, 'v2 新列 reminded_at 默认 NULL')
+    await client.request('todos.update', {
+      keys: { id: 't-old' },
+      data: { due_at: 1767225600000, remind_at: 1767225600000 },
+      required: true
+    })
+    const upgraded = await client.request('todos.get', { keys: { id: 't-old' } })
+    assertEq(upgraded.due_at, 1767225600000, '升级后新列可写（due_at）')
+    assertEq(upgraded.remind_at, 1767225600000, '升级后新列可写（remind_at）')
+
+    clients.delete(client)
+    await client.dispose().catch(() => {})
+    return `v1 → v${TARGET_VERSION} 用时 ${elapsed}ms；快照 ${snaps.length} 份（v${snapVersion}）；老待办完好、新列可写`
   })
 } catch (e) {
   console.error('验收脚本自身异常:', e)

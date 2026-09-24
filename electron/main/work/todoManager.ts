@@ -50,34 +50,54 @@ export const INITIAL_STATE_BY_SOURCE: Record<TodoSource, string> = {
 export interface TodoRow {
   id: string
   title: string
+  /** 到期日（本地 YYYY-MM-DD；按天聚合/索引走这列；null = 随时） */
   due_date: string | null
+  /** v3：精确到期时刻（epoch ms；null = 只有 due_date 的按天待办） */
+  due_at: number | null
   matter_id: string | null
   source: string
   routine_rule: string | null
   state: string
   done_at: number | null
+  /** v2：到点提醒时刻（epoch ms；null = 不提醒） */
+  remind_at: number | null
+  /** v2：已提醒标记（null = 未提醒；到点即消费） */
+  reminded_at: number | null
   created_at: number
   updated_at: number
 }
 
-/** 允许 update 的字段白名单（禁止改 id / source / state / created_at） */
-export const TODO_UPDATABLE_FIELDS = ['title', 'due_date', 'matter_id', 'routine_rule'] as const
+/**
+ * 允许 update 的字段白名单（禁止改 id / source / state / created_at）。
+ *
+ * 这是**调用方口径**的白名单：reminded_at 不在其中——它只由 update 内部在 remindAt
+ * 改期时派生清零（见 update），不接受外部直接指定。
+ */
+export const TODO_UPDATABLE_FIELDS = ['title', 'due_date', 'due_at', 'matter_id', 'routine_rule', 'remind_at'] as const
 
 export interface CreateTodoInput {
   title: string
   dueDate?: string | null
+  /** 精确到期时刻（epoch ms；null/缺省 = 只按 due_date 当天到期；允许过去=补登逾期待办） */
+  dueAt?: number | null
   matterId?: string | null
   /** 来源；默认 manual（手动新建 → 直接 confirmed）。**state 不接受传入** */
   source?: TodoSource
   /** 例事规则（仅 source=routine 有意义） */
   routineRule?: RoutineRule | null
+  /** 到点提醒时刻（epoch ms；null/缺省 = 不提醒；必须晚于当前时间）。到点本机通知必达，外发到渠道是加成 */
+  remindAt?: number | null
 }
 
 export interface UpdateTodoInput {
   title?: string
   dueDate?: string | null
+  /** 改/取消精确到期时刻（null = 回到按天到期） */
+  dueAt?: number | null
   matterId?: string | null
   routineRule?: RoutineRule | null
+  /** 改/取消到点提醒（null = 取消；改期即重新排队，必须晚于当前时间） */
+  remindAt?: number | null
 }
 
 export interface ListTodosParams {
@@ -183,19 +203,30 @@ export class TodoManager {
     const source = normalizeSource(input.source)
     const state = INITIAL_STATE_BY_SOURCE[source]
     const routineRule = source === 'routine' ? normalizeRoutineRule(input.routineRule, true) : normalizeRoutineRule(input.routineRule, false)
-    const dueDate = input.dueDate === undefined || input.dueDate === null ? null : normalizeDate(input.dueDate)
-    const matterId = normalizeOptionalId(input.matterId, 'matterId')
     const ts = this.now()
+    const dueAt = normalizeDueAt(input.dueAt)
+    // 精确时刻是更细的真相：给了 dueAt，到期日就从它推导，保证两列同步
+    const dueDate =
+      dueAt !== null
+        ? dateOf(dueAt)
+        : input.dueDate === undefined || input.dueDate === null
+          ? null
+          : normalizeDate(input.dueDate)
+    const matterId = normalizeOptionalId(input.matterId, 'matterId')
+    const remindAt = normalizeRemindAt(input.remindAt, ts)
     const id = this.newId()
     await this.database.request('todos.create', {
       data: {
         id,
         title,
         due_date: dueDate,
+        due_at: dueAt,
         matter_id: matterId,
         source,
         routine_rule: routineRule,
         state,
+        remind_at: remindAt,
+        reminded_at: null,
         created_at: ts,
         updated_at: ts
       }
@@ -215,8 +246,20 @@ export class TodoManager {
     if (patch.dueDate !== undefined) {
       data.due_date = patch.dueDate === null ? null : normalizeDate(patch.dueDate)
     }
+    if (patch.dueAt !== undefined) {
+      const dueAt = normalizeDueAt(patch.dueAt)
+      data.due_at = dueAt
+      // 与 create 同口径：精确时刻非空时连到期日一起校正
+      if (dueAt !== null) data.due_date = dateOf(dueAt)
+    }
     if (patch.matterId !== undefined) data.matter_id = normalizeOptionalId(patch.matterId, 'matterId')
     if (patch.routineRule !== undefined) data.routine_rule = normalizeRoutineRule(patch.routineRule, false)
+    if (patch.remindAt !== undefined) {
+      data.remind_at = normalizeRemindAt(patch.remindAt, this.now())
+      // 改期 = 重新排队：不清 reminded_at 的话，listDueReminders 的 `reminded_at === null`
+      // 条件会把这条永久挡在队列外（投递过一次之后，改到任何时间都不会再发）
+      data.reminded_at = null
+    }
     if (!Object.keys(data).length) {
       this.log(`[todo] update(${todoId}) 空 patch，未改动`)
       return this.get(todoId)
@@ -232,6 +275,37 @@ export class TodoManager {
       keys: { id: todoId }
     })
     return { id: todoId, rowDeleted: Number(res?.changes ?? 0) > 0 }
+  }
+
+  // ── 到点提醒（v2）────────────────────────────────────────────────────────────
+
+  /**
+   * 到点待提醒的 confirmed 待办。
+   *
+   * worker where 只支持等值（无 `<=`/`IS NOT NULL`），故先拉 confirmed 再在 JS 过滤：
+   * `remind_at` 非空、`reminded_at` 为空、`remind_at <= now`。
+   * 桌面端 confirmed 待办量很小，全拉成本可忽略；但 worker 的 list **默认只返回 500 行**
+   * （db-worker clampLimit 的 def=500），不显式抬到上限就会漏掉较老的到点待办
+   * → 与 todayManager 同口径取 5000。
+   */
+  async listDueReminders(): Promise<TodoRow[]> {
+    const rows = await this.list({ state: TODO_STATE_CONFIRMED, limit: 5000 })
+    const at = this.now()
+    return rows.filter(
+      (t) => t.remind_at !== null && t.reminded_at === null && Number(t.remind_at) <= at
+    )
+  }
+
+  /** 标记已提醒（ReminderManager 弹过本机通知后立刻调用；到点即消费，防重复弹） */
+  async markReminded(id: string, ts?: number): Promise<void> {
+    const todoId = requireId(id, 'markReminded')
+    const when = ts ?? this.now()
+    await this.database.request('todos.update', {
+      keys: { id: todoId },
+      data: { reminded_at: when, updated_at: when },
+      required: true
+    })
+    this.log(`[todo] markReminded ${todoId} @ ${when}`)
   }
 
   // ── 状态迁移 ────────────────────────────────────────────────────────────────
@@ -473,6 +547,32 @@ function normalizeRoutineRule(rule: unknown, required: boolean): string | null {
     throw new AppError(ERROR_CODES.VALIDATION_ERROR, `非法 routine_rule: ${rule}`, { field: 'routineRule' })
   }
   return rule as string
+}
+
+/**
+ * 精确到期时刻校验：缺省/null → null；否则必须是整数时间戳。
+ * 与提醒时刻不同，**允许过去的时间**——补登一条已经逾期的待办是正当场景。
+ */
+function normalizeDueAt(value: unknown): number | null {
+  if (value === undefined || value === null) return null
+  const ts = Number(value)
+  if (!Number.isInteger(ts)) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, '到期时间必须是整数时间戳', { field: 'dueAt' })
+  }
+  return ts
+}
+
+/** 到点提醒时刻校验：缺省/null → null；否则必须是晚于 now 的整数时间戳 */
+function normalizeRemindAt(value: unknown, now: number): number | null {
+  if (value === undefined || value === null) return null
+  const ts = Number(value)
+  if (!Number.isInteger(ts)) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, '提醒时间必须是整数时间戳', { field: 'remindAt' })
+  }
+  if (ts <= now) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, '提醒时间必须晚于当前时间', { field: 'remindAt' })
+  }
+  return ts
 }
 
 function normalizeOptionalId(id: unknown, field: string): string | null {

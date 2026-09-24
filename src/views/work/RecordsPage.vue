@@ -44,7 +44,7 @@
           <button class="btn btn-sm" @click="toggleMatterStatus(m)">
             {{ m.status === 'active' ? '归档' : '恢复' }}
           </button>
-          <button class="btn btn-sm btn-danger" @click="removeMatter(m.id)">删除</button>
+          <button class="btn btn-sm btn-danger" @click="askRemoveMatter(m)">删除</button>
         </li>
       </ul>
       <div v-if="!matters.length" class="empty">还没有事项。事项是轻量的「这件事」，用来归拢记录和待办。</div>
@@ -131,7 +131,7 @@
             <template v-else>
               <button class="btn btn-sm" @click="startEdit(r)">编辑</button>
             </template>
-            <button class="btn btn-sm btn-danger" @click="removeRec(r.id)">删除</button>
+            <button class="btn btn-sm btn-danger" @click="removeRec(r)">删除</button>
           </div>
         </li>
       </ul>
@@ -141,6 +141,16 @@
     <div v-if="toast" class="toast" :class="toast.type">
       {{ toast.msg }}
     </div>
+
+    <ConfirmDialog
+      v-model:visible="confirmVisible"
+      icon="⚠️"
+      :title="confirmTitle"
+      :message="confirmMessage"
+      confirm-text="删除"
+      danger
+      @confirm="doRemove"
+    />
   </div>
 </template>
 
@@ -149,8 +159,24 @@ import { computed, onMounted, ref } from 'vue'
 import type { RecordRow } from '../../electron/main/work/recordManager'
 import type { MatterRow } from '../../electron/main/work/matterManager'
 import { useToast } from '@/composables/useToast'
+import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 
 const { toast, showToast } = useToast()
+
+// 删除二次确认（工作记录 / 事项共用同一个 ConfirmDialog）：点删除只弹窗，确认后才真正删
+const confirmVisible = ref(false)
+const pendingKind = ref<'record' | 'matter'>('record')
+const pendingId = ref<string | null>(null)
+const pendingText = ref('')
+
+const confirmTitle = computed(() =>
+  pendingKind.value === 'matter' ? '删除这个事项？' : '删除这条工作记录？'
+)
+const confirmMessage = computed(() =>
+  pendingKind.value === 'matter'
+    ? `将删除事项「${pendingText.value}」。挂在其下的工作记录会保留，仅解除归属。`
+    : `将删除「${pendingText.value}」。此操作不可撤销。`
+)
 
 const palette = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#6B7280']
 
@@ -294,10 +320,40 @@ async function restoreRec(id: string): Promise<void> {
   showToast('已恢复为候选', 'success')
   await load()
 }
-async function removeRec(id: string): Promise<void> {
-  await window.api.work.records.delete(id)
-  showToast('已删除', 'success')
-  await load()
+function removeRec(r: RecordRow): void {
+  pendingKind.value = 'record'
+  pendingId.value = r.id
+  // 弹窗正文只放摘要，避免长记录把弹窗撑高
+  pendingText.value = r.content.length > 40 ? r.content.slice(0, 40) + '…' : r.content
+  confirmVisible.value = true
+}
+
+function askRemoveMatter(m: MatterRow): void {
+  pendingKind.value = 'matter'
+  pendingId.value = m.id
+  pendingText.value = m.name
+  confirmVisible.value = true
+}
+
+async function doRemove(): Promise<void> {
+  const kind = pendingKind.value
+  const id = pendingId.value
+  pendingId.value = null
+  if (!id) return
+  try {
+    if (kind === 'matter') {
+      await window.api.work.matters.delete(id)
+      showToast('事项已删除（挂在其下的记录保留，仅解绑）', 'success')
+      await loadMatters()
+      await load()
+    } else {
+      await window.api.work.records.delete(id)
+      showToast('已删除', 'success')
+      await load()
+    }
+  } catch (e: any) {
+    showToast(`删除失败：${e.message}`, 'error')
+  }
 }
 
 async function addMatter(): Promise<void> {
@@ -325,12 +381,6 @@ async function renameMatter(id: string, name: string): Promise<void> {
 async function toggleMatterStatus(m: MatterRow): Promise<void> {
   await window.api.work.matters.update(m.id, { status: m.status === 'active' ? 'archived' : 'active' })
   await loadMatters()
-}
-async function removeMatter(id: string): Promise<void> {
-  await window.api.work.matters.delete(id)
-  showToast('事项已删除（挂在其下的记录保留，仅解绑）', 'success')
-  await loadMatters()
-  await load()
 }
 
 onMounted(async () => {

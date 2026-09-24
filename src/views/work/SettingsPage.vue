@@ -105,8 +105,8 @@
       </div>
     </section>
 
-    <!-- 外发（方案 A：只推短提示，不推正文） -->
-    <section class="card">
+    <!-- 外发（方案 A：只推短提示，不推正文）。id 供今日页「去配置」跳来定位 -->
+    <section id="push" class="card">
       <div class="s-head">
         <h2>外发提醒到渠道</h2>
         <label class="toggle">
@@ -117,6 +117,10 @@
       <p class="text-sm text-muted">
         到点时把<strong>同一条短提示</strong>发到渠道（如「日报草稿已就绪，去确认」）。
         <strong>不推送日报正文</strong>——正文仍需你在「报告」页确认后才外传。
+      </p>
+      <p class="text-sm text-muted">
+        这是<strong>总开关</strong>，只管<strong>外发到渠道</strong>：关掉后「新的一天」页逐条设的
+        待办到点提醒<strong>仍会在本机弹通知</strong>，只是不再外发到渠道（到点即消费，不补发）。
       </p>
 
       <p class="text-sm push-hint">
@@ -281,8 +285,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import {
   consentGranted,
@@ -294,6 +298,7 @@ import {
 import { openWizard } from '@/composables/useWizardGate'
 
 const router = useRouter()
+const route = useRoute()
 const { toast, showToast } = useToast()
 
 const form = ref({
@@ -627,6 +632,11 @@ async function reenter(decision: 'keep' | 'fresh' | 'later'): Promise<void> {
 
 onMounted(async () => {
   await Promise.all([loadProfile(), loadReminders(), loadWizard()])
+  // 从今日页「去配置」带 #push 跳来：滚动定位到外发段落
+  if (route.hash === '#push') {
+    await nextTick()
+    document.getElementById('push')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 })
 
 /** 复核用户协议：弹窗会反显之前填的（已同意则默认打勾）。弹窗实例在 App.vue。 */

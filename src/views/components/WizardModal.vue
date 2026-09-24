@@ -148,9 +148,9 @@
         <div v-else class="step-body done-body">
           <div class="done-icon">🎉</div>
           <h2>可以开始了</h2>
-          <p class="hint">从「今日」页开始你的一天。随时可在设置里改画像和提醒。</p>
+          <p class="hint">从「新的一天」页开始你的一天。随时可在设置里改画像和提醒。</p>
           <div class="actions">
-            <button class="btn btn-primary" @click="close">进入今日</button>
+            <button class="btn btn-primary" @click="close">进入新的一天</button>
           </div>
         </div>
 

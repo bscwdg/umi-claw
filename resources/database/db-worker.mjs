@@ -104,7 +104,7 @@ const TABLES = {
   },
   todos: {
     pk: ['id'],
-    columns: ['id', 'title', 'due_date', 'matter_id', 'source', 'routine_rule', 'state', 'done_at', 'created_at', 'updated_at'],
+    columns: ['id', 'title', 'due_date', 'due_at', 'matter_id', 'source', 'routine_rule', 'state', 'done_at', 'remind_at', 'reminded_at', 'created_at', 'updated_at'],
     createdAt: 'created_at',
     updatedAt: 'updated_at'
   },

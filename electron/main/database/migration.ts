@@ -26,6 +26,26 @@ export const MIGRATION_STEPS: MigrationStep[] = [
     version: 1,
     name: 'init: 8 表 + 索引',
     statements: [...SCHEMA_STATEMENTS, ...INDEX_STATEMENTS]
+  },
+  {
+    version: 2,
+    name: 'todos: 到点提醒两列 + 索引',
+    statements: [
+      // 到点提醒时刻（epoch ms；NULL = 不提醒）
+      'ALTER TABLE todos ADD COLUMN remind_at INTEGER',
+      // 已提醒标记（NULL = 未提醒）；check 循环据此「到点即消费」，防重复弹/重复推
+      'ALTER TABLE todos ADD COLUMN reminded_at INTEGER',
+      'CREATE INDEX idx_todos_remind ON todos(state, remind_at)'
+    ]
+  },
+  {
+    version: 3,
+    name: 'todos: 到期精确到分钟',
+    statements: [
+      // 精确到期时刻（epoch ms；NULL = 只有 due_date 按天到期的旧待办）。
+      // due_date 不废弃：按天聚合/索引/今日页仍走它，由 TodoManager 保持两列同步。
+      'ALTER TABLE todos ADD COLUMN due_at INTEGER'
+    ]
   }
 ]
 

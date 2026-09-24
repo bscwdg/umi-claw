@@ -7,7 +7,7 @@
 //   - 用 @vue/server-renderer 渲染，捕获渲染期 Vue 警告（能抓到模板/引用类真 bug）
 
 import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, basename } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { parse as parseSfc, compileScript, compileTemplate } from '@vue/compiler-sfc'
@@ -65,8 +65,8 @@ export function writeStubs() {
   writeFileSync(
     routerStub,
     [
-      '// vue-router 桩：页面只用 useRouter/useRoute',
-      'export function useRouter() { return { push() {}, replace() {}, go() {} } }',
+      '// vue-router 桩：页面只用 useRouter/useRoute；push 记录供交互验收断言',
+      'export function useRouter() { return { push(loc) { (globalThis.__routerPushes ||= []).push(loc) }, replace() {}, go() {} } }',
       'export function useRoute() { return { query: {}, params: {}, path: "/", name: null } }',
       'export function createRouter() { return { install() {} } }',
       'export function createWebHashHistory() { return {} }',
@@ -179,10 +179,55 @@ function ensureComponentStub() {
 }
 
 /**
+ * 把子组件 .vue（位于 src/views/components/）编译打包成可 import 的真组件。
+ *
+ * 与页面走同一条 SFC 管线；它自己的子组件仍然换桩。
+ * 供 compileVuePage 的 realComponents 使用：个别交互验收（如二次确认）需要真子组件。
+ */
+function compileChildComponent(fileRelPath, outName) {
+  const abs = join(repoRoot, fileRelPath)
+  const source = readFileSync(abs, 'utf-8')
+  const id = 'ui' + outName.replace(/[^a-z0-9]/gi, '')
+
+  const { descriptor, errors } = parseSfc(source, { filename: abs })
+  if (errors.length) throw new Error(`SFC 解析失败 ${fileRelPath}: ${errors[0].message}`)
+  const script = compileScript(descriptor, { id, inlineTemplate: false })
+  const tpl = compileTemplate({
+    source: descriptor.template.content,
+    filename: abs,
+    id,
+    compilerOptions: { bindingMetadata: script.bindings, hoistStatic: false }
+  })
+  if (tpl.errors.length) throw new Error(`模板编译失败 ${fileRelPath}: ${tpl.errors[0].message}`)
+
+  let code = script.content.replace(/export\s+default\s+/, 'const __component = ')
+  code = code.replace(
+    /from\s+(['"])@\/views\/components\/[^'"]+\.vue\1/g,
+    "from '@/stub-component'"
+  )
+  const tplBody = tpl.code.replace(/export\s+function\s+render/, 'function render')
+  const assembled = `${code}\n${tplBody}\n__component.render = render\nexport default __component\n`
+  const assembledPath = join(tmpDir, `${outName}.sfc.ts`)
+  writeFileSync(assembledPath, assembled)
+
+  return esbuildBundle(assembledPath, outName, {
+    externals: ['vue'],
+    alias: aliasForComposables()
+  })
+}
+
+/**
  * 把 .vue 编译成可直接 import 的 ESM（script setup + render 合成一个默认导出）。
  * 返回打包后的模块路径。
+ *
+ * `realComponents`：指定的 @/views/components/ 下子组件**用真组件**（如确认弹窗
+ * 交互验收）；未列出的子组件仍统一换桩。
  */
-export function compileVuePage(fileRelPath, outName, { routerStub }) {
+export function compileVuePage(
+  fileRelPath,
+  outName,
+  { routerStub, realComponents = [] }
+) {
   const abs = join(repoRoot, fileRelPath)
   const source = readFileSync(abs, 'utf-8')
   const id = 'ui' + outName.replace(/[^a-z0-9]/gi, '')
@@ -205,12 +250,24 @@ export function compileVuePage(fileRelPath, outName, { routerStub }) {
   })
   if (tpl.errors.length) throw new Error(`模板编译失败 ${fileRelPath}: ${tpl.errors[0]}`)
 
+  // 真子组件先编译好，记录 import 路径 → 产物文件
+  const realByImport = new Map()
+  for (const rel of realComponents) {
+    const importPath = `@/views/components/${rel}`
+    const childOut = `real-${outName}-${rel.replace(/[\\/.]/g, '-')}`
+    const bundled = compileChildComponent(`src/views/components/${rel}`, childOut)
+    realByImport.set(importPath, bundled)
+  }
+
   // 把 script 的 default 导出改名，挂上 render，再作为 default 导出
   let code = script.content.replace(/export\s+default\s+/, 'const __component = ')
-  // 子组件（.vue）统一换桩：esbuild 不递归编译 SFC，页面内的子组件不属于本层验收目标
+  // 子组件（.vue）默认换桩；realComponents 列出的改写为真组件产物（与本文件同在 tmpDir）
   code = code.replace(
-    /from\s+(['"])@\/views\/components\/[^'"]+\.vue\1/g,
-    "from '@/stub-component'"
+    /from\s+(['"])@\/views\/components\/([^'"]+\.vue)\1/g,
+    (_m, q, compPath) => {
+      const real = realByImport.get(`@/views/components/${compPath}`)
+      return real ? `from './${basename(real)}'` : "from '@/stub-component'"
+    }
   )
   const tplBody = tpl.code.replace(/export\s+function\s+render/, 'function render')
   const assembled = `${code}\n${tplBody}\n__component.render = render\nexport default __component\n`
@@ -347,10 +404,28 @@ function makeNode(tag, text) {
     // v-model 走 runtime-dom 指令，直接操作这些并挂事件监听
     value: undefined,
     checked: undefined,
-    addEventListener() {},
-    removeEventListener() {},
+    // 监听器真实存储：验收测试据此触发 v-model 的 input/change 回调模拟交互
+    listeners: {},
+    addEventListener(type, fn) {
+      ;(this.listeners[type] ??= []).push(fn)
+    },
+    removeEventListener(type, fn) {
+      const list = this.listeners[type]
+      if (!list) return
+      const i = list.indexOf(fn)
+      if (i >= 0) list.splice(i, 1)
+    },
     setAttribute() {},
     removeAttribute() {},
+    // transition 钩子经 el.ownerDocument 找 body（forceReflow）
+    get ownerDocument() { return globalThis.document },
+    // transition 进出场钩子（runtime-dom）要操作 classList；宿主对象树本应具备
+    classList: {
+      add() {},
+      remove() {},
+      contains() { return false },
+      toggle() {}
+    },
     // v-model 的更新钩子会调 getRootNode（比 activeElement），缺了会抛
     getRootNode() { return this },
     // <select v-model>：dev 版 runtime-dom 的 setSelected 会遍历 el.options
@@ -430,12 +505,19 @@ function installDomGlobals() {
       createElement: () => makeNode('div'),
       createTextNode: (t) => makeNode('#text', t),
       querySelector: () => null,
+      // transition 离场 forceReflow 读 document.body.offsetHeight
+      body: { offsetHeight: 0 },
       getRootNode() { return this }
     }
   }
   // instanceof 检查用（如 getRootNode() instanceof ShadowRoot）；桩类保证为 false
   for (const name of ['Document', 'ShadowRoot', 'Element', 'Node', 'HTMLElement', 'SVGElement']) {
     if (!g[name]) g[name] = class {}
+  }
+  // runtime-dom 的 transition nextFrame 直接调 requestAnimationFrame（无 setTimeout 回退）
+  if (!g.requestAnimationFrame) {
+    g.requestAnimationFrame = (cb) => setTimeout(() => cb(Date.now()), 16)
+    g.cancelAnimationFrame = (id) => clearTimeout(id)
   }
 }
 
@@ -448,7 +530,12 @@ function installDomGlobals() {
 export async function mountPage(component, { api, flush = 8 } = {}) {
   const renderer = createHostRenderer()
   const root = makeNode('#root')
-  globalThis.window = { api }
+  // getComputedStyle 仅 transition 收尾时读时长；空值 = 无过渡，立即结束
+  const emptyStyle = {
+    transitionDuration: '', transitionDelay: '', transitionProperty: '',
+    animationDuration: '', animationDelay: ''
+  }
+  globalThis.window = { api, getComputedStyle: () => emptyStyle }
   // Vue 的 vModelText 等 runtime-dom 指令会访问 DOM 全局量（如 document.activeElement），
   // Node 下不存在 → 指令抛错、值不落。这里补最小桩（不做通用 DOM 模拟）。
   installDomGlobals()

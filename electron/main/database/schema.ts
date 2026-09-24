@@ -11,8 +11,13 @@
 //   2.0 = projects/businesses/knowledge_items/knowledge_chunks/hot_topics/…（营销域）
 //   3.0 = 工作域 8 表；knowledge 去 project 维度，conversations 承接 runId→快照（§14.1）。
 
-/** 第一版 Schema 版本号（PRAGMA user_version） */
-export const SCHEMA_VERSION = 1
+/**
+ * Schema 版本号（PRAGMA user_version）。
+ * v2（2026-09-24）：todos 加 remind_at / reminded_at（到点提醒：本机通知必达 + 外发可选，见 migration.ts）。
+ * v3（2026-09-24）：todos 加 due_at（到期精确到分钟；due_date 保留，承担按天查询）。
+ * 注意：v1 建表语句已发布、冻结不改，新列只在 MIGRATION_STEPS 的迁移步骤里 ALTER。
+ */
+export const SCHEMA_VERSION = 3
 
 /** 表清单（与 schema.ts 的 DDL、db-worker.mjs 的 TABLES 白名单一一对应） */
 export const SCHEMA_TABLES = [
@@ -50,6 +55,7 @@ export const SCHEMA_STATEMENTS: string[] = [
     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 )`,
   // ── 待办（state 由 source 决定初始值，见 4.2 规则 5 / 参数约定 7）───────────
+  // v1 形状冻结；v2 追加 remind_at / reminded_at（见 migration.ts 的 v2 step）
   `CREATE TABLE todos (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -123,6 +129,8 @@ export const INDEX_STATEMENTS: string[] = [
   `CREATE INDEX idx_activity_source_ref  ON activity_log(source_ref)`,
   `CREATE INDEX idx_todos_state_due      ON todos(state, due_date)`,
   `CREATE INDEX idx_todos_matter         ON todos(matter_id)`,
+  // 注：v2 的 idx_todos_remind 不收进这里——本表是 v1 冻结形状，且 v1 建表时
+  // todos 还没有 remind_at 列；新索引只在 migration.ts 的 v2 步骤里创建。
   `CREATE INDEX idx_matters_status       ON matters(status)`,
   `CREATE INDEX idx_knowledge_status     ON knowledge(status)`,
   `CREATE INDEX idx_conversations_key    ON conversations(conversation_key)`,

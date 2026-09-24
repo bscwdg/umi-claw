@@ -23,7 +23,7 @@ import { pathToFileURL } from 'node:url'
 import { Recorder, assert, assertEq, printResult, writeJson, __dirname, repoRoot } from './_lib.mjs'
 import {
   writeStubs, compileVuePage, importPreloadApi, mountPage, esbuildBundle,
-  collectRendererChannels, loadWorkIpcChannels
+  collectRendererChannels, loadWorkIpcChannels, serialize
 } from './_ui.mjs'
 
 const r = new Recorder('UI · work 域页面组件级验收')
@@ -69,9 +69,9 @@ try {
   })
 
   // ── 挂载辅助 ──
-  async function mount(file, outName, ipcMap) {
+  async function mount(file, outName, ipcMap, compileOpts = {}) {
     setIpc(ipcMap)
-    const bundle = compileVuePage(file, outName, { routerStub: stubs.routerStub })
+    const bundle = compileVuePage(file, outName, { routerStub: stubs.routerStub, ...compileOpts })
     const mod = await import(pathToFileURL(bundle).href)
     const res = await mountPage(mod.default, { api })
     if (res.mountError) throw new Error('挂载异常: ' + res.mountError.message)
@@ -128,6 +128,158 @@ try {
     assert(res.html.includes('手动'), '渲染来源标记')
     assert(res.html.includes('14:00'), '渲染时间')
     return '记录页渲染 ✓'
+  })
+
+  // ── U13 删除工作记录二次确认 ──
+  await r.check('U13', '删除工作记录 / 事项均二次确认：同一 ConfirmDialog，先弹窗后删除', async () => {
+    const res = await mount(
+      'src/views/work/RecordsPage.vue',
+      'ui-records-del',
+      {
+        'work:matters:list': [
+          { id: 'm1', name: 'Q3活动', status: 'active', color: '#F59E0B', created_at: 1, updated_at: 1 }
+        ],
+        'work:records:list': [
+          {
+            id: 'r1', content: '召开 Q3 启动会', occurred_date: '2026-09-23', occurred_time: '14:00',
+            source: 'manual', source_ref: null, status: 'confirmed', matter_id: 'm1',
+            confirmed_at: 1, filtered_reason: null, created_at: 1, updated_at: 1
+          }
+        ],
+        'work:records:delete': null,
+        'work:matters:delete': null
+      },
+      { realComponents: ['ConfirmDialog.vue'] }
+    )
+    const ticks = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((s) => setTimeout(s, 0)) }
+    const allButtons = (root) => {
+      const out = []
+      const rec = (n) => {
+        if (n.tag === 'button') out.push(n)
+        for (const c of n.children ?? []) rec(c)
+      }
+      rec(root)
+      return out
+    }
+    const btnText = (n) =>
+      n.children.map((c) => (c.tag === '#text' ? c.text ?? '' : '')).join('').trim()
+    const flush = async () => { await ticks() }
+
+    // 点记录行的「删除」：只弹确认框，不产生删除调用
+    let delBtns = allButtons(res.root).filter((b) => btnText(b) === '删除')
+    assertEq(delBtns.length, 1, '初始只有记录行一个删除按钮')
+    delBtns[0].props.onClick()
+    await flush()
+    let deletes = calls().filter((c) => c.channel === 'work:records:delete')
+    assertEq(deletes.length, 0, '弹窗阶段不得删除')
+    const dom = serialize(res.root)
+    assert(dom.includes('删除这条工作记录？'), '应显示确认弹窗')
+    assert(dom.includes('召开 Q3 启动会'), '弹窗应点名要删的记录')
+
+    // 取消：不删，弹窗关闭
+    allButtons(res.root).find((b) => btnText(b) === '取消')?.props.onClick()
+    await flush()
+    assertEq(calls().filter((c) => c.channel === 'work:records:delete').length, 0, '取消不删除')
+    assert(!serialize(res.root).includes('删除这条工作记录？'), '取消后弹窗关闭')
+
+    // 重新点删除 → 弹窗内确认：真正删除，带上记录 id
+    delBtns = allButtons(res.root).filter((b) => btnText(b) === '删除')
+    assertEq(delBtns.length, 1, '取消后只剩记录行删除按钮')
+    delBtns[0].props.onClick()
+    await flush()
+    // 弹窗内的「删除」是此刻第二个同名按钮
+    delBtns = allButtons(res.root).filter((b) => btnText(b) === '删除')
+    assertEq(delBtns.length, 2, '弹窗确认按钮出现')
+    delBtns[1].props.onClick()
+    await flush()
+    deletes = calls().filter((c) => c.channel === 'work:records:delete')
+    assertEq(deletes.length, 1, '确认后只删一次')
+    assertEq(deletes[0].args[0], 'r1', '删除应带上记录 id')
+
+    // 同一个弹窗实例兼管「事项删除」：先展开默认折叠的事项面板
+    allButtons(res.root).find((b) => btnText(b) === '管理事项')?.props.onClick()
+    await flush()
+    let rowDels = allButtons(res.root).filter((b) => btnText(b) === '删除')
+    assertEq(rowDels.length, 2, '展开后：事项行 + 记录行各一个删除按钮')
+    rowDels[0].props.onClick() // 事项区在记录区之前
+    await flush()
+    assertEq(calls().filter((c) => c.channel === 'work:matters:delete').length, 0, '事项弹窗阶段不得删除')
+    const matterDom = serialize(res.root)
+    assert(matterDom.includes('删除这个事项？'), '事项确认弹窗标题')
+    assert(matterDom.includes('Q3活动'), '弹窗应点名要删的事项')
+    assert(matterDom.includes('工作记录会保留'), '应说明记录保留、仅解绑')
+
+    // 弹窗内的「删除」排在两个行按钮之后
+    rowDels = allButtons(res.root).filter((b) => btnText(b) === '删除')
+    assertEq(rowDels.length, 3, '事项弹窗确认按钮出现')
+    rowDels[2].props.onClick()
+    await flush()
+    const matterDeletes = calls().filter((c) => c.channel === 'work:matters:delete')
+    assertEq(matterDeletes.length, 1, '确认后事项只删一次')
+    assertEq(matterDeletes[0].args[0], 'm1', '删除应带上事项 id')
+    assertEq(calls().filter((c) => c.channel === 'work:records:delete').length, 1, '记录删除数不被事项操作影响')
+
+    return '记录：弹窗不删·取消不删·确认带 id；事项：同一弹窗同口径 ✓'
+  })
+
+  // ── U14 删除知识资料二次确认 ──
+  await r.check('U14', '删除知识资料二次确认：全系统一的 ConfirmDialog，先弹窗后删除', async () => {
+    const res = await mount(
+      'src/views/work/KnowledgePage.vue',
+      'ui-knowledge-del',
+      {
+        'work:knowledge:list': [
+          {
+            id: 'k1', title: '报销制度', type: 'text',
+            content: '每月 5 号前提交报销单', status: 'ready', source_name: null
+          }
+        ],
+        'work:knowledge:delete': null
+      },
+      { realComponents: ['ConfirmDialog.vue'] }
+    )
+    const ticks = async (n = 6) => { for (let i = 0; i < n; i++) await new Promise((s) => setTimeout(s, 0)) }
+    const allButtons = (root) => {
+      const out = []
+      const rec = (n) => {
+        if (n.tag === 'button') out.push(n)
+        for (const c of n.children ?? []) rec(c)
+      }
+      rec(root)
+      return out
+    }
+    const btnText = (n) =>
+      n.children.map((c) => (c.tag === '#text' ? c.text ?? '' : '')).join('').trim()
+    const flush = async () => { await ticks() }
+
+    // 点行内删除：只弹窗
+    let delBtns = allButtons(res.root).filter((b) => btnText(b) === '删除')
+    assertEq(delBtns.length, 1, '初始只有行内一个删除按钮')
+    delBtns[0].props.onClick()
+    await flush()
+    assertEq(calls().filter((c) => c.channel === 'work:knowledge:delete').length, 0, '弹窗阶段不得删除')
+    const dom = serialize(res.root)
+    assert(dom.includes('删除这条知识资料？'), '应显示确认弹窗')
+    assert(dom.includes('报销制度'), '弹窗应点名要删的资料')
+
+    // 取消不删
+    allButtons(res.root).find((b) => btnText(b) === '取消')?.props.onClick()
+    await flush()
+    assert(!serialize(res.root).includes('删除这条知识资料？'), '取消后弹窗关闭')
+
+    // 确认才删，带知识 id
+    delBtns = allButtons(res.root).filter((b) => btnText(b) === '删除')
+    delBtns[0].props.onClick()
+    await flush()
+    delBtns = allButtons(res.root).filter((b) => btnText(b) === '删除')
+    assertEq(delBtns.length, 2, '弹窗确认按钮出现')
+    delBtns[1].props.onClick()
+    await flush()
+    const deletes = calls().filter((c) => c.channel === 'work:knowledge:delete')
+    assertEq(deletes.length, 1, '确认后只删一次')
+    assertEq(deletes[0].args[0], 'k1', '删除应带上资料 id')
+
+    return '知识资料：弹窗不删 · 取消不删 · 确认才删且带 id ✓'
   })
 
   // ── U4 报告页 ──
@@ -322,6 +474,171 @@ try {
     assertEq(orphan.length, 0, `主进程注册但渲染端无法触达（孤儿）: ${orphan.join(', ')}`)
 
     return `渲染端 ${invoked.length} 通道 = 主进程 ${registered.length} handler，全对齐 ✓`
+  })
+
+  // ── 宿主节点遍历辅助（交互断言用） ──
+  function* walk(node) {
+    if (!node) return
+    yield node
+    for (const c of node.children ?? []) yield* walk(c)
+  }
+  function findTag(root, tag, pred) {
+    for (const n of walk(root)) {
+      if (n.tag === tag && (!pred || pred(n))) return n
+    }
+    return null
+  }
+  function findButton(root, text) {
+    for (const n of walk(root)) {
+      const label = (n.children ?? []).map((c) => c.text ?? '').join('')
+      if (n.tag === 'button' && label.includes(text)) return n
+    }
+    return null
+  }
+  const flushTicks = async (n = 6) => {
+    for (let i = 0; i < n; i++) await new Promise((s) => setTimeout(s, 0))
+  }
+  /** epoch ms → datetime-local 控件值（本地时区 YYYY-MM-DDTHH:mm） */
+  const toLocalInput = (ts) => {
+    const d = new Date(ts)
+    const p = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+  }
+
+  // ── U12 今日页交互 ──
+  await r.check('U12', '今日页交互：回车只建待办不跳页 · 问答带原文 · 到点提醒带时间 · 外发未就绪仍调度并给入口', async () => {
+    const emptyToday = {
+      date: '2026-09-24', weekday: 3, greeting: '早上好',
+      todos: [], candidateTodos: [], records: [], candidateRecords: [],
+      report: { exists: false, reportId: null, status: null, canGenerate: false },
+      counts: { todos: 0, candidateTodos: 0, records: 0, candidateRecords: 0 }
+    }
+    const res = await mount('src/views/work/TodayPage.vue', 'ui-today-interact', {
+      'work:today:get': emptyToday,
+      // 新口径：外发就绪 = 总开关开 + 通道与目标配齐（关着时页面不调度，见第 5 步）
+      'work:reminder:getPushConfig': {
+        enabled: true, channel: 'feishu', fallbackChannel: null, target: 'u1', fallbackTarget: null
+      },
+      'work:router:route': (text) => ({ target: 'qa', reason: '兜底', longText: false, text, draft: null }),
+      'work:todos:create': null
+    })
+    globalThis.__routerPushes = []
+
+    const quickInput = findTag(res.root, 'input', (n) => String(n.props.placeholder ?? '').includes('加个待办'))
+
+    // 1) 输入 + 选到期时间 + 回车：只建待办、不跳页（router 判成 qa 也一样）
+    quickInput.value = '明天要交方案'
+    quickInput.listeners.input[0]({ target: quickInput })
+    const dueInput = findTag(res.root, 'input', (n) => n.props.type === 'datetime-local')
+    dueInput.value = '2026-09-24T18:00'
+    dueInput.listeners.input[0]({ target: dueInput })
+    quickInput.props.onKeydown({ key: 'Enter' })
+    await flushTicks()
+    const creates = calls().filter((c) => c.channel === 'work:todos:create')
+    assertEq(creates.length, 1, '回车应调 todos.create')
+    assertEq(creates[0].args[0].title, '明天要交方案', '标题为原文')
+    assertEq(
+      creates[0].args[0].dueAt,
+      new Date('2026-09-24T18:00').getTime(),
+      'create 携带精确到期时刻'
+    )
+    assertEq(creates[0].args[0].dueDate, '2026-09-24', '到期日与时刻同步')
+    assertEq(globalThis.__routerPushes.length, 0, '回车不产生任何导航')
+
+    // 2) 独立问答按钮：原文带过去作为问题
+    quickInput.value = '这个需求怎么做'
+    quickInput.listeners.input[0]({ target: quickInput })
+    findButton(res.root, '去工作问答').props.onClick()
+    assertEq(globalThis.__routerPushes.length, 1, '问答按钮只跳一次')
+    assertEq(globalThis.__routerPushes[0].path, '/work/qa', '跳工作问答')
+    assertEq(globalThis.__routerPushes[0].query.q, '这个需求怎么做', '原文带过去作为问题')
+
+    // 3) 勾选到点提醒 + 选时间：create 携带 remindAt
+    const pushBox = findTag(res.root, 'input', (n) => n.props.type === 'checkbox')
+    pushBox.props.onChange({ target: { checked: true } })
+    await flushTicks(2)
+    // 此刻有两个 datetime-local：到期（恒在）+ 外发（勾选后出现），外发是第二个
+    const timeInputs = []
+    for (const n of walk(res.root)) {
+      if (n.tag === 'input' && n.props.type === 'datetime-local') timeInputs.push(n)
+    }
+    assertEq(timeInputs.length, 2, '勾选后应有到期 + 外发两个时间输入')
+    const timeInput = timeInputs[1]
+    // 提醒时间必须晚于「现在」（页面口径：ts <= Date.now() 视为「已过」→ 不带 remindAt），
+    // 故取相对时间；写死日期会让本用例随日历过期而必挂
+    const remindLocal = toLocalInput(Date.now() + 60 * 60 * 1000)
+    timeInput.value = remindLocal
+    timeInput.listeners.input[0]({ target: timeInput })
+    quickInput.value = '提醒客户回款'
+    quickInput.listeners.input[0]({ target: quickInput })
+    quickInput.props.onKeydown({ key: 'Enter' })
+    await flushTicks()
+    const scheduled = calls().filter((c) => c.channel === 'work:todos:create')
+    assertEq(scheduled.length, 2, '第二次建待办')
+    assertEq(
+      scheduled[1].args[0].remindAt,
+      new Date(remindLocal).getTime(),
+      '勾选到点提醒后 create 携带提醒时间戳'
+    )
+
+    // 4) 渠道未配置：弱提示 + 去工作设置外发段落
+    const res2 = await mount('src/views/work/TodayPage.vue', 'ui-today-nopush', {
+      'work:today:get': emptyToday,
+      'work:reminder:getPushConfig': {
+        enabled: false, channel: null, fallbackChannel: null, target: null, fallbackTarget: null
+      }
+    })
+    const box2 = findTag(res2.root, 'input', (n) => n.props.type === 'checkbox')
+    box2.props.onChange({ target: { checked: true } })
+    await flushTicks(2)
+    assert(serialize(res2.root).includes('未配置外发渠道'), '渠道未配置时显示提示')
+    findButton(res2.root, '去配置').props.onClick()
+    assertEq(globalThis.__routerPushes.at(-1), '/work/settings#push', '去配置直达工作设置外发段落')
+
+    // 5) 通道配好但**外发总开关关着**（v0.17 口径）：提示「外发开关未开启」+ 去开启入口，
+    //    但**照样调度**——到点本机通知必达，总开关只管外发（与主进程同口径）
+    const res3 = await mount('src/views/work/TodayPage.vue', 'ui-today-pushoff', {
+      'work:today:get': emptyToday,
+      'work:reminder:getPushConfig': {
+        enabled: false, channel: 'feishu', fallbackChannel: null, target: 'u1', fallbackTarget: null
+      },
+      'work:router:route': (text) => ({
+        target: 'todo_extract', reason: '待办', longText: false, text, draft: null
+      }),
+      'work:todos:create': null
+    })
+    const box3 = findTag(res3.root, 'input', (n) => n.props.type === 'checkbox')
+    box3.props.onChange({ target: { checked: true } })
+    await flushTicks(2)
+    assert(serialize(res3.root).includes('外发开关未开启'), '总开关关着时提示「外发开关未开启」')
+    assert(findButton(res3.root, '去开启') !== null, '给「去开启」入口（不是「去配置」）')
+    findButton(res3.root, '去开启').props.onClick()
+    assertEq(globalThis.__routerPushes.at(-1), '/work/settings#push', '去开启同样直达外发段落')
+
+    const times3 = []
+    for (const n of walk(res3.root)) {
+      if (n.tag === 'input' && n.props.type === 'datetime-local') times3.push(n)
+    }
+    assertEq(times3.length, 2, '勾选后应有到期 + 提醒两个时间输入')
+    times3[0].value = toLocalInput(Date.now() + 30 * 60 * 1000)
+    times3[0].listeners.input[0]({ target: times3[0] })
+    times3[1].value = toLocalInput(Date.now() + 60 * 60 * 1000)
+    times3[1].listeners.input[0]({ target: times3[1] })
+    const qi3 = findTag(res3.root, 'input', (n) => String(n.props.placeholder ?? '').includes('加个待办'))
+    qi3.value = '开关关着也要记下来'
+    qi3.listeners.input[0]({ target: qi3 })
+    qi3.props.onKeydown({ key: 'Enter' })
+    await flushTicks()
+    const created3 = calls().filter((c) => c.channel === 'work:todos:create')
+    assertEq(created3.length, 1, '待办本身照建（提醒选项不阻断记录）')
+    assertEq(
+      created3[0].args[0].remindAt,
+      new Date(times3[1].value).getTime(),
+      '外发未就绪也照样调度（到点本机通知必达，总开关只管外发）'
+    )
+    assertEq(created3[0].args[0].title, '开关关着也要记下来', '标题为原文')
+
+    return '回车只建待办 · 问答带文跳转 · 提醒带时间 · 外发未就绪仍调度且给入口 ✓'
   })
 } catch (e) {
   console.error('UI 验收脚本自身异常:', e)

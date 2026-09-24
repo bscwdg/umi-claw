@@ -121,7 +121,7 @@ const configStore = useConfigStore()
 const version = ref('')
 
 const workNavItems = [
-  { to: '/work/today', icon: '☀️', label: '今天' },
+  { to: '/work/today', icon: '☀️', label: '新的一天' },
   { to: '/work/records', icon: '🗂', label: '工作记录' },
   { to: '/work/qa', icon: '💬', label: '工作问答' },
   { to: '/work/reports', icon: '📊', label: '报告' },

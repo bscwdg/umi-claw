@@ -15,10 +15,14 @@ export interface TodayTodoItem {
   id: string
   title: string
   dueDate: string | null
+  /** v3：精确到期时刻（null = 只按 dueDate 当天到期） */
+  dueAt: number | null
   matterId: string | null
   source: string
-  /** 已逾期（dueDate < 今天，仍 confirmed） */
+  /** 已逾期（有 dueAt 按 dueAt 判；否则按 dueDate < 今天），仍 confirmed */
   overdue: boolean
+  /** v2：到点提醒时刻（epoch ms；null = 不提醒） */
+  remindAt: number | null
 }
 
 export interface TodayCandidateTodoItem {
@@ -110,13 +114,17 @@ export class TodayManager {
     const todos: TodayTodoItem[] = todoRows
       .map((t) => {
         const due = t.due_date === null || t.due_date === undefined ? null : String(t.due_date)
+        const dueAt = t.due_at === null || t.due_at === undefined ? null : Number(t.due_at)
         return {
           id: String(t.id),
           title: String(t.title ?? ''),
           dueDate: due,
+          dueAt,
           matterId: t.matter_id === null || t.matter_id === undefined ? null : String(t.matter_id),
           source: String(t.source ?? 'manual'),
-          overdue: due !== null && due < today
+          overdue: dueAt !== null ? dueAt < ts : due !== null && due < today,
+          remindAt:
+            t.remind_at === null || t.remind_at === undefined ? null : Number(t.remind_at)
         }
       })
       // 收今日到期、无日期（open-ended，始终展示）、已逾期

@@ -1,7 +1,13 @@
-// work/reminderManager.ts —— 最简两个本地通知（PLAN-3.0.md §八 / 硬规则 22）
+// work/reminderManager.ts —— 两个固定本地通知 + 待办到点提醒（PLAN-3.0.md §八 / 硬规则 22）
 //
-// **护栏（硬规则 22）：提醒是两个固定通知，不是调度系统。**
-// 不加自定义规则/重复规则/多提醒/日历同步——想做先重新评估。
+// **护栏（硬规则 22）：提醒不是调度系统。**
+// 不加自定义规则/重复规则/多提醒/日历同步。
+// 2026-09-24 重新评估并经北拍板：允许**待办逐条带一个提醒时刻**，复用本文件同一个
+// 30s check 循环到点触发——仍不引入 cron 框架、不做重复规则。
+// 待办到点提醒的口径（北 2026-09-24 三次拍板）：
+//   ① **本地通知必达**：到点一定弹本机通知，不看外发总开关、不看通道配置
+//   ② **外发是加成**：总开关开 + 通道配齐才顺带投渠道；失败落 pushStatus，不重试
+//   ③ **到点即消费**：弹过就写 reminded_at，不补发（宁可少一次外发，不要重复弹通知）
 //
 // 两个固定通知（可关，不依赖 Gateway）：
 //   morning  早上一次（今日待办汇总）
@@ -23,6 +29,14 @@ export const REMINDERS = {
 } as const
 export type ReminderId = (typeof REMINDERS)[keyof typeof REMINDERS]
 export const REMINDER_IDS = [REMINDERS.MORNING, REMINDERS.REPORT] as const
+
+/**
+ * 待办到点提醒的来源标识（v0.17）。
+ *
+ * **不是** ReminderId、**不进** REMINDER_IDS：因此它没有时刻设置、没有独立开关、
+ * 也不参与两个固定通知的「当天去重」（待办的去重靠 todos.reminded_at 落库）。
+ */
+export const TODO_REMINDER_ID = 'todo'
 
 /** 触发时刻（本地 24h 制） */
 export interface ReminderTime {
@@ -61,8 +75,14 @@ export interface ReminderPayload {
   body: string
 }
 
-/** 通知器（主进程注入 electron Notification；测试用记录型假件） */
-export type Notifier = (id: ReminderId, payload: ReminderPayload) => void
+/**
+ * 通知器（主进程注入 electron Notification；测试用记录型假件）。
+ * id = 两个固定通知的 ReminderId，或待办到点提醒的 TODO_REMINDER_ID。
+ */
+export type Notifier = (
+  id: ReminderId | typeof TODO_REMINDER_ID,
+  payload: ReminderPayload
+) => void
 
 /** 今日待办汇总数据提供器（morning 通知正文用） */
 export type MorningSummaryProvider = () => Promise<{ count: number; titles: string[] }>
@@ -137,12 +157,25 @@ export type PushChannelProvider = () => Promise<PushChannelOption[]>
 
 /** 外发结果；失败只记录不抛（本地通知已送达，外发尽力而为） */
 export type PushResult = { ok: true } | { ok: false; message: string }
-/** 单次外发：告知投到哪个渠道 + 目标 */
+/** 单次外发：告知投到哪个渠道 + 目标。id 仅作来源标注（生产实现不读它） */
 export type Pusher = (
-  id: ReminderId,
+  id: string,
   payload: ReminderPayload,
   dest: { channel: PushChannel; target: string }
 ) => Promise<PushResult>
+
+/**
+ * 到点待提醒的待办（TodoManager 过滤后提供，只给提醒/投递所需字段）。
+ */
+export interface DueTodoReminder {
+  id: string
+  title: string
+  dueDate: string | null
+  /** v3：精确到期时刻（有则文案里带出 HH:mm；缺省只显示日期） */
+  dueAt?: number | null
+}
+export type ListDueTodoReminders = () => Promise<DueTodoReminder[]>
+export type MarkTodoReminded = (id: string, ts: number) => Promise<void>
 
 /**
  * 一个**已发现的**推送目标（由 OpenClaw 自己记录，用户不需手填）。
@@ -181,6 +214,10 @@ export interface ReminderManagerOptions {
   listPushChannels?: PushChannelProvider
   /** 可选：列出某渠道下 OpenClaw 已知的目标（不提供则需手填 target） */
   listPushTargets?: PushTargetProvider
+  /** 可选（v2）：列出到点待提醒的待办；与 markTodoReminded 成对提供 */
+  listDueTodoReminders?: ListDueTodoReminders
+  /** 可选（v2）：标记待办已提醒（到点即消费，防重复弹） */
+  markTodoReminded?: MarkTodoReminded
   now?: () => number
   logger?: (message: string) => void
 }
@@ -193,6 +230,8 @@ export class ReminderManager {
   private readonly pusher?: Pusher
   private readonly listPushChannelsProvider?: PushChannelProvider
   private readonly listPushTargetsProvider?: PushTargetProvider
+  private readonly listDueTodoReminders?: ListDueTodoReminders
+  private readonly markTodoReminded?: MarkTodoReminded
   private readonly now: () => number
   private readonly logger?: (message: string) => void
   /** 当天已发记录（内存；key=date+id），防同窗口重复发 */
@@ -231,6 +270,14 @@ export class ReminderManager {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, 'listPushTargets 必须是函数')
     }
     this.listPushTargetsProvider = options.listPushTargets
+    if (options.listDueTodoReminders !== undefined && typeof options.listDueTodoReminders !== 'function') {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, 'listDueTodoReminders 必须是函数')
+    }
+    this.listDueTodoReminders = options.listDueTodoReminders
+    if (options.markTodoReminded !== undefined && typeof options.markTodoReminded !== 'function') {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, 'markTodoReminded 必须是函数')
+    }
+    this.markTodoReminded = options.markTodoReminded
     this.now = options.now ?? (() => Date.now())
     this.logger = options.logger
   }
@@ -509,21 +556,46 @@ export class ReminderManager {
     if (!this.pusher) return
     const cfg = await this.getPushConfig()
     if (!cfg.enabled) return
+    const res = await this.sendWithFallback(id, cfg, payload)
+    if (!res.ok) this.log(`[reminder] ${id} 外发全部失败（已记失败提示）`)
+  }
 
+  /**
+   * 首选 → 次选（兜底）投递，并落 pushStatus。
+   *
+   * - 成功即返回
+   * - 通道未配齐（无 channel/target）→ **也写一条失败状态**：这种「一次都没投出去」的
+   *   情况原先不落状态，UI 上完全看不出来（待办外发还会照样标记已投递 → 静默丢失）
+   * - 全部失败 → 写失败提示（UI 可见）。**不抛**：外发是尽力而为。
+   *
+   * `sourceLabel`：pushStatus 是全局**单条**记录，不带来源就分不清是哪类外发失败。
+   * 固定通知不传（保持原文案）；待办外发传「待办「标题」」。
+   */
+  private async sendWithFallback(
+    id: string,
+    cfg: PushConfig,
+    payload: ReminderPayload,
+    sourceLabel?: string
+  ): Promise<{ ok: boolean; channel: PushChannel | null; message: string | null }> {
+    const label = (message: string): string => (sourceLabel ? `${sourceLabel}：${message}` : message)
     const plan = [
       { channel: cfg.channel, target: cfg.target },
       { channel: cfg.fallbackChannel, target: cfg.fallbackTarget }
     ].filter((p): p is { channel: PushChannel; target: string } => !!p.channel && !!p.target)
-    if (!plan.length) return
+    if (!plan.length) {
+      const message = label('通道未配置')
+      await this.recordPushStatus({ at: this.now(), channel: null, ok: false, message })
+      return { ok: false, channel: null, message }
+    }
 
     let lastMessage: string | null = null
     for (const dest of plan) {
       try {
-        const res = await this.pusher(id, payload, dest)
+        const res = await this.pusher!(id, payload, dest)
         if (res.ok) {
           await this.recordPushStatus({ at: this.now(), channel: dest.channel, ok: true, message: null })
           this.log(`[reminder] ${id} 已外发 → ${dest.channel}`)
-          return
+          return { ok: true, channel: dest.channel, message: null }
         }
         lastMessage = res.message
         this.log(`[reminder] ${id} 外发 ${dest.channel} 失败: ${res.message}`)
@@ -533,13 +605,9 @@ export class ReminderManager {
       }
     }
     // 全部失败 → 写失败提示（UI 可见）
-    await this.recordPushStatus({
-      at: this.now(),
-      channel: plan[plan.length - 1].channel,
-      ok: false,
-      message: lastMessage ?? '外发失败'
-    })
-    this.log(`[reminder] ${id} 外发全部失败（已记失败提示）`)
+    const message = label(lastMessage ?? '外发失败')
+    await this.recordPushStatus({ at: this.now(), channel: plan[plan.length - 1].channel, ok: false, message })
+    return { ok: false, channel: plan[plan.length - 1].channel, message }
   }
 
   /** 开关状态：默认**开启**（P0 期望提醒拉回第 3-5 天掉线） */
@@ -604,7 +672,77 @@ export class ReminderManager {
         this.log(`[reminder] ${id} 载荷构建失败: ${(e as Error)?.message}`)
       }
     }
+
+    // v2：待办到点提醒（本机必达 + 外发加成；与两个固定通知相互独立）
+    await this.processTodoReminders()
     return fired
+  }
+
+  /**
+   * 待办到点提醒（v2 起；口径 2026-09-24 三次拍板：**本地必达 + 外发是加成**）。
+   *
+   * 与两个固定通知的异同，注释钉死：
+   * - **本地通知必达**：到点一定弹本机通知——**不看外发总开关、不看通道配置、不需要
+   *   pusher**（本地通知不依赖 Gateway / 渠道 CLI；没配渠道的人也必须被提醒）
+   * - **外发是加成**：总开关开 + 通道配齐才顺带投渠道；失败落 pushStatus（带来源前缀），
+   *   **不重试**——渠道被删掉重试也不会成功，瞬态失败由用户手动补发
+   * - **到点即消费**：弹过就写 `reminded_at`，**不补发**（宁可少一次外发，也不要每 30s
+   *   重复弹通知）。故标记紧跟在本地通知之后、外发之前
+   * - **不看** morning/report 各自的开关（那是两个固定通知自己的事）
+   * - 到点判定由 TodoManager 按 `remind_at` 完成；无独立时刻设置、不进 REMINDER_IDS
+   * - **逐条兜底**：任一条异常（如列表与标记之间待办被删 → NOT_FOUND）不得连累同轮其它
+   *   到点待办；异常那条不标记，留给下一轮 check（最坏是多弹一次本地通知）
+   */
+  private async processTodoReminders(): Promise<void> {
+    if (!this.listDueTodoReminders || !this.markTodoReminded) return
+    let due: DueTodoReminder[]
+    try {
+      due = await this.listDueTodoReminders()
+    } catch (e) {
+      this.log(`[reminder] 待办提醒查询失败（本轮跳过）: ${(e as Error)?.message}`)
+      return
+    }
+    if (!due.length) return
+    const cfg = await this.getPushConfig()
+    for (const t of due) {
+      try {
+        const ts = this.now()
+        const when = t.dueAt !== undefined && t.dueAt !== null ? formatDueAt(t.dueAt) : t.dueDate
+        const payload: ReminderPayload = {
+          title: '待办提醒',
+          body: when ? `${t.title}（${when} 到期）` : t.title
+        }
+        // 1) 本地通知：必达主通道（不受总开关 / 通道配置 / pusher 有无影响）
+        this.notifier(TODO_REMINDER_ID, payload)
+        // 2) 立刻标记消费：本地已响过，重复弹比漏弹更烦
+        await this.markTodoReminded(t.id, ts)
+        // 3) 外发：尽力而为（受总开关管；未开启或未接入 pusher → 只本地通知）
+        if (!cfg.enabled || !this.pusher) {
+          this.log(
+            `[reminder] 待办 ${t.id} 已本地通知（外发跳过：${
+              !cfg.enabled ? '总开关关' : '未接入外发'
+            }）`
+          )
+          continue
+        }
+        const res = await this.sendWithFallback(
+          TODO_REMINDER_ID,
+          cfg,
+          payload,
+          `待办「${t.title}」`
+        )
+        this.log(
+          `[reminder] 待办 ${t.id} 已本地通知；外发 ${
+            res.ok ? '成功 → ' + res.channel : `失败：${res.message}`
+          }`
+        )
+      } catch (e) {
+        // 未标记 → 下一轮 check 会重来（最坏多弹一次本地通知）
+        this.log(
+          `[reminder] 待办 ${t.id} 提醒流程异常（未标记，下一轮重试）: ${(e as Error)?.message}`
+        )
+      }
+    }
   }
 
   /** 启动轻量定时器（不是调度系统：固定间隔 check，时刻判定在 check 内） */
@@ -680,6 +818,13 @@ function parseTime(raw: string | null): ReminderTime | null {
 function localDateKey(d: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+/** 待办精确到期时刻 → 外发文案里的 `MM-DD HH:mm`（本地时区） */
+function formatDueAt(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 export function createReminderManager(options: ReminderManagerOptions): ReminderManager {

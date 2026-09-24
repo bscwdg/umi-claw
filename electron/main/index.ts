@@ -406,15 +406,29 @@ function asString(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v : undefined
 }
 
-/** 发两个固定本地通知之一（硬规则 22：仅此两个，无其他通知） */
+/**
+ * 发本地通知（硬规则 22：只有三类——早上汇总 / 日报草稿 / **待办到点提醒**，无其他通知）。
+ * id 仅用于日志与将来的点击跳转，通知内容全在 payload 里。
+ */
 function showReminderNotification(
   id: string,
   payload: import('./work/reminderManager').ReminderPayload
 ): void {
-  const n = new Notification({ title: payload.title, body: payload.body })
-  // 点击 morning → 打开/聚焦今日页；具体路由由渲染端处理，这里只展示
-  void id
-  n.show()
+  // 本机通知现在是**必达主通道**（待办到点提醒不看外发配置），所以这里必须**不抛**：
+  // 抛出去会被 reminderManager 的逐条兜底当成「未消费」→ 每 30s 重试一次，
+  // 结果是永远弹不出来还一直刷日志。不可用就记日志放过（提醒照样消费）。
+  try {
+    if (!Notification.isSupported()) {
+      console.log(`[reminder] 本机通知不可用（isSupported=false），跳过 ${id}: ${payload.title}`)
+      return
+    }
+    const n = new Notification({ title: payload.title, body: payload.body })
+    // 点击 morning → 打开/聚焦「新的一天」页；具体路由由渲染端处理，这里只展示
+    void id
+    n.show()
+  } catch (e) {
+    console.log(`[reminder] 本机通知失败（不影响提醒消费）: ${(e as Error)?.message}`)
+  }
 }
 
 /**
@@ -691,6 +705,15 @@ function initWorkManagers(): {
       listPushChannels: () => listPushChannelOptions(),
       // 目标由 OpenClaw 自己给出（北：不需要填，openclaw 自己知道）
       listPushTargets: (channel) => listPushTargetOptions(channel),
+      // v2：待办到点提醒——到点查询与提醒后回标（口径见 reminderManager 注释）
+      listDueTodoReminders: async () =>
+        (await workTodoManager!.listDueReminders()).map((t) => ({
+          id: t.id,
+          title: t.title,
+          dueDate: t.due_date,
+          dueAt: t.due_at
+        })),
+      markTodoReminded: (id, ts) => workTodoManager!.markReminded(id, ts),
       // 本地闭环（硬规则 22 重评估后拍板）：到点**先自动生成日报草稿**，再发通知。
       // 仍**不自动外发正文**——草稿进「报告」页等人工确认（硬规则 5）。
       generateDailyDraft: async () => {

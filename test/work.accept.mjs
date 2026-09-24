@@ -95,7 +95,7 @@ async function outcome(promise) {
 
 try {
   // ── W0 前置：真 Worker 拉起 + 建库 + 迁移 ──
-  await r.check('W0', '前置：真 DB Worker 拉起、建库、user_version=1、8 表', async () => {
+  await r.check('W0', '前置：真 DB Worker 拉起、建库、user_version=3、8 表', async () => {
     database = new DatabaseClient({
       dbPath,
       backupDir,
@@ -107,7 +107,7 @@ try {
     })
     const st = await database.dbStatus({ initialize: true })
     assertEq(st.ready, true, 'Worker 应就绪')
-    assertEq(st.userVersion, 1, 'user_version 应为 1')
+    assertEq(st.userVersion, 3, 'user_version 应为 3')
     assertEq(st.tables.length, 8, `应有 8 张表（实际 ${st.tables.length}）`)
     return `pid=${st.workerPid} uv=${st.userVersion} tables=${st.tables.length}`
   })
@@ -414,7 +414,23 @@ try {
     assertEq(badDate2.code, 'VALIDATION_ERROR', '不存在的日期应被拒')
     const emptyTitle = await outcome(todos.create({ title: '  ' }))
     assertEq(emptyTitle.code, 'VALIDATION_ERROR', '空标题应被拒')
-    return '局部更新 ✓ state 不可改 ✓ 日期严格校验 ✓'
+
+    // v3：dueAt 精确到期 → due_date 从时刻推导；允许过去；可改可清
+    const dueTs = new Date('2026-10-01T09:30').getTime()
+    const withTime = await todos.create({ title: '精确到期', dueAt: dueTs })
+    assertEq(withTime.due_at, dueTs, 'dueAt 应落库')
+    assertEq(withTime.due_date, '2026-10-01', 'due_date 应从 dueAt 推导同步')
+    const moved = await todos.update(withTime.id, { dueAt: new Date('2026-10-02T14:00').getTime() })
+    assertEq(moved.due_at, new Date('2026-10-02T14:00').getTime(), 'dueAt 可改')
+    assertEq(moved.due_date, '2026-10-02', '改 dueAt 连带校正 due_date')
+    const onlyDate = await todos.update(withTime.id, { dueAt: null })
+    assertEq(onlyDate.due_at, null, 'dueAt 可清空，回到按天到期')
+    const pastOk = await todos.create({ title: '补登逾期', dueAt: new Date('2020-01-01T08:00').getTime() })
+    assertEq(pastOk.due_date, '2020-01-01', '过去的到期时刻允许（补登逾期待办）')
+    const badDueAt = await outcome(todos.create({ title: 'x', dueAt: 1.5 }))
+    assertEq(badDueAt.code, 'VALIDATION_ERROR', 'dueAt 必须是整数时间戳')
+
+    return '局部更新 ✓ state 不可改 ✓ 日期严格校验 ✓ dueAt 同步/可清/补登 ✓'
   })
 
   await r.check('T8', 'list 新→旧（参数约定 4）+ state 过滤 + 幂等删除', async () => {
@@ -469,6 +485,55 @@ try {
     // 失败信封统一
     assert(src.includes('toErrorEnvelope'), '应走统一错误信封')
     return `${channels.length} 条通道齐备；id 位置参数；统一信封`
+  })
+
+  // ── T10 到点提醒队列口径（v2）────────────────────────────────────────────────
+  //
+  // 锁四件事：到点判定按 remind_at（未到点不进队列）/ markReminded 后不重复 /
+  // **改期后重新排队**（update 必须清 reminded_at，否则投递过一次就永不外发）/
+  // 扫描不吃 worker 的默认 500 行上限（否则较老的到点待办会被静默漏掉）。
+  await r.check('T10', '到点提醒队列：到点判定·标记去重·改期重新排队·不吃默认 500 行上限', async () => {
+    const remindAt = clock.now() + 60_000
+    const t = await todos.create({
+      title: '到点提醒那条', dueAt: clock.now() + 30 * 60_000, remindAt
+    })
+    assertEq(t.remind_at, remindAt, 'remind_at 应落库')
+    assertEq(t.reminded_at, null, '新建时 reminded_at 为 null')
+    assertEq((await todos.listDueReminders()).length, 0, '未到点不进队列')
+
+    clock.advance(61_000)
+    let due = await todos.listDueReminders()
+    assertEq(due.length, 1, '到点进队列')
+    assertEq(due[0].id, t.id, '正是这条待办')
+
+    await todos.markReminded(t.id)
+    assertEq((await todos.listDueReminders()).length, 0, '标记后不再重复进队列')
+    assert((await todos.get(t.id)).reminded_at !== null, 'reminded_at 已写')
+
+    // 改期 = 重新排队（回归点）
+    const moved = await todos.update(t.id, { remindAt: clock.now() + 60_000 })
+    assertEq(moved.reminded_at, null, '改期应清掉已投递标记')
+    clock.advance(61_000)
+    due = await todos.listDueReminders()
+    assertEq(due.length, 1, '改期到点后重新进队列')
+    assertEq(due[0].id, t.id, '仍是这条')
+    await todos.markReminded(t.id)
+
+    // 不吃 worker 的默认 500 行上限：最老的那条到点待办也必须被扫出来
+    clock.advance(1000)
+    const old = await todos.create({ title: '最老的到点待办', remindAt: clock.now() + 60_000 })
+    clock.advance(1000)
+    for (let i = 0; i < 505; i += 50) {
+      const batch = []
+      for (let j = i; j < Math.min(i + 50, 505); j++) batch.push(todos.create({ title: `填充 ${j}` }))
+      await Promise.all(batch)
+    }
+    clock.advance(61_000)
+    const scanned = await todos.listDueReminders()
+    assertEq(scanned.length, 1, `应只扫出那一条到点待办（实际 ${scanned.length}）`)
+    assertEq(scanned[0].id, old.id, '被 500 行上限挡住的正是最老那条')
+
+    return '到点判定 ✓ 标记去重 ✓ 改期重新排队 ✓ 505 条填充下仍扫到最老那条 ✓'
   })
 } catch (e) {
   console.error('验收脚本自身异常:', e)

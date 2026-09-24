@@ -374,7 +374,9 @@ export class DatabaseClient {
       // §四 备份触发时机：Schema 迁移前（已有数据才需要）
       if (from > 0) {
         try {
-          const b = await this.backup('pre-migration')
+          // 必须走 init 内部路径：公共 backup() 会 await ensureReady()，
+          // 而此刻 startWorker() 的 readyPromise 尚未兑现 → 自等死锁。
+          const b = await this.backupDuringInit('pre-migration')
           this.log(`[db] 迁移前快照: ${b.path}`)
         } catch (e) {
           this.log(`[db] 迁移前快照失败（继续迁移）: ${errorText(e)}`)
@@ -724,11 +726,22 @@ export class DatabaseClient {
   /** VACUUM INTO 在线一致性快照；保留最近 maxBackups 份，超出删最旧 */
   async backup(reason = 'manual'): Promise<BackupResult> {
     await this.ensureReady()
+    return this.backupDuringInit(reason)
+  }
+
+  /**
+   * 备份的内部实现：直接走 sendRaw，不触发 ensureReady。
+   *
+   * 专供 startWorker → runMigrations 期间的「迁移前快照」使用：那时本 client 还没
+   * ready，公共 backup() 的 `await ensureReady()` 会拿回当前这轮尚未兑现的
+   * readyPromise → 永久死锁（v1→v2 首次真实升级才暴露）。
+   */
+  private async backupDuringInit(reason: string): Promise<BackupResult> {
     const target = join(this.opts.backupDir, `work-${backupStamp()}.db`)
-    const res = (await this.request(
+    const res = (await this.sendRaw(
       'maintenance.vacuumInto',
       { path: target },
-      { timeoutMs: this.opts.requestTimeoutMs * 4 }
+      this.opts.requestTimeoutMs * 4
     )) as { path: string; size: number }
     const pruned = this.pruneBackups()
     return { path: res?.path ?? target, size: Number(res?.size ?? 0), reason, pruned }
