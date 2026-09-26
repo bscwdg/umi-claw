@@ -139,9 +139,11 @@ try {
 
   // 造 confirmed 记录（qa grounding）
   await r.check('Q1', '造数据：confirmed 记录（近3天）', async () => {
+    // 相对当天取昨天，保证落在 qa 近 3 天滚动窗口内（写死日期会随时间滑出窗口）
+    const yesterday = new Date(Date.now() - 24*60*60*1000).toISOString().slice(0, 10)
     await database.request('activity_log.create', {
       data: {
-        id: 'g1', content: '完成活动方案', occurred_date: '2026-09-23', occurred_time: '09:00',
+        id: 'g1', content: '完成活动方案', occurred_date: yesterday, occurred_time: '09:00',
         source: 'manual', status: 'confirmed', created_at: 1, updated_at: 1
       }
     })

@@ -1,16 +1,33 @@
 # 🦞 Umi Claw
 
-> OpenClaw 便携管理工具（愿景：简单点，无需复杂安装操作让每个人都能享受ai带来的便利） — 基于 Electron + Vue3 + Vite 开发
+> 3.0「工作版」：AI 工作记忆 + 每日工作闭环（今日待办 / 工作记录 / 日报周报 / 工作问答 / 工具箱 / 到点提醒），同时保留 OpenClaw 便携管理能力 — 基于 Electron + Vue3 + Vite 开发
+>
+> 愿景：简单点，无需复杂安装即可让每个人享受 AI 带来的便利
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## 项目特性
 
+**3.0 工作版**
+
+- ☀️ **新的一天** — 今日待办聚合（手动 / daily·weekly 例事 / AI 提取）+ 一句话智能入口
+- 🗂 **工作记录** — 手动、AI 候选、勾完成联动三来源；候选确认后才成为事实，支持 LIKE 检索
+- 📊 **日报 / 周报** — 事实确定性聚合 → AI 表达 → 编辑确认；生成快照不可变、可溯源
+- 💬 **工作问答** — 基于工作记忆作答，答不出说明缺什么，每条回答可展开「依据」
+- 🧰 **AI 工具箱** — 会议纪要（含待办提取）、邮件起草，以及润色 / 翻译 / 摘要 / 邮件润色
+- 📚 **工作知识库** — 本地文档解析入库，预算内全量注入工作记忆
+- ⏰ **到点提醒** — 待办到点本机通知必达；可选外发「草稿已就绪」短提示到渠道
+- 🔍 **AI 的世界** — 查看 AI 看到的工作记忆组成，以及被裁剪的内容与原因
+
+**OpenClaw 管理**
+
 - 🚀 **零配置启动** — 首次运行自动下载所需运行时
 - 🖥️ **原生桌面体验** — 自定义标题栏、系统托盘、原生弹窗
 - ⚙️ **完整管理界面** — 图形化配置 OpenClaw、模型、技能
-- 🧩 **内置中文技能** — 开箱即用的中文 AI 能力
-- 🤖 **多个个模型服务商** — DeepSeek、Kimi、通义千问、OpenAI 等
+- 🧩 **内置中文技能** — 开箱即用的中文 AI 能力，支持远程同步更新
+- 🤖 **多个模型服务商** — DeepSeek、Kimi、通义千问、OpenAI 等
+- 🧙 **首启向导 + 用户协议** — 冷启动弹窗引导初始化，同意协议后方可使用
+- 🔧 **Node 运行时管理** — 界面内查看 / 切换便携 Node.js 版本
 - 📋 **实时日志监控** —— 带过滤、导出功能的日志查看器，日志文件：`data/logs/runtime-debug.log`
 - 📩 **多渠道接入** — 内置微信，支持企业微信官方插件（扫码即接入）、飞书自建应用（长连接，界面一键装插件）
 - 📚 **Obsidian 知识库** — 笔记向量化语义检索，以 MCP 工具喂给模型，按需取片段省 token
@@ -28,6 +45,20 @@
 | Pinia | 2.1 | 状态管理 |
 | Vue Router | 4.3 | 前端路由 |
 | electron-vite | 2.1 | Electron+Vite 集成 |
+| xterm.js | 6 | 内嵌终端 |
+| Less | 4.6 | 样式预处理 |
+| mammoth / exceljs / docx / pdfjs-dist | — | Word / Excel / PDF 文档解析与生成 |
+| @vueuse/core | 10 | Vue 组合式工具库 |
+
+## 3.0 工作版
+
+3.0 在 OpenClaw 管理能力之上，新增面向日常办公的「AI 工作记忆 + 每日工作闭环」。
+
+- **工作记忆（Context Pack）**：把工作画像、事项、今日待办、近期已确认记录、工作知识库、历史对话按固定优先级组装成上下文；超预算时从后往前裁剪，被裁剪内容在「AI 的世界」留痕可见。
+- **事实与表达分离**：工作记录只有在用户确认后才成为事实；日报由确定性规则聚合事实，再交给 AI 组织表达。日报错了改表达，事实错了改记录。
+- **每日闭环**：早上在「新的一天」看待办 → 随手记工作记录 / 用工具箱处理纪要邮件 → 候选一键确认 → 傍晚生成日报、复制发出。
+- **可追溯快照**：每次生成日报都把当时的输入与工作记忆作为不可变副本存下；删除记录后，历史报告仍完整，而新的记忆不再包含它。
+- **隐私默认本地**：资料默认存本机；仅在主动发起 AI 操作时，相关上下文才会发送给所选模型服务商。首启需同意用户协议。
 
 ## 目录结构
 
@@ -35,17 +66,50 @@
 umi-claw/
 ├── electron/
 │   ├── main/
-│   │   ├── index.ts           # 主进程入口 / IPC 注册 / 窗口 / 托盘
-│   │   ├── clawManager.ts     # OpenClaw 进程管理
-│   │   ├── configManager.ts   # 配置读写管理
-│   │   ├── downloadManager.ts # 环境下载安装
-│   │   ├── channelManager.ts  # 渠道（微信等）安装与管理
-│   │   ├── channelCatalog.ts  # 渠道目录 / 元信息
-│   │   ├── modelConfig.ts     # 模型预设键位/命名避让（预设数据已外置）
-│   │   ├── modelPresets.ts    # 预设加载/校验/「拉取最新」（上游：Gitee awesome-llm-models，快照在 resources/model-presets/）
-│   │   └── obsidian/          # Obsidian 知识库管理
-│   │       ├── obsidianManager.ts  # 配置/索引/检索测试/MCP 配置生成
-│   │       └── types.ts            # 类型定义
+│   │   ├── index.ts              # 主进程入口 / 窗口 / 托盘
+│   │   ├── clawManager.ts        # OpenClaw 进程管理
+│   │   ├── configManager.ts      # 配置读写管理
+│   │   ├── downloadManager.ts    # 环境下载安装（含 Node 版本管理）
+│   │   ├── channelManager.ts     # 渠道（微信等）安装与管理
+│   │   ├── channelCatalog.ts     # 渠道目录 / 元信息
+│   │   ├── modelConfig.ts        # 模型预设键位/命名避让（预设数据已外置）
+│   │   ├── modelPresets.ts       # 预设加载/校验/「拉取最新」（上游：Gitee awesome-llm-models，快照在 resources/model-presets/）
+│   │   ├── gatewayClient.ts      # 网关 HTTP 客户端（token 仅留在主进程）
+│   │   ├── openClawPaths.ts      # OpenClaw 路径解析（安装版/便携版）
+│   │   ├── skillSyncService.ts   # 技能远程同步更新
+│   │   ├── subprocessRegistry.ts # 子进程登记 / 统一清理
+│   │   ├── ipc/                  # IPC handler 分组注册
+│   │   │   ├── index.ts          # 汇总注册
+│   │   │   ├── gateway.ts        # 窗口/进程/配置/环境/技能等管理侧
+│   │   │   └── work.ts           # 3.0 工作版域
+│   │   ├── obsidian/             # Obsidian 知识库管理
+│   │   │   ├── obsidianManager.ts    # 配置/索引/检索测试/MCP 配置生成
+│   │   │   └── types.ts              # 类型定义
+│   │   ├── database/             # 3.0 数据层：schema / Worker 通信 / 迁移 / 错误码
+│   │   │   ├── database.ts       # DB 句柄 / Worker 通信
+│   │   │   ├── schema.ts         # 表结构
+│   │   │   ├── migration.ts      # 迁移
+│   │   │   └── errors.ts         # 错误码
+│   │   └── work/                 # 3.0 工作版域
+│   │       ├── contextEngine.ts  # Context Pack 组装 / 预算裁剪
+│   │       ├── contextManager.ts # 上下文快照
+│   │       ├── factAggregator.ts # 事实确定性聚合
+│   │       ├── profileManager.ts # 工作画像
+│   │       ├── matterManager.ts  # 事项
+│   │       ├── todoManager.ts    # 待办（含 daily/weekly 例事、AI 候选）
+│   │       ├── recordManager.ts  # 工作记录（候选确认、LIKE 检索）
+│   │       ├── todayManager.ts   # 新的一天聚合
+│   │       ├── routerManager.ts  # 一句话智能入口路由
+│   │       ├── qaManager.ts      # 工作问答
+│   │       ├── reportManager.ts  # 日报/周报 + 不可变快照
+│   │       ├── toolManager.ts    # AI 工具箱
+│   │       ├── knowledgeManager.ts   # 工作知识库
+│   │       ├── wizardManager.ts  # 首启向导 / 用户协议
+│   │       ├── reminderManager.ts    # 到点提醒 / 外发推送
+│   │       └── parsers/           # 工作知识库文档解析
+│   │           ├── documentParsers.ts # Word/Excel/PDF/TXT
+│   │           ├── pdfjsAssets.ts     # 打包态 pdfjs 资源定位
+│   │           └── urlParser.ts       # URL 解析
 │   └── preload/
 │       ├── index.ts           # Preload / IPC 桥接
 │       └── index.d.ts         # window.api 类型声明
@@ -60,9 +124,20 @@ umi-claw/
 │   │   ├── TerminalPage.vue   # OpenClaw 终端（支持 openclaw/npx 双运行时）
 │   │   ├── ObsidianPage.vue   # 知识库（Obsidian）
 │   │   ├── About.vue          # 关于
+│   │   ├── work/              # 3.0 工作版页面
+│   │   │   ├── TodayPage.vue       # 新的一天
+│   │   │   ├── RecordsPage.vue     # 工作记录
+│   │   │   ├── QaPage.vue          # 工作问答
+│   │   │   ├── ReportsPage.vue     # 报告
+│   │   │   ├── ToolsPage.vue       # 工具箱
+│   │   │   ├── KnowledgePage.vue   # 工作知识库
+│   │   │   ├── ContextPage.vue     # AI 的世界
+│   │   │   └── SettingsPage.vue    # 工作设置
 │   │   └── components/        # 通用组件
 │   │       ├── ConfirmDialog.vue       # 确认对话框（关闭确认等）
-│   │       └── ModelPickerModal.vue    # 模型选择弹窗
+│   │       ├── ModelPickerModal.vue    # 模型选择弹窗
+│   │       ├── UserAgreementModal.vue  # 用户协议弹窗
+│   │       └── WizardModal.vue         # 首启向导弹窗
 │   ├── types/
 │   │   └── terminal.ts        # 终端运行时类型（TerminalRuntime）
 │   ├── stores/
@@ -70,12 +145,21 @@ umi-claw/
 │   │   └── config.ts          # 配置状态
 │   ├── composables/
 │   │   └── useToast.ts        # 全局提示
+│   ├── theme/
+│   │   └── themes.ts          # 主题系统
 │   ├── assets/style.css       # 全局样式
 │   ├── App.vue                # 根组件（标题栏+侧边栏+关闭确认）
 │   └── renderer/
 │       ├── main.ts            # Vue 入口 / 路由
 │       └── index.html         # 渲染进程 HTML
-├── resources/                 # 应用图标等静态资源
+├── resources/                 # 应用资源（打包为 extraResources）
+│   ├── icon.ico / tray.png    # 应用 / 托盘图标
+│   ├── umiIcon.svg
+│   ├── database/              # 3.0 数据层 Worker
+│   │   ├── db-worker.mjs      # Worker 子进程（sqlite 操作）
+│   │   └── read-old-db.mjs    # 旧库读取（迁移用）
+│   ├── model-presets/         # 模型预设内置快照
+│   ├── pdfjs/                 # pdfjs 资源（cmaps / standard_fonts / build）
 │   └── obsidian/              # 知识库子进程脚本（零依赖，绿色 node 拉起）
 │       ├── indexer.mjs        # 索引器：扫描 vault、切块、embedding、写向量库
 │       ├── mcp-server.mjs     # MCP server（stdio JSON-RPC），OpenClaw 拉起
@@ -86,6 +170,14 @@ umi-claw/
 ├── electron.vite.config.ts
 ├── build/
 │   └── installer.nsh           # NSIS 钩子：升级时自动搬迁旧版数据目录
+├── scripts/
+│   └── run-all-accept.mjs      # 一键跑全部验收
+├── test/                       # 验收：11 套 accept + 一天 e2e + 打包态 smoke
+│   ├── _lib.mjs                # 验收公共库
+│   ├── _ui.mjs                 # UI 验收公共库
+│   └── fixtures/               # 验收夹具
+├── CLAUDE.md / PLAN-3.0.md    # Agent 开发指引 / 3.0 规划
+├── run-shared.bat             # 共享运行脚本
 └── package.json
 ```
 
@@ -95,8 +187,10 @@ umi-claw/
 |------|------|
 | `master` | 稳定主分支（默认分支），只接收经过验证的发布内容，PR 的默认目标 |
 | `release/1.0` | 1.0 版本开发分支，日常开发在此进行，包含最新特性（Obsidian 知识库、企微官方插件、便携模式等），功能稳定后合入 `master` |
+| `release/2.0` | 2.0 版本分支：AI 助手能力与验收体系，3.0 的移植来源 |
+| `release/3.0` | 3.0「工作版」开发分支：AI 工作记忆 + 每日工作闭环，即当前版本 |
 
-> 想体验最新功能请切换到 `release/1.0`：`git checkout release/1.0`
+> 想体验最新工作版请切换到 `release/3.0`：`git checkout release/3.0`
 
 ## 快速开始
 
@@ -109,7 +203,7 @@ umi-claw/
 
 ```bash
 # 克隆项目
-git clone <repo-url>
+git clone https://github.com/bscwdg/umi-claw.git
 cd umi-claw
 
 # 安装依赖
@@ -117,6 +211,12 @@ npm install
 
 # 开发模式（热重载）
 npm run dev
+
+# 类型检查
+npm run typecheck
+
+# 一键跑全部验收（11 套 accept + e2e）
+npm run accept
 ```
 
 ### 构建打包
@@ -210,6 +310,8 @@ window.api.env.init(opts)             // 初始化环境
 window.api.env.update(opts)           // 更新 OpenClaw
 window.api.env.checkLatest(opts)      // 检查最新版本
 window.api.env.getInfo()              // 获取环境信息
+window.api.env.getNodeVersions()      // 查看可用/当前便携 Node 版本
+window.api.env.updateNode(opts)       // 切换 / 更新 Node 版本
 window.api.env.onProgress(cb)         // 监听下载 / 安装进度
 
 // ── 技能管理 ──
@@ -219,6 +321,9 @@ window.api.skills.uninstall(id)       // 卸载技能
 window.api.skills.getInstalledSkills()          // 已安装技能
 window.api.skills.toggleSkillStatus(id, enabled)// 启用 / 停用技能
 window.api.skills.importSkillZip()    // 从 zip 导入技能
+window.api.skills.syncFromRemote()    // 从远程检查技能更新
+window.api.skills.getPendingUpdates() // 待更新技能列表
+window.api.skills.applyUpdates(ids)   // 应用更新
 
 // ── 日志 ──
 window.api.log.getLogs()              // 获取日志列表
@@ -255,7 +360,61 @@ window.api.obsidian.onIndexProgress(cb)    // 监听索引进度，返回取消�
 
 // ── 其他工具 ──
 window.api.shell.openExternal(url)    // 用系统默认浏览器打开链接
+window.api.app.getVersion()           // 应用版本号
 window.api.dialog.showMessage(opts)   // 弹出系统原生消息框
+
+// ── 3.0 工作版（work 域）──
+// 硬规则：渲染端不持有 GATEWAY_TOKEN、不直连网关，一律 IPC → Manager → Gateway。
+// 流式事件统一 work:stream:{chunk,done,error}，按 runId 归并：
+window.api.work.stream.onChunk(cb)    // 流式增量 { runId, index, delta }
+window.api.work.stream.onDone(cb)     // 完成 { runId, chunks, text, aborted }
+window.api.work.stream.onError(cb)    // 出错 { runId, error }
+window.api.work.stream.removeAll()    // 移除全部流式监听
+
+window.api.work.gateway.status()            // 网关就绪状态
+window.api.work.gateway.ensureReady()       // 确保网关可用（必要时拉起）
+window.api.work.profile.get() / .update(input)                 // 工作画像
+window.api.work.matters.list(params) / .create / .update / .delete
+window.api.work.matters.suggestMatter(recordText)              // 从记录 AI 推荐归属事项
+window.api.work.todos.list(params) / .create / .update / .delete
+window.api.work.todos.complete(id) / .uncomplete(id)           // 完成 / 取消完成
+window.api.work.todos.confirm(id) / .ignore(id)                // 确认 / 忽略 AI 候选
+window.api.work.todos.confirmBatch(ids) / .ignoreBatch(ids)    // 批量处理候选
+window.api.work.records.list(params) / .get(id) / .create / .update / .delete
+window.api.work.records.confirm(id, patch?) / .ignore(id)      // 候选确认后才成事实
+window.api.work.records.restore(id)                            // 恢复已删除记录
+window.api.work.records.confirmBatch(ids) / .ignoreBatch(ids)
+window.api.work.records.listFiltered(params)                   // LIKE 检索
+window.api.work.records.proposeCandidate(input)                // AI 提取候选
+window.api.work.context.snapshot({ scope, id? })               // 「AI 的世界」记忆快照
+window.api.work.today.get(date?)                               // 新的一天聚合
+window.api.work.router.route(input)                             // 一句话智能入口路由
+window.api.work.reports.list(params) / .get(id)
+window.api.work.reports.aggregate({ type, period? })           // 确定性事实聚合
+window.api.work.reports.generate({ type, period? })             // AI 表达（流式）
+window.api.work.reports.abortGenerate(runId)
+window.api.work.reports.saveDraft(id, content)                 // 编辑保存
+window.api.work.reports.confirm(id) / .regenerate(id)
+window.api.work.reports.versions(id)                           // 不可变快照版本
+window.api.work.qa.ask({ question, conversationKey? })         // 工作问答（流式）
+window.api.work.qa.abortAsk(runId)
+window.api.work.tools.list()                                   // 工具箱能力列表
+window.api.work.tools.run({ toolId, text, conversationKey?, instruction? })
+window.api.work.tools.abortRun(runId)
+window.api.work.knowledge.list(params) / .get(id) / .create / .update / .delete
+window.api.work.knowledge.search(query, limit?)                 // 工作知识库检索
+window.api.work.knowledge.import(input)                        // 解析文档入库
+window.api.work.knowledge.pickFile(expectedType?)              // 系统对话框选文件
+window.api.work.wizard.status()                                // 首启向导状态
+window.api.work.wizard.grantConsent() / .revokeConsent() / .ensureConsent()
+window.api.work.wizard.complete() / .decide(decision) / .readMapping()
+window.api.work.reminder.isEnabled('morning'|'report')         // 提醒开关
+window.api.work.reminder.setEnabled(id, enabled)
+window.api.work.reminder.getTimes() / .setTime(id, hour, minute)
+window.api.work.reminder.getPushConfig() / .setPushConfig(patch) // 外发推送配置
+window.api.work.reminder.availablePushChannels()               // 可用推送渠道
+window.api.work.reminder.availablePushTargets(channel)         // 渠道下可选目标
+window.api.work.reminder.testPush() / .getPushStatus() / .check()
 ```
 
 ## 渠道接入
@@ -345,7 +504,9 @@ OpenClaw 通过 MCP 工具按需检索片段，不用把整个知识库塞进上
 
 ## 便携模式
 
-将构建产物解压到任意目录（包括 U 盘）。程序会优先检测 `exe同级/data/` 目录，若存在则使用便携模式，所有配置和运行时均存储在该目录中，删除即可完全卸载。
+便携模式的完整说明（数据目录、U 盘使用、升级与数据搬迁）见上文 [便携模式（U 盘使用）](#便携模式u-盘使用)。
+
+简而言之：将构建产物解压到任意目录（包括 U 盘），在 exe 同级创建 `data` 文件夹即进入便携模式，所有配置和运行时均存储在该目录中，删除即可完全卸载。
 
 ## 联系作者
 嘿嘿，我是小北，开源不易请点点stars，谢谢！

@@ -240,11 +240,9 @@
       </p>
       <div class="agreement-actions">
         <button class="btn btn-sm" @click="openWizard">开始向导</button>
-        <button class="btn btn-sm" @click="revokeAgreement">撤销同意（重新测试）</button>
       </div>
       <p class="text-sm text-muted agreement-hint">
-        「开始向导」随时可重跑（画像 / 知识库 / 第一条待办，均可跳过）；
-        「撤销同意」会立即重弹协议弹窗，便于验证首启流程。
+        「开始向导」随时可重跑（画像 / 知识库 / 第一条待办，均可跳过）。
       </p>
     </section>
 
@@ -292,7 +290,6 @@ import {
   consentGranted,
   consentAt,
   openAgreementReview,
-  openAgreementBlocking,
   syncConsent
 } from '@/composables/useAgreementGate'
 import { openWizard } from '@/composables/useWizardGate'
@@ -642,18 +639,6 @@ onMounted(async () => {
 /** 复核用户协议：弹窗会反显之前填的（已同意则默认打勾）。弹窗实例在 App.vue。 */
 function openAgreement(): void {
   openAgreementReview()
-}
-
-/** 撤销同意：清库 → 同步状态 → **立即**重弹阻断式弹窗（无需重启即可验证首启流程） */
-async function revokeAgreement(): Promise<void> {
-  try {
-    await window.api.work.wizard.revokeConsent()
-    syncConsent(false, null)
-    openAgreementBlocking()
-    showToast('已撤销同意，请重新同意', 'success')
-  } catch (e: any) {
-    showToast(`撤销失败：${e.message}`, 'error')
-  }
 }
 </script>
 
