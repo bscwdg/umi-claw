@@ -105,6 +105,36 @@
       </div>
     </section>
 
+    <!-- OpenClaw 当日总结（v0.18 桥接式）：到点问 OpenClaw「今天做了什么」 -->
+    <section class="card">
+      <div class="s-head">
+        <h2>OpenClaw 当日总结</h2>
+        <span class="text-sm text-muted">到点问 OpenClaw「今天做了什么」，结果作为待确认记录</span>
+      </div>
+      <div class="reminder-row">
+        <div class="r-info">
+          <span class="r-title">日报时刻前 30 分钟自动总结</span>
+          <span class="r-desc text-sm text-muted">
+            开启后在日报时刻前 30 分钟自动问一次 OpenClaw，把它回忆起的工作落成待确认记录——
+            提前是为了留出确认窗口（未确认的记录不会进日报）。关闭后只在「新的一天」点按钮手动总结。
+            一次总结通常要 1–3 分钟（OpenClaw 要检索自己的会话记录）。
+            当天自动最多试 3 次（间隔 5 分钟），失败不无限重试；手动按钮随时可用
+          </span>
+        </div>
+        <div class="r-actions">
+          <label class="toggle">
+            <input
+              type="checkbox"
+              ref="autoSummaryToggle"
+              :checked="autoSummary"
+              @change="toggleAutoSummary(($event.target as HTMLInputElement).checked)"
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+    </section>
+
     <!-- 外发（方案 A：只推短提示，不推正文）。id 供今日页「去配置」跳来定位 -->
     <section id="push" class="card">
       <div class="s-head">
@@ -305,6 +335,10 @@ const form = ref({
 const completeness = ref({ filled: 0, total: 6, percent: 0, missing: [] as string[] })
 const dirty = ref(false)
 const reminders = ref({ morning: true, report: true })
+/** OpenClaw 当日总结（v0.18）：自动开关 */
+const autoSummary = ref(false)
+const autoSummaryToggle = ref<HTMLInputElement | null>(null)
+let summaryTogglePending = false
 const reminderTimes = ref({ morning: '09:00', report: '18:30' })
 type PushChannelKey = 'feishu' | 'wecom' | 'openclaw-weixin' | 'dingtalk'
 interface PushChannelOption {
@@ -607,6 +641,40 @@ async function toggleReminder(id: 'morning' | 'report', enabled: boolean): Promi
   }
 }
 
+async function loadOpenClawSummary(): Promise<void> {
+  try {
+    autoSummary.value = await window.api.work.openclawSummary.isAutoEnabled()
+  } catch (e: any) {
+    showToast(`读取 OpenClaw 总结设置失败：${e.message}`, 'error')
+  }
+}
+
+async function toggleAutoSummary(enabled: boolean): Promise<void> {
+  // 并发防抖：快速连点时第二个 change 直接忽略，
+  // 避免两个 setAutoEnabled 并发、回包乱序导致 UI 与持久化值背离
+  if (summaryTogglePending) return
+  summaryTogglePending = true
+  try {
+    const result = await window.api.work.openclawSummary.setAutoEnabled(enabled)
+    autoSummary.value = result.enabled
+    showToast(result.enabled ? '自动总结已开启' : '自动总结已关闭', 'success')
+  } catch (e: any) {
+    showToast(`设置失败：${e.message}`, 'error')
+    // 落库结果未知：尽力回读真实状态；回读也失败时保持原值——
+    // 绝不臆造成「关」，否则实际开着自动总结、用户却以为关不掉
+    try {
+      autoSummary.value = await window.api.work.openclawSummary.isAutoEnabled()
+    } catch {
+      /* 保持原值（finally 会把复选框对齐到它） */
+    }
+  } finally {
+    summaryTogglePending = false
+    await nextTick()
+    // 被忽略的连点已让复选框停在错误视觉态：强制对齐到已确认状态
+    if (autoSummaryToggle.value) autoSummaryToggle.value.checked = autoSummary.value
+  }
+}
+
 async function loadWizard(): Promise<void> {
   try {
     const s = await window.api.work.wizard.status()
@@ -628,7 +696,7 @@ async function reenter(decision: 'keep' | 'fresh' | 'later'): Promise<void> {
 }
 
 onMounted(async () => {
-  await Promise.all([loadProfile(), loadReminders(), loadWizard()])
+  await Promise.all([loadProfile(), loadReminders(), loadWizard(), loadOpenClawSummary()])
   // 从今日页「去配置」带 #push 跳来：滚动定位到外发段落
   if (route.hash === '#push') {
     await nextTick()

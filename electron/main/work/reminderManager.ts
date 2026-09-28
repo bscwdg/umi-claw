@@ -61,6 +61,16 @@ export const CHECK_INTERVAL_MS = 30 * 1000
 /** 命中容差窗口：进入触发时刻后 60 分钟内均可（避免进程恰好未在整点运行而漏发） */
 export const FIRE_GRACE_MS = 60 * 60 * 1000
 
+/**
+ * OpenClaw 当日总结的提前量（v0.18，北 2026-09-28 拍板 b 方案）：
+ * 触发点 = **日报时刻 - 30 分钟**。
+ *
+ * 为什么必须提前：未确认的候选不进事实层（硬规则 4），到点自动生成的日报草稿
+ * 只吃已确认的事实——总结若和草稿同时刻跑，当天这份草稿永远赶不上总结结果。
+ * 提前 30 分钟 = 给用户留出「确认候选 → 到点草稿自然包含」的窗口。
+ */
+export const SUMMARY_LEAD_MS = 30 * 60_000
+
 const META_PREFIX = 'reminder_enabled_'
 const META_TIME_PREFIX = 'reminder_time_'
 const META_PUSH_ENABLED = 'reminder_push_enabled'
@@ -99,6 +109,24 @@ export type DailyDraftResult =
   | { status: 'empty' }
   | { status: 'error'; message: string }
 export type DailyDraftProvider = () => Promise<DailyDraftResult>
+
+/**
+ * OpenClaw 当日总结结果（v0.18 桥接式）。
+ *
+ * 与旧的「自己读 OpenClaw 内部库」实现相比，这里**只有调度语义**：
+ * 总结内容怎么来、去重怎么做，全在 OpenClawSummaryManager 里，本模块不关心。
+ * provider **约定永不抛错**（真抛了也只当本轮失败、下一轮再试）。
+ */
+export type DailySummaryResult =
+  | { status: 'done'; date: string; proposed: number }
+  | { status: 'empty'; date: string }
+  | {
+      status: 'skipped'
+      reason: 'disabled' | 'done' | 'attempts-exhausted' | 'retry-wait'
+      date: string
+    }
+  | { status: 'error'; message: string; date: string }
+export type DailySummaryProvider = () => Promise<DailySummaryResult>
 
 /**
  * 可用于外发的渠道枚举。
@@ -208,6 +236,8 @@ export interface ReminderManagerOptions {
   getMorningSummary: MorningSummaryProvider
   /** 可选：到点自动生成今日日报草稿（不提供则只发提醒） */
   generateDailyDraft?: DailyDraftProvider
+  /** 可选（v0.18）：日报时刻前 30 分钟桥接 OpenClaw 总结当天工作 → 落候选 */
+  summarizeDaily?: DailySummaryProvider
   /** 可选：外发短提示到渠道（不提供则只发本地通知） */
   pusher?: Pusher
   /** 可选：列出可推送渠道及其配置状态（不提供则返回空清单，且不做「已配置」校验） */
@@ -227,6 +257,7 @@ export class ReminderManager {
   private readonly notifier: Notifier
   private readonly getMorningSummary: MorningSummaryProvider
   private readonly generateDailyDraft?: DailyDraftProvider
+  private readonly summarizeDaily?: DailySummaryProvider
   private readonly pusher?: Pusher
   private readonly listPushChannelsProvider?: PushChannelProvider
   private readonly listPushTargetsProvider?: PushTargetProvider
@@ -236,6 +267,8 @@ export class ReminderManager {
   private readonly logger?: (message: string) => void
   /** 当天已发记录（内存；key=date+id），防同窗口重复发 */
   private readonly firedToday = new Set<string>()
+  /** 当天总结是否已有终态结果（内存；key=date|summary），防同窗口重复调模型 */
+  private readonly summaryFired = new Set<string>()
   private timer: NodeJS.Timeout | null = null
 
   constructor(options: ReminderManagerOptions) {
@@ -258,6 +291,10 @@ export class ReminderManager {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, 'generateDailyDraft 必须是函数')
     }
     this.generateDailyDraft = options.generateDailyDraft
+    if (options.summarizeDaily !== undefined && typeof options.summarizeDaily !== 'function') {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, 'summarizeDaily 必须是函数')
+    }
+    this.summarizeDaily = options.summarizeDaily
     if (options.pusher !== undefined && typeof options.pusher !== 'function') {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, 'pusher 必须是函数')
     }
@@ -673,9 +710,57 @@ export class ReminderManager {
       }
     }
 
+    // v0.18：日报时刻前 30 分钟桥接 OpenClaw 总结当天工作（落候选，留确认窗口）
+    await this.processDailySummary(now, times[REMINDERS.REPORT])
+
     // v2：待办到点提醒（本机必达 + 外发加成；与两个固定通知相互独立）
     await this.processTodoReminders()
     return fired
+  }
+
+  /**
+   * OpenClaw 当日总结的触发窗口（v0.18）。
+   *
+   * 窗口 = [日报时刻 - 30min, 日报时刻 - 30min + 60min]：与两个固定通知同款 60 分钟
+   * 宽容度（应用没在跑 / 刚开机也补得上），但**过了窗口就不补**——补在草稿之后
+   * 就失去「留确认窗口」的意义了，剩下的交给今日页的手动按钮。
+   *
+   * 占位口径：先占位再调用（总结要调模型、耗时，不占位则下一次 check 重复触发）；
+   * 只有**终态**（done / empty / 当天已成功 / 尝试耗尽）才保留占位，
+   * error / retry-wait / disabled 一律释放，让后续 check 再问一次 provider——
+   * 次数上限与最小间隔由 provider 按**持久化**状态判定，所以重启也不会多烧。
+   */
+  private async processDailySummary(now: Date, reportTime: ReminderTime): Promise<void> {
+    if (!this.summarizeDaily) return
+    const reportAt = new Date(now)
+    reportAt.setHours(reportTime.hour, reportTime.minute, 0, 0)
+    const summaryAt = reportAt.getTime() - SUMMARY_LEAD_MS
+    const delta = now.getTime() - summaryAt
+    if (delta < 0 || delta > FIRE_GRACE_MS) return
+
+    const dateKey = localDateKey(now) + '|summary'
+    if (this.summaryFired.has(dateKey)) return
+    this.summaryFired.add(dateKey)
+
+    let res: DailySummaryResult
+    try {
+      res = await this.summarizeDaily()
+    } catch (e) {
+      this.summaryFired.delete(dateKey)
+      this.log(`[reminder] 当日总结异常（下一轮重试）: ${(e as Error)?.message}`)
+      return
+    }
+    const terminal =
+      res.status === 'done' ||
+      res.status === 'empty' ||
+      (res.status === 'skipped' && (res.reason === 'done' || res.reason === 'attempts-exhausted'))
+    if (!terminal) this.summaryFired.delete(dateKey)
+    if (res.status === 'done') this.log(`[reminder] 当日总结完成：新候选 ${res.proposed} 条`)
+    else if (res.status === 'empty') this.log('[reminder] 当日总结：OpenClaw 表示没有可确证内容')
+    else if (res.status === 'error') this.log(`[reminder] 当日总结失败（下一轮重试）: ${res.message}`)
+    else if (res.status === 'skipped' && res.reason === 'attempts-exhausted') {
+      this.log('[reminder] 当日总结尝试已耗尽，等手动触发')
+    }
   }
 
   /**

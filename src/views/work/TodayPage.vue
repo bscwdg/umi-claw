@@ -115,9 +115,19 @@
       <section class="card col">
         <div class="col-head">
           <h2>📝 今日记录</h2>
-          <span class="badge badge-blue">{{ view.records.length }}</span>
+          <div class="head-actions">
+            <span class="badge badge-blue">{{ view.records.length }}</span>
+            <button class="btn btn-sm" :disabled="summarizing" @click="onSummarize">
+              {{ summarizing ? '总结中…（1–3 分钟）' : '🦞 让 OpenClaw 总结今天' }}
+            </button>
+          </div>
         </div>
 
+        <!-- 总结状态：进行中给耗时预期（实测 72–184s）；成功/无内容/失败各一句话 -->
+        <div v-if="summarizing" class="text-sm text-muted summary-hint">
+          正在问 OpenClaw…它要检索自己的会话记录，通常 1–3 分钟，可以先做别的
+        </div>
+        <div v-else-if="summaryHint" class="text-sm text-muted summary-hint">{{ summaryHint }}</div>
         <div v-if="!view.records.length" class="empty">今天还没记录，记一件吧</div>
         <ul class="item-list">
           <li v-for="r in view.records" :key="r.id" class="item record">
@@ -155,6 +165,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import type { TodayView } from '../../electron/main/work/todayManager'
+import type { SummaryStatus } from '../../electron/main/work/openclawSummaryManager'
 import { useToast } from '@/composables/useToast'
 
 const router = useRouter()
@@ -174,6 +185,13 @@ const view = ref<TodayView>({
 
 const weekdayName = computed(() => ['周日','周一','周二','周三','周四','周五','周六'][view.value.weekday])
 const quickText = ref('')
+
+/**
+ * OpenClaw 当日总结（v0.18 桥接式）：按钮永远可用（不受自动开关影响）。
+ * 自动那条路在主进程按「日报时刻 - 30 分钟」跑，这里只负责手动触发与状态展示。
+ */
+const summarizing = ref(false)
+const summaryStatus = ref<SummaryStatus | null>(null)
 
 /** 到期时间（v3：精确到分钟；默认今天 18:00，已过点则顺延明天 18:00） */
 const dueTime = ref(defaultDue())
@@ -411,12 +429,91 @@ function openReport(): void {
   }
 }
 
+/** 总结状态一句话（没有当天记录就不占版面） */
+const summaryHint = computed(() => {
+  const s = summaryStatus.value
+  if (!s || s.lastAt === null || s.lastStatus === null) return ''
+  if (s.lastStatus === 'error') {
+    return `上次总结失败：${s.lastMessage ?? '未知原因'}（可点上方按钮重试）`
+  }
+  if (s.lastStatus === 'empty') return '今天已问过 OpenClaw：没有可确证的工作内容'
+  return s.lastProposed > 0
+    ? `今天已总结：新增 ${s.lastProposed} 条待确认记录`
+    : '今天已总结：内容此前都已记录过，没有新增'
+})
+
+async function loadSummaryStatus(): Promise<void> {
+  try {
+    summaryStatus.value = await window.api.work.openclawSummary.getStatus()
+  } catch {
+    // 状态读不到不影响页面主功能：不显示那一行就是了
+    summaryStatus.value = null
+  }
+}
+
+/** 手动「立刻总结」：一次 gateway 调用 → 候选落库 → 刷新列表 */
+async function onSummarize(): Promise<void> {
+  if (summarizing.value) return
+  summarizing.value = true
+  let result: Awaited<ReturnType<typeof window.api.work.openclawSummary.runToday>> | null = null
+  try {
+    result = await window.api.work.openclawSummary.runToday()
+  } catch (e: any) {
+    showToast(`总结失败：${String(e?.message ?? e)}`, 'error')
+  } finally {
+    summarizing.value = false
+  }
+  await loadSummaryStatus()
+  if (result) {
+    // 用本次结果覆盖状态行：主进程那边状态已落库（两边一致），本地覆盖是为了
+    // 状态行和 toast 同帧出现，不用再等一次 getStatus 往返
+    const base: SummaryStatus = summaryStatus.value ?? {
+      enabled: false,
+      date: result.date,
+      attempts: 0,
+      autoDone: false,
+      lastAt: null,
+      lastTrigger: null,
+      lastStatus: null,
+      lastMessage: null,
+      lastProposed: 0
+    }
+    summaryStatus.value = {
+      ...base,
+      date: result.date,
+      lastAt: Date.now(),
+      lastTrigger: 'manual',
+      lastStatus: result.empty ? 'empty' : 'done',
+      lastMessage: null,
+      lastProposed: result.proposed
+    }
+  }
+  if (!result) return
+  showToast(
+    result.proposed > 0
+      ? `已总结 ${result.proposed} 条待确认记录`
+      : result.empty
+        ? 'OpenClaw 没有找到可确证的工作内容'
+        : '总结完成，内容此前都已记录过',
+    result.proposed > 0 ? 'success' : 'warning'
+  )
+  // 有新候选才刷新列表；刷新失败不影响已落库的事实
+  if (result.proposed > 0 || result.filtered > 0) {
+    try {
+      await refresh()
+    } catch {
+      /* 下次进页自然刷新 */
+    }
+  }
+}
+
 onMounted(() => {
   // 页面长开着跨过默认时刻（今天 18:00）后重算，避免「一建就逾期」
   dueTime.value = defaultDue()
   void refresh()
   void loadCompleteness()
   void loadPushReady()
+  void loadSummaryStatus()
 })
 </script>
 
@@ -449,6 +546,8 @@ onMounted(() => {
 .today-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .col { display: flex; flex-direction: column; gap: 12px; }
 .col-head { display: flex; align-items: center; justify-content: space-between; }
+.head-actions { display: flex; align-items: center; gap: 8px; }
+.summary-hint { margin: 4px 0; }
 .batch-btns { display: flex; gap: 6px; }
 
 .item-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }

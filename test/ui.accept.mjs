@@ -2,7 +2,7 @@
 //
 // 目标：补上「typecheck/build 只证明能编译」的证据缺口——
 // 用**真 .vue 源码** + **真 preload 桥**，在 Node 侧真挂载页面，断言：
-//   U1 preload 桥面完整（15 个 work 命名空间 + 流式订阅 + 信封解包语义）
+//   U1 preload 桥面完整（16 个 work 命名空间 + 流式订阅 + 信封解包语义）
 //   U2 今日页挂载：调 work:today:get，渲染出问候/待办/记录
 //   U3 工作记录页挂载：调 matters.list + records.list，渲染出记录与来源标记
 //   U4 报告页挂载：调 reports.list，渲染出报告行与状态徽标
@@ -13,6 +13,8 @@
 //   U8 向导弹窗挂载：调 wizard.status，渲染出隐私说明必过页
 //   U9 挂载全程无 Vue 警告（能抓到模板引用不存在字段这类真 bug）
 //   U10 流式归并（useWorkStream）：chunk 累积 / done 收口 / 早期 chunk 缓冲
+//   U15 OpenClaw 当日总结（v0.18 桥接式）：今日页手动按钮立刻出结果 / 状态一句话 /
+//       设置页开关落库 + 连点防抖
 //
 // 机制：@vue/compiler-sfc 编译真 SFC → esbuild 打包（vue 共享实例）→
 //       vue createRenderer 造对象树宿主真挂载 → 注入 window.api 响应。
@@ -44,11 +46,12 @@ let api = null
 
 try {
   // ── U1 真 preload 桥面 ──
-  await r.check('U1', '真 preload 桥：15 个 work 命名空间 + 流式订阅 + 信封解包', async () => {
+  await r.check('U1', '真 preload 桥：16 个 work 命名空间 + 流式订阅 + 信封解包', async () => {
     api = await importPreloadApi({ electronStub: stubs.electronStub, toolkitStub: stubs.toolkitStub })
     const expected = [
       'stream', 'gateway', 'profile', 'matters', 'todos', 'records', 'context',
-      'today', 'router', 'reports', 'qa', 'tools', 'knowledge', 'wizard', 'reminder'
+      'today', 'router', 'reports', 'qa', 'tools', 'knowledge', 'wizard', 'reminder',
+      'openclawSummary'
     ]
     const missing = expected.filter((k) => !api.work[k])
     assertEq(missing.length, 0, `缺命名空间: ${missing.join(',')}`)
@@ -639,6 +642,124 @@ try {
     assertEq(created3[0].args[0].title, '开关关着也要记下来', '标题为原文')
 
     return '回车只建待办 · 问答带文跳转 · 提醒带时间 · 外发未就绪仍调度且给入口 ✓'
+  })
+
+  // ── U15 OpenClaw 当日总结（v0.18 桥接式）──
+  await r.check('U15', 'OpenClaw 当日总结：手动按钮立刻出结果 · 状态一句话 · 设置页开关落库 + 连点防抖', async () => {
+    const emptyToday = {
+      date: '2026-09-28', weekday: 1, greeting: '早上好',
+      todos: [], candidateTodos: [], records: [], candidateRecords: [],
+      report: { exists: false, reportId: null, status: null, canGenerate: false },
+      counts: { todos: 0, candidateTodos: 0, records: 0, candidateRecords: 0 }
+    }
+    const pushOff = {
+      enabled: false, channel: null, fallbackChannel: null, target: null, fallbackTarget: null
+    }
+    const noStatus = {
+      enabled: false, date: '2026-09-28', attempts: 0, autoDone: false,
+      lastAt: null, lastTrigger: null, lastStatus: null, lastMessage: null, lastProposed: 0
+    }
+
+    // 1) 今日页：按钮**永远在**（不受自动开关影响），点击 → runToday → 刷新列表 + 状态一句话
+    const res = await mount('src/views/work/TodayPage.vue', 'ui-today-summary', {
+      'work:today:get': emptyToday,
+      'work:reminder:getPushConfig': pushOff,
+      'work:openclaw-summary:getStatus': noStatus,
+      'work:openclaw-summary:runToday': {
+        date: '2026-09-28', proposed: 2, duplicates: 0, filtered: 0, empty: false,
+        candidateIds: ['c1', 'c2']
+      }
+    })
+    assert(calls().some((c) => c.channel === 'work:openclaw-summary:getStatus'), '进页应读总结状态')
+    const btn = findButton(res.root, '让 OpenClaw 总结今天')
+    assert(btn !== null, '今日页应有「立刻总结」按钮')
+    assert(!serialize(res.root).includes('上次总结失败'), '没有历史记录时不该占版面')
+    btn.props.onClick()
+    await flushTicks()
+    const runs = calls().filter((c) => c.channel === 'work:openclaw-summary:runToday')
+    assertEq(runs.length, 1, '点击调一次 runToday')
+    assertEq(runs[0].args.length, 0, '手动通道不带入参（一律按手动计，不占自动预算）')
+    assertEq(
+      calls().filter((c) => c.channel === 'work:today:get').length,
+      2,
+      'proposed>0 → 刷新列表（新候选立刻可见）'
+    )
+    assert(serialize(res.root).includes('新增 2 条待确认记录'), '成功后状态行给出结果')
+
+    // 2) 失败态：状态行点名原因 + 提示可重试；再点一次仍能重跑
+    const res2 = await mount('src/views/work/TodayPage.vue', 'ui-today-summary-fail', {
+      'work:today:get': emptyToday,
+      'work:reminder:getPushConfig': pushOff,
+      'work:openclaw-summary:getStatus': {
+        ...noStatus,
+        attempts: 3, lastAt: 1790000000000, lastTrigger: 'auto',
+        lastStatus: 'error', lastMessage: '网关未就绪'
+      },
+      'work:openclaw-summary:runToday': { ok: false, error: { code: 'OPENCLAW_NOT_READY', message: '网关未就绪' } }
+    })
+    await flushTicks()
+    const html2 = serialize(res2.root)
+    assert(html2.includes('上次总结失败'), '自动失败要在页面上看得见')
+    assert(html2.includes('网关未就绪'), '失败原因要点名（不能只显示「失败」）')
+    assert(html2.includes('重试'), '要告诉用户可以手动重试')
+    // 自动预算耗尽后手动仍可用：按钮不 disabled，点了照样发请求（错误走 toast，不炸页面）
+    const btn2 = findButton(res2.root, '让 OpenClaw 总结今天')
+    assert(btn2 !== null && btn2.props.disabled !== true, '手动按钮不受自动预算约束')
+    btn2.props.onClick()
+    await flushTicks()
+    assertEq(
+      calls().filter((c) => c.channel === 'work:openclaw-summary:runToday').length,
+      1,
+      '失败后手动再点仍会发一次请求'
+    )
+
+    // 3) 设置页开关：change → setAutoEnabled；连点只落一次（并发防抖）
+    const res3 = await mount('src/views/work/SettingsPage.vue', 'ui-settings-summary', {
+      'work:profile:get': {
+        profile: { id: 'default', call_name: '小北' },
+        completeness: { filled: 1, total: 6, percent: 17, missing: [] }
+      },
+      'work:reminder:isEnabled': () => false,
+      'work:reminder:setEnabled': { enabled: false },
+      // 提醒/外发面要给全：缺一个 loadReminders 就中途抛错、push 停在 null，
+      // 之后任何一次重渲染都会炸在 push.enabled
+      'work:reminder:getTimes': { morning: { hour: 9, minute: 0 }, report: { hour: 18, minute: 30 } },
+      'work:reminder:getPushConfig': pushOff,
+      'work:reminder:availablePushChannels': [],
+      'work:reminder:setPushConfig': (patch) => ({ ...pushOff, ...(patch ?? {}) }),
+      'work:reminder:getPushStatus': null,
+      'work:wizard:status': { consent: true, completed: true, oldDb: null, oldDbDecision: null },
+      'work:openclaw-summary:isAutoEnabled': false,
+      'work:openclaw-summary:setAutoEnabled': (enabled) => ({ enabled: enabled === true })
+    })
+    assert(res3.html.includes('日报时刻前 30 分钟自动总结'), '设置页应说明触发时机（提前 30 分钟）')
+    const boxes = []
+    for (const n of walk(res3.root)) {
+      if (n.tag === 'input' && n.props.type === 'checkbox') boxes.push(n)
+    }
+    // 页面上有多个 toggle（提醒×2 / 外发 / 自动总结）：逐个派发 change，
+    // 只有「自动总结」那一个会打到 setAutoEnabled
+    const setCalls = () => calls().filter((c) => c.channel === 'work:openclaw-summary:setAutoEnabled')
+    let autoBox = null
+    for (const box of boxes) {
+      if (typeof box.props.onChange !== 'function') continue
+      const before = setCalls().length
+      box.props.onChange({ target: { checked: true } })
+      await flushTicks(2)
+      if (setCalls().length > before) {
+        assertEq(autoBox, null, '只应有一个开关打到 setAutoEnabled')
+        autoBox = box
+      }
+    }
+    assert(autoBox !== null, '设置页自动总结开关 change → setAutoEnabled')
+    assertEq(setCalls()[0].args[0], true, '开关状态原样透传')
+    const beforeBurst = setCalls().length
+    autoBox.props.onChange({ target: { checked: false } })
+    autoBox.props.onChange({ target: { checked: true } })
+    await flushTicks(4)
+    assertEq(setCalls().length, beforeBurst + 1, '连点并发防抖：只落一次 setAutoEnabled')
+
+    return '手动按钮立刻出结果 · 失败态点名可重试 · 开关落库且防抖 ✓'
   })
 } catch (e) {
   console.error('UI 验收脚本自身异常:', e)

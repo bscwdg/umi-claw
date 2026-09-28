@@ -328,6 +328,14 @@ const api = {
       testPush: () => call('work:reminder:testPush'),
       getPushStatus: () => call('work:reminder:getPushStatus'),
       check: () => call('work:reminder:check')
+    },
+
+    // v0.18：桥接 OpenClaw 总结当天工作（runToday 一律按手动计，不占自动预算）
+    openclawSummary: {
+      isAutoEnabled: () => call('work:openclaw-summary:isAutoEnabled'),
+      setAutoEnabled: (enabled: boolean) => call('work:openclaw-summary:setAutoEnabled', enabled),
+      runToday: () => call('work:openclaw-summary:runToday'),
+      getStatus: () => call('work:openclaw-summary:getStatus')
     }
   }
 }

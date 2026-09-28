@@ -35,6 +35,7 @@ import type { ToolManager } from '../work/toolManager'
 import type { KnowledgeManager } from '../work/knowledgeManager'
 import type { WizardManager } from '../work/wizardManager'
 import type { ReminderManager, ReminderId, PushChannel } from '../work/reminderManager'
+import type { OpenClawSummaryManager } from '../work/openclawSummaryManager'
 import { forwardGatewayStream } from '../gatewayClient'
 
 /** IPC 统一返回信封（§14.2） */
@@ -155,6 +156,20 @@ export const WORK_REMINDER_CHANNELS = {
   check: 'work:reminder:check'
 } as const
 
+/**
+ * OpenClaw 当日总结（v0.18 桥接式）：开关 / 立刻总结 / 状态。
+ *
+ * 没有「auto」入参——渲染端调 runToday 一律是**手动**（不占自动尝试预算、
+ * 不受当天是否已自动跑过影响）；自动那条路由 ReminderManager 在主进程直接调
+ * runScheduled()，不经 IPC。
+ */
+export const WORK_OPENCLAW_SUMMARY_CHANNELS = {
+  isAutoEnabled: 'work:openclaw-summary:isAutoEnabled',
+  setAutoEnabled: 'work:openclaw-summary:setAutoEnabled',
+  runToday: 'work:openclaw-summary:runToday',
+  getStatus: 'work:openclaw-summary:getStatus'
+} as const
+
 async function wrap<T>(fn: () => Promise<T>): Promise<WorkIpcResult<T>> {
   try {
     return { ok: true, data: await fn() }
@@ -192,11 +207,12 @@ export interface WorkIpcDeps {
   knowledge: KnowledgeManager
   wizard: WizardManager
   reminder: ReminderManager
+  openclawSummary: OpenClawSummaryManager
 }
 
 /** 注册 work 域 IPC（Commit 02：profile / matters / todos） */
 export function registerWorkIpc(deps: WorkIpcDeps): void {
-  const { profile, matters, todos, records, context, today, router, reports, qa, tools, knowledge, wizard, reminder } = deps
+  const { profile, matters, todos, records, context, today, router, reports, qa, tools, knowledge, wizard, reminder, openclawSummary } = deps
 
   // ── profile ──
   handle(WORK_PROFILE_CHANNELS.get, () => wrap(() => profile.get()))
@@ -405,4 +421,16 @@ export function registerWorkIpc(deps: WorkIpcDeps): void {
   handle(WORK_REMINDER_CHANNELS.testPush, () => wrap(() => reminder.testPush()))
   handle(WORK_REMINDER_CHANNELS.getPushStatus, () => wrap(() => reminder.getPushStatus()))
   handle(WORK_REMINDER_CHANNELS.check, () => wrap(() => reminder.check()))
+
+  // ── openclaw-summary（v0.18：桥接 OpenClaw 总结当天工作 → 候选）──
+  handle(WORK_OPENCLAW_SUMMARY_CHANNELS.isAutoEnabled, () =>
+    wrap(() => openclawSummary.isAutoEnabled())
+  )
+  handle(WORK_OPENCLAW_SUMMARY_CHANNELS.setAutoEnabled, (enabled: boolean) =>
+    wrap(() => openclawSummary.setAutoEnabled(enabled === true))
+  )
+  handle(WORK_OPENCLAW_SUMMARY_CHANNELS.runToday, () =>
+    wrap(() => openclawSummary.summarizeToday('manual'))
+  )
+  handle(WORK_OPENCLAW_SUMMARY_CHANNELS.getStatus, () => wrap(() => openclawSummary.getStatus()))
 }

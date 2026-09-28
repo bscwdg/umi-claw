@@ -106,6 +106,7 @@ umi-claw/
 │   │       ├── knowledgeManager.ts   # 工作知识库
 │   │       ├── wizardManager.ts  # 首启向导 / 用户协议
 │   │       ├── reminderManager.ts    # 到点提醒 / 外发推送
+│   │       ├── openclawSummaryManager.ts # 桥接 OpenClaw 总结当天工作 → 候选
 │   │       └── parsers/           # 工作知识库文档解析
 │   │           ├── documentParsers.ts # Word/Excel/PDF/TXT
 │   │           ├── pdfjsAssets.ts     # 打包态 pdfjs 资源定位
@@ -172,7 +173,7 @@ umi-claw/
 │   └── installer.nsh           # NSIS 钩子：升级时自动搬迁旧版数据目录
 ├── scripts/
 │   └── run-all-accept.mjs      # 一键跑全部验收
-├── test/                       # 验收：11 套 accept + 一天 e2e + 打包态 smoke
+├── test/                       # 验收：12 套 accept + 一天 e2e + 打包态 smoke
 │   ├── _lib.mjs                # 验收公共库
 │   ├── _ui.mjs                 # UI 验收公共库
 │   └── fixtures/               # 验收夹具
@@ -215,7 +216,7 @@ npm run dev
 # 类型检查
 npm run typecheck
 
-# 一键跑全部验收（11 套 accept + e2e）
+# 一键跑全部验收（12 套 accept + e2e + smoke）
 npm run accept
 ```
 

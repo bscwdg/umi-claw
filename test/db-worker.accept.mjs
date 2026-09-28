@@ -404,14 +404,16 @@ try {
     const rawSql = await main.call('p', { sql: 'DROP TABLE matters' })
     assertEq(rawSql.ok, false, '前端传 SQL 必须被拒')
 
-    // 错误码必须全部落在 §14.2 的 11 项内
+    // 错误码必须全部落在 §14.2 的 12 项内
     const envelopeMod = await import(
       pathToFileURL(bundleEntry('electron/main/database/errors.ts', 'errors.mjs')).href
     )
     const allowedCodes = Object.keys(envelopeMod.ERROR_CODES)
-    assertEq(allowedCodes.length, 11, `§14.2 应为 11 项，实际 ${allowedCodes.length}`)
+    assertEq(allowedCodes.length, 12, `§14.2 应为 12 项，实际 ${allowedCodes.length}`)
     assert(!allowedCodes.includes('HOT_SOURCE_ERROR'), 'HOT_SOURCE_ERROR 应已移除')
     assert(allowedCodes.includes('STREAM_TRUNCATED'), 'STREAM_TRUNCATED 应已加入')
+    // v0.18 桥接式当日总结新增一项（PLAN §14.2 表同步）
+    assert(allowedCodes.includes('OPENCLAW_INVALID_OUTPUT'), 'OPENCLAW_INVALID_OUTPUT 应已加入')
     return `allowed=${unknown.error.details.allowed.length} 方法；错误码 ${allowedCodes.length} 项`
   })
 

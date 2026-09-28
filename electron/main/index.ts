@@ -53,6 +53,10 @@ import { createToolManager, type ToolManager } from './work/toolManager'
 import { createKnowledgeManager, type KnowledgeManager } from './work/knowledgeManager'
 import { createWizardManager, type WizardManager } from './work/wizardManager'
 import { createReminderManager, type ReminderManager } from './work/reminderManager'
+import {
+  createOpenClawSummaryManager,
+  type OpenClawSummaryManager
+} from './work/openclawSummaryManager'
 import { resolvePdfjsAssets } from './work/parsers/pdfjsAssets'
 
 // 类型定义
@@ -87,6 +91,7 @@ let workToolManager: ToolManager | null = null
 let workKnowledgeManager: KnowledgeManager | null = null
 let workWizardManager: WizardManager | null = null
 let workReminderManager: ReminderManager | null = null
+let workOpenClawSummaryManager: OpenClawSummaryManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -614,6 +619,7 @@ function initWorkManagers(): {
   knowledge: KnowledgeManager
   wizard: WizardManager
   reminder: ReminderManager
+  openclawSummary: OpenClawSummaryManager
 } {
   if (!workDatabase) throw new Error('DB 客户端尚未初始化')
   workProfileManager = workProfileManager ?? createProfileManager({ database: workDatabase })
@@ -679,6 +685,19 @@ function initWorkManagers(): {
       logger: (m) => console.log(m)
     })
   }
+  // openclaw-summary（v0.18）：桥接 OpenClaw 总结当天工作 → 候选。
+  // 必须先于 ReminderManager 创建：提醒循环要在「日报时刻 - 30 分钟」调它的 runScheduled
+  workOpenClawSummaryManager =
+    workOpenClawSummaryManager ??
+    (() => {
+      if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
+      return createOpenClawSummaryManager({
+        database: workDatabase,
+        records: workRecordManager!,
+        gateway: workGatewayClient,
+        logger: (m) => console.log(m)
+      })
+    })()
   // wizard / reminder（Commit 09）
   workWizardManager =
     workWizardManager ??
@@ -731,6 +750,9 @@ function initWorkManagers(): {
           return { status: 'error', message: err?.message ?? '未知错误' }
         }
       },
+      // v0.18：日报时刻前 30 分钟桥接 OpenClaw 总结当天工作（结果落候选，
+      // 留出确认窗口——未确认候选不进事实层，硬规则 4）。provider 永不抛错。
+      summarizeDaily: () => workOpenClawSummaryManager!.runScheduled(),
       logger: (m) => console.log(m)
     })
   return {
@@ -746,7 +768,8 @@ function initWorkManagers(): {
     tools: workToolManager,
     knowledge: workKnowledgeManager,
     wizard: workWizardManager,
-    reminder: workReminderManager
+    reminder: workReminderManager,
+    openclawSummary: workOpenClawSummaryManager
   }
 }
 

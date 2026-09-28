@@ -370,7 +370,7 @@ export async function loadWorkIpcChannels({ electronStub }) {
   workMod.registerWorkIpc({
     profile: stub, matters: stub, todos: stub, records: stub, context: stub,
     today: stub, router: stub, reports: stub, qa: stub, tools: stub,
-    knowledge: stub, wizard: stub, reminder: stub
+    knowledge: stub, wizard: stub, reminder: stub, openclawSummary: stub
   })
 
   // gateway.ts：只读就绪面（gateway 桩只需方法存在）
