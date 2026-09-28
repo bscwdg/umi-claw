@@ -13,11 +13,15 @@
 //   - reader 时钟统一 created_at：重启重写守卫（旧内嵌时间戳丢弃、缺失兜底保留）
 //   - 失败重试（间隔超过去重窗口）→ 已提议集合按会话键跳过，不重复候选
 //   - 手动撞上在途自动扫描 → 等待并复用真实扫描结果，绝不并发起两轮
+//   - 真 reader 失败路径（库不存在 / 缺表）→ exit 0 + 单份 JSON + unavailable，不崩溃
+//   - 跨午夜补扫 → 昨天的消息记回昨天（occurred_date 不串到今天）
+//   - 读库故障不消耗模型重试预算（不花钱的故障不该让自动提取整天停摆）
+//   - 0 条新消息但已读行前移 → 水位照样收敛，不每轮重读被丢弃的行
 //
 // 用法：node test/openclaw-import.accept.mjs（npm run accept:openclaw-import）
 
 import { mkdirSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -645,6 +649,214 @@ try {
     const manualResult = await manualPromise
     assertEq(reader.calls.length, 1, '真实扫描成功的结果直接复用，全程只扫一次')
     assert(autoResult === manualResult, '手动应复用在途自动扫描的结果对象')
+  })
+
+  await r.check('C23', 'reader 失败路径：库不存在 / 缺表 → exit 0 + 单份 JSON + unavailable（不崩溃）', async () => {
+    const readerPath = join(__dirname, '..', 'resources', 'database', 'openclaw-reader.mjs')
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const dayStart = today.getTime()
+    const since = dayStart + 3600_000
+    const run = (db) => {
+      const res = spawnSync(nodePath, [readerPath, db, String(since), String(dayStart)], {
+        windowsHide: true,
+        encoding: 'utf8',
+        maxBuffer: 8 * 1024 * 1024
+      })
+      return { status: res.status, stdout: String(res.stdout ?? ''), stderr: String(res.stderr ?? '') }
+    }
+
+    // ① 库文件不存在（OpenClaw 从未产生会话 / 枚举后被删）
+    const missing = run(join(dataDir, 'no-such-agent.sqlite'))
+    assertEq(missing.status, 0, '库不存在应优雅退出 exit 0（不是崩溃）')
+    assert(!/TypeError|not iterable/.test(missing.stderr), 'stderr 不应出现崩溃栈')
+    // JSON.parse 能过就证明 stdout 只有一份 JSON（曾经会连写三份再崩）
+    const missingOut = JSON.parse(missing.stdout)
+    assertEq(missingOut.unavailable, true, '应标 unavailable')
+    assertEq(missingOut.messages.length, 0, '0 条消息')
+    assertEq(missingOut.maxCreatedAt, since, '水位原样返回（不可用时绝不推进）')
+    assert(
+      typeof missingOut.reason === 'string' && missingOut.reason.length > 0,
+      '应带 reason 供日志定位'
+    )
+
+    // ② 库存在但缺表（OpenClaw 升级改 schema）：真因必须透出，不能被 TypeError 覆盖
+    const noTableDb = join(dataDir, 'no-table.sqlite')
+    execFileSync(
+      nodePath,
+      [
+        '-e',
+        'const { DatabaseSync } = require("node:sqlite"); const db = new DatabaseSync(process.argv[1]); db.close();',
+        noTableDb
+      ],
+      { windowsHide: true }
+    )
+    const noTable = run(noTableDb)
+    assertEq(noTable.status, 0, '缺表也应优雅退出 exit 0')
+    const noTableOut = JSON.parse(noTable.stdout)
+    assertEq(noTableOut.unavailable, true, '缺表应标 unavailable')
+    assert(/no such table/.test(noTableOut.reason), `reason 应是真因（实际：${noTableOut.reason}）`)
+    assert(!/TypeError|not iterable/.test(noTable.stderr), 'stderr 不应出现崩溃栈')
+    return '库不存在 / 缺表 均 exit 0 + 单份 JSON + 真因 ✓'
+  })
+
+  await r.check('C24', '跨午夜补扫：昨天的消息记回昨天（occurred_date 不串到今天）', async () => {
+    const MIDNIGHT_DB = 'D:\\fake\\midnight.sqlite'
+    await database.metaSet('openclaw_import_retry', '0')
+    const fmtDate = (ts) => {
+      const d = new Date(ts)
+      const p = (n) => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+    }
+    const today0 = new Date()
+    today0.setHours(0, 0, 0, 0)
+    const yesterdayNoon = today0.getTime() - 12 * 3600_000
+    const todayMorning = today0.getTime() + 9 * 3600_000
+    const mk = (ts, text) => ({
+      ts,
+      role: 'user',
+      text,
+      sessionKey: 'agent:main:dashboard:midnight',
+      channel: null
+    })
+    // 水位停在昨天 → reader 一次返回昨天 + 今天两段消息
+    const scan = {
+      messages: [mk(yesterdayNoon, '昨天中午的对话'), mk(todayMorning, '今天早上的对话')],
+      maxCreatedAt: todayMorning
+    }
+    const gateway = sequenceGateway(['- 昨天推进的工作甲', '- 今天推进的工作乙'])
+    const manager = createOpenClawImportManager({
+      database,
+      records,
+      gateway,
+      reader: fakeReader([scan, scan]),
+      dbPath: MIDNIGHT_DB
+    })
+    const result = await manager.importToday('manual')
+    assertEq(result.scanned, 2, '两段消息都扫到')
+    assertEq(gateway.calls.length, 2, '按消息自己的本地日分成两批（昨天/今天各一批）')
+    const rows = await records.list({ status: 'candidate' })
+    const yRow = rows.find((c) => c.content === '昨天推进的工作甲')
+    const tRow = rows.find((c) => c.content === '今天推进的工作乙')
+    assert(yRow && tRow, '两天各一条候选')
+    assertEq(yRow.occurred_date, fmtDate(yesterdayNoon), '昨天那条必须归昨天（不得串进今天日报）')
+    assertEq(tRow.occurred_date, fmtDate(todayMorning), '今天那条归今天')
+    return `${yRow.occurred_date} / ${tRow.occurred_date} 各归其日 ✓`
+  })
+
+  await r.check('C25', '读库故障不消耗模型重试预算（unavailable / reader reject 两种形态）', async () => {
+    const READFAIL_DB = 'D:\\fake\\readfail.sqlite'
+    await database.metaSet('openclaw_import_retry', '0')
+
+    // ① reader 正常返回但标 unavailable（库被 OpenClaw 独占）
+    const unavailableReader = async () => ({
+      messages: [],
+      maxCreatedAt: 0,
+      unavailable: true,
+      reason: 'database is locked'
+    })
+    const m1 = createOpenClawImportManager({
+      database,
+      records,
+      gateway: fakeGateway(''),
+      reader: unavailableReader,
+      dbPath: READFAIL_DB
+    })
+    let threw1 = null
+    try {
+      await m1.importToday('auto')
+    } catch (e) {
+      threw1 = e
+    }
+    assert(threw1, '全库不可读应抛错（不能误报「没有新内容」）')
+    assertEq(threw1.code, 'OPENCLAW_NOT_READY', '错误码 OPENCLAW_NOT_READY')
+    assertEq(
+      await database.metaGet('openclaw_import_retry'),
+      '0',
+      '读库故障不花 token，不得计入模型重试预算'
+    )
+
+    // ② reader 直接 reject（便携 Node 未就绪 / spawn 失败 / 输出损坏）
+    const rejectingReader = async () => {
+      const e = new Error('便携 Node 运行时尚未就绪，无法读取 OpenClaw 会话')
+      e.code = 'OPENCLAW_NOT_READY'
+      throw e
+    }
+    const m2 = createOpenClawImportManager({
+      database,
+      records,
+      gateway: fakeGateway(''),
+      reader: rejectingReader,
+      dbPath: READFAIL_DB
+    })
+    let threw2 = null
+    try {
+      await m2.importToday('auto')
+    } catch (e) {
+      threw2 = e
+    }
+    assert(threw2, 'reader reject 应抛错')
+    assertEq(
+      await database.metaGet('openclaw_import_retry'),
+      '0',
+      'reader reject 同属读库故障，同样不计入预算'
+    )
+
+    // ③ 对照：会花钱的解析故障仍要计入（防止同一批转录无限烧钱）
+    const m3 = createOpenClawImportManager({
+      database,
+      records,
+      gateway: fakeGateway('抱歉，我无法整理。'),
+      reader: fakeReader([
+        { messages: [sessionMessage('user', '解析故障对照')], maxCreatedAt: WATERMARK_1 + 13000 }
+      ]),
+      dbPath: 'D:\\fake\\parsefail.sqlite'
+    })
+    let threw3 = null
+    try {
+      await m3.importToday('auto')
+    } catch (e) {
+      threw3 = e
+    }
+    assert(threw3, '解析失败应抛错')
+    const raw = await database.metaGet('openclaw_import_retry')
+    assert(raw && raw !== '0', '解析故障应写入重试状态')
+    assertEq(JSON.parse(raw).count, 1, '解析故障计入预算 count=1')
+    await database.metaSet('openclaw_import_retry', '0')
+    return '读库故障 0 计入 · 解析故障 1 计入 ✓'
+  })
+
+  await r.check('C26', '0 条新消息但已读行前移 → 水位照样收敛（不每轮重读被丢弃的行）', async () => {
+    const CONVERGE_DB = 'D:\\fake\\converge.sqlite'
+    const advanced = WATERMARK_1 + 20000
+    const gateway = fakeGateway('')
+    // reader 读到了行、但全被角色/空文本/重启重写守卫丢弃 → messages 为空、maxCreatedAt 前移
+    const reader = fakeReader([{ messages: [], maxCreatedAt: advanced }])
+    const manager = createOpenClawImportManager({
+      database,
+      records,
+      gateway,
+      reader,
+      dbPath: CONVERGE_DB
+    })
+    const first = await manager.importToday('manual')
+    assertEq(first.scanned, 0, 'scanned=0')
+    assertEq(gateway.calls, 0, '0 条消息不调模型')
+    const probeReader = fakeReader([])
+    const probe = createOpenClawImportManager({
+      database,
+      records,
+      gateway: fakeGateway(''),
+      reader: probeReader,
+      dbPath: CONVERGE_DB
+    })
+    await probe.importToday('manual')
+    assertEq(
+      probeReader.calls[0].sinceMs,
+      advanced,
+      '水位应收敛到已读行末尾，否则被丢弃的行每轮重读（最坏 20000 行 / 10 分钟）'
+    )
+    return '水位收敛到 ' + advanced + ' ✓'
   })
 } catch (e) {
   console.error('验收脚本自身异常:', e)

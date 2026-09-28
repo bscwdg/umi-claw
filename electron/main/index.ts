@@ -56,7 +56,9 @@ import { createReminderManager, type ReminderManager } from './work/reminderMana
 import {
   createOpenClawImportManager,
   type OpenClawImportManager,
-  type OpenClawReader
+  type OpenClawReader,
+  type OpenClawReaderResult,
+  type OpenClawSessionMessage
 } from './work/openclawImportManager'
 import { resolvePdfjsAssets } from './work/parsers/pdfjsAssets'
 
@@ -334,16 +336,18 @@ function resourcesRoot(): string {
  * 与 readLegacyDb / listPushTargetOptions 同构：execFile + timeout + maxBuffer，
  * Node 内部按 Buffer 收集并一次性解码（中文不被 chunk 边界切碎）。
  */
-function createOpenClawReader(scriptPath: string, nodePath: string): OpenClawReader {
+function createOpenClawReader(scriptPath: string, nodePath: () => string): OpenClawReader {
   return ({ dbPath, sinceMs, dayStartMs }) =>
     new Promise((resolve, reject) => {
-      // 冷启动时便携 Node 可能尚未由下载器落地：先探测，给业务错误而非裸 ENOENT
-      if (!existsSync(nodePath)) {
+      // 便携 Node 路径每次求值（与 dbPath 同口径惰性）：冷启动时可能尚未由下载器落地，
+      // 先探测，给业务错误而非裸 ENOENT
+      const node = nodePath()
+      if (!existsSync(node)) {
         reject(new AppError(ERROR_CODES.OPENCLAW_NOT_READY, '便携 Node 运行时尚未就绪，无法读取 OpenClaw 会话'))
         return
       }
       execFile(
-        nodePath,
+        node,
         [scriptPath, dbPath, String(sinceMs), String(dayStartMs)],
         { windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024 * 1024 },
         (err, stdout, stderr) => {
@@ -352,13 +356,15 @@ function createOpenClawReader(scriptPath: string, nodePath: string): OpenClawRea
             return
           }
           try {
-            resolve(JSON.parse(String(stdout)))
+            resolve(normalizeReaderPayload(JSON.parse(String(stdout))))
           } catch (e) {
             reject(
-              new AppError(
-                ERROR_CODES.OPENCLAW_INVALID_OUTPUT,
-                `OpenClaw 读取输出损坏：${(e as Error).message}`
-              )
+              e instanceof AppError
+                ? e
+                : new AppError(
+                    ERROR_CODES.OPENCLAW_INVALID_OUTPUT,
+                    `OpenClaw 读取输出损坏：${(e as Error).message}`
+                  )
             )
           }
         }
@@ -366,12 +372,58 @@ function createOpenClawReader(scriptPath: string, nodePath: string): OpenClawRea
     })
 }
 
+/**
+ * 校验 reader 的输出契约。
+ *
+ * 不校验就会让 `messages: undefined` 流到 splitIntoBatches（在 try 之外），
+ * 用户看到的是「Cannot read properties of undefined」而不是可读的业务错误。
+ * 逐条兜底：字段不合法的行丢弃，不让一行坏数据毁掉整轮。
+ */
+function normalizeReaderPayload(raw: unknown): OpenClawReaderResult {
+  const payload = raw as Partial<OpenClawReaderResult> | null
+  if (!payload || typeof payload !== 'object' || !Array.isArray(payload.messages)) {
+    throw new AppError(ERROR_CODES.OPENCLAW_INVALID_OUTPUT, 'OpenClaw 读取输出缺少 messages 数组')
+  }
+  const maxCreatedAt = Number(payload.maxCreatedAt)
+  if (!Number.isFinite(maxCreatedAt) || maxCreatedAt < 0) {
+    throw new AppError(ERROR_CODES.OPENCLAW_INVALID_OUTPUT, 'OpenClaw 读取输出的 maxCreatedAt 非法')
+  }
+  const messages: OpenClawSessionMessage[] = []
+  for (const item of payload.messages) {
+    const m = item as Partial<OpenClawSessionMessage> | null
+    if (!m || typeof m !== 'object') continue
+    const ts = Number(m.ts)
+    if (!Number.isFinite(ts) || typeof m.text !== 'string') continue
+    if (m.role !== 'user' && m.role !== 'assistant') continue
+    messages.push({
+      ts,
+      role: m.role,
+      text: m.text,
+      sessionKey: typeof m.sessionKey === 'string' ? m.sessionKey : '',
+      channel: typeof m.channel === 'string' ? m.channel : null
+    })
+  }
+  return {
+    messages,
+    maxCreatedAt,
+    unavailable: payload.unavailable === true,
+    reason: typeof payload.reason === 'string' ? payload.reason : undefined,
+    truncated: payload.truncated === true
+  }
+}
+
 /** 把 execFile 的各类失败翻译成对应业务错误码（渲染端按 code 分支） */
 function mapReaderError(err: Error, stderr: string | Buffer): AppError {
   const error = err as NodeJS.ErrnoException & { killed?: boolean }
   const code = String(error.code ?? '')
   const message = String(error.message ?? '')
-  const detail = String(stderr ?? '').trim()
+  // stderr 可能是整段崩溃栈：只取最后一条有内容的行并限长，
+  // 否则会经 IPC 直接显示在用户 toast 上
+  const detailLines = String(stderr ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const detail = (detailLines[detailLines.length - 1] ?? '').slice(0, 200)
   // execFile 超时的实际形态：killed=true 且 message 只有「Command failed: ...」，
   // 并没有「timed out」字样——必须检查 killed，否则超时被当成普通失败翻译
   if (error.killed === true || /timed out/i.test(message) || code === 'ETIMEDOUT') {
@@ -856,7 +908,7 @@ function initWorkManagers(): {
       gateway: workGatewayClient,
       reader: createOpenClawReader(
         join(resourcesRoot(), 'database', 'openclaw-reader.mjs'),
-        configManager.getNodePath()
+        () => configManager.getNodePath()
       ),
       dbPath: () => listAgentDbPaths(configManager.getDataDir()),
       logger: (m) => console.log(m)

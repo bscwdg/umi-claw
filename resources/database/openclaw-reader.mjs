@@ -34,6 +34,19 @@
 import { DatabaseSync } from 'node:sqlite'
 import { existsSync } from 'node:fs'
 
+/**
+ * 输出唯一一份 JSON，等 flush 完成后再退出。
+ *
+ * 必须 await：Windows 上 stdout 接管道是**异步**的，若写成
+ * `process.stdout.write(json, () => process.exit(0))`，回调还没跑同步代码就继续往下——
+ * 失败路径会连写三份 JSON，再崩在 `processPage(undefined)`（exit=1，
+ * 真因被 TypeError 覆盖，父进程只能看到「输出损坏」）。
+ */
+async function emit(payload) {
+  await new Promise((resolve) => process.stdout.write(JSON.stringify(payload), resolve))
+  process.exit(0)
+}
+
 const [dbPath, sinceRaw, dayStartRaw] = process.argv.slice(2)
 const sinceMs = Number(sinceRaw)
 const dayStartMs = Number(dayStartRaw)
@@ -44,9 +57,8 @@ if (!dbPath || !Number.isFinite(sinceMs) || !Number.isFinite(dayStartMs)) {
 }
 
 // 库从未产生（OpenClaw 未启动）不是错误：没有可提取的东西。
-// 输出后等 flush 完成再退出——大 JSON 写管道是异步的，process.exit 会丢缓冲
 if (!existsSync(dbPath)) {
-  process.stdout.write(JSON.stringify({ messages: [], maxCreatedAt: sinceMs, unavailable: true }), () => process.exit(0))
+  await emit({ messages: [], maxCreatedAt: sinceMs, unavailable: true, reason: '库文件不存在' })
 }
 
 /** 单页行数（keyset 分页，仅控制单次查询） */
@@ -137,7 +149,7 @@ try {
   // 库被独占 / 损坏 / 缺表：unavailable，本轮跳过、水位不动，下轮自动重试
   const reason = `无法读取 agent 库: ${(e && e.message) || e}`
   process.stderr.write(`[openclaw-reader] ${reason}\n`)
-  process.stdout.write(JSON.stringify({ messages: [], maxCreatedAt: sinceMs, unavailable: true, reason }), () => process.exit(0))
+  await emit({ messages: [], maxCreatedAt: sinceMs, unavailable: true, reason })
 }
 
 const messages = []
@@ -202,10 +214,12 @@ for (;;) {
   } catch (e) {
     const reason = `无法读取 agent 库: ${(e && e.message) || e}`
     process.stderr.write(`[openclaw-reader] ${reason}\n`)
-    process.stdout.write(JSON.stringify({ messages: [], maxCreatedAt: sinceMs, unavailable: true, reason }), () => process.exit(0))
+    await emit({ messages: [], maxCreatedAt: sinceMs, unavailable: true, reason })
   }
   processPage(page)
   totalRows += page.length
+  // 行数预算与输出预算同口径：本轮没读完就标 truncated，未读行下轮继续
+  if (totalRows >= MAX_TOTAL_ROWS) truncated = true
   if (page.length < PAGE_SIZE || totalRows >= MAX_TOTAL_ROWS) break
   if (outputChars > OUTPUT_TEXT_LIMIT) {
     truncated = true
@@ -219,4 +233,4 @@ const result = { messages, maxCreatedAt }
 if (truncated) result.truncated = true
 // 大输出写管道是异步的：等 flush 完成再退出，否则 process.exit 丢缓冲，
 // 父进程拿到截断 JSON 会误报「输出损坏」（越是大批量日越容易踩中）
-process.stdout.write(JSON.stringify(result), () => process.exit(0))
+await emit(result)

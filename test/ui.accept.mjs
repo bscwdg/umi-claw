@@ -2,7 +2,7 @@
 //
 // 目标：补上「typecheck/build 只证明能编译」的证据缺口——
 // 用**真 .vue 源码** + **真 preload 桥**，在 Node 侧真挂载页面，断言：
-//   U1 preload 桥面完整（15 个 work 命名空间 + 流式订阅 + 信封解包语义）
+//   U1 preload 桥面完整（16 个 work 命名空间 + 流式订阅 + 信封解包语义）
 //   U2 今日页挂载：调 work:today:get，渲染出问候/待办/记录
 //   U3 工作记录页挂载：调 matters.list + records.list，渲染出记录与来源标记
 //   U4 报告页挂载：调 reports.list，渲染出报告行与状态徽标
@@ -13,6 +13,8 @@
 //   U8 向导弹窗挂载：调 wizard.status，渲染出隐私说明必过页
 //   U9 挂载全程无 Vue 警告（能抓到模板引用不存在字段这类真 bug）
 //   U10 流式归并（useWorkStream）：chunk 累积 / done 收口 / 早期 chunk 缓冲
+//   U15 OpenClaw 使用记录提取：今日页手动入口带 manual=true / 退避横幅 /
+//       设置页开关落库 + 连点防抖
 //
 // 机制：@vue/compiler-sfc 编译真 SFC → esbuild 打包（vue 共享实例）→
 //       vue createRenderer 造对象树宿主真挂载 → 注入 window.api 响应。
@@ -640,6 +642,120 @@ try {
     assertEq(created3[0].args[0].title, '开关关着也要记下来', '标题为原文')
 
     return '回车只建待办 · 问答带文跳转 · 提醒带时间 · 外发未就绪仍调度且给入口 ✓'
+  })
+
+  // ── U15 OpenClaw 使用记录提取 ──
+  await r.check('U15', 'OpenClaw 提取：手动入口带 manual=true · 退避横幅 · 设置页开关落库 + 连点防抖', async () => {
+    const emptyToday = {
+      date: '2026-09-28', weekday: 1, greeting: '早上好',
+      todos: [], candidateTodos: [], records: [], candidateRecords: [],
+      report: { exists: false, reportId: null, status: null, canGenerate: false },
+      counts: { todos: 0, candidateTodos: 0, records: 0, candidateRecords: 0 }
+    }
+    const pushOff = {
+      enabled: false, channel: null, fallbackChannel: null, target: null, fallbackTarget: null
+    }
+
+    // 1) 开关关：今日页仍要有手动入口，且点击必须带 manual=true
+    //    （传 false 会被主进程当成 auto：退避期内直接 skipped，用户只会看到「没有新内容」）
+    const res = await mount('src/views/work/TodayPage.vue', 'ui-today-oc-import', {
+      'work:today:get': emptyToday,
+      'work:reminder:getPushConfig': pushOff,
+      'work:openclaw-import:isAutoEnabled': false,
+      'work:openclaw-import:importToday': {
+        scanned: 2, extracted: 1, filtered: 0, deduped: 0, candidateIds: ['c1']
+      }
+    })
+    assert(calls().some((c) => c.channel === 'work:openclaw-import:isAutoEnabled'), '进页应读自动开关')
+    assertEq(
+      calls().filter((c) => c.channel === 'work:openclaw-import:importToday').length,
+      0,
+      '开关关着不得自动扫描'
+    )
+    const btn = findButton(res.root, '从 OpenClaw 提取')
+    assert(btn !== null, '开关关着也要有手动提取入口')
+    btn.props.onClick()
+    await flushTicks()
+    const imports = calls().filter((c) => c.channel === 'work:openclaw-import:importToday')
+    assertEq(imports.length, 1, '点击调一次 importToday')
+    assertEq(imports[0].args[0], true, '手动入口必须带 manual=true')
+    assertEq(
+      calls().filter((c) => c.channel === 'work:today:get').length,
+      2,
+      'scanned>0 → 提取后刷新列表（新候选立刻可见）'
+    )
+
+    // 2) 开关开：进页补扫一次（auto）；退避/耗尽要给横幅，不能静默
+    const res2 = await mount('src/views/work/TodayPage.vue', 'ui-today-oc-backoff', {
+      'work:today:get': emptyToday,
+      'work:reminder:getPushConfig': pushOff,
+      'work:openclaw-import:isAutoEnabled': true,
+      'work:openclaw-import:importToday': {
+        scanned: 0, extracted: 0, filtered: 0, deduped: 0, candidateIds: [],
+        skipped: true, skipReason: 'exhausted'
+      }
+    })
+    await flushTicks()
+    const autoImports = calls().filter((c) => c.channel === 'work:openclaw-import:importToday')
+    assertEq(autoImports.length, 1, '开关开着进页补扫一次')
+    assertEq(autoImports[0].args[0], false, '补扫是 auto（manual=false），受退避约束')
+    assertEq(
+      calls().filter((c) => c.channel === 'work:today:get').length,
+      1,
+      'skipped 没有新事实落库，不该刷新列表'
+    )
+    const html2 = serialize(res2.root)
+    assert(html2.includes('自动提取连续失败'), 'skipped → 显示退避横幅')
+    assert(html2.includes('请点上方按钮手动提取'), 'exhausted 要引导手动提取')
+
+    // 3) 设置页开关：change → setAutoEnabled；连点只落一次（并发防抖）
+    const res3 = await mount('src/views/work/SettingsPage.vue', 'ui-settings-oc', {
+      'work:profile:get': {
+        profile: { id: 'default', call_name: '小北' },
+        completeness: { filled: 1, total: 6, percent: 17, missing: [] }
+      },
+      'work:reminder:isEnabled': () => false,
+      'work:reminder:setEnabled': { enabled: false },
+      // 提醒/外发面要给全：缺一个就会让 loadReminders 中途抛错、push 停在 null，
+      // 之后任何一次重渲染都会炸在 push.enabled（U6 不重渲染所以没暴露）
+      'work:reminder:getTimes': { morning: { hour: 9, minute: 0 }, report: { hour: 18, minute: 30 } },
+      'work:reminder:getPushConfig': pushOff,
+      'work:reminder:availablePushChannels': [],
+      // togglePush 会把返回值直接赋给 push：桩返回 null 会让重渲染炸在 push.enabled
+      'work:reminder:setPushConfig': (patch) => ({ ...pushOff, ...(patch ?? {}) }),
+      'work:reminder:getPushStatus': null,
+      'work:wizard:status': { consent: true, completed: true, oldDb: null, oldDbDecision: null },
+      'work:openclaw-import:isAutoEnabled': false,
+      'work:openclaw-import:setAutoEnabled': (enabled) => ({ enabled: enabled === true })
+    })
+    assert(res3.html.includes('自动提取今日使用记录'), '设置页应渲染自动提取开关行')
+    const boxes = []
+    for (const n of walk(res3.root)) {
+      if (n.tag === 'input' && n.props.type === 'checkbox') boxes.push(n)
+    }
+    // 页面上有多个 toggle（提醒×2 / 外发 / 自动提取）：逐个派发 change，
+    // 只有「自动提取」那一个会打到 setAutoEnabled
+    const setCalls = () => calls().filter((c) => c.channel === 'work:openclaw-import:setAutoEnabled')
+    let autoBox = null
+    for (const box of boxes) {
+      if (typeof box.props.onChange !== 'function') continue
+      const before = setCalls().length
+      box.props.onChange({ target: { checked: true } })
+      await flushTicks(2)
+      if (setCalls().length > before) {
+        assertEq(autoBox, null, '只应有一个开关打到 setAutoEnabled')
+        autoBox = box
+      }
+    }
+    assert(autoBox !== null, '设置页自动提取开关 change → setAutoEnabled')
+    assertEq(setCalls()[0].args[0], true, '开关状态原样透传')
+    const beforeBurst = setCalls().length
+    autoBox.props.onChange({ target: { checked: false } })
+    autoBox.props.onChange({ target: { checked: true } })
+    await flushTicks(4)
+    assertEq(setCalls().length, beforeBurst + 1, '连点并发防抖：只落一次 setAutoEnabled')
+
+    return '手动入口带 manual=true · auto 补扫 + 退避横幅 · 开关落库且防抖 ✓'
   })
 } catch (e) {
   console.error('UI 验收脚本自身异常:', e)

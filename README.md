@@ -106,6 +106,7 @@ umi-claw/
 │   │       ├── knowledgeManager.ts   # 工作知识库
 │   │       ├── wizardManager.ts  # 首启向导 / 用户协议
 │   │       ├── reminderManager.ts    # 到点提醒 / 外发推送
+│   │       ├── openclawImportManager.ts # OpenClaw 使用记录 → 工作记录候选
 │   │       └── parsers/           # 工作知识库文档解析
 │   │           ├── documentParsers.ts # Word/Excel/PDF/TXT
 │   │           ├── pdfjsAssets.ts     # 打包态 pdfjs 资源定位
@@ -157,7 +158,8 @@ umi-claw/
 │   ├── umiIcon.svg
 │   ├── database/              # 3.0 数据层 Worker
 │   │   ├── db-worker.mjs      # Worker 子进程（sqlite 操作）
-│   │   └── read-old-db.mjs    # 旧库读取（迁移用）
+│   │   ├── read-old-db.mjs    # 旧库读取（迁移用）
+│   │   └── openclaw-reader.mjs # OpenClaw 会话只读查询（便携 node 拉起，工作记录提取用）
 │   ├── model-presets/         # 模型预设内置快照
 │   ├── pdfjs/                 # pdfjs 资源（cmaps / standard_fonts / build）
 │   └── obsidian/              # 知识库子进程脚本（零依赖，绿色 node 拉起）
@@ -172,7 +174,7 @@ umi-claw/
 │   └── installer.nsh           # NSIS 钩子：升级时自动搬迁旧版数据目录
 ├── scripts/
 │   └── run-all-accept.mjs      # 一键跑全部验收
-├── test/                       # 验收：11 套 accept + 一天 e2e + 打包态 smoke
+├── test/                       # 验收：12 套 accept + 一天 e2e + 打包态 smoke
 │   ├── _lib.mjs                # 验收公共库
 │   ├── _ui.mjs                 # UI 验收公共库
 │   └── fixtures/               # 验收夹具
@@ -215,7 +217,7 @@ npm run dev
 # 类型检查
 npm run typecheck
 
-# 一键跑全部验收（11 套 accept + e2e）
+# 一键跑全部验收（12 套 accept + e2e + smoke）
 npm run accept
 ```
 

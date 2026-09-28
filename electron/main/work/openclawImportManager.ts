@@ -11,16 +11,20 @@
 // 增量水位线（app_meta，每个 agent 库各存一份，键按库路径哈希区分）：
 // 上次处理到的最大消息时间；reader 只返回更新的消息。
 // 模型调用 + 候选全部落库成功才推进水位——中途失败不推进，重扫靠确定性去重键兜底。
-// 跨午夜补扫：失败后水位停在昨天时，reader 从昨天水位继续读（见 openclaw-reader.mjs）。
-// 自动模式重试预算：任何自动失败（解析 / 读库 / 网关 / 全库不可读）按指数退避
+// 0 条新消息但 reader 的已读行前移时同样收敛水位（被丢弃的行都已决定，
+// 不推进就会每轮重读空转）。
+// 跨午夜补扫：失败后水位停在昨天时，reader 从昨天水位继续读（见 openclaw-reader.mjs）；
+// 候选按**消息自己的本地日**落 occurred_date，昨天的工作不串进今天日报。
+// 自动模式重试预算：**会花钱的**失败（解析 / 网关 / 模型异常）按指数退避
 //（10→20→40→80 分钟，最多 5 次），超限后自动轮询不再调模型，等用户手动触发——
-// 防止同一批转录无限烧钱。
+// 防止同一批转录无限烧钱。读库故障（库被占用 / 损坏 / 便携 Node 未就绪）**不计入**：
+// 它连模型都没调到，计入只会让自动提取白白停摆一整天。
 // 候选不重复的三重防线：
 //   ① reader 严格增量（同域 created_at，无 SKEW 重读）；
 //   ② 候选键锚定源消息身份（同批源消息重扫命中同键）；
 //   ③ 「已提议集合」按会话键记录本水位时代已提议的条目——失败重试间隔超过
 //      recordManager 的 30 分钟去重窗口、或候选已被用户确认/忽略后，不再重复提议。
-// 重试预算覆盖自动模式的一切故障（解析失败 / 读库失败 / 网关异常 / 全库不可读）。
+// 重试预算只覆盖会花钱的故障（输出无法解析 / 空响应 / 网关异常）；读库故障不计入。
 // 自动调度跑在主进程（startAutoScheduler，每 10 分钟），不依赖渲染端页面是否存活。
 //
 // 本模块不 import electron；reader / gateway / DB 全注入，纯 Node 可测。
@@ -58,18 +62,40 @@ export interface OpenClawSessionMessage {
   channel: string | null
 }
 
-/** 只读查询器（生产实现 = spawn 便携 Node 跑 resources/database/openclaw-reader.mjs） */
-export type OpenClawReader = (params: {
-  dbPath: string
-  sinceMs: number
-  dayStartMs: number
-}) => Promise<{
+/** reader 一轮的输出契约 */
+export interface OpenClawReaderResult {
   messages: OpenClawSessionMessage[]
   maxCreatedAt: number
   unavailable?: boolean
   /** unavailable 时的原因（库被占用/损坏/缺表等），仅用于日志 */
   reason?: string
-}>
+  /** 行数/输出预算降级：本轮没读完，剩余部分下一轮从水位继续（仅用于日志） */
+  truncated?: boolean
+}
+
+/** 只读查询器（生产实现 = spawn 便携 Node 跑 resources/database/openclaw-reader.mjs） */
+export type OpenClawReader = (params: {
+  dbPath: string
+  sinceMs: number
+  dayStartMs: number
+}) => Promise<OpenClawReaderResult>
+
+/**
+ * 「读库不可用」故障标记（AppError.details.kind）。
+ * 这类故障不花 token，不该消耗模型重试预算——否则库被占用几轮就把 5 次额度烧光，
+ * 自动提取整天停摆、只能等用户手动点。
+ */
+const READ_FAILURE_KIND = 'read-unavailable'
+
+/** 是否为「读库不可用」类故障（不依赖 instanceof：模块可能被拆进不同 chunk） */
+function isReadFailure(error: unknown): boolean {
+  const details = (error as { details?: unknown } | null | undefined)?.details
+  return (
+    !!details &&
+    typeof details === 'object' &&
+    (details as { kind?: unknown }).kind === READ_FAILURE_KIND
+  )
+}
 
 export interface ImportTodayResult {
   /** 本次扫到的新增消息条数 */
@@ -252,9 +278,10 @@ export class OpenClawImportManager {
       }
       const run = this.runImport(trigger)
         .catch(async (error) => {
-          // 自动模式的一切失败（解析 / 读库 / 网关 / 全库不可读）都计入重试预算：
-          // 否则 token 过期等非解析故障会绕过退避无限烧钱
-          if (trigger === 'auto') {
+          // 自动模式会花钱的失败（解析 / 网关 / 模型异常）都计入重试预算：
+          // 否则 token 过期等非解析故障会绕过退避无限烧钱。
+          // 唯独「读库不可用」不计——它连模型都没调到，计入只会让自动提取白白停摆
+          if (trigger === 'auto' && !isReadFailure(error)) {
             try {
               await this.noteAutoFailure(this.now())
             } catch {
@@ -338,8 +365,10 @@ export class OpenClawImportManager {
           const result = await this.reader({ dbPath, sinceMs, dayStartMs })
           if (result.unavailable) {
             this.log(`[openclaw-import] ${dbPath} 不可用，本轮跳过${result.reason ? `: ${result.reason}` : ''}`)
+          } else if (result.truncated) {
+            this.log(`[openclaw-import] ${dbPath} 本轮按预算截断，未读部分下一轮从水位继续`)
           }
-          return { ok: true as const, wmKey, ...result }
+          return { ok: true as const, wmKey, sinceMs, ...result }
         } catch (error) {
           const message = (error as Error)?.message ?? String(error)
           this.log(`[openclaw-import] ${dbPath} 读取失败，本轮跳过该库: ${message}`)
@@ -349,17 +378,30 @@ export class OpenClawImportManager {
     )
     const scans = scanResults.filter((s) => s.ok)
     if (!scans.length) {
-      throw new AppError(ERROR_CODES.OPENCLAW_NOT_READY, '所有 agent 库都无法读取，本轮未提炼')
+      throw new AppError(ERROR_CODES.OPENCLAW_NOT_READY, '所有 agent 库都无法读取，本轮未提炼', {
+        kind: READ_FAILURE_KIND
+      })
     }
     // reader 成功返回但全部标记 unavailable（如 OpenClaw 运行中独占库）：
     // 这是「读不了」而不是「没有内容」——不能静默返回 0 条，
     // 否则手动点击会误报「没有新的可记录内容」
     if (scans.every((s) => s.unavailable)) {
-      throw new AppError(ERROR_CODES.OPENCLAW_NOT_READY, '所有 agent 库都暂时不可读（可能正被 OpenClaw 占用），本轮未提炼')
+      throw new AppError(
+        ERROR_CODES.OPENCLAW_NOT_READY,
+        '所有 agent 库都暂时不可读（可能正被 OpenClaw 占用），本轮未提炼',
+        { kind: READ_FAILURE_KIND }
+      )
     }
 
     const messages = scans.flatMap((s) => s.messages).sort((a, b) => a.ts - b.ts)
     if (!messages.length) {
+      // 0 条新消息同样要收敛水位：reader 的 maxCreatedAt 覆盖「所有已读行」
+      //（含被角色/空文本/重启重写守卫丢弃的行，它们都已决定）。不推进的话，
+      // OpenClaw 重启重写等场景下同一批被丢弃的行会每轮重新读满（最坏 20000 行 /
+      // 10 分钟），水位永远停在原地空转。
+      for (const s of scans) {
+        if (s.maxCreatedAt > s.sinceMs) await this.database.metaSet(s.wmKey, String(s.maxCreatedAt))
+      }
       // 0 条新消息也要清退避：重试耗尽后手动触发若恰好无新内容，
       // 不清状态会导致 UI 横幅已清、持久化退避仍在，下轮又冒出来（闪烁）
       await this.clearRetryState()
@@ -377,8 +419,9 @@ export class OpenClawImportManager {
     }
     let proposedDirty = false
 
-    // 分批提炼：对话量超预算时切成多批各调一次模型，避免只保留最近消息而漏掉早间工作
-    const batches = splitIntoBatches(messages, TRANSCRIPT_MAX_CHARS)
+    // 分批提炼：先按消息**自己的本地日**分组（跨午夜补扫时昨天的工作记回昨天），
+    // 再在组内按字符预算切批，避免只保留最近消息而漏掉早间工作
+    const batches = buildBatches(messages)
     const candidateIds: string[] = []
     /** 已处理过的行文本：同批/跨批的模型自我重复只走一次，不各成候选 */
     const seenLines = new Set<string>()
@@ -391,8 +434,8 @@ export class OpenClawImportManager {
         const result = await this.gateway.chat({
           conversationKey: `conv:work:openclaw-import:${date}:${runId}`,
           messages: [
-            { role: 'system', content: buildImportPrompt(renderTranscript(batch)) },
-            { role: 'user', content: '请按规则提炼今天的工作记录。' }
+            { role: 'system', content: buildImportPrompt(renderTranscript(batch.messages), batch.date) },
+            { role: 'user', content: '请按规则提炼上述对话中的工作记录。' }
           ],
           stream: false
         })
@@ -416,13 +459,13 @@ export class OpenClawImportManager {
         // 候选键锚定源消息：date + 本批源消息身份哈希 + 批内行序。
         // 同一批源消息重扫（失败重试）时命中同键，被已提议集合/去重窗口兜住
         const sourceAnchor = shortHash(
-          batch.map((message) => `${message.ts}:${message.sessionKey}`).join('|')
+          batch.messages.map((message) => `${message.ts}:${message.sessionKey}`).join('|')
         )
         for (let index = 0; index < batchItems.length; index++) {
           const content = batchItems[index]
           if (seenLines.has(content)) continue
           seenLines.add(content)
-          const conversationKey = `conv:work:openclaw-import:${date}:${sourceAnchor}:${index}`
+          const conversationKey = `conv:work:openclaw-import:${batch.date}:${sourceAnchor}:${index}`
           if (proposedMap[`ck:${conversationKey}`] !== undefined) {
             // 本水位时代已提议过该键：跳过（计 deduped=非新增），不重复提议
             deduped += 1
@@ -431,7 +474,11 @@ export class OpenClawImportManager {
           const proposed = await this.records.proposeCandidate({
             content,
             outputType: 'openclaw_activity',
-            conversationKey
+            conversationKey,
+            // 归到消息自己那一天：水位停在昨天时补扫到的工作不能记进今天日报。
+            // occurredTime 留空——模型输出行与源消息不是一一对应，
+            // 编一个时刻比「时间未记」更误导
+            occurredDate: batch.date
           })
           proposedMap[`ck:${conversationKey}`] = now
           proposedDirty = true
@@ -470,7 +517,7 @@ export class OpenClawImportManager {
     await this.clearRetryState()
     if (proposedDirty || proposedHadEntries) await this.saveProposedMap({})
     this.log(
-      `[openclaw-import] 扫描 ${messages.length} 条消息（${scans.length} 个 agent 库）→ 新候选 ${extracted}，覆盖 ${deduped}，门槛过滤 ${filtered}`
+      `[openclaw-import] 扫描 ${messages.length} 条消息（${scans.length} 个 agent 库 / ${batches.length} 批）→ 新候选 ${extracted}，覆盖 ${deduped}，门槛过滤 ${filtered}`
     )
     return { scanned: messages.length, extracted, filtered, deduped, candidateIds }
   }
@@ -518,6 +565,36 @@ function splitIntoBatches(messages: OpenClawSessionMessage[], maxChars: number):
     currentSize += (current.length > 1 ? 2 : 0) + block.length
   }
   flush()
+  return batches
+}
+
+/** 一批待提炼的对话：同一本地日 + 同一字符预算批 */
+interface ImportBatch {
+  /** 该批消息所属的本地日（YYYY-MM-DD），用作候选的 occurredDate 与去重键前缀 */
+  date: string
+  messages: OpenClawSessionMessage[]
+}
+
+/**
+ * 先按消息**自己的本地日**分组、再在组内按字符预算分批。
+ *
+ * 为什么不能一律按 now 归日：水位停在昨天时（失败未推进 / 夜里没开机）reader 会
+ * 回溯补扫昨天的消息，若按 now 归日，昨天的工作会被记进今天的日报，
+ * prompt 里还告诉模型是「今天」。
+ */
+function buildBatches(messages: OpenClawSessionMessage[]): ImportBatch[] {
+  const byDate = new Map<string, OpenClawSessionMessage[]>()
+  for (const message of messages) {
+    const date = dateOf(message.ts)
+    const bucket = byDate.get(date)
+    if (bucket) bucket.push(message)
+    else byDate.set(date, [message])
+  }
+  const batches: ImportBatch[] = []
+  // messages 已按 ts 升序，Map 保持插入序 → 批次天然是「先日序、再时序」
+  for (const [date, group] of byDate) {
+    for (const batch of splitIntoBatches(group, TRANSCRIPT_MAX_CHARS)) batches.push({ date, messages: batch })
+  }
   return batches
 }
 
@@ -588,9 +665,9 @@ function shortHash(text: string): string {
   return createHash('sha1').update(text).digest('hex').slice(0, 12)
 }
 
-function buildImportPrompt(transcript: string): string {
+function buildImportPrompt(transcript: string, date: string): string {
   return [
-    '你是工作助手。下面是用户今天通过 OpenClaw（桌面对话 / 微信 / 飞书等渠道）与 AI 的对话片段，可能不完整。',
+    `你是工作助手。下面是用户 ${date} 通过 OpenClaw（桌面对话 / 微信 / 飞书等渠道）与 AI 的对话片段，可能不完整。`,
     '请识别用户实际完成或推进的业务工作，提炼为简明工作记录（每条一句话、动宾结构，可直接作为日报事实）。',
     '',
     '规则：',
