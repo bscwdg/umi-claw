@@ -3,8 +3,8 @@
     <header class="reports-header">
       <h1>📊 报告</h1>
       <div class="header-actions">
-        <button class="btn" @click="generate('daily')">生成日报</button>
-        <button class="btn" @click="generate('weekly')">生成周报</button>
+        <button class="btn" :disabled="stream.running.value" @click="generate('daily')">生成日报</button>
+        <button class="btn" :disabled="stream.running.value" @click="generate('weekly')">生成周报</button>
       </div>
     </header>
 
@@ -46,7 +46,23 @@
 
       <!-- 右：报告详情 -->
       <section class="card detail-col">
-        <div v-if="!detail" class="empty detail-empty">选择一份报告查看，或生成新报告</div>
+        <!-- 流式生成中：独立于 detail 渲染。否则进页未选中报告时点生成，
+             detail 被置空 → 1–3 分钟生成期右栏只剩空占位，流文本和停止按钮都看不到 -->
+        <template v-if="stream.running.value">
+          <div class="detail-head">
+            <div class="detail-title">
+              <h2>{{ generatingLabel }}</h2>
+            </div>
+          </div>
+          <div class="generating">
+            <div class="stream-text">{{ stream.text.value }}<span class="caret">▍</span></div>
+          </div>
+          <div class="detail-actions">
+            <button class="btn btn-danger" @click="abort">停止生成</button>
+          </div>
+        </template>
+
+        <div v-else-if="!detail" class="empty detail-empty">选择一份报告查看，或生成新报告</div>
 
         <template v-else>
           <div class="detail-head">
@@ -64,23 +80,16 @@
             </div>
           </div>
 
-          <!-- 流式生成中 -->
-          <div v-if="stream.running.value" class="generating">
-            <div class="stream-text">{{ stream.text.value }}<span class="caret">▍</span></div>
-          </div>
-
-          <template v-else>
-            <textarea
-              v-if="detail.status === 'draft'"
-              v-model="editingContent"
-              class="form-textarea editor"
-              placeholder="报告内容…"
-            ></textarea>
-            <div v-else class="readonly-content">{{ versionContent }}</div>
-          </template>
+          <textarea
+            v-if="detail.status === 'draft'"
+            v-model="editingContent"
+            class="form-textarea editor"
+            placeholder="报告内容…"
+          ></textarea>
+          <div v-else class="readonly-content">{{ versionContent }}</div>
 
           <!-- 操作 -->
-          <div class="detail-actions" v-if="!stream.running.value">
+          <div class="detail-actions">
             <template v-if="detail.status === 'draft'">
               <button class="btn" @click="saveDraft">保存草稿</button>
               <button class="btn btn-primary" @click="confirm">确认报告</button>
@@ -89,9 +98,6 @@
             <template v-else>
               <button class="btn" @click="regenerate">重生成（新版本）</button>
             </template>
-          </div>
-          <div class="detail-actions" v-else>
-            <button class="btn btn-danger" @click="abort">停止生成</button>
           </div>
 
           <div v-if="stream.error.value" class="error-box">
@@ -146,6 +152,19 @@ const versionContent = computed(() => {
   return v?.content ?? detail.value.content ?? ''
 })
 
+/** 正在生成的报告类型（决定生成中标题文案） */
+const generatingType = ref<'daily' | 'weekly'>('daily')
+const generatingLabel = computed(() =>
+  generatingType.value === 'daily' ? '正在生成日报…' : '正在生成周报…'
+)
+
+/** 本地今天 YYYY-MM-DD（与主进程 daily period 同口径） */
+function todayStr(): string {
+  const d = new Date()
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
 async function loadList(): Promise<void> {
   list.value = await window.api.work.reports.list({ limit: 200 })
 }
@@ -167,9 +186,9 @@ function setFilter(id: 'all' | 'daily' | 'weekly'): void {
 
 async function generate(type: 'daily' | 'weekly'): Promise<void> {
   try {
+    generatingType.value = type
     const res = await window.api.work.reports.generate({ type })
     stream.bind(res.runId)
-    detail.value = null
     currentId.value = res.reportId
     await stream.done
     await loadList()
@@ -215,6 +234,7 @@ async function confirm(): Promise<void> {
 
 async function regenerate(): Promise<void> {
   if (!detail.value) return
+  generatingType.value = detail.value.type === 'weekly' ? 'weekly' : 'daily'
   const res = await window.api.work.reports.regenerate(detail.value.id)
   stream.bind(res.runId)
   await stream.done
@@ -231,7 +251,13 @@ function selectVersion(v: number): void {
 onMounted(async () => {
   await loadList()
   const qid = typeof route.query.id === 'string' ? route.query.id : null
-  if (qid) await select(qid)
+  if (qid) {
+    await select(qid)
+  } else {
+    // 进来默认选中今天：今天的日报已存在就选中，右栏不再是空白占位
+    const todays = list.value.find((r) => r.type === 'daily' && r.period === todayStr())
+    if (todays) await select(todays.id)
+  }
   // 从今日页/路由带过来的生成意图
   if (route.query.target === 'report') await generate('daily')
 })

@@ -286,12 +286,20 @@ try {
   })
 
   // ── U4 报告页 ──
-  await r.check('U4', '报告页挂载：调 reports.list，渲染报告行与状态', async () => {
+  await r.check('U4', '报告页挂载：调 reports.list，默认选中今天，渲染报告行与状态', async () => {
+    const pad = (n) => String(n).padStart(2, '0')
+    const now = new Date()
+    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
     const res = await mount('src/views/work/ReportsPage.vue', 'ui-reports', {
       'work:reports:list': [
+        { id: 'p0', type: 'daily', period: today, status: 'draft', created_at: 0, updated_at: 0 },
         { id: 'p1', type: 'daily', period: '2026-09-23', status: 'confirmed', created_at: 1, updated_at: 1 },
         { id: 'p2', type: 'weekly', period: '2026-W39', status: 'draft', created_at: 2, updated_at: 2 }
-      ]
+      ],
+      'work:reports:get': (id) => ({
+        id, type: 'daily', period: today, status: 'draft',
+        content: '', generation_context: null, versions: [], created_at: 0, updated_at: 0
+      })
     })
     const called = calls().map((c) => c.channel)
     assert(called.includes('work:reports:list'), '应调 reports.list')
@@ -299,6 +307,10 @@ try {
     assert(res.html.includes('2026-W39'), '渲染周报期')
     assert(res.html.includes('已确认'), '已确认徽标')
     assert(res.html.includes('草稿'), '草稿徽标')
+    // 进来默认选中今天：自动 get 今天那行，右栏渲染它而不是空占位
+    const getCall = calls().find((c) => c.channel === 'work:reports:get')
+    assertEq(getCall?.args[0], 'p0', '应自动选中今天的日报')
+    assert(res.html.includes(`日报 · ${today}`), '右栏渲染今天日报')
     return '报告页渲染 ✓'
   })
 
