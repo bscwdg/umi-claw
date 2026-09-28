@@ -328,6 +328,12 @@ const api = {
       testPush: () => call('work:reminder:testPush'),
       getPushStatus: () => call('work:reminder:getPushStatus'),
       check: () => call('work:reminder:check')
+    },
+
+    openclawImport: {
+      isAutoEnabled: () => call('work:openclaw-import:isAutoEnabled'),
+      setAutoEnabled: (enabled: boolean) => call('work:openclaw-import:setAutoEnabled', enabled),
+      importToday: (manual?: boolean) => call('work:openclaw-import:importToday', manual === true)
     }
   }
 }

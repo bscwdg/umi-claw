@@ -115,10 +115,20 @@
       <section class="card col">
         <div class="col-head">
           <h2>📝 今日记录</h2>
-          <span class="badge badge-blue">{{ view.records.length }}</span>
+          <div class="head-actions">
+            <span class="badge badge-blue">{{ view.records.length }}</span>
+            <button
+              class="btn btn-sm"
+              :disabled="importing"
+              @click="onManualImport"
+            >{{ importing ? '提取中…' : '🦞 从 OpenClaw 提取' }}</button>
+          </div>
         </div>
 
         <div v-if="!view.records.length" class="empty">今天还没记录，记一件吧</div>
+        <div v-if="autoImport && autoBackoff" class="text-sm text-muted" style="margin: 4px 0">
+          自动提取连续失败，已暂停自动重试{{ autoBackoff.exhausted ? '，请点上方按钮手动提取' : '，稍候自动重试（也可立即手动提取）' }}
+        </div>
         <ul class="item-list">
           <li v-for="r in view.records" :key="r.id" class="item record">
             <span class="record-time">{{ r.occurredTime ?? '时间未记' }}</span>
@@ -152,7 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import type { TodayView } from '../../electron/main/work/todayManager'
 import { useToast } from '@/composables/useToast'
@@ -174,6 +184,18 @@ const view = ref<TodayView>({
 
 const weekdayName = computed(() => ['周日','周一','周二','周三','周四','周五','周六'][view.value.weekday])
 const quickText = ref('')
+
+/** OpenClaw 使用记录提取：autoImport=自动模式；importing=扫描进行中 */
+const autoImport = ref(false)
+const importing = ref(false)
+/** 自动模式退避状态（null=正常）：exhausted=true 表示重试耗尽、只能手动 */
+const autoBackoff = ref<{ exhausted: boolean } | null>(null)
+/** 退避横幅轮询定时器：仅在横幅展示期间轮询，横幅消失即清 */
+let autoBackoffTimer: ReturnType<typeof setInterval> | null = null
+/** 上次自动提取的错误文案（相同错误不重复弹 toast，恢复后清空） */
+let lastAutoError = ''
+/** 组件是否已卸载（进页即时扫描的 IPC 往返可能晚于卸载返回，此时不再触发扫描） */
+let autoImportDisposed = false
 
 /** 到期时间（v3：精确到分钟；默认今天 18:00，已过点则顺延明天 18:00） */
 const dueTime = ref(defaultDue())
@@ -380,6 +402,93 @@ async function onComplete(id: string): Promise<void> {
   }
 }
 
+/**
+ * 退避横幅状态（含轮询定时器管理）：横幅出现期间每 60 秒重扫一次——
+ * 主进程退避到期后下一轮会真实扫描，横幅随之自动清除；页面开着不操作也能看到恢复。
+ */
+function setAutoBackoff(value: { exhausted: boolean } | null): void {
+  if (autoBackoffTimer) {
+    clearInterval(autoBackoffTimer)
+    autoBackoffTimer = null
+  }
+  autoBackoff.value = value
+  if (value && !autoImportDisposed) {
+    autoBackoffTimer = setInterval(() => {
+      if (autoImportDisposed) {
+        if (autoBackoffTimer) {
+          clearInterval(autoBackoffTimer)
+          autoBackoffTimer = null
+        }
+        return
+      }
+      void syncOpenClaw(false)
+    }, 60_000)
+  }
+}
+
+/** 扫描 OpenClaw 今日会话：manual=true 给 toast 反馈，自动模式非退避期间静默不打扰 */
+async function syncOpenClaw(manual: boolean): Promise<void> {
+  if (importing.value) return
+  importing.value = true
+  let result: Awaited<ReturnType<typeof window.api.work.openclawImport.importToday>>
+  try {
+    result = await window.api.work.openclawImport.importToday(manual)
+  } catch (e: any) {
+    // 只有提取本身失败才报「提取失败」——refresh 失败不能抹掉已成功的事实
+    const message = String(e?.message ?? e)
+    if (manual) {
+      showToast(`提取失败：${message}`, 'error')
+    } else if (message !== lastAutoError) {
+      // 自动模式：低调提示，相同错误去重避免轮询反复弹窗
+      lastAutoError = message
+      showToast(`OpenClaw 自动提取失败：${message}`, 'warning')
+    }
+    return
+  } finally {
+    importing.value = false
+  }
+  lastAutoError = ''
+  if (result.skipped) {
+    // 自动退避/耗尽：展示状态提示，让用户知道为何没自动提取、可手动救活
+    if (!manual) setAutoBackoff({ exhausted: result.skipReason === 'exhausted' })
+  } else {
+    setAutoBackoff(null)
+  }
+  if (manual) {
+    showToast(
+      result.extracted > 0
+        ? `已提取 ${result.extracted} 条待确认记录`
+        : '没有新的可记录内容',
+      result.extracted > 0 ? 'success' : 'warning'
+    )
+  }
+  // 退避跳过（skipped）时没有任何新事实落库，不触发刷新
+  if (result.scanned > 0 && !result.skipped) {
+    try {
+      await refresh()
+    } catch {
+      // 列表刷新失败不影响提取结果（候选已入队），下次进页自然刷新
+    }
+  }
+}
+
+/** 手动按钮（开关关闭时显示） */
+function onManualImport(): void {
+  void syncOpenClaw(true)
+}
+
+/** 读自动开关；开启时进页补一次即时扫描（周期调度在主进程） */
+async function setupAutoImport(): Promise<void> {
+  try {
+    autoImport.value = await window.api.work.openclawImport.isAutoEnabled()
+    // 自动扫描已由主进程调度（用户不在本页也照常跑，不随卸载停摆）；
+    // 这里仅在进页时补一次拿到即时反馈
+    if (autoImport.value && !autoImportDisposed) void syncOpenClaw(false)
+  } catch {
+    autoImport.value = false
+  }
+}
+
 async function confirmTodos(): Promise<void> {
   const ids = view.value.candidateTodos.map((t) => t.id)
   await window.api.work.todos.confirmBatch(ids)
@@ -417,6 +526,15 @@ onMounted(() => {
   void refresh()
   void loadCompleteness()
   void loadPushReady()
+  void setupAutoImport()
+})
+
+onUnmounted(() => {
+  autoImportDisposed = true
+  if (autoBackoffTimer) {
+    clearInterval(autoBackoffTimer)
+    autoBackoffTimer = null
+  }
 })
 </script>
 
@@ -449,6 +567,7 @@ onMounted(() => {
 .today-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .col { display: flex; flex-direction: column; gap: 12px; }
 .col-head { display: flex; align-items: center; justify-content: space-between; }
+.head-actions { display: flex; align-items: center; gap: 8px; }
 .batch-btns { display: flex; gap: 6px; }
 
 .item-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }

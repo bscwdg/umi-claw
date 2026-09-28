@@ -20,7 +20,7 @@ import { ChannelManager } from './channelManager'
 import { ObsidianManager } from './obsidian/obsidianManager'
 import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv, toPosix, GATEWAY_TOKEN } from './openClawPaths'
-import { readFileSync, existsSync, readdirSync } from 'fs'
+import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
 import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process'
 import type { TerminalRuntime } from '../../src/types/terminal'
 import {
@@ -53,6 +53,11 @@ import { createToolManager, type ToolManager } from './work/toolManager'
 import { createKnowledgeManager, type KnowledgeManager } from './work/knowledgeManager'
 import { createWizardManager, type WizardManager } from './work/wizardManager'
 import { createReminderManager, type ReminderManager } from './work/reminderManager'
+import {
+  createOpenClawImportManager,
+  type OpenClawImportManager,
+  type OpenClawReader
+} from './work/openclawImportManager'
 import { resolvePdfjsAssets } from './work/parsers/pdfjsAssets'
 
 // 类型定义
@@ -87,6 +92,7 @@ let workToolManager: ToolManager | null = null
 let workKnowledgeManager: KnowledgeManager | null = null
 let workWizardManager: WizardManager | null = null
 let workReminderManager: ReminderManager | null = null
+let workOpenClawImportManager: OpenClawImportManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -323,6 +329,122 @@ function resourcesRoot(): string {
 }
 
 /**
+ * 构造 OpenClaw 会话只读查询器：execFile 便携 Node 跑 openclaw-reader.mjs
+ * （Electron 30 自带 Node 20 无 node:sqlite）。一次性命令，stdout 返回 JSON。
+ * 与 readLegacyDb / listPushTargetOptions 同构：execFile + timeout + maxBuffer，
+ * Node 内部按 Buffer 收集并一次性解码（中文不被 chunk 边界切碎）。
+ */
+function createOpenClawReader(scriptPath: string, nodePath: string): OpenClawReader {
+  return ({ dbPath, sinceMs, dayStartMs }) =>
+    new Promise((resolve, reject) => {
+      // 冷启动时便携 Node 可能尚未由下载器落地：先探测，给业务错误而非裸 ENOENT
+      if (!existsSync(nodePath)) {
+        reject(new AppError(ERROR_CODES.OPENCLAW_NOT_READY, '便携 Node 运行时尚未就绪，无法读取 OpenClaw 会话'))
+        return
+      }
+      execFile(
+        nodePath,
+        [scriptPath, dbPath, String(sinceMs), String(dayStartMs)],
+        { windowsHide: true, timeout: 15_000, maxBuffer: 64 * 1024 * 1024 },
+        (err, stdout, stderr) => {
+          if (err) {
+            reject(mapReaderError(err, stderr))
+            return
+          }
+          try {
+            resolve(JSON.parse(String(stdout)))
+          } catch (e) {
+            reject(
+              new AppError(
+                ERROR_CODES.OPENCLAW_INVALID_OUTPUT,
+                `OpenClaw 读取输出损坏：${(e as Error).message}`
+              )
+            )
+          }
+        }
+      )
+    })
+}
+
+/** 把 execFile 的各类失败翻译成对应业务错误码（渲染端按 code 分支） */
+function mapReaderError(err: Error, stderr: string | Buffer): AppError {
+  const error = err as NodeJS.ErrnoException & { killed?: boolean }
+  const code = String(error.code ?? '')
+  const message = String(error.message ?? '')
+  const detail = String(stderr ?? '').trim()
+  // execFile 超时的实际形态：killed=true 且 message 只有「Command failed: ...」，
+  // 并没有「timed out」字样——必须检查 killed，否则超时被当成普通失败翻译
+  if (error.killed === true || /timed out/i.test(message) || code === 'ETIMEDOUT') {
+    return new AppError(ERROR_CODES.OPENCLAW_TIMEOUT, 'OpenClaw 会话读取超时（15 秒）')
+  }
+  // maxBuffer 超限（stdout/stderr 分别有 ERR_CHILD_PROCESS_*_BUFFER 错误码）
+  if (code.startsWith('ERR_CHILD_PROCESS') || /maxBuffer|buffer length exceeded/i.test(message)) {
+    return new AppError(ERROR_CODES.OPENCLAW_OUTPUT_TOO_LARGE, 'OpenClaw 会话读取输出超过 64MB 上限')
+  }
+  if (code === 'ENOENT' || code === 'EACCES' || code === 'EPERM') {
+    return new AppError(ERROR_CODES.OPENCLAW_NOT_READY, `无法启动便携 Node 读取会话：${message}`)
+  }
+  // reader 主动 exit(1)（参数错误等）→ stderr 说明
+  return new AppError(ERROR_CODES.OPENCLAW_NOT_READY, detail || message || 'OpenClaw 会话读取失败')
+}
+
+/** 恢复 OpenClaw 自动调度：读持久化开关，开 → 启动主进程调度器；失败重试至多 retries 次（60 秒间隔） */
+async function restoreOpenClawAutoScheduler(retries: number): Promise<void> {
+  try {
+    const enabled = await workOpenClawImportManager?.isAutoEnabled()
+    if (enabled) workOpenClawImportManager?.startAutoScheduler()
+  } catch (e) {
+    const message = (e as Error)?.message ?? String(e)
+    if (retries <= 0) {
+      console.warn(`[openclaw-import] 自动调度恢复失败（已达重试上限，开关状态未知）: ${message}`)
+      return
+    }
+    console.warn(`[openclaw-import] 自动调度恢复失败，60 秒后重试（剩余 ${retries} 次）: ${message}`)
+    setTimeout(() => {
+      void restoreOpenClawAutoScheduler(retries - 1)
+    }, 60_000)
+  }
+}
+
+/**
+ * 枚举所有已存在的 agent 库（main 优先，其余按最近使用新→旧）。
+ * 工作记录提取与推送目标列表共用，避免两处各自枚举拼接路径。
+ * 每次调用时求值（惰性），OpenClaw 后启动也能扫到。
+ */
+function listAgentDbPaths(dataDir: string): string[] {
+  const agentsDir = openClawPaths.agentsDir(dataDir)
+  try {
+    // 目录不存在 = OpenClaw 尚未产生会话：返回 []。
+    // 调用方（推送目标列表 / 自动提取）均按空数组短路，
+    // 不能返回不存在的 fallback 路径，否则每轮白 spawn 一次便携 node
+    if (!existsSync(agentsDir)) return []
+    const paths = readdirSync(agentsDir)
+      .map((id) => openClawPaths.agentDb(dataDir, id))
+      .filter((p) => existsSync(p))
+    const main = openClawPaths.agentDb(dataDir, 'main')
+    const rest = paths
+      .filter((p) => p !== main)
+      // 逐路径容错：existsSync 与 statSync 之间文件恰好被删时，
+      // 只丢弃这一条，不能让整个枚举抛错归零、跳过所有库
+      .map((p) => {
+        try {
+          return { p, mtime: statSync(p).mtimeMs }
+        } catch {
+          return null
+        }
+      })
+      .filter((x): x is { p: string; mtime: number } => x !== null)
+      .sort((a, b) => b.mtime - a.mtime)
+      .map((x) => x.p)
+    return paths.includes(main) ? [main, ...rest] : rest
+  } catch (e) {
+    // 只可能是 agents 目录本身不可读：留下日志，不静默归零
+    console.warn(`[openclaw-import] 枚举 agent 库失败，本轮按无库处理: ${(e as Error)?.message ?? e}`)
+    return []
+  }
+}
+
+/**
  * 定位旧版本库（硬规则 17：只读检测，不写旧库）。
  *
  * 版本隔离：1.0 = %APPDATA%/umi-claw/data；2.0 = %APPDATA%/<2.0 dir>/data；
@@ -524,17 +646,8 @@ async function listPushTargetOptions(
   if (!existsSync(nodePath)) return []
 
   // agent 库路径：config/.openclaw/agents/<agentId>/agent/openclaw-agent.sqlite
-  const agentsDir = join(dataDir, 'config', '.openclaw', 'agents')
-  if (!existsSync(agentsDir)) return []
-  const dbPaths: string[] = []
-  try {
-    for (const agentId of readdirSync(agentsDir)) {
-      const p = join(agentsDir, agentId, 'agent', 'openclaw-agent.sqlite')
-      if (existsSync(p)) dbPaths.push(toPosix(p))
-    }
-  } catch {
-    return []
-  }
+  // 枚举逻辑与工作记录提取共用（listAgentDbPaths），避免路径调整时只改一处
+  const dbPaths = listAgentDbPaths(dataDir).map(toPosix)
   if (!dbPaths.length) return []
 
   const script = [
@@ -614,6 +727,7 @@ function initWorkManagers(): {
   knowledge: KnowledgeManager
   wizard: WizardManager
   reminder: ReminderManager
+  openclawImport: OpenClawImportManager
 } {
   if (!workDatabase) throw new Error('DB 客户端尚未初始化')
   workProfileManager = workProfileManager ?? createProfileManager({ database: workDatabase })
@@ -733,6 +847,25 @@ function initWorkManagers(): {
       },
       logger: (m) => console.log(m)
     })
+  // openclaw-import（OpenClaw 当日会话 → 工作记录候选）
+  if (!workOpenClawImportManager) {
+    if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
+    workOpenClawImportManager = createOpenClawImportManager({
+      database: workDatabase,
+      records: workRecordManager!,
+      gateway: workGatewayClient,
+      reader: createOpenClawReader(
+        join(resourcesRoot(), 'database', 'openclaw-reader.mjs'),
+        configManager.getNodePath()
+      ),
+      dbPath: () => listAgentDbPaths(configManager.getDataDir()),
+      logger: (m) => console.log(m)
+    })
+    // 应用重启后按持久化开关恢复主进程自动调度（关 → 不启动）。
+    // 首读可能踩中数据库尚未就绪：失败只记日志，最多重试 3 次（间隔 60 秒），
+    // 绝不静默吞掉——否则持久化为「开」的调度器恢复失败后无人知晓
+    void restoreOpenClawAutoScheduler(3)
+  }
   return {
     profile: workProfileManager,
     matters: workMatterManager,
@@ -746,7 +879,8 @@ function initWorkManagers(): {
     tools: workToolManager,
     knowledge: workKnowledgeManager,
     wizard: workWizardManager,
-    reminder: workReminderManager
+    reminder: workReminderManager,
+    openclawImport: workOpenClawImportManager
   }
 }
 

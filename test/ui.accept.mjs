@@ -44,11 +44,12 @@ let api = null
 
 try {
   // ── U1 真 preload 桥面 ──
-  await r.check('U1', '真 preload 桥：15 个 work 命名空间 + 流式订阅 + 信封解包', async () => {
+  await r.check('U1', '真 preload 桥：16 个 work 命名空间 + 流式订阅 + 信封解包', async () => {
     api = await importPreloadApi({ electronStub: stubs.electronStub, toolkitStub: stubs.toolkitStub })
     const expected = [
       'stream', 'gateway', 'profile', 'matters', 'todos', 'records', 'context',
-      'today', 'router', 'reports', 'qa', 'tools', 'knowledge', 'wizard', 'reminder'
+      'today', 'router', 'reports', 'qa', 'tools', 'knowledge', 'wizard', 'reminder',
+      'openclawImport'
     ]
     const missing = expected.filter((k) => !api.work[k])
     assertEq(missing.length, 0, `缺命名空间: ${missing.join(',')}`)

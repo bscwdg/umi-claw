@@ -202,11 +202,12 @@ async function saveDraft(): Promise<void> {
 
 async function confirm(): Promise<void> {
   if (!detail.value) return
+  const reportId = detail.value.id
   // 先保存编辑内容，再确认
-  await window.api.work.reports.saveDraft(detail.value.id, editingContent.value)
-  await window.api.work.reports.confirm(detail.value)
+  await window.api.work.reports.saveDraft(reportId, editingContent.value)
+  await window.api.work.reports.confirm(reportId)
   await loadList()
-  await select(detail.value.id)
+  await select(reportId)
   showToast('报告已确认', 'success')
 }
 

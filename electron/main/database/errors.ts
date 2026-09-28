@@ -7,7 +7,7 @@
 //   - 去掉与 3.0 无关的 HOT_SOURCE_ERROR（营销热点采集专属）
 //   - 新增 STREAM_TRUNCATED：流式响应体已开始后的传输中断（2.0 v1.21 已从 connect-failed 拆出）
 
-/** §14.2 错误码表（唯一的 code 真相来源，共 11 项） */
+/** §14.2 错误码表（唯一的 code 真相来源，共 13 项） */
 export const ERROR_CODES = {
   /** 参数不合法 */
   VALIDATION_ERROR: 'VALIDATION_ERROR',
@@ -23,6 +23,10 @@ export const ERROR_CODES = {
   OPENCLAW_NOT_READY: 'OPENCLAW_NOT_READY',
   /** 调用超时（Commit 07） */
   OPENCLAW_TIMEOUT: 'OPENCLAW_TIMEOUT',
+  /** OpenClaw 使用记录提炼结果无法识别 / 空响应（需重试，区别于网关未就绪） */
+  OPENCLAW_INVALID_OUTPUT: 'OPENCLAW_INVALID_OUTPUT',
+  /** OpenClaw 会话读取输出体积超过安全上限（区别于读取超时） */
+  OPENCLAW_OUTPUT_TOO_LARGE: 'OPENCLAW_OUTPUT_TOO_LARGE',
   /** Gateway token 鉴权失败（Commit 07） */
   OPENCLAW_AUTH_ERROR: 'OPENCLAW_AUTH_ERROR',
   /** 原始文件缺失 */

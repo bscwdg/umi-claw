@@ -58,6 +58,7 @@ export const OUTPUT_TYPE_CLASSIFICATION = {
   minutes: 'productive', // 会议纪要
   report: 'productive', // 日报 / 周报
   email_draft: 'productive', // 邮件起草（从无到有生成）
+  openclaw_activity: 'productive', // OpenClaw 当日会话提炼的工作记录
   /** 加工型：加工一个片段，不产生候选 */
   polish: 'processing', // 润色
   translate: 'processing', // 翻译
