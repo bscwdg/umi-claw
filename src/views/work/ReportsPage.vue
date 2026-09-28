@@ -203,7 +203,9 @@ async function saveDraft(): Promise<void> {
 async function confirm(): Promise<void> {
   if (!detail.value) return
   const reportId = detail.value.id
-  // 先保存编辑内容，再确认
+  // 先保存编辑内容，再确认。
+  // confirm 的 IPC 契约是 (id: string)（主进程走 requireId），传整个 detail 对象
+  // 会被判成非字符串 → VALIDATION_ERROR，「确认报告」按钮点了必炸
   await window.api.work.reports.saveDraft(reportId, editingContent.value)
   await window.api.work.reports.confirm(reportId)
   await loadList()

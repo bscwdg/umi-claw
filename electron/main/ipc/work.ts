@@ -35,7 +35,6 @@ import type { ToolManager } from '../work/toolManager'
 import type { KnowledgeManager } from '../work/knowledgeManager'
 import type { WizardManager } from '../work/wizardManager'
 import type { ReminderManager, ReminderId, PushChannel } from '../work/reminderManager'
-import type { OpenClawImportManager } from '../work/openclawImportManager'
 import { forwardGatewayStream } from '../gatewayClient'
 
 /** IPC 统一返回信封（§14.2） */
@@ -156,13 +155,6 @@ export const WORK_REMINDER_CHANNELS = {
   check: 'work:reminder:check'
 } as const
 
-/** OpenClaw 使用记录 → 工作记录候选（自动开关 / 手动扫描） */
-export const WORK_OPENCLAW_IMPORT_CHANNELS = {
-  isAutoEnabled: 'work:openclaw-import:isAutoEnabled',
-  setAutoEnabled: 'work:openclaw-import:setAutoEnabled',
-  importToday: 'work:openclaw-import:importToday'
-} as const
-
 async function wrap<T>(fn: () => Promise<T>): Promise<WorkIpcResult<T>> {
   try {
     return { ok: true, data: await fn() }
@@ -200,12 +192,11 @@ export interface WorkIpcDeps {
   knowledge: KnowledgeManager
   wizard: WizardManager
   reminder: ReminderManager
-  openclawImport: OpenClawImportManager
 }
 
 /** 注册 work 域 IPC（Commit 02：profile / matters / todos） */
 export function registerWorkIpc(deps: WorkIpcDeps): void {
-  const { profile, matters, todos, records, context, today, router, reports, qa, tools, knowledge, wizard, reminder, openclawImport } = deps
+  const { profile, matters, todos, records, context, today, router, reports, qa, tools, knowledge, wizard, reminder } = deps
 
   // ── profile ──
   handle(WORK_PROFILE_CHANNELS.get, () => wrap(() => profile.get()))
@@ -414,19 +405,4 @@ export function registerWorkIpc(deps: WorkIpcDeps): void {
   handle(WORK_REMINDER_CHANNELS.testPush, () => wrap(() => reminder.testPush()))
   handle(WORK_REMINDER_CHANNELS.getPushStatus, () => wrap(() => reminder.getPushStatus()))
   handle(WORK_REMINDER_CHANNELS.check, () => wrap(() => reminder.check()))
-
-  // ── openclaw-import（OpenClaw 当日会话 → 工作记录候选）──
-  handle(WORK_OPENCLAW_IMPORT_CHANNELS.isAutoEnabled, () => wrap(() => openclawImport.isAutoEnabled()))
-  handle(WORK_OPENCLAW_IMPORT_CHANNELS.setAutoEnabled, (enabled: boolean) =>
-    wrap(async () => {
-      const result = await openclawImport.setAutoEnabled(enabled === true)
-      // 开关即调度：开启 → 主进程每 10 分钟自动扫描；关闭 → 停止调度
-      if (result.enabled) openclawImport.startAutoScheduler()
-      else openclawImport.stopAutoScheduler()
-      return result
-    })
-  )
-  handle(WORK_OPENCLAW_IMPORT_CHANNELS.importToday, (manual?: boolean) =>
-    wrap(() => openclawImport.importToday(manual === true ? 'manual' : 'auto'))
-  )
 }

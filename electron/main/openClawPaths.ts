@@ -49,14 +49,7 @@ export const openClawPaths = {
   obsidianDir: (dataDir: string) => join(dataDir, 'config', '.openclaw', 'obsidian'),
 
   /** Obsidian 向量库文件 */
-  obsidianDb: (dataDir: string) => join(dataDir, 'config', '.openclaw', 'obsidian', 'index.db'),
-
-  /** agent 目录（config/.openclaw/agents/，下有多个 <agentId>/agent/…） */
-  agentsDir: (dataDir: string) => join(dataDir, 'config', '.openclaw', 'agents'),
-
-  /** agent 主库（会话 transcript；3.0 工作记录自动提取的数据源，只读使用） */
-  agentDb: (dataDir: string, agentId = 'main') =>
-    join(dataDir, 'config', '.openclaw', 'agents', agentId, 'agent', 'openclaw-agent.sqlite')
+  obsidianDb: (dataDir: string) => join(dataDir, 'config', '.openclaw', 'obsidian', 'index.db')
 }
 
 /** 把 Windows 反斜杠统一成正斜杠，兼容 OpenClaw / Node 内部处理 */

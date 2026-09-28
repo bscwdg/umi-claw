@@ -22,7 +22,6 @@ const ACCEPT = [
   ['context', 'test/context.accept.mjs'],
   ['today', 'test/today.accept.mjs'],
   ['report', 'test/report.accept.mjs'],
-  ['openclaw-import', 'test/openclaw-import.accept.mjs'],
   ['qatool', 'test/qatool.accept.mjs'],
   ['knowledge', 'test/knowledge.accept.mjs'],
   ['wizard', 'test/wizard.accept.mjs'],

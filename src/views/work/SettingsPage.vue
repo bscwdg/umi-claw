@@ -105,33 +105,6 @@
       </div>
     </section>
 
-    <!-- OpenClaw 使用记录：自动提取开关 -->
-    <section class="card">
-      <div class="s-head">
-        <h2>OpenClaw 使用记录</h2>
-        <span class="text-sm text-muted">把今天和 AI 的对话提炼成工作记录</span>
-      </div>
-      <div class="reminder-row">
-        <div class="r-info">
-          <span class="r-title">自动提取今日使用记录</span>
-          <span class="r-desc text-sm text-muted">
-            开启后进「新的一天」自动扫描（桌面对话 / 微信 / 飞书）；关闭后在「新的一天」点按钮手动提取
-          </span>
-        </div>
-        <div class="r-actions">
-          <label class="toggle">
-            <input
-              type="checkbox"
-              ref="autoImportToggle"
-              :checked="autoImport"
-              @change="toggleAutoImport(($event.target as HTMLInputElement).checked)"
-            />
-            <span class="toggle-slider"></span>
-          </label>
-        </div>
-      </div>
-    </section>
-
     <!-- 外发（方案 A：只推短提示，不推正文）。id 供今日页「去配置」跳来定位 -->
     <section id="push" class="card">
       <div class="s-head">
@@ -333,9 +306,6 @@ const completeness = ref({ filled: 0, total: 6, percent: 0, missing: [] as strin
 const dirty = ref(false)
 const reminders = ref({ morning: true, report: true })
 const reminderTimes = ref({ morning: '09:00', report: '18:30' })
-const autoImport = ref(false)
-const autoImportToggle = ref<HTMLInputElement | null>(null)
-let autoTogglePending = false
 type PushChannelKey = 'feishu' | 'wecom' | 'openclaw-weixin' | 'dingtalk'
 interface PushChannelOption {
   channel: PushChannelKey
@@ -637,40 +607,6 @@ async function toggleReminder(id: 'morning' | 'report', enabled: boolean): Promi
   }
 }
 
-async function loadOpenClawImport(): Promise<void> {
-  try {
-    autoImport.value = await window.api.work.openclawImport.isAutoEnabled()
-  } catch (e: any) {
-    showToast(`读取 OpenClaw 提取设置失败：${e.message}`, 'error')
-  }
-}
-
-async function toggleAutoImport(enabled: boolean): Promise<void> {
-  // 并发防抖：快速连点时第二个 change 直接忽略，
-  // 避免两个 setAutoEnabled 并发、回包乱序导致 UI 与持久化值背离
-  if (autoTogglePending) return
-  autoTogglePending = true
-  try {
-    const result = await window.api.work.openclawImport.setAutoEnabled(enabled)
-    autoImport.value = result.enabled
-    showToast(result.enabled ? '自动提取已开启' : '自动提取已关闭', 'success')
-  } catch (e: any) {
-    showToast(`设置失败：${e.message}`, 'error')
-    // 落库结果未知：尽力回读真实状态；回读也失败时保持原值，
-    // 绝不臆造成「关」——否则实际开着自动扫描，用户却以为关不掉
-    try {
-      autoImport.value = await window.api.work.openclawImport.isAutoEnabled()
-    } catch {
-      // 回读也失败：保持原值不动（finally 会把复选框对齐到它）
-    }
-  } finally {
-    autoTogglePending = false
-    await nextTick()
-    // 被忽略的连点已让复选框停在错误视觉态：强制对齐到已确认状态
-    if (autoImportToggle.value) autoImportToggle.value.checked = autoImport.value
-  }
-}
-
 async function loadWizard(): Promise<void> {
   try {
     const s = await window.api.work.wizard.status()
@@ -692,7 +628,7 @@ async function reenter(decision: 'keep' | 'fresh' | 'later'): Promise<void> {
 }
 
 onMounted(async () => {
-  await Promise.all([loadProfile(), loadReminders(), loadWizard(), loadOpenClawImport()])
+  await Promise.all([loadProfile(), loadReminders(), loadWizard()])
   // 从今日页「去配置」带 #push 跳来：滚动定位到外发段落
   if (route.hash === '#push') {
     await nextTick()

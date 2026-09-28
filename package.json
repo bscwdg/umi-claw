@@ -21,7 +21,6 @@
     "accept:context": "node test/context.accept.mjs",
     "accept:today": "node test/today.accept.mjs",
     "accept:report": "node test/report.accept.mjs",
-    "accept:openclaw-import": "node test/openclaw-import.accept.mjs",
     "accept:qatool": "node test/qatool.accept.mjs",
     "accept:knowledge": "node test/knowledge.accept.mjs",
     "accept:wizard": "node test/wizard.accept.mjs",
