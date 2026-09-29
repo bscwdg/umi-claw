@@ -1212,6 +1212,12 @@ function registerIpcHandlers(): void {
   ipcMain.handle('skills:uninstall', (_e, skillId) => clawManager.uninstallSkill(skillId))
   ipcMain.handle('skills:getInstalledSkills', () => configManager.getInstalledSkills());
   ipcMain.handle('skills:toggleSkillStatus', (_event, id, enabled) => configManager.toggleSkillStatus(id, enabled));
+  ipcMain.handle('skills:removeSkill', (_event, id: unknown) => {
+    const result = configManager.removeSkill(typeof id === 'string' ? id : '')
+    // 移除成功：顺带从云端更新缓存剔除，避免跳页回来又提示更新一个已删的技能
+    if (result.success && typeof id === 'string') skillSyncService.dropPendingUpdate(id)
+    return result
+  });
   ipcMain.handle('skills:importSkillZip', async () => {
     return await configManager.importSkillZip()
   })

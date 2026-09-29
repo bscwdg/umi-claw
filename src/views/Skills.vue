@@ -106,6 +106,22 @@
             >
               {{ loadingMap[skill.id] ? "请稍候..." : "禁用" }}
             </button>
+            <button
+              class="btn btn-sm"
+              @click="rereadDescription(skill)"
+              :disabled="loadingMap[skill.id]"
+              title="重新从 SKILL.md 读取描述（只读不改文件），修复描述未显示的问题"
+            >
+              {{ loadingMap[skill.id] ? "请稍候..." : "🔄 重读描述" }}
+            </button>
+            <button
+              class="btn btn-sm"
+              @click="askRemove(skill)"
+              :disabled="loadingMap[skill.id]"
+              title="从本地磁盘删除该技能（禁用只是不加载）"
+            >
+              {{ loadingMap[skill.id] ? "请稍候..." : "移除" }}
+            </button>
           </div>
         </div>
       </div>
@@ -119,6 +135,17 @@
       📂 暂未在 data/config/.openclaw/skills/ 目录下检测到子技能。
     </div>
 
+    <!-- 移除技能确认 -->
+    <ConfirmDialog
+      v-model:visible="showRemoveConfirm"
+      icon="🗑️"
+      title="移除技能"
+      :message="removeMessage"
+      confirm-text="移除"
+      danger
+      @confirm="doRemove"
+    />
+
     <transition name="slide">
       <div v-if="toast" class="toast" :class="toast.type">{{ toast.msg }}</div>
     </transition>
@@ -128,6 +155,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useToast } from "@/composables/useToast";
+import ConfirmDialog from "@/views/components/ConfirmDialog.vue";
 
 interface SkillInfo {
   id: string; // 对应本地文件夹名 (slug)
@@ -177,6 +205,11 @@ const enabledCount = computed(
   () => skills.value.filter((s) => s.enabled).length
 );
 
+// catch 到的 err 是 unknown：Error 取 message，普通对象直接拼接会得到 [object Object]
+function toErrMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 // 对应方向 A：全量扫描本地便携式子目录
 async function load() {
   // 调用刚才在主进程实现好的 getInstalledSkills
@@ -195,6 +228,66 @@ async function toggleSkill(id: string, targetStatus: boolean) {
     showToast("操作失败，请查看后台控制台", "error");
   } finally {
     loadingMap.value[id] = false;
+  }
+}
+
+// ── 移除本地技能（删除磁盘目录，不只是禁用）──
+const removeTarget = ref<SkillInfo | null>(null);
+const showRemoveConfirm = ref(false);
+const removeMessage = computed(() =>
+  removeTarget.value
+    ? `确定要移除「${removeTarget.value.name}」吗？技能目录将从本地磁盘删除（禁用只是暂时不加载，文件还在）。${
+        removeTarget.value.enabled ? "该技能当前为启用状态，移除后立即失效。" : ""
+      }`
+    : ""
+);
+
+function askRemove(skill: SkillInfo) {
+  removeTarget.value = skill;
+  showRemoveConfirm.value = true;
+}
+
+async function doRemove() {
+  const target = removeTarget.value;
+  if (!target) return;
+  loadingMap.value[target.id] = true;
+  try {
+    const result = await window.api.skills.removeSkill(target.id);
+    if (result.success) {
+      showToast(`技能「${target.name}」已移除`, "success");
+      // 同步云端更新面板，避免已删技能还留在勾选列表
+      pendingUpdates.value = pendingUpdates.value.filter((u) => u.id !== target.id);
+      delete selectedUpdates.value[target.id];
+      await load();
+    } else {
+      showToast(result.error || "移除失败", "error");
+    }
+  } catch (err) {
+    showToast(`移除发生系统异常${toErrMsg(err)}`, "error");
+  } finally {
+    loadingMap.value[target.id] = false;
+    removeTarget.value = null;
+  }
+}
+
+// ── 重新读取描述：重新实时解析 SKILL.md 的 front matter（只读，不改动任何文件）──
+async function rereadDescription(skill: SkillInfo) {
+  loadingMap.value[skill.id] = true;
+  try {
+    await load(); // getInstalledSkills 每次都实时读盘解析
+    const fresh = skills.value.find((s) => s.id === skill.id);
+    if (fresh && fresh.description !== "暂无描述信息。") {
+      showToast("已重新从 SKILL.md 读取描述", "success");
+    } else {
+      showToast(
+        "仍未从该技能的 SKILL.md 解析到描述，请检查 front matter 中 description 的写法",
+        "warning"
+      );
+    }
+  } catch (err) {
+    showToast(`重新读取发生系统异常${toErrMsg(err)}`, "error");
+  } finally {
+    loadingMap.value[skill.id] = false;
   }
 }
 
@@ -246,7 +339,7 @@ async function handleSyncFromRemote() {
       showToast(result.error || "云端技能拉取失败", "error");
     }
   } catch (err) {
-    showToast(`云端拉取发生系统异常${err}`, "error");
+    showToast(`云端拉取发生系统异常${toErrMsg(err)}`, "error");
   } finally {
     actionLoading.value = false;
   }
@@ -279,7 +372,7 @@ async function handleApplyUpdates() {
     }
     await load();
   } catch (err) {
-    showToast(`更新发生系统异常${err}`, "error");
+    showToast(`更新发生系统异常${toErrMsg(err)}`, "error");
   } finally {
     updating.value = false;
   }
@@ -300,7 +393,7 @@ async function handleImportZip() {
       }
     }
   } catch (err) {
-    showToast(`导入发生系统异常${err}`, "error");
+    showToast(`导入发生系统异常${toErrMsg(err)}`, "error");
   } finally {
     actionLoading.value = false;
   }

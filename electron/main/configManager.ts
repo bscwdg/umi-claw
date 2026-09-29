@@ -500,20 +500,243 @@ export class ConfigManager {
   }
 
   /**
-   * 从 SKILL.md 的 YAML Front Matter 中解析指定字段
-   * 支持 name: xxx、name: "xxx"、name: 'xxx' 三种写法
-   * 只在前置 front-matter 区块（文件开头的 --- ... ---）内匹配：
-   * 正文里出现的同名行（如文档示例中的 version:）不会被误取；嵌套缩进的
-   * 子键（如 metadata.version）也不会被当成顶层字段；无 front-matter 区块返回 undefined。
-   * @returns 解析到的值（已 trim），未匹配到返回 undefined
+   * 解析 SKILL.md 的 YAML Front Matter，返回顶层标量字段（只读，绝不写文件）。
+   * 旧的单行正则只认 `key: value` 一种写法，以下情况全部会「读不出来」：
+   * - description 用双引号/单引号且跨行（含 \"、\\ 转义，单引号 '' 转义）
+   * - block scalar：`description: >-` 或 `|` 后续若干缩进行折叠
+   * - plain 标量跨行续行、值尾带 ` #` 行内注释
+   * - BOM、分隔行尾部空白、CRLF
+   * 只解析顶层（无缩进）key: value；嵌套 map/list 行跳过。
+   * 起始分隔符必须是文件第一行（前面不放宽空行，否则正文里偶然出现的 --- 会被误判）；
+   * 结束分隔符缺失时容错解析到文件末尾。任何异常返回 {}。
    */
-  private _parseFrontMatterField(content: string, field: string): string | undefined {
+  private _parseFrontMatter(content: string): Record<string, string> {
     let text = content
     if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
-    const block = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)
-    if (!block) return undefined
-    const match = block[1].match(new RegExp(`^${field}:\\s*["']?(.*?)["']?\\s*(\\r?\\n|$)`, 'm'))
-    return match && match[1] ? match[1].trim() : undefined
+    const head = text.match(/^---[ \t]*\r?\n/)
+    if (!head) return {}
+    const rest = text.slice(head[0].length)
+    const end = rest.match(/\r?\n---[ \t]*(?:\r?\n|$)/)
+    const block = end ? rest.slice(0, end.index) : rest
+
+    const fields: Record<string, string> = {}
+    const lines = block.split(/\r?\n/)
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      // 只认顶层（无缩进）的 key: 形式；嵌套行/注释行/列表项自然跳过
+      const kv = line.match(/^([A-Za-z0-9_-]+):(?:[ \t]*(.*))?$/)
+      if (!kv) continue
+      const key = kv[1]
+      const raw = kv[2] ?? ''
+      if (raw === '') {
+        fields[key] = ''
+        continue
+      }
+
+      if (raw.startsWith('"')) {
+        // 双引号标量：行内没有未转义闭合引号就续接后续行
+        let buf = raw.slice(1)
+        let j = i
+        while (!this._doubleQuoteClosed(buf) && j + 1 < lines.length) {
+          j++
+          buf += '\n' + lines[j]
+        }
+        fields[key] = this._decodeDoubleQuoted(buf)
+        i = j
+        continue
+      }
+
+      if (raw.startsWith("'")) {
+        // 单引号标量：'' 是 YAML 转义的单引号
+        let buf = raw.slice(1)
+        let j = i
+        while (!this._singleQuoteClosed(buf) && j + 1 < lines.length) {
+          j++
+          buf += '\n' + lines[j]
+        }
+        fields[key] = this._decodeSingleQuoted(buf)
+        i = j
+        continue
+      }
+
+      // block scalar：> / | 后可带 chomping 指示符 -/+/空
+      const blockScalar = raw.match(/^([>|])([+-]?)[ \t]*$/)
+      if (blockScalar) {
+        const gathered: string[] = []
+        let j = i + 1
+        while (j < lines.length) {
+          const l = lines[j]
+          // 空行属于 block；非空且不缩进 → block 结束
+          if (l.trim() !== '' && !/^\s/.test(l)) break
+          gathered.push(l)
+          j++
+        }
+        fields[key] = this._decodeBlockScalar(
+          gathered,
+          blockScalar[1] as '>' | '|',
+          blockScalar[2] as '' | '-' | '+'
+        )
+        i = j - 1
+        continue
+      }
+
+      // plain 标量：剥行内注释；后续缩进的非空行是续行，折叠为空格
+      let value = this._stripInlineYamlComment(raw)
+      let j = i + 1
+      while (j < lines.length && /^\s+\S/.test(lines[j])) {
+        value += ' ' + this._stripInlineYamlComment(lines[j].trim())
+        j++
+      }
+      fields[key] = value.trim()
+      i = j - 1
+    }
+    return fields
+  }
+
+  /** 从 front-matter 中取单个字段；空值/未出现返回 undefined */
+  private _parseFrontMatterField(content: string, field: string): string | undefined {
+    const value = this._parseFrontMatter(content)[field]
+    if (typeof value !== 'string') return undefined
+    const trimmed = value.trim()
+    return trimmed ? trimmed : undefined
+  }
+
+  /** buf（已去掉开头引号）中是否存在未被反斜杠转义的闭合双引号 */
+  private _doubleQuoteClosed(buf: string): boolean {
+    for (let k = 0; k < buf.length; k++) {
+      if (buf[k] === '\\') {
+        k++
+        continue
+      }
+      if (buf[k] === '"') return true
+    }
+    return false
+  }
+
+  /** buf（已去掉开头引号）中是否存在闭合单引号（'' 为转义，不算闭合） */
+  private _singleQuoteClosed(buf: string): boolean {
+    for (let k = 0; k < buf.length; k++) {
+      if (buf[k] === "'") {
+        if (buf[k + 1] === "'") {
+          k++
+          continue
+        }
+        return true
+      }
+    }
+    return false
+  }
+
+  /**
+   * 解码双引号标量内容（到闭合引号为止）：
+   * 常见转义 \n \t \r \" \\；行尾反斜杠为续行（吞掉换行）；
+   * 裸换行折叠为空格（CRLF 算一个）。水平连续空白压缩。
+   */
+  private _decodeDoubleQuoted(buf: string): string {
+    let out = ''
+    for (let k = 0; k < buf.length; k++) {
+      const ch = buf[k]
+      if (ch === '"') break
+      if (ch === '\\') {
+        const n = buf[k + 1]
+        if (n === undefined) break
+        if (n === 'n') out += '\n'
+        else if (n === 't') out += '\t'
+        else if (n === 'r') out += '\r'
+        else if (n === '"') out += '"'
+        else if (n === '\\') out += '\\'
+        else if (n === '\n') {
+          /* 续行：吞掉换行 */
+        } else if (n === '\r') {
+          if (buf[k + 2] === '\n') k++
+        } else {
+          out += n // 未列举的转义保守保留原字符
+        }
+        k++
+      } else if (ch === '\r' || ch === '\n') {
+        out += ' '
+        if (ch === '\r' && buf[k + 1] === '\n') k++
+      } else {
+        out += ch
+      }
+    }
+    return out.replace(/[ \t]+/g, ' ').trim()
+  }
+
+  /** 解码单引号标量内容：'' → '；裸换行折叠为空格 */
+  private _decodeSingleQuoted(buf: string): string {
+    let out = ''
+    for (let k = 0; k < buf.length; k++) {
+      const ch = buf[k]
+      if (ch === "'") {
+        if (buf[k + 1] === "'") {
+          out += "'"
+          k++
+          continue
+        }
+        break
+      }
+      if (ch === '\r' || ch === '\n') {
+        out += ' '
+        if (ch === '\r' && buf[k + 1] === '\n') k++
+      } else {
+        out += ch
+      }
+    }
+    return out.replace(/[ \t]+/g, ' ').trim()
+  }
+
+  /**
+   * 解码 block scalar。缩进取第一非空行的前导空白长度，统一去掉。
+   * | 保留换行；> 把相邻非空行折叠为空格、空行产生换行（空行连续则保留段落间隔）。
+   * chomping（-/+/空）只影响尾部换行数——返回前整体 trim，差异对最终值无影响，
+   * 参数保留以便对齐 YAML 语义。
+   */
+  private _decodeBlockScalar(
+    gathered: string[],
+    style: '>' | '|',
+    _chomping: '' | '-' | '+'
+  ): string {
+    let indent = -1
+    for (const l of gathered) {
+      if (l.trim() !== '') {
+        indent = (l.match(/^[ \t]*/) as RegExpMatchArray)[0].length
+        break
+      }
+    }
+    if (indent < 0) return ''
+    const body = gathered.map((l) => (l.trim() === '' ? '' : l.slice(indent)))
+    if (style === '|') {
+      return body.join('\n').replace(/^\n+/, '').trim()
+    }
+    let out = ''
+    let started = false
+    let prevBlank = false
+    for (const l of body) {
+      if (l === '') {
+        if (started) {
+          out += '\n'
+          prevBlank = true
+        }
+        continue
+      }
+      if (!started) {
+        out = l
+        started = true
+      } else if (prevBlank) {
+        out += l
+        prevBlank = false
+      } else {
+        out += ' ' + l
+      }
+    }
+    return out.trim()
+  }
+
+  /** 剥掉 plain 标量的行内注释：YAML 注释必须以 # 开头且位于行首或空白之后 */
+  private _stripInlineYamlComment(s: string): string {
+    const at = s.search(/(?:^|\s)#/)
+    return at >= 0 ? s.slice(0, at) : s
   }
 
   /**
@@ -1102,6 +1325,99 @@ private _archiveLegacyAuthProfiles(): void {
 
     } catch (err) {
       console.error(`[ConfigManager] 切换技能 [${skillId}] 开关失败:`, err)
+    }
+  }
+
+  /**
+   * 🟢 供前端 Skills 页面调用：移除本地便携技能。
+   * 删除技能目录，并清理 openclaw.json 的开关条目与 skill-manifest.json 台账。
+   * 开关/台账清理失败仅 warn（技能目录已删，主结果不受影响）；目录删除失败把原因原样带回。
+   */
+  public removeSkill(skillId: string): { success: boolean; error?: string } {
+    // 目录名白名单：与 _resolveZipTarget 的落盘命名同口径，挡掉 ../、.. 等穿越
+    if (typeof skillId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(skillId)) {
+      return { success: false, error: '非法的技能 ID' }
+    }
+    const resolvedSkillsRoot = resolve(this.portableSkillsDir)
+    const skillDir = resolve(resolvedSkillsRoot, skillId)
+    if (!skillDir.startsWith(resolvedSkillsRoot + sep)) {
+      return { success: false, error: '非法的技能路径' }
+    }
+    try {
+      if (!existsSync(skillDir)) return { success: false, error: '技能目录不存在' }
+
+      // 1. 删目录（Windows 下被 gateway / 杀软占用会 EPERM，原样把原因带回前端）
+      rmSync(skillDir, { recursive: true, force: true })
+
+      // 2. 清 openclaw.json 开关条目（非致命）
+      this._removeSkillConfigEntry(skillId)
+
+      // 3. 清 manifest 台账（非致命）
+      this._removeSkillManifestEntry(skillId)
+
+      console.log(`[ConfigManager] 本地技能 [${skillId}] 已移除`)
+      return { success: true }
+    } catch (err: any) {
+      console.error('[ConfigManager] 移除本地技能失败:', err)
+      return { success: false, error: err.message || '移除过程中发生未知错误' }
+    }
+  }
+
+  /**
+   * 删除 openclaw.json 里指定技能的开关条目。
+   * 兼容两种历史结构：skills.entries.<id>（现口径）与 skills.<id>（旧口径）。
+   * 非致命：读/写失败仅 warn，绝不影响已成功的目录删除。
+   */
+  private _removeSkillConfigEntry(skillId: string): void {
+    try {
+      if (!existsSync(this.openClawConfigPath)) return
+      const cfg = this._parseOpenClawJsonRaw()
+      if (!cfg || typeof cfg !== 'object') return
+      let changed = false
+      const entries = cfg.skills?.entries
+      if (entries && typeof entries === 'object' && entries[skillId] !== undefined) {
+        delete entries[skillId]
+        changed = true
+      }
+      // 旧口径：开关直接挂在 skills 下（且不是 entries 等保留键）
+      if (cfg.skills && typeof cfg.skills === 'object' && cfg.skills[skillId] !== undefined) {
+        delete cfg.skills[skillId]
+        changed = true
+      }
+      if (changed) {
+        this._atomicWriteFileSync(this.openClawConfigPath, JSON.stringify(cfg, null, 2))
+        console.log(`[ConfigManager] 已清除技能 [${skillId}] 的开关条目`)
+      }
+    } catch (err) {
+      console.warn(`[ConfigManager] 清除技能 [${skillId}] 开关条目失败（不影响移除）:`, err)
+    }
+  }
+
+  /**
+   * 删除 skill-manifest.json 里指向该技能的台账条目：
+   * key 同名条目，以及 actualDir 指向该目录的条目（规范包 key ≠ 目录名）。
+   * 非致命：失败仅 warn。
+   */
+  private _removeSkillManifestEntry(skillId: string): void {
+    try {
+      const manifest = this.getSkillManifest()
+      let changed = false
+      if (Object.prototype.hasOwnProperty.call(manifest, skillId)) {
+        delete manifest[skillId]
+        changed = true
+      }
+      for (const [key, entry] of Object.entries(manifest)) {
+        if (entry?.actualDir === skillId) {
+          delete manifest[key]
+          changed = true
+        }
+      }
+      if (changed) {
+        this._writeSkillManifest(manifest)
+        console.log(`[ConfigManager] 已清除技能 [${skillId}] 的 manifest 台账`)
+      }
+    } catch (err) {
+      console.warn(`[ConfigManager] 清除技能 [${skillId}] manifest 台账失败（不影响移除）:`, err)
     }
   }
 
