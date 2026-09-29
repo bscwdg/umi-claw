@@ -72,6 +72,11 @@ export class SkillSyncService {
     return this.lastPendingUpdates
   }
 
+  /** 技能被移除后，从在途的可更新缓存中剔除，避免跳页回来它又出现在更新面板 */
+  dropPendingUpdate(id: string): void {
+    this.lastPendingUpdates = this.lastPendingUpdates.filter((u) => u.id !== id)
+  }
+
   private async _doSync(options: SkillSyncOptions): Promise<SkillSyncResult> {
     const listResult = await this._fetchList(options.externalSignal)
     if (!listResult.ok) {
