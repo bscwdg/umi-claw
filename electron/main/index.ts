@@ -1243,6 +1243,8 @@ function registerIpcHandlers(): void {
       return { success: false, error: err?.message || String(err) }
     }
   })
+  // 渠道已接入状态（只读，依据 openclaw.json 与插件登录态）
+  ipcMain.handle('channels:getStatuses', () => channelManager.getChannelStatuses())
 
   ipcMain.handle('shell:openExternal', (_e, url: string) => {
     if (url.startsWith('http://') || url.startsWith('https://')) {

@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { TerminalRuntime } from '../../src/types/terminal'
-
+import type { ChannelStatus } from '../../src/types/channels'
 console.log('✅ preload loaded')
 
 // ── work 域信封解包：IPC 返回 {ok,data} / {ok,error} ────────────────────────
@@ -131,7 +131,8 @@ const api = {
     isPluginInstalled: (pluginId: string) =>
       ipcRenderer.invoke('channels:isPluginInstalled', pluginId),
     installPlugin: (pluginPkg: string) =>
-      ipcRenderer.invoke('channels:installPlugin', pluginPkg)
+      ipcRenderer.invoke('channels:installPlugin', pluginPkg),
+    getStatuses: (): Promise<ChannelStatus[]> => ipcRenderer.invoke('channels:getStatuses')
   },
 
   // 终端

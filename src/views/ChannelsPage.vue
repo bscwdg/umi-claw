@@ -5,6 +5,21 @@
       <p class="page-sub">配置聊天平台，让 AI 助手接入你的消息渠道</p>
     </div>
 
+    <div class="configured-summary">
+      <div class="cs-header">
+        <span class="cs-title">已接入渠道</span>
+        <span class="cs-count">{{ configuredChannels.length }}</span>
+      </div>
+      <div v-if="configuredChannels.length" class="cs-chips">
+        <div v-for="s in configuredChannels" :key="s.key" class="cs-chip">
+          <span class="cs-chip-icon">{{ STATUS_META[s.key]?.icon }}</span>
+          <span class="cs-chip-label">{{ STATUS_META[s.key]?.label || s.key }}</span>
+          <span v-if="s.detail" class="cs-chip-detail">{{ s.detail }}</span>
+        </div>
+      </div>
+      <p v-else class="cs-empty">尚未配置任何渠道，选择下方渠道卡片开始接入</p>
+    </div>
+
     <div class="channels-list">
       <div
         v-for="ch in CHANNELS"
@@ -12,7 +27,7 @@
         :class="[
           'channel-card',
           expanded[ch.key] && 'expanded',
-          isConfigured(ch.key) && 'configured',
+          (isConfigured(ch.key) || statusConfigured(ch.key)) && 'configured',
         ]"
       >
         <div class="channel-header" @click="toggle(ch.key)">
@@ -21,7 +36,7 @@
             <span class="ch-label">{{ ch.label }}</span>
             <span class="ch-desc">{{ ch.desc }}</span>
           </div>
-          <span v-if="isConfigured(ch.key)" class="ch-badge">已配置</span>
+          <span v-if="isConfigured(ch.key) || statusConfigured(ch.key)" class="ch-badge">已配置</span>
           <span class="ch-arrow">{{ expanded[ch.key] ? "▲" : "▼" }}</span>
         </div>
 
@@ -105,6 +120,7 @@
             >插件已默认安装，扫码登录即可接入微信，无需 AppID/Secret</span
           >
         </div>
+        <span v-if="statusConfigured('weixin')" class="ch-badge">已配置</span>
         <button
           class="docs-btn"
           @click="
@@ -149,6 +165,7 @@
             >运行官方安装向导：安装插件、扫码接入、一键创建机器人，无需 CorpID/Secret</span
           >
         </div>
+        <span v-if="statusConfigured('wecom')" class="ch-badge">已配置</span>
         <button
           class="docs-btn"
           @click="
@@ -186,11 +203,44 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router"; // 👈 引入 Vue 路由，摆脱 props
+import type { ChannelStatus } from "../types/channels";
 
 const router = useRouter();
 const weixinMsg = ref("");
+
+// ── 已接入渠道（依据网关真实配置，见 electron/main/channelManager.getChannelStatuses）──
+const channelStatuses = ref<Record<string, ChannelStatus>>({});
+
+/** 总览里展示的渠道展示元数据；weixin 不在 CHANNELS 里，单独补一条 */
+const STATUS_META: Record<string, { icon: string; label: string }> = {
+  feishu: { icon: "💙", label: "飞书自建应用" },
+  wechat_mp: { icon: "💬", label: "微信公众号" },
+  wecom: { icon: "💼", label: "企业微信" },
+  dingtalk: { icon: "🔹", label: "钉钉机器人" },
+  weixin: { icon: "💚", label: "微信（官方插件）" },
+};
+
+const configuredChannels = computed(() =>
+  Object.values(channelStatuses.value).filter((s) => s.configured)
+);
+
+function statusConfigured(key: string): boolean {
+  return !!channelStatuses.value[key]?.configured;
+}
+
+async function loadChannelStatuses() {
+  try {
+    if (!window.api?.channels?.getStatuses) return;
+    const list = await window.api.channels.getStatuses();
+    const map: Record<string, ChannelStatus> = {};
+    for (const s of list || []) map[s.key] = s;
+    channelStatuses.value = map;
+  } catch (err) {
+    console.error("加载渠道运行状态失败:", err);
+  }
+}
 
 // ── 1. 外部链接调用解耦 ──────────────────────────────────────────────────
 function openExternalUrl(url: string) {
@@ -428,6 +478,9 @@ onMounted(async () => {
   } catch (err) {
     console.error("加载渠道已有配置失败:", err);
   }
+
+  // 3. 拉取网关侧的真实接入状态（含插件型渠道）
+  await loadChannelStatuses();
 });
 
 // ── 5. 交互行为逻辑 ───────────────────────────────────────────────────
@@ -485,6 +538,9 @@ async function save() {
 
       await window.api.config.save(fullConfig);
       savedMsg.value = "✅ 已保存，重启 OpenClaw 后生效";
+
+      // config.save 内部已同步 openclaw.json，这里刷新「已接入渠道」总览
+      await loadChannelStatuses();
 
       // 飞书为插件驱动渠道：已配置且插件未安装时，自动安装官方插件
       const feishuConfigured = !!channelConfigs["feishu"];
@@ -545,6 +601,62 @@ async function save() {
   flex-direction: column;
   gap: 10px;
   margin-bottom: 20px;
+}
+/* 顶部「已接入渠道」总览：判定依据是网关真实配置，不是表单内存值 */
+.configured-summary {
+  border: 1px solid color-mix(in srgb, var(--green) 30%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--green) 6%, var(--bg-surface));
+  padding: 12px 16px;
+  margin-bottom: 16px;
+}
+.cs-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.cs-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.cs-count {
+  font-size: 0.7rem;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--green) 15%, transparent);
+  color: var(--green);
+}
+.cs-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cs-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  font-size: 0.78rem;
+  color: var(--text-primary);
+}
+.cs-chip-icon {
+  font-size: 0.9rem;
+}
+.cs-chip-label {
+  font-weight: 500;
+}
+.cs-chip-detail {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+.cs-empty {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
 }
 .channel-card {
   border: 1px solid var(--border);
