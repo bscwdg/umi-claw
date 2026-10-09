@@ -504,6 +504,8 @@ window.api.work.stream       // 流式事件订阅
 - 关键词检索（SQLite LIKE，对中文友好）与 Knowledge 维度完整度提示
 - 扫描版 PDF / 纯图片可显式触发 AI 文字识别，结果经人工确认后入库，识别可中止
 
+> 与 1.0 / 3.0 知识库的实现差异，见下方「知识库对比（1.0 / 2.0 / 3.0）」。
+
 ### AI 顾问
 
 - 基于本商家资料的问答：只引用已有事实（grounded），资料里没有的价格 / 承诺 / 卖点绝不编造，资料不足会提示该补什么
@@ -562,6 +564,8 @@ window.api.work.stream       // 流式事件订阅
 | AI 的世界 | 查看工作记忆组成与被裁剪内容及原因 |
 | 工作设置 | 工作画像、提醒等设置 |
 
+> 工作知识库与 1.0 / 2.0 知识库的实现差异，见下方「知识库对比（1.0 / 2.0 / 3.0）」。
+
 ## 渠道接入
 
 应用内置微信渠道，同时支持**企业微信官方插件**和**飞书自建应用**两种扩展渠道。
@@ -613,7 +617,46 @@ openclaw pairing approve feishu <配对码>  # 审批通过
 
 > 群聊中默认需要 @机器人 才会响应，可在渠道卡片中关闭。
 
-## 知识库（Obsidian）
+## 知识库对比（1.0 / 2.0 / 3.0）
+
+三个版本各有一个叫「知识库」的模块，但它们是三套独立实现，只有名字相同。核心分歧在**检索方式**：1.0 走检索式（RAG），2.0 / 3.0 走注入式。
+
+| | **1.0（master / release/1.0）** | **2.0（release/2.0）** | **3.0（release/3.0）** |
+|---|---|---|---|
+| 模块名 | Obsidian 知识库 | 商家知识库 | 工作知识库 |
+| 数据源 | 用户的 Obsidian vault（`.md` 笔记） | 人工导入的商家资料 | 人工导入的工作资料 |
+| 支持格式 | 仅 Markdown | docx / xlsx / pdf / url / text / markdown / faq | 同 2.0 |
+| 存储 | 独立向量库 `data/config/.openclaw/obsidian/index.db` | 主库 `umi-claw.db` 的 `knowledge_items` 表 | 主库的 `knowledge` 表 |
+| 原件位置 | 不动，留在 vault 原地 | 拷贝到 `data/projects/<id>/` | 拷贝到 `data/knowledge/` |
+| 切块 | 按标题切块，800 字/块，每篇上限 50 块 | 不切块（整篇入库） | 不切块 |
+| 向量化 | 有（OpenAI 兼容 / Cohere embedding） | 无（`knowledge_chunks` 表预留） | 无 |
+| 检索 | 语义向量 topK + 多样性剪枝 | LIKE 关键词（中文友好） | 全量注入优先，超预算才退化为 LIKE |
+| 消费方 | OpenClaw 模型调用 MCP 工具 | 应用内 ContextEngine → AI 顾问 / 内容中心 | 应用内 ContextEngine → 工作问答 / 工具箱 / 日报 |
+| 隔离维度 | 单 vault，无多租户 | 按 `project_id` 隔离，跨商家访问一律 NOT_FOUND | 全局单库，无 project 维度 |
+| 写入路径 | 模型可经 MCP `create_note` / `update_note` 写回笔记 | 仅人工显式导入，无自动写入 | 仅人工导入 |
+| 扫描件 OCR | 无 | 有（显式触发 + 人工确认后入库 + 可中止） | 无 |
+| 增量更新 | vault watcher + 写后 1.5s 去抖增量索引 | 按 `UNIQUE(project_id, source_path)` 重导入覆盖 | 按 `UNIQUE(source_path)` 重导入覆盖 |
+
+### 1.0：检索式（RAG）
+
+笔记按标题切块并向量化，注册为 `openclaw.json` 的 `mcp.servers.obsidian`，模型通过 `search_notes` / `read_note` / `list_notes` / `create_note` / `update_note` / `get_backlinks` / `get_outgoing_links` / `get_tags` 按需取片段。省 token 是核心卖点，代价是模型得先「想到要查」。它绑定 Obsidian 生态：只吃 `.md`，但会把 wikilink、标签、front matter 一并建索引（代码块不参与语义索引，`read_note` 仍可读全文）。
+
+### 2.0：注入式 + 多租户
+
+知识库是**一级能力**，不是商家大脑的子功能，存的是「商家事实知识」——套系单、价目表、话术、常见问答。定位上明确 *External Intelligence ≠ Merchant Knowledge*：热点雷达等外部情报**永不自动写入**，只有老板人工采纳的事实才进来，因此整条链路**没有任何自动写入路径**。每个方法显式接收 `projectId`，跨 Project 的 id 一律视同不存在，杜绝「换个商家还能看到别家资料」。另有扫描件 AI 识别兜底：显式触发、人工确认后才入库、可中止。
+
+### 3.0：2.0 解析管线的裁剪版
+
+复用 2.0 的解析管线（`documentParsers` / `urlParser` 两边逐字相同），数据源换成全局 `knowledge` 表——3.0 无 project 维度，去掉了 `project_id`、`knowledge_chunks` 预留表与 OCR 兜底，原件落 `data/knowledge/`。它不对外暴露 MCP 工具，只作为 Context Pack 的第 6 段被消费。
+
+### 检索策略：两个相反的方向
+
+- **1.0 不注入，让模型自己查**：知识库可以很大，靠向量检索按需取片段。
+- **2.0 / 3.0 预算内全量注入**：2.0 是 business + knowledge ≤ 上下文窗口 60%，3.0 是第 2–6 段合计 ≤ 70%；超预算才退化为 LIKE 裁剪，被丢 / 被截的条目留痕可查。理由是顾问类问题（「客户嫌贵怎么回」）与文档标题（「套系价目表」）常无字面重合，LIKE 会漏掉最相关的资料；只有全量注入才验证得了「AI 认识这个商家」。
+
+> 共同短板：2.0 / 3.0 的 LIKE 检索对语义改写无能为力。2.0 里预留的 `knowledge_chunks` 表，以及 1.0 已经跑通的切块 + embedding 管线，是二期升级 RAG 的现成起点。
+
+## 知识库（Obsidian）— 1.0 线
 
 把 Obsidian 笔记库接入模型：笔记按标题切块并向量化，存入本地 sqlite 向量库；
 OpenClaw 通过 MCP 工具按需检索片段，不用把整个知识库塞进上下文。
