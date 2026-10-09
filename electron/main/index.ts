@@ -971,7 +971,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle('skills:importSkillZip', async () => {
     return await configManager.importSkillZip()
   })
-  ipcMain.handle('skills:syncFromRemote', () => skillSyncService.syncFromRemote())
+  // 拉取改为两阶段：先只读探测（不下载），前端弹窗勾选后再按 ids 下载安装
+  ipcMain.handle('skills:probeRemote', () => skillSyncService.probeFromRemote())
+  ipcMain.handle('skills:installSkills', (_e, ids: unknown) =>
+    skillSyncService.installSkills(Array.isArray(ids) ? ids.filter((i): i is string => typeof i === 'string') : []))
   // 勾选更新：主进程先过滤非 string 项，service 内再做白名单校验与去重
   ipcMain.handle('skills:applyUpdates', (_e, ids: unknown) =>
     skillSyncService.applyUpdates(Array.isArray(ids) ? ids.filter((i): i is string => typeof i === 'string') : []))
