@@ -146,6 +146,83 @@
       @confirm="doRemove"
     />
 
+    <!-- 云端新技能勾选弹窗（拉取后弹出，默认全选） -->
+    <transition name="fade">
+      <div
+        v-if="availableSkills.length"
+        class="modal-overlay"
+        @click.self="cancelInstall"
+      >
+        <div class="modal-card">
+          <div class="modal-header">
+            <span class="modal-icon">☁️</span>
+            <h4>选择要导入的云端技能</h4>
+          </div>
+          <div class="modal-body">
+            <div class="skill-header">
+              <span class="text-muted text-sm"
+                >发现 {{ availableSkills.length }} 个本地未安装的技能</span
+              >
+              <label
+                class="flex gap-2 text-sm"
+                style="align-items: center; cursor: pointer"
+              >
+                <input
+                  type="checkbox"
+                  :checked="allInstallSelected"
+                  @change="toggleInstallSelectAll"
+                />
+                全选
+              </label>
+            </div>
+            <div class="update-list">
+              <template v-for="s in availableSkills" :key="s.id">
+                <label class="update-item">
+                  <input type="checkbox" v-model="selectedInstalls[s.id]" />
+                  <span class="update-id">{{ s.id }}</span>
+                  <span class="text-muted text-xs">
+                    <span v-if="s.version" class="badge badge-blue"
+                      >v{{ s.version }}</span
+                    >
+                    <span v-else class="badge badge-yellow">未登记版本</span>
+                  </span>
+                  <button
+                    v-if="s.usage"
+                    type="button"
+                    class="help-btn"
+                    :class="{ open: usageOpen[s.id] }"
+                    title="查看用途说明"
+                    @click.prevent.stop="toggleUsage(s.id)"
+                  >
+                    ?
+                  </button>
+                </label>
+                <div v-if="s.usage && usageOpen[s.id]" class="usage-box">
+                  {{ s.usage }}
+                </div>
+              </template>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button
+              class="btn btn-sm"
+              @click="cancelInstall"
+              :disabled="installing"
+            >
+              取消
+            </button>
+            <button
+              class="btn btn-sm btn-primary"
+              @click="confirmInstall"
+              :disabled="installing || installCount === 0"
+            >
+              {{ installing ? "导入中..." : `导入所选 (${installCount})` }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition>
+
     <transition name="slide">
       <div v-if="toast" class="toast" :class="toast.type">{{ toast.msg }}</div>
     </transition>
@@ -198,6 +275,93 @@ function toggleSelectAll() {
 function dismissUpdates() {
   pendingUpdates.value = [];
   selectedUpdates.value = {};
+}
+
+// ── 云端新技能勾选弹窗状态 ──
+interface AvailableCandidate {
+  id: string;
+  version: string | null;
+  usage: string;
+}
+const availableSkills = ref<AvailableCandidate[]>([]);
+const selectedInstalls = ref<Record<string, boolean>>({});
+const installing = ref(false);
+// 「?」用途展开状态：每个技能独立，可同时展开多个对照
+const usageOpen = ref<Record<string, boolean>>({});
+
+function toggleUsage(id: string) {
+  usageOpen.value[id] = !usageOpen.value[id];
+}
+
+const installCount = computed(
+  () =>
+    availableSkills.value.filter((s) => selectedInstalls.value[s.id]).length
+);
+const allInstallSelected = computed(
+  () =>
+    availableSkills.value.length > 0 &&
+    availableSkills.value.every((s) => selectedInstalls.value[s.id])
+);
+
+function toggleInstallSelectAll() {
+  const target = !allInstallSelected.value;
+  for (const s of availableSkills.value) {
+    selectedInstalls.value[s.id] = target;
+  }
+}
+
+function cancelInstall() {
+  if (installing.value) return;
+  availableSkills.value = [];
+  selectedInstalls.value = {};
+  usageOpen.value = {};
+}
+
+async function confirmInstall() {
+  const ids = availableSkills.value
+    .filter((s) => selectedInstalls.value[s.id])
+    .map((s) => s.id);
+  if (ids.length === 0) return;
+  installing.value = true;
+  try {
+    const result = await window.api.skills.installSkills(ids);
+    if (!result.success) {
+      showToast("没有可导入的合法技能，请重新拉取", "error");
+      return;
+    }
+    const failText = result.failed.length
+      ? `，失败 ${result.failed.length} 个（${result.failed
+          .filter((f: { id: string }) => f.id)
+          .map((f: { id: string }) => f.id)
+          .join("、")}）`
+      : "";
+    const skipText = result.skipped.length
+      ? `，${result.skipped.length} 个已存在跳过`
+      : "";
+    showToast(
+      `云端技能导入：${result.installed.length} 个已导入${skipText}${failText}`,
+      result.failed.length ? "warning" : "success"
+    );
+    await load();
+    if (result.failed.length === 0) {
+      // 全部处理完才关闭弹窗
+      availableSkills.value = [];
+      selectedInstalls.value = {};
+      usageOpen.value = {};
+    } else {
+      // 失败项保留勾选状态，直接再次点击即可重试；成功/跳过项移出
+      const failedIds = new Set(
+        result.failed.map((f: { id: string }) => f.id)
+      );
+      availableSkills.value = availableSkills.value.filter((s) =>
+        failedIds.has(s.id)
+      );
+    }
+  } catch (err) {
+    showToast(`导入发生系统异常${toErrMsg(err)}`, "error");
+  } finally {
+    installing.value = false;
+  }
 }
 
 // 动态计算当前已开启的技能数量
@@ -303,38 +467,42 @@ async function enableAll() {
   actionLoading.value = false;
 }
 
-// 🟢 从 Gitee 云端技能仓库同步官方技能（与初始化共用主进程 SkillSyncService）
+// 🟢 拉取云端技能：先只读探测，新技能弹窗勾选（默认全选）后才下载导入
 async function handleSyncFromRemote() {
   actionLoading.value = true;
   try {
-    const result = await window.api.skills.syncFromRemote();
+    const result = await window.api.skills.probeRemote();
     if (result.success) {
-      // 可更新列表进勾选面板（默认全选），与「跳过」分开表述
+      // 可更新列表进勾选面板（默认全选），与新装弹窗分开
       pendingUpdates.value = result.updates ?? [];
       selectedUpdates.value = {};
       for (const u of pendingUpdates.value) {
         selectedUpdates.value[u.id] = true;
       }
-      const updateHint = pendingUpdates.value.length
-        ? `、可更新 ${pendingUpdates.value.length} 个（见下方列表）`
-        : "";
-      if (result.failed.length > 0) {
-        // 单槽 toast，成功概览 + 失败明细合并成一条 warning
+
+      if (result.available.length > 0) {
+        // 弹出勾选框，默认全选；确认导入后才刷新列表
+        availableSkills.value = result.available;
+        selectedInstalls.value = {};
+        for (const s of availableSkills.value) {
+          selectedInstalls.value[s.id] = true;
+        }
+        const updateHint = pendingUpdates.value.length
+          ? `；另有 ${pendingUpdates.value.length} 个可更新（见下方列表）`
+          : "";
         showToast(
-          `云端同步完成：新装 ${result.installed.length} 个、跳过 ${
-            result.skipped.length
-          } 个${updateHint}，失败 ${result.failed.length} 个（${result.failed
-            .map((f: { file: string; error: string }) => f.file)
-            .join("、")}）`,
-          "warning"
-        );
-      } else {
-        showToast(
-          `云端同步完成：新装 ${result.installed.length} 个，跳过 ${result.skipped.length} 个${updateHint}`,
+          `发现 ${availableSkills.value.length} 个可导入的新技能${updateHint}`,
           "success"
         );
+      } else {
+        const updateHint = pendingUpdates.value.length
+          ? `；${pendingUpdates.value.length} 个可更新（见下方列表）`
+          : "";
+        showToast(
+          `云端没有新技能可导入${updateHint}`,
+          updateHint ? "success" : "warning"
+        );
       }
-      await load(); // 刷新列表，新技能以「已禁用」状态上架
     } else {
       showToast(result.error || "云端技能拉取失败", "error");
     }
@@ -354,9 +522,14 @@ async function handleApplyUpdates() {
   updating.value = true;
   try {
     const result = await window.api.skills.applyUpdates(ids);
+    if (!result.success) {
+      showToast("没有可更新的合法技能，请重新拉取", "error");
+      return;
+    }
     const failText = result.failed.length
       ? `，失败 ${result.failed.length} 个（${result.failed
-          .map((f: { id: string; error: string }) => f.id)
+          .filter((f: { id: string }) => f.id)
+          .map((f: { id: string }) => f.id)
           .join("、")}）`
       : "";
     showToast(
@@ -485,6 +658,42 @@ onMounted(async () => {
   font-size: 13px;
 }
 
+/* 版本后面的「?」用途按钮 */
+.help-btn {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: none;
+}
+.help-btn:hover,
+.help-btn.open {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 点 ? 后展开的用途说明块 */
+.usage-box {
+  margin: 2px 0 8px 24px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  background: var(--accent-muted);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius-sm);
+}
+
 .toast {
   position: fixed;
   bottom: 24px;
@@ -506,5 +715,64 @@ onMounted(async () => {
 .toast.warning {
   background: rgba(245, 158, 11, 0.9);
   color: #fff;
+}
+
+/* 云端新技能勾选弹窗（视觉口径对齐 ConfirmDialog） */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 22, 26, 0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2100;
+}
+.modal-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  width: 460px;
+  max-width: 90vw;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-header h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.modal-icon {
+  font-size: 18px;
+}
+.modal-body {
+  padding: 16px 18px;
+  font-size: 14px;
+  overflow-y: auto;
+}
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>
