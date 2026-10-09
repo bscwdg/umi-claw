@@ -106,7 +106,8 @@ const api = {
       ipcRenderer.invoke('skills:toggleSkillStatus', id, enabled),
     removeSkill: (id: string) => ipcRenderer.invoke('skills:removeSkill', id),
     importSkillZip: () => ipcRenderer.invoke('skills:importSkillZip'),
-    syncFromRemote: () => ipcRenderer.invoke('skills:syncFromRemote'),
+    probeRemote: () => ipcRenderer.invoke('skills:probeRemote'),
+    installSkills: (ids: string[]) => ipcRenderer.invoke('skills:installSkills', ids),
     applyUpdates: (ids: string[]) => ipcRenderer.invoke('skills:applyUpdates', ids),
     getPendingUpdates: () => ipcRenderer.invoke('skills:getPendingUpdates')
   },
