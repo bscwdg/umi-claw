@@ -323,6 +323,21 @@ export class ConfigManager {
   }
 
   /**
+   * 只读返回 openclaw.json 的 channels 节点（网关真实运行时配置）。
+   *
+   * 与 getConfig().channels 不同：后者是 app.json 里 UI 表单的副本，只有 feishu 会被
+   * _syncOpenClawConfig 注入到 openclaw.json；插件型渠道（如扫码接入的企微机器人）只
+   * 存在于 openclaw.json。文件缺失/损坏/BOM 时返回空对象，绝不抛错。
+   */
+  getOpenClawChannels(): Record<string, Record<string, unknown>> {
+    const cfg = this._readOpenClawConfig(null, (e) =>
+      console.warn('[ConfigManager] 读取 openclaw.json channels 失败:', e)
+    )
+    const channels = cfg?.channels
+    return channels && typeof channels === 'object' ? channels : {}
+  }
+
+  /**
    * 同步 openclaw.json，供启动流程在 spawn 前调用，确保凭证/模型/渠道是最新的。
    * 内部等价于 _syncOpenClawConfig，对外暴露一个稳定入口，避免 clawManager 重复实现。
    */
