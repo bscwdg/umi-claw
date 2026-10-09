@@ -34,6 +34,14 @@ export const openClawPaths = {
   openClawConfig: (dataDir: string) =>
     join(dataDir, 'config', '.openclaw', 'openclaw.json'),
 
+  /**
+   * 插件在 OpenClaw 状态目录下的私有数据目录（config/.openclaw/<pluginId>/）。
+   * 插件用 `resolveStateDir()/openclaw-weixin` 这类路径存登录态，而 resolveStateDir()
+   * 取 HOME/.openclaw —— 网关的 HOME 被设为 config/，因此落点就在这里。
+   */
+  pluginStateDir: (dataDir: string, pluginId: string) =>
+    join(dataDir, 'config', '.openclaw', pluginId),
+
   /** 便携式技能目录（config/.openclaw/skills/） */
   portableSkillsDir: (dataDir: string) =>
     join(dataDir, 'config', '.openclaw', 'skills'),
