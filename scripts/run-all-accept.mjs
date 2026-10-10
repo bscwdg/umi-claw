@@ -17,6 +17,7 @@ const repoRoot = join(here, '..')
 const ACCEPT = [
   ['db-worker', 'test/db-worker.accept.mjs'],
   ['gateway', 'test/gateway.accept.mjs'],
+  ['maintenance', 'test/claw-maintenance.accept.mjs'],
   ['work', 'test/work.accept.mjs'],
   ['record', 'test/record.accept.mjs'],
   ['context', 'test/context.accept.mjs'],
