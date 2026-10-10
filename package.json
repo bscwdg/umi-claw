@@ -17,6 +17,7 @@
     "accept:db": "node test/db-worker.accept.mjs",
     "accept:project": "node test/project.accept.mjs",
     "accept:business": "node test/business.accept.mjs",
+    "accept:maintenance": "node test/claw-maintenance.accept.mjs",
     "accept:knowledge": "node test/knowledge.accept.mjs",
     "accept:context": "node test/context.accept.mjs",
     "accept:gateway": "node test/gateway.accept.mjs",

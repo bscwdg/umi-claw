@@ -12,7 +12,7 @@ import {
 } from 'electron'
 import { join, parse, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { ClawManager } from './clawManager'
+import { ClawManager, decideRollback } from './clawManager'
 import { ConfigManager } from './configManager'
 import { SkillSyncService } from './skillSyncService'
 import { DownloadManager, type DownloadProgress } from './downloadManager'
@@ -885,35 +885,108 @@ function registerIpcHandlers(): void {
       await clawManager.stop()
     }
     const result = await downloadManager.updateOpenClaw(options)
+    /** 探针跑完后网关是否已经处于运行中（避免下方再 start 一次） */
+    let gatewayRunning = false
     if (result.success) {
+      // 回滚快照里只有二进制（node_modules / lock / npm），**没有数据库**。
+      // 所以先量一遍各库的 schema 版本，doctor 跑完再量一遍：变了就说明数据
+      // 已被迁移，此后回滚旧二进制会让它读不了新库。
+      const before = await clawManager.readSchemaVersions()
+
+      // doctor 只作参考，不再单独决定回滚：它在完成 schema 迁移**之后**，
+      // 仍可能因为与迁移无关的检查（插件白名单过期、memory provider 没配 key 等）
+      // 非 0 退出。拿它的退出码当回滚判据，会把迁移其实成功、版本完全可用的新包误回滚。
+      // （状态库独占由 runDoctorFix 内部保证：先清残留网关，命中争用再重试一次。）
       const doctor = await clawManager.runDoctorFix()
+      const after = await clawManager.readSchemaVersions()
+      // 比的是「变没变」而不是绝对值，所以半迁移（state 升了、agent 没升）也能检出
+      const dataMigrated = JSON.stringify(before) !== JSON.stringify(after)
       if (!doctor.success) {
-        // 对齐 OpenClaw v2026.9.1：更新后 Doctor 失败 → 自动回滚 npm 候选版本，
-        // 不把迁移不过去的新版本留在用户环境里；快照缺失（回滚不可用）才降级为警告。
+        result.warning =
+          `数据库迁移（doctor --fix）未正常结束：${doctor.error || '未知错误'}；` +
+          '已改用实际启动校验判断新版本是否可用'
+      }
+
+      // 真判据：用新版本实际启动一次，看它能不能真的起来。
+      // 探针无持久化副作用 —— 网关遇到旧 schema 是「拒绝启动」而非自己去迁移。
+      const probe = await clawManager.probeStartup(() =>
+        getMarketingGatewayClient()
+          .getStatus()
+          .then((s) => s.ready)
+      )
+
+      // 回滚是单向的（_restoreOpenClawSnapshot 会先删掉新版本的 node_modules），
+      // 滚错就没有再滚回来的机会 —— 判据必须偏保守，详见 decideRollback 的注释。
+      const { rollback: canRollback, reason: rollbackRefusedReason } = decideRollback(
+        probe,
+        dataMigrated
+      )
+
+      if (probe.ok) {
+        // 新版本确实可用：候选版本正式生效，此前保留的回滚快照可以删除
+        // （清理失败仅留调试日志，残留快照不影响运行，下次更新会自动清理）。
+        downloadManager.discardOpenClawBackup()
+        gatewayRunning = true
+        if (!wasRunning) {
+          // 探针是为了验证才把网关拉起来的，更新前它并没在跑 —— 恢复原状
+          await clawManager.stop()
+          gatewayRunning = false
+        }
+      } else if (canRollback) {
+        // 拿到「进程自己退出」的正面证据，且数据没被动过 —— 回滚是干净的环境恢复。
+        // 快照缺失时降级为警告。注意探针此时已经把进程跑挂了，gatewayRunning 保持 false。
         const rollback = await downloadManager.restoreOpenClawBackup()
         if (rollback.restored) {
           result.success = false
           result.rolledBack = true
           result.currentVersion = rollback.version
           result.error =
-            `新版本数据库迁移（doctor --fix）失败，已自动回滚到 v${rollback.version ?? '原版本'}，` +
-            `旧环境可继续使用，可稍后重试更新。失败原因：${doctor.error || '未知错误'}`
+            `新版本无法启动（${probe.reason}），已自动回滚到 v${rollback.version ?? '原版本'}，` +
+            '旧环境可继续使用，可稍后重试更新。'
         } else {
-          result.warning =
-            'OpenClaw 已更新，但数据库迁移未成功：' + (doctor.error || '未知错误') +
-            '。下次启动网关时应用会自动重试迁移；如异常持续可重新执行更新。'
+          result.warning = [
+            result.warning,
+            `新版本无法启动（${probe.reason}），且回滚快照不可用，请重新执行更新`
+          ]
+            .filter(Boolean)
+            .join('；')
         }
+      } else if (probe.refused) {
+        // 进程自退，但回滚不安全（数据已迁移 / 数据待迁移）—— 只能保留新版本。
+        // 把补救动作说清楚：重新执行更新会再跑一次迁移。
+        result.warning = [
+          result.warning,
+          `新版本启动后自退（${probe.reason}）。${rollbackRefusedReason}，` +
+            '故保留新版本；请重新执行更新以再次尝试迁移，或点击「启动」触发自动修复。'
+        ]
+          .filter(Boolean)
+          .join('；')
       } else {
-        // 迁移通过：候选版本正式生效，此前保留的回滚快照可以删除
-        // （清理失败仅留调试日志，残留快照不影响运行，下次更新会自动清理）。
-        downloadManager.discardOpenClawBackup()
+        // 进程还在跑但迟迟没就绪：证据不足以判定新版本不可用，不贸然回滚。
+        result.warning = [
+          result.warning,
+          `新版本启动后未在预期时间内就绪（${probe.reason}），已保留新版本；如异常持续请重新执行更新`
+        ]
+          .filter(Boolean)
+          .join('；')
+        gatewayRunning = true
+        if (!wasRunning) {
+          await clawManager.stop()
+          gatewayRunning = false
+        }
       }
     }
-    // 更新成功或失败后已回滚，都恢复网关运行（旧版本回滚后重启可做到更新不中断工作）；
-    // 回滚也失败时环境不确定，不贸然重启。
-    if (wasRunning && (result.success || result.rolledBack)) {
+    // 恢复网关运行（旧版本回滚后重启可做到更新不中断工作）；
+    // 更新本身就没成功且没回滚时环境不确定，不贸然重启。
+    if (wasRunning && !gatewayRunning && (result.success || result.rolledBack)) {
       try {
-        await clawManager.start()
+        const restarted = await clawManager.start()
+        // start() 自己吞掉异常、以 {success:false} 返回，只 try/catch 的话
+        // 重启失败会完全静默（原实现就是这个毛病）。'已在运行中' 会返回
+        // success:false 但进程确实在跑，故以「是否真的有进程」为准，不匹配错误文案。
+        if (!restarted.success && !clawManager.getStatus().running) {
+          throw new Error(restarted.error || '未知原因')
+        }
       } catch (e: any) {
         // 网关重启失败不改变更新结果本身，附加警告由 UI 展示
         const restartWarning = `网关重启失败：${e.message}`
@@ -1428,7 +1501,7 @@ app.whenReady().then(() => {
 
   configManager = new ConfigManager()
   skillSyncService = new SkillSyncService(configManager)
-  clawManager = new ClawManager(configManager)
+  clawManager = new ClawManager(configManager, app.isPackaged ? join(process.resourcesPath, 'resources') : join(app.getAppPath(), 'resources'))
   downloadManager = new DownloadManager(configManager)
   channelManager =
     new ChannelManager(
