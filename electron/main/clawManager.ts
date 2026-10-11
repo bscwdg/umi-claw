@@ -173,6 +173,15 @@ export class ClawManager extends EventEmitter {
   private healthyResetTimer?: ReturnType<typeof setTimeout>
   // probeStartup 进行中：期间禁止退出码 78 触发自动 doctor，决策权交给探针调用方
   private probeInFlight = false
+  /**
+   * 进行中的启动 Promise：并发 start() 归并到同一次 spawn。
+   * 旧实现在「检查 this.process」与「真正 spawn」之间隔着多个 await，
+   * 更新探针与退出码 78 自愈同时启动时两边都会 spawn，先 spawn 成功的
+   * 句柄还会被后退出者的 exit 处理清掉 —— 网关实际在跑，App 却显示已停止。
+   */
+  private startInFlight: Promise<{ success: boolean; error?: string; warning?: string }> | null = null
+  /** 进行中的 doctor：并发调用（更新流程 / 退出码 78 自愈）共享同一次执行，绝不并发迁移同一状态库 */
+  private doctorInFlight: Promise<{ success: boolean; output?: string; error?: string }> | null = null
   /** resources/ 根路径（dev/打包双路径，定位 list-node-starts.ps1）；可选 */
   private resourcesRoot?: string
 
@@ -267,12 +276,27 @@ export class ClawManager extends EventEmitter {
     }
   }
 
+  /**
+   * 启动网关（可重入）：已在运行 / 启动在途时直接归并，绝不 spawn 第二个。
+   * 真正的 spawn 在 _spawnGateway，同一时刻只允许一个 in-flight。
+   */
   async start(): Promise<{ success: boolean; error?: string; warning?: string }> {
-    console.log('启动 OpenClaw...', new Date().toISOString())
-
     if (this.process) {
       return { success: false, error: 'OpenClaw 已在运行中' }
     }
+    if (this.startInFlight) {
+      console.log('启动已在进行中，归并到同一次启动')
+      return this.startInFlight
+    }
+    const inFlight = this._spawnGateway().finally(() => {
+      if (this.startInFlight === inFlight) this.startInFlight = null
+    })
+    this.startInFlight = inFlight
+    return inFlight
+  }
+
+  private async _spawnGateway(): Promise<{ success: boolean; error?: string; warning?: string }> {
+    console.log('启动 OpenClaw...', new Date().toISOString())
 
     this.maintenanceMarkerSeen = false
 
@@ -371,7 +395,7 @@ export class ClawManager extends EventEmitter {
       })
 
       this.startedAt = Date.now()
-      this._setupProcessEvents()
+      this._setupProcessEvents(this.process!)
       this.emit('statusChange', true, this.port)
       if (this.healthyResetTimer) clearTimeout(this.healthyResetTimer)
       this.healthyResetTimer = setTimeout(() => {
@@ -389,6 +413,11 @@ export class ClawManager extends EventEmitter {
     if (this.healthyResetTimer) {
       clearTimeout(this.healthyResetTimer)
       this.healthyResetTimer = undefined
+    }
+    // 启动在途（ghost 清理 / 配置同步的 await 窗口）时先等它落定，
+    // 否则会漏掉刚 spawn 的网关，留下占用状态目录的孤儿。
+    if (this.startInFlight) {
+      await this.startInFlight.catch(() => undefined)
     }
     if (!this.process) return { success: true }
     if (this.isStopping) return { success: true }
@@ -715,6 +744,22 @@ export class ClawManager extends EventEmitter {
   async runDoctorFix(
     timeoutMs = 20 * 60 * 1000
   ): Promise<{ success: boolean; output?: string; error?: string }> {
+    // 单飞：更新流程的 doctor 与退出码 78 自愈的 doctor 可能同时触发，
+    // 两个 doctor 并发迁移同一批 SQLite 正是半迁移死局的来源。后来者复用结果。
+    if (this.doctorInFlight) {
+      this._addLog('已有 doctor --fix 在执行，复用其结果（不再并发启动第二个）', 'system')
+      return this.doctorInFlight
+    }
+    const inFlight = this._runDoctorFixLocked(timeoutMs).finally(() => {
+      if (this.doctorInFlight === inFlight) this.doctorInFlight = null
+    })
+    this.doctorInFlight = inFlight
+    return inFlight
+  }
+
+  private async _runDoctorFixLocked(
+    timeoutMs: number
+  ): Promise<{ success: boolean; output?: string; error?: string }> {
     const dataDir = this.configManager.getDataDir()
     const nodePath = this.configManager.getNodePath()
     const clawJsPath = openClawPaths.clawJs(dataDir)
@@ -838,7 +883,9 @@ export class ClawManager extends EventEmitter {
    */
   async probeStartup(
     readyProbe: () => Promise<boolean>,
-    budgetMs = 150000,
+    // 实测缺插件的冷启动要 ~200s（bootstrap 内补装尝试就占 ~163s），
+    // 150s 会把「其实在正常启动」误判成证据不足。正常收敛后的启动只需 30~60s。
+    budgetMs = 240000,
     pollMs = 1000
   ): Promise<StartupProbeResult> {
     const started = await this.start()
@@ -933,10 +980,16 @@ export class ClawManager extends EventEmitter {
     }
   }
 
-  private _setupProcessEvents(): void {
-    if (!this.process) return
+  /**
+   * 为指定网关子进程挂事件。事件一律按「进程身份」归属：只有当前跟踪的进程
+   * （this.process === proc）才允许清空句柄 / 触发自愈。旧实例（双启动竞态中
+   * 先 spawn 的那个）退出时不再会把新实例的句柄误清成「已停止」。
+   * 无参时绑定当前 this.process（兼容直接赋值后挂事件的用法与验收测试）。
+   */
+  private _setupProcessEvents(proc: ChildProcess | null = this.process): void {
+    if (!proc) return
 
-    this.process.stdout?.on('data', (data: Buffer) => {
+    proc.stdout?.on('data', (data: Buffer) => {
       const rawChunk = data.toString()
 
       const lines = rawChunk.split('\n').filter(Boolean)
@@ -946,27 +999,41 @@ export class ClawManager extends EventEmitter {
       })
     })
 
-    this.process.stderr?.on('data', (data: Buffer) => {
+    proc.stderr?.on('data', (data: Buffer) => {
       const lines = data.toString().split('\n').filter(Boolean)
       lines.forEach((line) => {
         this._addLog(line, 'stderr')
         this.emit('log', line, 'stderr')
-        if (/schema migration required|maintenance_required|run openclaw doctor --fix/i.test(line)) {
+        // 旧实例输出的迁移提示不能污染当前实例的判断
+        if (
+          this.process === proc &&
+          /schema migration required|maintenance_required|run openclaw doctor --fix/i.test(line)
+        ) {
           this.maintenanceMarkerSeen = true
         }
       })
     })
 
-    this.process.on('exit', (code, signal) => {
-      this._addLog(`OpenClaw 进程退出 (code=${code}, signal=${signal})`, 'system')
-      if (this.process) {
+    proc.on('exit', (code, signal) => {
+      const isTracked = this.process === proc
+      this._addLog(
+        `OpenClaw 进程退出 (code=${code}, signal=${signal}${isTracked ? '' : '，旧实例'})`,
+        'system'
+      )
+      if (isTracked) {
         this.process = null
         this.startedAt = undefined
         this.emit('statusChange', false)
       }
       // 退出码 78（EX_CONFIG）或本生命周期内出现过迁移提示：自动 doctor --fix 后重启，每次启动最多一次
       const needsMaintenance =
-        code === 78 || (typeof code === 'number' && code !== 0 && this.maintenanceMarkerSeen)
+        isTracked &&
+        (code === 78 || (typeof code === 'number' && code !== 0 && this.maintenanceMarkerSeen))
+      if (!isTracked) {
+        // 旧实例退出：不碰当前句柄、不触发自愈，只留一行可读日志
+        this._addLog('检测到旧 OpenClaw 实例退出，已忽略（不影响当前实例）', 'system')
+        return
+      }
       if (needsMaintenance) {
         // 探针期间决策权归 probeStartup 的调用方（回滚 / 保留由它定），
         // 这里不要插一轮 doctor，否则会和探针抢状态库、并拖长更新流程。
@@ -986,10 +1053,10 @@ export class ClawManager extends EventEmitter {
       }
     })
 
-    this.process.on('error', (err) => {
+    proc.on('error', (err) => {
       this._addLog(`进程错误: ${err.message}`, 'stderr')
       this.emit('log', `进程错误: ${err.message}`, 'stderr')
-      if (this.process) {
+      if (this.process === proc) {
         this.process = null
         this.startedAt = undefined
         this.emit('statusChange', false)
