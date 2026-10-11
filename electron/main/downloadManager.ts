@@ -570,6 +570,13 @@ export class DownloadManager extends EventEmitter {
       }
       await this._smokeTestOpenClaw(candidate.openClawVersion)
 
+      // 官方插件/状态收敛：doctor 修复 + 按新核心重装全部受管插件。
+      // 这是旧更新链路缺失的关键一步 —— 只换核心时，.openclaw/npm/projects 里
+      // 与新核心不匹配或缺包的插件会让 doctor 退 1、网关冷启动卡几分钟补装后
+      // degraded 运行。先收敛，再做启动探针。
+      this._progress('装配插件', '正在收敛已安装插件与更新遗留状态（openclaw update repair）...', 87)
+      const repairReady = await this._runUpdateRepair(useMirror)
+
       // 更新核心后同步刷新受管微信插件，保证渠道登录持续可用。
       const pluginReady = await this._installWeixinChannelPlugin(useMirror, true)
       await this._installBuiltinSkills()
@@ -583,6 +590,11 @@ export class DownloadManager extends EventEmitter {
       const warnings: string[] = []
       if (!pluginReady) {
         warnings.push('微信渠道插件刷新未完成，将在首次扫码登录时自动补装')
+      }
+      if (!repairReady) {
+        warnings.push(
+          'OpenClaw 插件收敛（update repair）未完成，缺失插件可能在首次启动时延迟补装；可稍后重试更新'
+        )
       }
       this._progress(
         '完成',
@@ -625,9 +637,18 @@ export class DownloadManager extends EventEmitter {
   }
 
   /**
-   * 更新前快照：把核心 node_modules、package-lock.json 与受管插件根目录
-   * 整体 rename 到 *.update-backup（同卷改名瞬时完成）。
-   * 若上次更新异常中断残留了备份而 live 缺失，则直接复用该备份作为回滚点。
+   * 更新前快照：把核心 node_modules 与 package-lock.json rename 到
+   * *.update-backup（同卷改名瞬时完成）。
+   *
+   * **受管插件根（.openclaw/npm）不再纳入快照**。它是用户数据而不是核心二进制：
+   * 旧实现把整个 npm 根挪走，装完新核心只装回微信一个插件，其余插件
+   * （feishu/wecom/deepseek/…）只能靠 OpenClaw 延迟收敛 —— 一旦收敛没跑，
+   * doctor 就会带着一堆 missing-package-dir 警告退 1，网关冷启动还要花几分钟
+   * 尝试补装后 degraded 运行。插件改由装完核心后的 `openclaw update repair`
+   * 显式收敛（见 _runUpdateRepair），回滚也只回滚核心、不动插件目录。
+   *
+   * managedRoot* 字段保留：仅用于在成功后识别并清理旧版本逻辑遗留的
+   * npm.update-backup 残留（见 _discardOpenClawSnapshot）。
    */
   private async _snapshotOpenClawForUpdate(): Promise<OpenClawUpdateSnapshot> {
     const dataDir = this.configManager.getDataDir()
@@ -678,7 +699,7 @@ export class DownloadManager extends EventEmitter {
       managedRootBackup,
       hasCoreModules: await moveDirToBackup(coreModules, coreModulesBackup),
       hasLockFile: moveFileToBackup(lockFile, lockFileBackup),
-      hasManagedRoot: await moveDirToBackup(managedRoot, managedRootBackup)
+      hasManagedRoot: false
     }
     this._writeDebugLog(
       `[UpdateSnapshot] core=${snapshot.hasCoreModules}, lock=${snapshot.hasLockFile}, ` +
@@ -737,12 +758,9 @@ export class DownloadManager extends EventEmitter {
     const lockFile = snapshot?.lockFile ?? join(openClawDir, 'package-lock.json')
     const lockFileBackup =
       snapshot?.lockFileBackup ?? join(openClawDir, 'package-lock.update-backup.json')
-    const managedRoot =
-      snapshot?.managedRoot ?? join(openClawPaths.configDir(dataDir), 'npm')
-    const managedRootBackup =
-      snapshot?.managedRootBackup ?? join(openClawPaths.configDir(dataDir), 'npm.update-backup')
-
-    if (![coreModulesBackup, lockFileBackup, managedRootBackup].some(existsSync)) {
+    // 只有核心 / lock 快照在时回滚才有意义；受管插件根已不再纳入快照，
+    // 单凭旧逻辑遗留的 npm.update-backup 不能触发「回滚成功」的结论。
+    if (![coreModulesBackup, lockFileBackup].some(existsSync)) {
       return { restored: false, error: '未找到更新前的版本快照' }
     }
 
@@ -757,7 +775,6 @@ export class DownloadManager extends EventEmitter {
       }
       await restoreOne(coreModules, coreModulesBackup, 'rollback-core')
       await restoreOne(lockFile, lockFileBackup, 'rollback-lock')
-      await restoreOne(managedRoot, managedRootBackup, 'rollback-managed')
 
       const info = await this.checkEnvironment()
       if (!info.openClawVersion) {
@@ -807,6 +824,77 @@ export class DownloadManager extends EventEmitter {
       const reason = String(e?.message || e).split('\n')[0]
       throw new Error(`候选版本冒烟运行失败（openclaw --version）：${reason}`)
     }
+  }
+
+  /**
+   * 执行官方 `openclaw update repair --yes --json --no-restart`：
+   * 收敛半途而废的更新、跑 doctor 修复、按新核心重装全部受管插件。
+   *
+   * 必须在「新核心已装好、网关未启动」的窗口执行：repair 自身会尝试停启它
+   * 接管的服务，--no-restart 让它不要自己拉起网关（生命周期由 App 管理）。
+   *
+   * 网络策略与微信插件安装一致：国内镜像先行，失败再回落官方源。
+   * 返回 false 只作警告，不直接判更新失败 —— 最终可用性仍由启动探针裁决。
+   */
+  private async _runUpdateRepair(useMirror: boolean): Promise<boolean> {
+    const dataDir = this.configManager.getDataDir()
+    const nodePath = this.configManager.getNodePath()
+    const clawJsPath = openClawPaths.clawJs(dataDir)
+
+    if (!existsSync(nodePath) || !existsSync(clawJsPath)) {
+      this._writeDebugLog('[UpdateRepair] Node 或 OpenClaw 尚未就绪，跳过插件收敛')
+      return false
+    }
+
+    // repair 内的 doctor 阶段必须独占状态库。IPC 层虽然已先 clawManager.stop()，
+    // 但网关派生的 worker 可能残留占库 —— 与回滚路径同一手段，按便携 Node
+    // 可执行路径清干净（注册表内常驻进程先走优雅停止）。
+    await this._stopRuntimeProcesses()
+
+    const nodeBinDir = dirname(nodePath)
+    const configDir = join(dataDir, 'config')
+    const registries = useMirror
+      ? [...DOMESTIC_MIRRORS.map((m) => m.url), OFFICIAL_REGISTRY.url]
+      : [OFFICIAL_REGISTRY.url]
+
+    for (const registry of registries) {
+      const env = {
+        ...process.env,
+        PATH: `${nodeBinDir}${pathDelimiter}${process.env.PATH || ''}`,
+        HOME: configDir,
+        USERPROFILE: configDir,
+        OPENCLAW_CONFIG_DIR: join(configDir, '.openclaw'),
+        OPENCLAW_DATA_DIR: join(dataDir, 'data'),
+        npm_config_registry: registry,
+        NODE_ENV: 'production'
+      }
+      this._writeDebugLog(`[UpdateRepair] 执行 openclaw update repair (registry=${registry})`)
+      try {
+        const { stdout, stderr } = await execFileAsync(
+          nodePath,
+          [clawJsPath, 'update', 'repair', '--yes', '--json', '--no-restart'],
+          {
+            cwd: openClawPaths.installDir(dataDir),
+            env,
+            // 实测完整收敛（doctor ~10min + 插件重装 ~3min + 配置收敛 ~15min）
+            // 可能接近 30 分钟。超时只是兜底，绝不能中途杀掉正在迁移/重装的进程，
+            // 否则非 0 退出还会触发镜像源重试、再跑一遍完整流程。
+            timeout: 40 * 60 * 1000,
+            maxBuffer: 16 * 1024 * 1024
+          }
+        )
+        const tail = (stdout || '').trim().split(/\r?\n/).slice(-3).join(' | ')
+        this._writeDebugLog(`[UpdateRepair] 收敛完成 (registry=${registry})：${tail || '无输出'}`)
+        if (stderr) this._writeDebugLog(`[UpdateRepair] stderr: ${stderr.trim().slice(0, 2000)}`)
+        return true
+      } catch (e: any) {
+        const reason = String(e?.message || e).split('\n')[0]
+        this._writeDebugLog(
+          `[UpdateRepair] 失败 (registry=${registry}, code=${e?.code ?? 'n/a'}): ${reason}`
+        )
+      }
+    }
+    return false
   }
 
   /**

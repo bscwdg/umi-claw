@@ -146,6 +146,14 @@ function killAllTerminalSessions() {
 let closeConfirmPending = false
 
 /**
+ * OpenClaw 更新在途标记。更新要独占状态库（npm 安装 / update repair /
+ * doctor 迁移 / 启动探针都不能与外部启动并发），期间手动启动、重启与
+ * 网关客户端的自动拉起一律先挡下，避免再出现「doctor 跑到一半网关抢锁」。
+ */
+let envUpdateInFlight = false
+const UPDATE_IN_PROGRESS_ERROR = 'OpenClaw 正在更新，请等待更新完成后再启动'
+
+/**
  * 统一的应用退出流程：标记退出、清理终端会话并停止 OpenClaw
  */
 function quitApp(): void {
@@ -397,12 +405,18 @@ function registerIpcHandlers(): void {
 
   // OpenClaw 进程管理
   ipcMain.handle('claw:start', async () => {
+    if (envUpdateInFlight) {
+      return { success: false, error: UPDATE_IN_PROGRESS_ERROR }
+    }
     return clawManager.start()
   })
   ipcMain.handle('claw:stop', async () => {
     return clawManager.stop()
   })
   ipcMain.handle('claw:restart', async () => {
+    if (envUpdateInFlight) {
+      return { success: false, error: UPDATE_IN_PROGRESS_ERROR }
+    }
     await clawManager.stop()
     return clawManager.start()
   })
@@ -443,12 +457,16 @@ function registerIpcHandlers(): void {
   ipcMain.handle('env:init', async (_e, options) => {
     return downloadManager.initEnvironment(options)
   })
-  ipcMain.handle('env:update', async (_e, options) => {
-    // 更新期间状态库不能被占用：先停网关，更新完执行 schema 迁移，再按需重启
+  const envUpdateImpl = async (options: { useMirror?: boolean }) => {
+    // 更新期间状态库不能被占用：先停网关，然后 update repair 收敛插件、
+    // doctor 迁移 schema、启动探针裁决，最后按需重启（全程由 envUpdateInFlight 闸住外部启动）
     const wasRunning = clawManager.getStatus().running
     if (wasRunning) {
       await clawManager.stop()
     }
+    // stop() 只收直接子进程，网关派生的 worker 与 DB 应用级租约可能残留；
+    // update repair 内的 doctor 必须独占状态库，先清残留进程与僵尸租约。
+    await clawManager.prepareForDoctor()
     const result = await downloadManager.updateOpenClaw(options)
     /** 探针跑完后网关是否已经处于运行中（避免下方再 start 一次） */
     let gatewayRunning = false
@@ -559,6 +577,16 @@ function registerIpcHandlers(): void {
       }
     }
     return result
+  }
+  ipcMain.handle('env:update', async (_e, options) => {
+    // 全程闸住外部启动（claw:start/restart、网关客户端自动拉起），
+    // 防止 doctor 迁移 / update repair 与手动启动抢同一个状态库
+    envUpdateInFlight = true
+    try {
+      return await envUpdateImpl(options)
+    } finally {
+      envUpdateInFlight = false
+    }
   })
   ipcMain.handle('env:checkLatest', async (_e, options) => {
     return downloadManager.checkLatestVersion(options)
