@@ -335,6 +335,92 @@ await rec.check(
   }
 )
 
+await rec.check(
+  'doctor-single-flight',
+  '并发两次 runDoctorFix → 只执行一次迁移，两边复用同一结果（杜绝双 doctor 并发改库）',
+  async () => {
+    const sandbox = await makeDoctorSandbox()
+    const cm = new ClawManager({
+      getDataDir: () => sandbox,
+      getNodePath: () => process.execPath
+    })
+    cm.prepareForDoctor = async () => {}
+    let calls = 0
+    cm._runDoctorOnce = async () => {
+      calls += 1
+      await sleep(50)
+      return { success: true, output: 'ok' }
+    }
+    const [r1, r2] = await Promise.all([cm.runDoctorFix(), cm.runDoctorFix()])
+    assertEq(calls, 1, '同一时刻只允许一个 doctor 落库')
+    assertEq(r1.success, true, '调用方 1 拿到结果')
+    assertEq(r2.success, true, '调用方 2 复用同一结果')
+    // 上一轮结束后再调用应能重新执行（单飞是作用域内归并，不是永久闩锁）
+    await cm.runDoctorFix()
+    assertEq(calls, 2, '上一轮结束后应允许新一轮 doctor')
+    return `并发归并：_runDoctorOnce 共 ${calls} 次`
+  }
+)
+
+// ── 8b. 退出事件按进程身份归属（缺陷：双启动竞态把成功实例的句柄清成「已停止」）──
+
+await rec.check(
+  'exit-event-process-identity',
+  '旧实例退出不清空当前实例句柄、不触发自愈；当前实例退出才更新状态并自愈',
+  async () => {
+    const { cm, doctor, fake } = makeClaw()
+
+    // 模拟竞态：先 spawn 的实例 A，句柄被后 spawn 的实例 B 覆盖（旧代码会发生）
+    const procA = new FakeProcess()
+    cm.process = procA
+    cm._setupProcessEvents(procA)
+    const procB = new FakeProcess()
+    cm.process = procB
+    cm._setupProcessEvents(procB)
+
+    // 旧实例 A 退出（比如它发现状态目录被占而退 78）：
+    // 绝不能清掉 B 的句柄，也不能替 B 触发一轮 doctor
+    procA.emit('exit', 78, null)
+    await sleep(120)
+    assertEq(cm.process, procB, '旧实例退出不得清空当前实例句柄')
+    assertEq(doctor.calls, 0, '旧实例的退出码 78 不得触发自愈')
+
+    // 当前实例 B 自己退 78：照常自愈
+    procB.emit('exit', 78, null)
+    await sleep(150)
+    assert(!!cm.process && cm.process !== procB, '当前实例退出后应经 doctor 重启出新实例')
+    assertEq(doctor.calls, 1, '当前实例退 78 应触发一次 doctor')
+    assertEq(fake.startCalls, 1, 'doctor 后应重启一次')
+    return `doctor ${doctor.calls} 次，句柄归属正确`
+  }
+)
+
+// ── 8c. start() 并发归并（缺陷：检查与 spawn 之间的 await 窗口被双重进入）──────
+
+await rec.check(
+  'start-merge-concurrent',
+  '并发调用 start() 只真正 spawn 一次，所有调用方拿到同一次启动结果',
+  async () => {
+    const cm = new ClawManager({ getDataDir: () => tmpDir })
+    let spawns = 0
+    cm._spawnGateway = async function () {
+      spawns += 1
+      await sleep(60) // 模拟 ghost 清理 / 配置同步 / 写 checkpoint 的 await 窗口
+      this.process = new FakeProcess()
+      return { success: true }
+    }
+    const results = await Promise.all([cm.start(), cm.start(), cm.start()])
+    assertEq(spawns, 1, '并发启动必须归并到一次 spawn')
+    assertEq(results.filter((r) => r.success).length, 3, '三个调用方都拿到成功结果')
+
+    // 启动落定后再调用：进程已在跑，返回「已在运行中」而不是再 spawn
+    const again = await cm.start()
+    assertEq(again.success, false, '已在运行应返回冲突提示')
+    assertEq(spawns, 1, '不能再 spawn 第二个网关')
+    return `3 路并发仅 spawn ${spawns} 次`
+  }
+)
+
 // ── 9. 回滚决策：这条判断出过一次把环境焊死的错，逐格盖住 ──────────────────────
 //
 // 事故：最初只拿「本次 doctor 有没有改 schema」当判据。环境若已被上一次失败迁到
