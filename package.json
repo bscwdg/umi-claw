@@ -11,7 +11,8 @@
     "build:mac": "npm run build && electron-builder --mac",
     "build:linux": "npm run build && electron-builder --linux",
     "build:all": "npm run build && electron-builder -mwl",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "accept:config-writer": "esbuild electron/main/openClawConfigWriter.ts --bundle --platform=node --format=esm --target=node20 --outfile=test/.tmp/openclaw-config-writer.mjs && node --test test/openclaw-config-writer.accept.mjs"
   },
   "dependencies": {
     "@vueuse/core": "^10.9.0",

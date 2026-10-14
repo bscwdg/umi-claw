@@ -459,12 +459,29 @@ async function rereadDescription(skill: SkillInfo) {
 async function enableAll() {
   actionLoading.value = true;
   const disabledSkills = skills.value.filter((s) => !s.enabled);
-  for (const skill of disabledSkills) {
-    await window.api.skills.toggleSkillStatus(skill.id, true);
+  // toggle 现在失败会 reject（不再内部吞错）：必须逐个 try/catch，否则中途任一失败会
+  // 中断循环、后面的技能不切换；finally 保证 actionLoading 一定复位，不卡死转圈。
+  let okCount = 0;
+  let failCount = 0;
+  try {
+    for (const skill of disabledSkills) {
+      try {
+        await window.api.skills.toggleSkillStatus(skill.id, true);
+        okCount++;
+      } catch (e) {
+        failCount++;
+        console.error(`启用技能失败: ${skill.id}`, e);
+      }
+    }
+    await load();
+    if (failCount === 0) {
+      showToast(`已一键启用 ${okCount} 个本地技能`, "success");
+    } else {
+      showToast(`已启用 ${okCount} 个，${failCount} 个失败`, "error");
+    }
+  } finally {
+    actionLoading.value = false;
   }
-  await load();
-  showToast(`已一键启用 ${disabledSkills.length} 个本地技能`, "success");
-  actionLoading.value = false;
 }
 
 // 🟢 拉取云端技能：先只读探测，新技能弹窗勾选（默认全选）后才下载导入

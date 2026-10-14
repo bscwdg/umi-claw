@@ -482,8 +482,16 @@ async function save() {
   saving.value = true
   try {
     // 深拷贝脱掉 Vue 响应式 Proxy，否则 IPC 结构化克隆会报 "An object could not be cloned"
-    await window.api.obsidian.saveConfig(JSON.parse(JSON.stringify(cfg.value)))
-    showToast('配置已保存，重启 OpenClaw 后生效', 'success')
+    const res = await window.api.obsidian.saveConfig(JSON.parse(JSON.stringify(cfg.value)))
+    // app.json 落盘失败（硬失败，设置没写进去、重启即丢）优先于同步警告提示
+    if (res && res.appConfigSavedOk === false) {
+      showToast(`保存失败（app.json 未能写入）：${res.appConfigSaveError || '未知原因'}`, 'error')
+    } else if (res && res.openClawSyncOk === false) {
+      // 本地已存，但 Obsidian MCP 注入 openclaw.json 被官方 schema 拒绝：如实告知
+      showToast(`本地已保存，但 Obsidian MCP 注入未通过校验：${res.openClawSyncError || '未知原因'}。下次启动会自动尝试修复。`, 'error')
+    } else {
+      showToast('配置已保存，重启 OpenClaw 后生效', 'success')
+    }
   } catch (e: any) {
     showToast('保存失败：' + e.message, 'error')
   } finally {
@@ -496,9 +504,19 @@ async function rebuild() {
     showToast('请先选择 Vault 路径', 'error')
     return
   }
-  // 重建前自动保存配置，避免用户改了路径未保存导致 rebuildIndex 读到旧空值
+  // 重建前自动保存配置，避免用户改了路径未保存导致 rebuildIndex 读到旧空值。
+  // 注意：saveConfig 对同步失败/落盘失败是「返回标志不 reject」，不能只靠 catch——
+  // 落盘失败（appConfigSavedOk=false）必须中止重建（路径没存上，重建会读到旧空值）；
+  // 同步失败（openClawSyncOk=false）不阻断重建（MCP 注入未生效，下次启动 doctor 收敛）。
   try {
-    await window.api.obsidian.saveConfig(JSON.parse(JSON.stringify(cfg.value)))
+    const saveRes = await window.api.obsidian.saveConfig(JSON.parse(JSON.stringify(cfg.value)))
+    if (saveRes && saveRes.appConfigSavedOk === false) {
+      showToast('保存配置失败（app.json 未能写入），无法重建索引：' + (saveRes.appConfigSaveError || '未知原因'), 'error')
+      return
+    }
+    if (saveRes && saveRes.openClawSyncOk === false) {
+      showToast('配置已保存，但 Obsidian MCP 注入未通过校验（下次启动自动修复），继续重建索引', 'error')
+    }
   } catch (e: any) {
     showToast('保存配置失败，无法重建索引：' + e.message, 'error')
     return
