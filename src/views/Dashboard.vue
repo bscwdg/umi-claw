@@ -16,14 +16,17 @@
     <!-- Status Card -->
     <div class="status-card" :class="{ running: clawStore.running }">
       <div class="status-main">
-        <div class="status-icon">{{ clawStore.running ? '🟢' : '🔴' }}</div>
+        <div class="status-icon">{{ clawStore.running ? '🟢' : (clawStore.maintenance ? '🟡' : '🔴') }}</div>
         <div class="status-info">
           <div class="status-title">
-            OpenClaw {{ clawStore.running ? '运行中' : '已停止' }}
+            OpenClaw {{ clawStore.running ? '运行中' : (clawStore.maintenance ? '修复中' : '已停止') }}
           </div>
           <div class="status-sub text-muted text-sm">
             <template v-if="clawStore.running">
               PID: {{ clawStore.pid }} · 端口: {{ clawStore.port }} · 运行时长: {{ clawStore.uptime || '--' }}
+            </template>
+            <template v-else-if="clawStore.maintenance">
+              正在修复配置 / 迁移数据库（doctor --fix，可能需要数分钟）… 请稍候，网关修复完成会自动启动
             </template>
             <template v-else>
               服务未运行，点击「启动」开始使用

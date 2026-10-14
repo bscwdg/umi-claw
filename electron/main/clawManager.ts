@@ -23,6 +23,8 @@ export interface ClawStatus {
   port: number
   uptime?: number
   startedAt?: number
+  /** doctor --fix / 状态库迁移进行中（网关未起但非静止） */
+  maintenance?: boolean
 }
 
 export interface LogEntry {
@@ -182,6 +184,51 @@ export class ClawManager extends EventEmitter {
   private startInFlight: Promise<{ success: boolean; error?: string; warning?: string }> | null = null
   /** 进行中的 doctor：并发调用（更新流程 / 退出码 78 自愈）共享同一次执行，绝不并发迁移同一状态库 */
   private doctorInFlight: Promise<{ success: boolean; output?: string; error?: string }> | null = null
+  /**
+   * 维护模式互斥锁：覆盖「prepareForDoctor（杀残留进程+清僵尸租约）+ 跑 doctor」整个临界区。
+   * doctorInFlight 只挡住同时调 runDoctorFix 的并发，挡不住 index.ts 更新链路直接调 prepareForDoctor——
+   * 那路会在另一路 doctor 正在跑时 taskkill 掉它（doctor 进程与网关命令行特征相同），造成互相残杀、
+   * 状态库锁来回易手（holder 18032→7476），没有一路能跑完。所有需要独占状态库的入口统一走这把锁。
+   */
+  private maintenanceMutex: Promise<void> = Promise.resolve()
+  /** 维护模式进行中标记：供前端把「启动中」细化为「正在修复配置/迁移数据库」 */
+  private maintenanceActive = false
+
+  /**
+   * 维护模式是否进行中（杀残留进程 / doctor --fix / 状态库迁移）。
+   * 供 IPC 透到前端：doctor 阶段网关虽未起，但也不是静止，应显示「正在修复配置…」。
+   */
+  isMaintenanceActive(): boolean {
+    return this.maintenanceActive
+  }
+
+  /**
+   * 在维护互斥锁内执行 fn：同一时刻只有一路能「杀残留进程 + 跑 doctor」。
+   * 后来者在锁外排队（而不是并行杀进程），避免互相 taskkill。
+   * 锁内维护 maintenanceActive 标记，fn 结束（无论成败）即复位。
+   */
+  private _withMaintenanceLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = async (): Promise<T> => {
+      this.maintenanceActive = true
+      // 主动推一次状态：doctor 期间 running 不变、不触发 statusChange，
+      // 前端靠这次推送把「已停止」实时细化成「修复中」，避免以为卡死重复点击。
+      this.emit('statusChange', !!this.process, this.port)
+      try {
+        return await fn()
+      } finally {
+        this.maintenanceActive = false
+        this.emit('statusChange', !!this.process, this.port)
+      }
+    }
+    // 链式排队：把本次执行挂到上一把锁之后，无论上一把成败都继续（finally 语义）。
+    const result = this.maintenanceMutex.then(run, run)
+    // maintenanceMutex 只跟踪「锁是否空闲」，不关心 fn 的成败/返回值；吞掉 rejection 防止未处理。
+    this.maintenanceMutex = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
   /** resources/ 根路径（dev/打包双路径，定位 list-node-starts.ps1）；可选 */
   private resourcesRoot?: string
 
@@ -226,10 +273,17 @@ export class ClawManager extends EventEmitter {
     // 用 execFile 而不是 exec：整段脚本作为一个 argv 传进去，
     // 不经过 cmd.exe，省掉一层引号转义（PS 脚本里 -Filter 的双引号在 cmd 下会被吃掉）。
     // 脚本内部只用单引号，避免与 Node 在 Windows 上的 argv 引号处理打架。
+    //
+    // 关键：只杀「网关本体」，不能杀同特征的其他子命令进程。真实网关命令行是
+    //   node <clawJs> gateway --port ...
+    // 而 doctor（node <clawJs> doctor --fix）/ config patch（node <clawJs> config patch）
+    // 命令行同样含 clawJs 路径——不排除会把正在跑的 doctor / 用户手动开的维护进程
+    // 当僵尸网关 taskkill 掉（这正是并发 doctor 互相残杀、状态库锁来回易手的根源）。
+    // 判据收紧为「含 clawJs 且含 gateway 子命令」，显式排除 doctor / config patch。
     const script =
       `$n='${psNeedle}'; ` +
       `Get-CimInstance Win32_Process -Filter 'Name=''node.exe''' | ` +
-      `Where-Object { $_.CommandLine -and $_.CommandLine.Replace('\\','/').ToLower().Contains($n) } | ` +
+      `Where-Object { $cl=$_.CommandLine; if(-not $cl){$false}else{$cl=$cl.Replace('\\','/').ToLower(); $cl.Contains($n) -and $cl.Contains('gateway') -and -not $cl.Contains('doctor') -and -not $cl.Contains('config patch')} } | ` +
       `ForEach-Object { $_.ProcessId }`
 
     let stdout: string
@@ -326,16 +380,15 @@ export class ClawManager extends EventEmitter {
 
     // 启动前同步 openclaw.json：凭证、激活模型、渠道等以 configManager 为唯一真相源，
     // 避免此前在本类内重复实现（且曾用 p.id 取 OFFICIAL_MODEL_PRESETS 导致死分支）。
-    try {
-      this.configManager.syncOpenClawConfig()
-    } catch (err: any) {
-      return { success: false, error: `配置初始化失败: ${err.message}` }
-    }
-
     // 启动前主动修复受管插件的 openclaw peerDependency junction 链接。
     // OpenClaw 新版会审计每个插件目录下的 node_modules/openclaw 是否真实指向核心包（realpath 相等），
     // 否则报 missing-openclaw-peer-link 并拒绝启动。这里提前把链接补建好。
     // best-effort：在支持链接的卷（NTFS）上尽量把真实 junction 补好；失败不阻断启动（见下方 checkpoint 兜底）。
+    //
+    // 顺序说明：peer-link 修复 + checkpoint 必须在下方 doctor 闸门**之前**完成（两者均幂等）。
+    // 原因：checkpoint 的唯一作用是让 OpenClaw 跳过在 exFAT/FAT32/UNC/U 盘上会失败的 peer-link 审计，
+    // 而 doctor --fix 自身也做同样的插件收敛——若「不支持 junction 的卷 + 配置恰好非法」叠加，
+    // doctor 会在没有 checkpoint、链接也没补的情况下失败，把原本靠 checkpoint 能启动的场景拦下。
     const peerLinkWarning = await this._repairManagedPluginPeerLinks(dataDir)
     if (peerLinkWarning) {
       // 链接补建失败（多为 U 盘/exFAT 等不支持 junction 的卷）：
@@ -345,6 +398,38 @@ export class ClawManager extends EventEmitter {
     // 关键根治：直接写入启动迁移 checkpoint，让 OpenClaw 跳过会因 peer-link 失败而
     // 拒绝启动的审计。这对任何磁盘/任何文件系统（含 U 盘 exFAT/FAT32/UNC）都有效。
     await this._markStartupMigrationsComplete(dataDir)
+
+    // 启动前同步 openclaw.json：凭证、激活模型、渠道等以 configManager 为唯一真相源，
+    // 避免此前在本类内重复实现（且曾用 p.id 取 OFFICIAL_MODEL_PRESETS 导致死分支）。
+    // 写入一律走官方 config patch：被 schema 拒绝时绝不 spawn 网关（否则必 exit 78）。
+    let syncResult = await this.configManager.syncOpenClawConfig()
+    if (!syncResult.ok) {
+      // patch 被拒只说明「当前磁盘配置不被已安装版本接受」（上游退役键 / legacy 迁移
+      // 未收敛等）。doctor --fix 是官方唯一且幂等的收敛入口——正常配置上跑也无副作用，
+      // 所以这里**无条件**收敛一次再重试，而不去匹配 CLI 的英文报错文案（文案不是稳定
+      // 契约，上游改个措辞就会漏判）。只重试一次，仍失败即中止启动，绝不带病拉起网关。
+      this._addLog(
+        'openclaw.json 未通过官方校验，正在运行 doctor --fix 自动收敛（可能需要数分钟，期间网关暂不启动）...',
+        'system'
+      )
+      const doctor = await this.runDoctorFix()
+      if (doctor.success) {
+        // doctor --fix 就地收敛了磁盘上的 openclaw.json，但 ConfigManager 内存里的 this.config
+        // 仍是加载时的旧快照。先 reloadFromDisk 重读（doctor 不碰 app.json，重读是防御性刷新），
+        // 否则重试同步会基于旧快照重算 merge patch，把 doctor 刚修掉的退役键/旧结构重新写回去
+        //（doctor 白跑，下次启动再触发 78）。
+        syncResult = await this.configManager.syncOpenClawConfig({ reloadFromDisk: true })
+      } else {
+        return {
+          success: false,
+          error: `配置自动修复失败（doctor --fix 未成功）：${doctor.error || syncResult.error}`
+        }
+      }
+      if (!syncResult.ok) {
+        return { success: false, error: `openclaw.json 同步未通过官方校验，未启动网关：${syncResult.error}` }
+      }
+      this._addLog('doctor 收敛完成，openclaw.json 已通过官方校验，继续启动网关。', 'system')
+    }
 
     const commonEnv = buildOpenClawEnv(dataDir, nodePath, {
       PORT: String(this.port),
@@ -479,7 +564,10 @@ export class ClawManager extends EventEmitter {
       pid: this.process?.pid,
       port: currentPort,
       uptime: this.startedAt ? Date.now() - this.startedAt : undefined,
-      startedAt: this.startedAt
+      startedAt: this.startedAt,
+      // doctor --fix / 状态库迁移进行中：网关虽未起，但也不是静止，
+      // 前端据此把「启动中」细化为「正在修复配置…」，避免用户以为卡死重复点击。
+      maintenance: this.maintenanceActive
     }
   }
 
@@ -590,7 +678,25 @@ export class ClawManager extends EventEmitter {
    * 「An agent database is in use」退出，迁移半途而废，留下「state 库已迁移、
    * agent 库没迁移」的半迁移状态，新旧版本都起不来（dev 环境实测过）。
    */
+  /**
+   * 让 doctor 能进入维护模式：结束仍占着状态库的残留网关进程 + 清僵尸租约。
+   * 公开入口：在维护互斥锁内执行（供 index.ts 更新链路调用）。
+   * 与 _runDoctorFixLocked 内部的 _prepareForDoctorUnlocked 区分——后者已在锁内，
+   * 直接调无锁实现，避免重入死锁。
+   */
   async prepareForDoctor(): Promise<void> {
+    return this._withMaintenanceLock(() => this._prepareForDoctorUnlocked())
+  }
+
+  /**
+   * prepareForDoctor 的无锁实现：仅在已持有维护互斥锁的上下文里调用（_runDoctorFixLocked）。
+   *
+   * 便携目录下 `gateway stop` 不可用，doctor 必须独占状态库。而 stop() 只杀直接
+   * 子进程，网关派生出来的 worker 会活下来继续占着 agent 库 —— doctor 只能报
+   * 「An agent database is in use」退出，迁移半途而废，留下「state 库已迁移、
+   * agent 库没迁移」的半迁移状态，新旧版本都起不来（dev 环境实测过）。
+   */
+  private async _prepareForDoctorUnlocked(): Promise<void> {
     const dataDir = this.configManager.getDataDir()
     await this._killGhostProcesses(dataDir)
     // 杀进程只释放 OS 文件句柄；agent_database_leases 是 **DB 记录**的应用级租约，
@@ -750,7 +856,10 @@ export class ClawManager extends EventEmitter {
       this._addLog('已有 doctor --fix 在执行，复用其结果（不再并发启动第二个）', 'system')
       return this.doctorInFlight
     }
-    const inFlight = this._runDoctorFixLocked(timeoutMs).finally(() => {
+    // 整个「杀残留进程 + 跑 doctor」都在维护互斥锁内：任何一路执行期间，
+    // 另一路（含 index.ts 更新链路直接调 prepareForDoctor）只能在锁外排队，
+    // 不会把正在跑的 doctor 当僵尸网关 taskkill 掉。
+    const inFlight = this._withMaintenanceLock(() => this._runDoctorFixLocked(timeoutMs)).finally(() => {
       if (this.doctorInFlight === inFlight) this.doctorInFlight = null
     })
     this.doctorInFlight = inFlight
@@ -771,7 +880,7 @@ export class ClawManager extends EventEmitter {
       BONJOUR_DISABLE: '1'
     })
 
-    await this.prepareForDoctor()
+    await this._prepareForDoctorUnlocked()
     const first = await this._runDoctorOnce(env, timeoutMs)
     if (first.success || !DOCTOR_CONTENTION_RE.test(first.output || '')) return first
 
@@ -779,7 +888,7 @@ export class ClawManager extends EventEmitter {
     // 上一轮 doctor 没退干净的 worker）。明确命中争用提示时再清一次重试，
     // 而不是把半迁移状态丢给探针 —— 探针只会把它误读成「新版本起不来」。
     this._addLog('doctor 报告状态库被占用，清理残留进程后重试一次...', 'system')
-    await this.prepareForDoctor()
+    await this._prepareForDoctorUnlocked()
     return this._runDoctorOnce(env, timeoutMs)
   }
 

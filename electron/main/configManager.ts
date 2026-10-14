@@ -5,6 +5,7 @@ import AdmZip from 'adm-zip'
 import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawProviderRefs, isReservedOpenClawProviderKey } from './modelConfig'
 import { ModelPresetService, type PresetInfo, type RefreshResult } from './modelPresets'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
+import { applyOpenClawConfigPatch, buildJsonMergePatch, type OpenClawPatchResult } from './openClawConfigWriter'
 import type { ObsidianConfig } from './obsidian/types'
 
 /**
@@ -266,8 +267,13 @@ export class ConfigManager {
     // 加载配置
     this.config = this._load()
 
-    // 初始同步 OpenClaw 配置
-    this._syncOpenClawConfig()
+    // 初始同步 OpenClaw 配置（走官方 config patch，需运行时已安装；未安装则跳过，
+    // env 初始化完成后由首次网关启动前的同步兜底）。构造函数不能 await，失败仅告警。
+    if (existsSync(openClawPaths.nodeBinary(this.dataDir)) && existsSync(openClawPaths.clawJs(this.dataDir))) {
+      this.syncOpenClawConfig().catch((err) => {
+        console.warn('[ConfigManager] 构造期初始同步 openclaw.json 失败（不阻断使用）:', err?.message || err)
+      })
+    }
   }
 
   /**
@@ -282,7 +288,7 @@ export class ConfigManager {
    * @param partial 部分配置对象
    * @returns 更新后的完整配置
    */
-  saveConfig(partial: Partial<AppConfig>): AppConfig {
+  async saveConfig(partial: Partial<AppConfig>, opts?: { skipSync?: boolean }): Promise<AppConfig & { openClawSyncOk?: boolean; openClawSyncError?: string; appConfigSavedOk?: boolean; appConfigSaveError?: string }> {
     // 1. 深度合并基础字段
     this.config = {
       ...this.config,
@@ -293,29 +299,67 @@ export class ConfigManager {
         : this.config.providers
     }
 
-    // 3. 必须恢复 app.json 本身的持久化写入
-    try {
-      writeFileSync(this.configPath, JSON.stringify(this.config, null, 2), 'utf-8')
-    } catch (err) {
-      console.error('[ConfigManager] 保存 app.json 失败:', err)
+    // 3. 必须恢复 app.json 本身的持久化写入。落盘失败不能静默——否则前端 toast「已保存」
+    //    但 app.json 实际没写进去，重启后用户改动丢失。把失败标志随返回值透出，由 IPC/前端提示。
+    const persist = this._persistAppConfig()
+
+    // 4. 同步衍生配置（官方 CLI 校验后写入）。app.json 已落盘（不丢用户设置），但 openclaw.json
+    //    可能因 schema 被官方拒绝；不能静默——否则用户以为 key/渠道已生效、实则网关没拿到。
+    //    把同步结果随返回值带出，由 IPC/前端提示；启动路径另有 doctor 自愈兼底。
+    //    skipSync：纯 UI 偏好（如 closeAction）不进 openclaw.json，无需触发 config patch——
+    //    退出路径 fire-and-forget 一次冷启动约 12s 的 spawn、quitApp 不等，留个持有 state 库的孤儿进程。
+    let sync: { ok: boolean; error?: string }
+    if (opts?.skipSync) {
+      sync = { ok: true }
+    } else {
+      sync = await this.syncOpenClawConfig()
+      if (!sync.ok) console.error('[ConfigManager] saveConfig 同步 openclaw.json 被拒:', sync.error)
     }
 
-    // 4. 同步衍生配置
-    this._syncOpenClawConfig()
+    return {
+      ...this.getConfig(),
+      appConfigSavedOk: persist.ok,
+      ...(persist.ok ? {} : { appConfigSaveError: persist.error }),
+      openClawSyncOk: sync.ok,
+      ...(sync.ok ? {} : { openClawSyncError: sync.error })
+    }
+  }
 
-    return this.getConfig()
+  /**
+   * 持久化 app.json。落盘失败不静默、也不抛异常中断流程，以 { ok, error } 透出由调用方携带。
+   * saveConfig / resetConfig 共用，保证「保存」与「重置」走同一套写入 + 失败透出逻辑。
+   */
+  private _persistAppConfig(): { ok: boolean; error?: string } {
+    try {
+      writeFileSync(this.configPath, JSON.stringify(this.config, null, 2), 'utf-8')
+      return { ok: true }
+    } catch (err) {
+      const error = (err as Error)?.message || String(err)
+      console.error('[ConfigManager] 保存 app.json 失败:', err)
+      return { ok: false, error }
+    }
   }
 
   /**
    * 重置配置为默认值
    */
-  resetConfig(): AppConfig {
+  async resetConfig(): Promise<AppConfig & { openClawSyncOk?: boolean; openClawSyncError?: string; appConfigSavedOk?: boolean; appConfigSaveError?: string }> {
     this.config = getDeepCopyDefaultConfig()
     // 恢复默认不丢「拉取最新」带来的动态服务商（DEFAULT_CONFIG 是静态快照，不含动态项）
     this._appendDynamicPresetProviders(this.config.providers)
-    // this._persist()
-    this._syncOpenClawConfig()
-    return this.getConfig()
+    // 「重置」语义应为持久化：仅改内存 + 同步网关会导致重启后 UI 回到旧值、两边对不上。
+    // 与 saveConfig 同一套落盘 + 失败透出逻辑；落盘失败随返回值透出，由 IPC/前端提示。
+    const persist = this._persistAppConfig()
+    // 同步失败不静默，把状态随返回值透出，由 IPC/前端像保存一样提示警告
+    const sync = await this.syncOpenClawConfig()
+    if (!sync.ok) console.error('[ConfigManager] resetConfig 同步 openclaw.json 被拒:', sync.error)
+    return {
+      ...this.getConfig(),
+      appConfigSavedOk: persist.ok,
+      ...(persist.ok ? {} : { appConfigSaveError: persist.error }),
+      openClawSyncOk: sync.ok,
+      ...(sync.ok ? {} : { openClawSyncError: sync.error })
+    }
   }
 
   getDataDir(): string {
@@ -340,9 +384,23 @@ export class ConfigManager {
   /**
    * 同步 openclaw.json，供启动流程在 spawn 前调用，确保凭证/模型/渠道是最新的。
    * 内部等价于 _syncOpenClawConfig，对外暴露一个稳定入口，避免 clawManager 重复实现。
+   *
+   * @param opts.reloadFromDisk doctor --fix 就地收敛了 openclaw.json 之后，内存里的 this.config
+   *   仍是加载时的旧快照；直接重试会基于旧快照重算 merge patch，把 doctor 刚修掉的退役键/旧结构
+   *   重新写回去（doctor 白跑，下次启动再次触发 exit 78）。传 true 时先 `this.config = this._load()`
+   *   重读 app.json 使内存快照刷新，再基于最新快照计算补丁。
+   *   说明：doctor 只收敛 openclaw.json、不碰 app.json；这里重读 app.json 是防御性刷新（万一外部
+   *   工具/手改也动了 app.json），常规同步不要开。
    */
-  syncOpenClawConfig(): void {
-    this._syncOpenClawConfig()
+  async syncOpenClawConfig(opts?: { reloadFromDisk?: boolean }): Promise<{ ok: boolean; error?: string }> {
+    if (opts?.reloadFromDisk) {
+      try {
+        this.config = this._load()
+      } catch (err) {
+        console.warn('[ConfigManager] sync 前重读磁盘配置失败，沿用内存快照:', (err as Error)?.message || err)
+      }
+    }
+    return this._syncOpenClawConfig()
   }
 
   /**
@@ -356,11 +414,11 @@ export class ConfigManager {
     if (result.success) {
       const added = this._appendDynamicPresetProviders(this.config.providers)
       if (added.length) {
-        // saveConfig({}) 会把当前 providers 落盘并触发 _syncOpenClawConfig
-        this.saveConfig({})
+        // saveConfig({}) 会把当前 providers 落盘并触发官方 config patch 同步
+        await this.saveConfig({})
         result.addedProviders = added
       } else {
-        this._syncOpenClawConfig()
+        await this.syncOpenClawConfig()
       }
     }
     return result
@@ -453,13 +511,7 @@ export class ConfigManager {
   }
 
   getNodePath(): string {
-    const platform = process.platform
-    const arch = process.arch
-    const nodeDir = join(this.dataDir, 'runtime', `node-${platform}-${arch}`)
-    if (platform === 'win32') {
-      return join(nodeDir, 'node.exe')
-    }
-    return join(nodeDir, 'bin', 'node')
+    return openClawPaths.nodeBinary(this.dataDir)
   }
 
   /**
@@ -851,16 +903,30 @@ export class ConfigManager {
   }
 
   /**
-   * 同步更新 OpenClaw 配置 (利用 mainConfig 里的官方标准模板完美对齐 Zod 结构)
+   * 同步更新 OpenClaw 配置。
+   *
+   * 写入通道：既有文件一律走官方 CLI `openclaw config patch`（openClawConfigWriter），
+   * 由官方写入器做整份 schema 校验 + 旧键迁移 + meta 自动盖戳；本方法只负责计算
+   * 「原配置 → 目标配置」的最小 merge patch。全新安装、文件尚不存在时才直接落首文件骨架。
    */
-private _syncOpenClawConfig(): void {
+private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string }> {
   try {
     const workspacePath = join(openClawPaths.configDir(this.dataDir), 'workspace')
 
     let existingConfig: any = {
       agents: { defaults: {} },
       gateway: { mode: "local", auth: { mode: "token", token: GATEWAY_TOKEN } },
-      channels: {},
+      // 与 downloadManager._ensureOpenClawConfig 的首文件骨架保持同一口径（gateway/skills/plugins/
+      // channels.openclaw-weixin 一致；本处额外带 agents/models/wizard 基础骨架）。两处都是「首文件创建」
+      // 的生产者，关键节点（尤其 channels.openclaw-weixin）任一改动要同步另一边，否则「openclaw.json
+      // 被删但运行时还在」的重建路径会缺节点（历史教训：曾漏掉 channels.openclaw-weixin）。
+      channels: {
+        "openclaw-weixin": {
+          enabled: true,
+          provider: "@tencent-weixin/openclaw-weixin",
+          config: { appId: "", appSecret: "" }
+        }
+      },
       plugins: { entries: { "openclaw-weixin": { "enabled": true } } },
       skills: { entries: {} },
       wizard: {
@@ -881,10 +947,15 @@ private _syncOpenClawConfig(): void {
         if (!parsedExisting || typeof parsedExisting !== 'object') parsedExisting = null
       } catch (parseErr) {
         console.error('[ConfigManager] openclaw.json parse failed; skip sync to avoid overwriting config with skeleton', parseErr)
-        return
+        return { ok: false, error: 'openclaw.json 解析失败，已跳过同步以免骨架覆盖真实配置' }
       }
     }
-    existingConfig = parsedExisting || existingConfig
+    // 变更前留底：existingConfig 必须是 parsedExisting 的深拷贝，而非同一引用。
+    // 否则后续所有原地变更都直接落在 parsedExisting 上，最后 buildJsonMergePatch(parsedExisting,
+    // existingConfig) 是同引用自比较、diff 恒为 null → 跳过 spawn 返回 ok:true，既有安装的同步
+    // 全部空操作（改 key/超时/渠道/退役键剥离都进不了 openclaw.json，却提示已同步）。
+    // 数据源自 JSON 反序列化，structuredClone 安全。
+    existingConfig = parsedExisting ? structuredClone(parsedExisting) : existingConfig
 
     // ----- 保证基础骨架存在 -----
     existingConfig.agents = existingConfig.agents || {}
@@ -987,6 +1058,31 @@ private _syncOpenClawConfig(): void {
     if (activeReady) {
       const pId = toOpenClawProviderKey(activeProvider.id)
       const fullModelKey = `${pId}/${activeProvider.model}`
+
+      // 自洽性兜底：OpenClaw 校验要求 primary 引用的模型必须在 models.providers[pId].models[]
+      // 里注册，否则 patch 被整单拒绝、网关起不来（报错见「Unknown model ... Add {id,name} to
+      // models.providers[].models[]」）。激活模型可能不在官方预设列表里（如默认的 deepseek-v4-flash），
+      // 也没被用户加进 customModels——上方 provider 注入只保证预设+自定义模型在册，不保证激活项。
+      // 这里确保激活模型一定注册一条（已存在则不动，缺失才补最小条目）。
+      // 注意：此前 P0 空操作（同引用自比较→diff 恒 null）让 patch 从不真正发出，这个不一致一直被
+      // 掩盖；P0 修复后 patch 真实落盘，必须保证目标配置自洽才能过官方校验。
+      const providerNode = existingConfig.models?.providers?.[pId]
+      if (providerNode && typeof providerNode === 'object') {
+        providerNode.models = Array.isArray(providerNode.models) ? providerNode.models : []
+        const modelId = activeProvider.model
+        const alreadyRegistered = providerNode.models.some((m: any) => m && m.id === modelId)
+        if (!alreadyRegistered) {
+          providerNode.models.push({
+            id: modelId,
+            name: modelId,
+            input: ['text'],
+            contextWindow: 8192,
+            maxTokens: 4096,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+          })
+        }
+      }
+
       existingConfig.agents.defaults.model = { primary: fullModelKey }
       existingConfig.agents.defaults.models[fullModelKey] =
         existingConfig.agents.defaults.models[fullModelKey] || {}
@@ -1112,25 +1208,51 @@ private _syncOpenClawConfig(): void {
       delete existingConfig.channels.feishu
     }
 
-    existingConfig.meta = {
-      ...(existingConfig.meta || {}),
-      lastTouchedVersion: 'latest',
-      lastTouchedAt: new Date().toISOString()
+    // meta 完全归官方写入器自动管理（lastTouchedVersion / migrations 钉）：
+    // 显式写 lastTouchedVersion 会被 config patch 直接拒绝；lastTouchedAt 已在
+    // v2026.10.x 退役（tier-eval tranche），残留即 exit 78。这里只剥离退役键，
+    // 版本戳由接下来的官方写入自动盖。
+    if (existingConfig.meta && typeof existingConfig.meta === 'object') {
+      delete existingConfig.meta.lastTouchedAt
     }
 
     // 注入 Obsidian MCP server 配置（由 ObsidianManager 提供）
     this._injectObsidianMcp(existingConfig)
 
-    const content = JSON.stringify(existingConfig, null, 2)
-    this._atomicWriteFileSync(this.openClawConfigPath, content)
-    console.log('[ConfigManager] openclaw.json 已使用新版预设结构同步完成。')
+    if (!parsedExisting) {
+      // 全新安装、文件尚不存在：state 库可能还没初始化，官方 CLI 在空环境无法 patch 建库，
+      // 仅此处承担「首文件创建」（与 downloadManager._ensureOpenClawConfig 同口径）。
+      // 不带任何 meta——官方写入器下次写时自动盖戳。
+      delete existingConfig.meta
+      const content = JSON.stringify(existingConfig, null, 2)
+      this._atomicWriteFileSync(this.openClawConfigPath, content)
+      console.log('[ConfigManager] openclaw.json 首文件骨架已创建，后续同步走官方 config patch。')
+      this._archiveLegacyAuthProfiles()
+      return { ok: true }
+    }
+
+    // 既有文件：原配置 → 目标配置生成最小 merge patch（删除项为 null），交官方 CLI 一次校验写入。
+    // 非法补丁整单被拒、原文件不动——此时绝不 spawn 网关（否则必 exit 78），由调用方展示原因。
+    const patch = buildJsonMergePatch(parsedExisting, existingConfig)
+    if (!patch) {
+      this._archiveLegacyAuthProfiles()
+      return { ok: true }
+    }
+    const result: OpenClawPatchResult = await applyOpenClawConfigPatch(this.dataDir, patch)
+    if (!result.ok) {
+      console.error('[ConfigManager] openclaw.json 同步被官方写入器拒绝:', result.error)
+      return { ok: false, error: result.error }
+    }
+    console.log('[ConfigManager] openclaw.json 已通过官方 config patch 同步。')
 
     // 归档 legacy 凭证文件 auth-profiles.json：OpenClaw v2026.9.x 以 SQLite 为凭证规范
     // 存储，遗留的 auth-profiles.json 会触发 AuthProfileMigrationRequiredError，
     // 拦截全部模型服务商鉴权（apiKey 已内嵌于 openclaw.json 的 models.providers，此文件多余）。
     this._archiveLegacyAuthProfiles()
+    return { ok: true }
   } catch (err: any) {
     console.error('[ConfigManager] 同步 OpenClaw 配置失败:', err.message)
+    return { ok: false, error: err.message }
   }
 }
 
@@ -1256,44 +1378,33 @@ private _archiveLegacyAuthProfiles(): void {
    * @param skillId 技能的唯一标识（即文件夹名，例如 "pdf-helper"）
    * @param enabled 目标状态：true 开启，false 关闭
    */
-  public toggleSkillStatus(skillId: string, enabled: boolean): void {
+  /**
+   * 供前端 Skills 页面调用：控制某个本地 Skill 的启用/禁用开关。
+   * 经官方 config patch 写入 skills.entries.<id>，落盘前过整份 schema 校验。
+   * @param skillId 技能的唯一标识（即文件夹名，例如 "pdf-helper"）
+   * @param enabled 目标状态：true 开启，false 关闭
+   */
+  public async toggleSkillStatus(skillId: string, enabled: boolean): Promise<{ ok: boolean; error?: string }> {
+    // 目录名白名单：开关值最终进入 patch 路径，挡掉 ../ 之类的注入
+    if (typeof skillId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(skillId)) {
+      return { ok: false, error: '非法的技能 ID' }
+    }
+    if (!existsSync(this.openClawConfigPath)) {
+      return { ok: false, error: 'openclaw.json 尚不存在，请先完成环境初始化' }
+    }
     try {
-      // 1. 初始化或读取现有的 openclaw.json 配置
-      let openClawConfig: any = {
-        agents: { defaults: {} },
-        gateway: { mode: "local", auth: {} },
-        channels: {},
-        plugins: { entries: { "openclaw-weixin": { "enabled": true } } },
-        skills: { entries: {} }
+      // 官方写入器递归合并 skills.entries：只动这一个键，其余配置原样保留
+      const patch = { skills: { entries: { [skillId]: { enabled } } } }
+      const result = await applyOpenClawConfigPatch(this.dataDir, patch)
+      if (!result.ok) {
+        console.error(`[ConfigManager] 切换技能 [${skillId}] 开关失败:`, result.error)
+        return { ok: false, error: result.error }
       }
-
-      // 只读一次并复用解析结果，避免守卫/兜底双读的 TOCTOU 窗口（同 _syncOpenClawConfig）
-      let parsedForToggle: any = null
-      if (existsSync(this.openClawConfigPath)) {
-        try {
-          parsedForToggle = this._parseOpenClawJsonRaw()
-          if (!parsedForToggle || typeof parsedForToggle !== 'object') parsedForToggle = null
-        } catch (parseErr) {
-          console.error('[ConfigManager] openclaw.json parse failed; skip skill toggle to avoid overwriting config', parseErr)
-          return
-        }
-      }
-      openClawConfig = parsedForToggle || openClawConfig
-
-      // 2. 强保障 skills 节点存在
-      openClawConfig.skills = openClawConfig.skills || {}
-      openClawConfig.skills.entries = openClawConfig.skills.entries || {}
-
-      // 🟢 写入到 entries 内部
-      openClawConfig.skills.entries[skillId] = {
-        enabled: enabled
-      }
-      // 4. 安全回写到磁盘
-      this._atomicWriteFileSync(this.openClawConfigPath, JSON.stringify(openClawConfig, null, 2))
       console.log(`[ConfigManager] 本地技能 [${skillId}] 状态已成功切换为: ${enabled}`)
-
-    } catch (err) {
+      return { ok: true }
+    } catch (err: any) {
       console.error(`[ConfigManager] 切换技能 [${skillId}] 开关失败:`, err)
+      return { ok: false, error: err.message || '切换失败' }
     }
   }
 
@@ -1302,7 +1413,7 @@ private _archiveLegacyAuthProfiles(): void {
    * 删除技能目录，并清理 openclaw.json 的开关条目与 skill-manifest.json 台账。
    * 开关/台账清理失败仅 warn（技能目录已删，主结果不受影响）；目录删除失败把原因原样带回。
    */
-  public removeSkill(skillId: string): { success: boolean; error?: string } {
+  public async removeSkill(skillId: string): Promise<{ success: boolean; error?: string }> {
     // 目录名白名单：与 _resolveZipTarget 的落盘命名同口径，挡掉 ../、.. 等穿越
     if (typeof skillId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(skillId)) {
       return { success: false, error: '非法的技能 ID' }
@@ -1319,7 +1430,7 @@ private _archiveLegacyAuthProfiles(): void {
       rmSync(skillDir, { recursive: true, force: true })
 
       // 2. 清 openclaw.json 开关条目（非致命）
-      this._removeSkillConfigEntry(skillId)
+      await this._removeSkillConfigEntry(skillId)
 
       // 3. 清 manifest 台账（非致命）
       this._removeSkillManifestEntry(skillId)
@@ -1333,30 +1444,30 @@ private _archiveLegacyAuthProfiles(): void {
   }
 
   /**
-   * 删除 openclaw.json 里指定技能的开关条目。
+   * 删除 openclaw.json 里指定技能的开关条目（官方 config patch 通道）。
    * 兼容两种历史结构：skills.entries.<id>（现口径）与 skills.<id>（旧口径）。
    * 非致命：读/写失败仅 warn，绝不影响已成功的目录删除。
    */
-  private _removeSkillConfigEntry(skillId: string): void {
+  private async _removeSkillConfigEntry(skillId: string): Promise<void> {
     try {
       if (!existsSync(this.openClawConfigPath)) return
       const cfg = this._parseOpenClawJsonRaw()
       if (!cfg || typeof cfg !== 'object') return
-      let changed = false
+      const patch: any = { skills: {} }
       const entries = cfg.skills?.entries
       if (entries && typeof entries === 'object' && entries[skillId] !== undefined) {
-        delete entries[skillId]
-        changed = true
+        patch.skills.entries = { [skillId]: null }
       }
       // 旧口径：开关直接挂在 skills 下（且不是 entries 等保留键）
-      if (cfg.skills && typeof cfg.skills === 'object' && cfg.skills[skillId] !== undefined) {
-        delete cfg.skills[skillId]
-        changed = true
+      // 必须排除保留键：若曾导入过目录名为 "entries" 的技能，不排除就会发出 {skills:{entries:null}}
+      // 把全部技能开关一次性清掉。与 _migrateSkillEnabledState 的 oldName !== 'entries' 同款守卫。
+      if (skillId !== 'entries' && cfg.skills && typeof cfg.skills === 'object' && cfg.skills[skillId] !== undefined) {
+        patch.skills[skillId] = null
       }
-      if (changed) {
-        this._atomicWriteFileSync(this.openClawConfigPath, JSON.stringify(cfg, null, 2))
-        console.log(`[ConfigManager] 已清除技能 [${skillId}] 的开关条目`)
-      }
+      if (!patch.skills.entries && patch.skills[skillId] === undefined) return
+      const result = await applyOpenClawConfigPatch(this.dataDir, patch)
+      if (result.ok) console.log(`[ConfigManager] 已清除技能 [${skillId}] 的开关条目`)
+      else console.warn(`[ConfigManager] 清除技能 [${skillId}] 开关条目失败（不影响移除）:`, result.error)
     } catch (err) {
       console.warn(`[ConfigManager] 清除技能 [${skillId}] 开关条目失败（不影响移除）:`, err)
     }
@@ -1651,9 +1762,12 @@ private _archiveLegacyAuthProfiles(): void {
       try { rmSync(trashDir, { recursive: true, force: true }) } catch { /* 清理失败不影响结果 */ }
       try { if (stagingDir !== payloadDir) rmSync(stagingDir, { recursive: true, force: true }) } catch { /* ignore */ }
 
-      // 目录名变化时迁移 openclaw.json 的 enabled 开关（非致命，失败仅 warn）
+      // 目录名变化时迁移 openclaw.json 的 enabled 开关（非致命，失败仅 warn）。
+      // 注意：这里用 void 丢弃 Promise（fire-and-forget）——改名后立即返回，迁移 patch 走串行队列
+      // 异步落地。若网关在迁移 patch 完成前启动，新目录名的技能开关会短暂回退默认；属「云端技能
+      // 更新改名」的窄路径，不阻断，重启后下次同步会收敛。
       if (oldDir !== newDir) {
-        this._migrateSkillEnabledState(basename(oldDir), dirName)
+        void this._migrateSkillEnabledState(basename(oldDir), dirName)
       }
 
       const version = skillMdContent ? this._parseFrontMatterField(skillMdContent, 'version') : undefined
@@ -1671,18 +1785,26 @@ private _archiveLegacyAuthProfiles(): void {
 
   /**
    * 目录名变化时，把 openclaw.json skills.entries 里旧目录名的开关条目搬到新名下。
-   * 非致命：读失败/写失败仅 warn，绝不影响更新结果。
+   * 非致命：写失败仅 warn，绝不影响更新结果。经官方 config patch 通道写入。
    */
-  private _migrateSkillEnabledState(oldName: string, newName: string): void {
+  private async _migrateSkillEnabledState(oldName: string, newName: string): Promise<void> {
     try {
       const cfg = this._readOpenClawConfig(null)
       if (!cfg || !cfg.skills) return
-      const entries = cfg.skills.entries || cfg.skills
-      if (!entries || typeof entries !== 'object' || entries[oldName] === undefined) return
-      entries[newName] = entries[oldName]
-      delete entries[oldName]
-      this._atomicWriteFileSync(this.openClawConfigPath, JSON.stringify(cfg, null, 2))
-      console.log(`[ConfigManager] 技能目录改名 ${oldName} → ${newName}，enabled 状态已迁移`)
+      const inEntries =
+        cfg.skills.entries && typeof cfg.skills.entries === 'object' && cfg.skills.entries[oldName] !== undefined
+      const inLegacy = !inEntries && cfg.skills[oldName] !== undefined && oldName !== 'entries'
+      if (!inEntries && !inLegacy) return
+      const entry = inEntries ? cfg.skills.entries[oldName] : cfg.skills[oldName]
+      const patch: any = inEntries
+        ? { skills: { entries: { [oldName]: null, [newName]: entry } } }
+        : { skills: { [oldName]: null, [newName]: entry } }
+      const result = await applyOpenClawConfigPatch(this.dataDir, patch)
+      if (result.ok) {
+        console.log(`[ConfigManager] 技能目录改名 ${oldName} → ${newName}，enabled 状态已迁移`)
+      } else {
+        console.warn('[ConfigManager] 迁移技能 enabled 状态失败（不影响更新）:', result.error)
+      }
     } catch (err) {
       console.warn('[ConfigManager] 迁移技能 enabled 状态失败（不影响更新）:', err)
     }
