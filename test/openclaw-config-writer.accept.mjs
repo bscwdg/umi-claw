@@ -24,13 +24,19 @@ const repoRoot = join(__dirname, '..')
 const bundled = join(repoRoot, 'test', '.tmp', 'openclaw-config-writer.mjs')
 
 if (!existsSync(bundled)) {
-  // 由 npm 脚本先 bundle；这里也兜底自构建一次
-  const esbuild = join(repoRoot, 'node_modules', '.bin', 'esbuild.cmd')
+  // 由 npm 脚本先 bundle；这里也兜底自构建一次。
+  // Windows 下 .cmd 不能直接 execFile（EINVAL），必须 shell:true；*nix 直接走二进制。
+  const esbuild = join(
+    repoRoot,
+    'node_modules',
+    '.bin',
+    process.platform === 'win32' ? 'esbuild.cmd' : 'esbuild'
+  )
   execFileSync(esbuild, [
     join(repoRoot, 'electron', 'main', 'openClawConfigWriter.ts'),
     '--bundle', '--platform=node', '--format=esm', '--target=node20',
     `--outfile=${bundled}`
-  ], { stdio: 'inherit' })
+  ], { stdio: 'inherit', shell: process.platform === 'win32' })
 }
 
 const { buildJsonMergePatch, summarizePatchError, applyOpenClawConfigPatch } =
