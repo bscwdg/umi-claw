@@ -536,8 +536,18 @@ async function save() {
       const fullConfig = (await window.api.config.get()) || {};
       fullConfig.channels = channelConfigs;
 
-      await window.api.config.save(fullConfig);
-      savedMsg.value = "✅ 已保存，重启 OpenClaw 后生效";
+      const saveRes = await window.api.config.save(fullConfig);
+      // app.json 本地落盘失败（硬失败，设置没写进去、重启即丢）优先于同步警告提示
+      if (saveRes && saveRes.appConfigSavedOk === false) {
+        savedMsg.value = `❌ 渠道配置保存失败（app.json 未能写入）：${saveRes.appConfigSaveError || "未知错误"}。请检查数据目录权限后重试。`;
+        return;
+      }
+      // 网关配置可能因 schema 被官方拒绝（本地 app.json 已存，不丢设置）
+      if (saveRes && saveRes.openClawSyncOk === false) {
+        savedMsg.value = `⚠️ 本地配置已保存，但同步到 OpenClaw 未通过校验：${saveRes.openClawSyncError || "未知错误"}。下次启动会自动尝试修复。`;
+      } else {
+        savedMsg.value = "✅ 已保存，重启 OpenClaw 后生效";
+      }
 
       // config.save 内部已同步 openclaw.json，这里刷新「已接入渠道」总览
       await loadChannelStatuses();

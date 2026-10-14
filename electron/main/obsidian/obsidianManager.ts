@@ -57,9 +57,19 @@ export class ObsidianManager extends EventEmitter {
     return { ...DEFAULT_OBSIDIAN_CONFIG, ...(cfg || {}) }
   }
 
-  saveObsidianConfig(cfg: ObsidianConfig): ObsidianConfig {
-    this.configManager.saveConfig({ obsidian: cfg } as any)
-    return this.getObsidianConfig()
+  async saveObsidianConfig(cfg: ObsidianConfig): Promise<ObsidianConfig & { openClawSyncOk?: boolean; openClawSyncError?: string; appConfigSavedOk?: boolean; appConfigSaveError?: string }> {
+    // saveConfig 会顺带把 Obsidian MCP 注入 openclaw.json；若被官方 schema 拒绝，同步状态随
+    // 返回值透出（openClawSyncOk=false + 原因），由 IPC/前端提示，不再静默提示「成功」——
+    // 与 save 路径「同步失败要告知」的方针保持一致。app.json 落盘失败（appConfigSavedOk=false）
+    // 同样透出，避免 Obsidian 页在本地没存成时仍提示成功。
+    const saved = await this.configManager.saveConfig({ obsidian: cfg } as any)
+    return {
+      ...this.getObsidianConfig(),
+      openClawSyncOk: saved.openClawSyncOk,
+      ...(saved.openClawSyncOk === false ? { openClawSyncError: saved.openClawSyncError } : {}),
+      appConfigSavedOk: saved.appConfigSavedOk,
+      ...(saved.appConfigSavedOk === false ? { appConfigSaveError: saved.appConfigSaveError } : {})
+    }
   }
 
   async selectVault(): Promise<{ path: string; warning?: string } | null> {

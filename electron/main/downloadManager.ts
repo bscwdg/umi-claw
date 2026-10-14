@@ -1576,11 +1576,13 @@ export class DownloadManager extends EventEmitter {
       if (!existsSync(configDir)) {
         mkdirSync(configDir, { recursive: true })
       }
-      // 刻意**不**写 `meta`（待办 #15 的第二处）：`meta` 在 OpenClaw schema 里是
-      // `additionalProperties: false` —— `lastTouchedAt` 根本不是合法字段，`lastTouchedVersion` 也必须是
-      // 真实安装版本而不是字面量 'latest'（旧代码两者都写，会被 schema 拒绝）。
-      // 这份保底配置只在 openclaw.json **缺失**时写；`meta` 由 configManager._syncOpenClawConfig()
-      // 在应用启动时按真实安装版本补上 —— 同一字段只在那一处写，避开两处各写一份的漂移。
+      // 仅承担全新安装时的「首文件创建」：不带任何 meta（lastTouchedVersion 等由
+      // OpenClaw 官方写入器自动盖戳，显式写会被 config patch 拒绝），也不写已退役的
+      // models.timeout（新版 provider 级超时是 timeoutSeconds，由 _syncOpenClawConfig 注入）。
+      // 文件一旦存在，后续所有变更都走官方 config patch 通道，这里不再参与。
+      // ⚠️ 骨架口径必须与 configManager._syncOpenClawConfig 的首文件分支（892 起）保持一致——
+      // 两处都是「首文件创建」的生产者，任一改动都要同步另一边，否则「openclaw.json 被删但
+      // 运行时还在」的重建路径会缺节点（历史教训：曾漏掉 channels.openclaw-weixin）。
       const fullSecureConfig = {
         "gateway": {
           "mode": "local",
@@ -1596,12 +1598,14 @@ export class DownloadManager extends EventEmitter {
             }
           }
         },
-        "skills": {},
+        "skills": { "entries": {} },
+        // v2026.10.x 起插件开关统一挂 plugins.entries.<id>（旧的 plugins.<id> 直挂是非法键）；
+        // bonjour 在网关 spawn 时已由 OPENCLAW_DISABLE_BONJOUR 环境变量关闭，不必落配置。
         "plugins": {
-          "bonjour": { "enabled": false },
-          "talk-voice": { "enabled": false }
+          "entries": {
+            "openclaw-weixin": { "enabled": true }
+          }
         },
-        "models": { "timeout": 900000 }
       }
       const configContent = JSON.stringify(fullSecureConfig, null, 2)
       const filePath = join(configDir, 'openclaw.json')

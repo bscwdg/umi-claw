@@ -1059,7 +1059,10 @@ function registerIpcHandlers(): void {
     const action = payload?.action ?? 'tray'
     const remember = payload?.remember === true
     if (remember && (action === 'tray' || action === 'exit')) {
-      configManager.saveConfig({ closeAction: action })
+      // closeAction 是纯 UI 偏好、不进 openclaw.json：skipSync 跳过 config patch，
+      // 避免退出时 fire-and-forget 一次冷启动 spawn（约 12s）而 quitApp 不等，
+      // 在应用退出后留个持有 state 库的孤儿进程靠 doctor 争用重试兜底。
+      void configManager.saveConfig({ closeAction: action }, { skipSync: true })
     }
     if (action === 'exit') {
       quitApp()
@@ -1123,16 +1126,33 @@ function registerIpcHandlers(): void {
 
   // 配置管理
   ipcMain.handle('config:get', () => configManager.getConfig())
-  ipcMain.handle('config:save', (_e, config) => {
-    const saved = configManager.saveConfig(config)
+  ipcMain.handle('config:save', async (_e, config) => {
+    const saved = await configManager.saveConfig(config)
     // 配置保存后同步开机自启项
     applyLoginItemSettings(saved.launchOnBoot)
-    return saved
+    // 拆分：前端 store 只拿干净的 AppConfig，同步状态单独透出供 UI 提示。
+    // appConfigSavedOk=false 表示 app.json 本地落盘失败——「已保存」不能再说谎。
+    const { openClawSyncOk, openClawSyncError, appConfigSavedOk, appConfigSaveError, ...appConfig } = saved
+    return {
+      config: appConfig,
+      openClawSyncOk: openClawSyncOk !== false,
+      openClawSyncError: openClawSyncError ?? null,
+      appConfigSavedOk: appConfigSavedOk !== false,
+      appConfigSaveError: appConfigSaveError ?? null
+    }
   })
-  ipcMain.handle('config:reset', () => {
-    const reset = configManager.resetConfig()
+  ipcMain.handle('config:reset', async () => {
+    const reset = await configManager.resetConfig()
     applyLoginItemSettings(reset.launchOnBoot)
-    return reset
+    // 与 config:save 同口径：把同步/落盘状态随返回值透出，前端重置后能像保存一样看到警告/失败
+    const { openClawSyncOk, openClawSyncError, appConfigSavedOk, appConfigSaveError, ...appConfig } = reset
+    return {
+      config: appConfig,
+      openClawSyncOk: openClawSyncOk !== false,
+      openClawSyncError: openClawSyncError ?? null,
+      appConfigSavedOk: appConfigSavedOk !== false,
+      appConfigSaveError: appConfigSaveError ?? null
+    }
   })
   ipcMain.handle('config:getDataDir', () => configManager.getDataDir())
   ipcMain.handle('config:getPresetModels', (_e, configName: string) =>
@@ -1317,13 +1337,18 @@ function registerIpcHandlers(): void {
   ipcMain.handle('skills:install', (_e, skillId) => clawManager.installSkill(skillId))
   ipcMain.handle('skills:uninstall', (_e, skillId) => clawManager.uninstallSkill(skillId))
   ipcMain.handle('skills:getInstalledSkills', () => configManager.getInstalledSkills());
-  ipcMain.handle('skills:toggleSkillStatus', (_event, id, enabled) => configManager.toggleSkillStatus(id, enabled));
-  ipcMain.handle('skills:removeSkill', (_event, id: unknown) => {
-    const result = configManager.removeSkill(typeof id === 'string' ? id : '')
+  ipcMain.handle('skills:toggleSkillStatus', async (_event, id, enabled) => {
+    // 返回 {ok:false} 时转成 reject：前端 Skills.vue 按 try/catch 弹失败提示
+    const result = await configManager.toggleSkillStatus(id, enabled)
+    if (!result.ok) throw new Error(result.error || '技能开关切换失败')
+    return result
+  })
+  ipcMain.handle('skills:removeSkill', async (_event, id: unknown) => {
+    const result = await configManager.removeSkill(typeof id === 'string' ? id : '')
     // 移除成功：顺带从云端更新缓存剔除，避免跳页回来又提示更新一个已删的技能
     if (result.success && typeof id === 'string') skillSyncService.dropPendingUpdate(id)
     return result
-  });
+  })
   ipcMain.handle('skills:importSkillZip', async () => {
     return await configManager.importSkillZip()
   })
@@ -1652,7 +1677,10 @@ function setupLogForwarding(): void {
 
   const statusHandler = (running: boolean, port?: number) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('claw:statusChange', { running, port })
+      // 转发全量状态（含 maintenance）：doctor 修复期间 running 不变，
+      // 但前端要能据此把「已停止」细化为「修复中」，避免用户以为卡死。
+      const full = clawManager.getStatus()
+      mainWindow.webContents.send('claw:statusChange', { running, port, maintenance: full.maintenance })
     }
   }
 

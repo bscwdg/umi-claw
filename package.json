@@ -29,6 +29,7 @@
     "accept:ui": "node test/ui.accept.mjs",
     "e2e:day": "node test/one-day.e2e.mjs",
     "smoke": "node test/packaged.smoke.mjs",
+    "accept:config-writer": "esbuild electron/main/openClawConfigWriter.ts --bundle --platform=node --format=esm --target=node20 --outfile=test/.tmp/openclaw-config-writer.mjs && node --test test/openclaw-config-writer.accept.mjs",
     "accept": "node scripts/run-all-accept.mjs"
   },
   "dependencies": {
