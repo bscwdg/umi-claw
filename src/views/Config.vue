@@ -475,8 +475,13 @@ async function saveConfig() {
     await configStore.save(formatValue);
     // 去读取修改配置
     showToast("配置已保存，已同步至 OpenClaw（无需重启），可用 /model 切换当前服务商的模型", "success");
-  } catch {
-    showToast("保存失败", "error");
+  } catch (e: any) {
+    // SyncWarning：本地 app.json 已存、但 openclaw.json 未通过官方校验，不丢用户设置
+    if (e?.name === 'SyncWarning') {
+      showToast(`本地配置已保存，但同步 OpenClaw 未通过校验：${e.message}。下次启动会自动修复`, "warning");
+    } else {
+      showToast("保存失败", "error");
+    }
   } finally {
     saving.value = false;
   }
@@ -487,8 +492,17 @@ function resetConfig() {
 }
 
 async function doResetConfig() {
-  await configStore.reset();
-  showToast("已恢复默认配置", "success");
+  try {
+    await configStore.reset();
+    showToast("已恢复默认配置", "success");
+  } catch (e: any) {
+    // 与保存路径同口径：SyncWarning = 本地已重置、仅 openclaw.json 同步被拒（不丢，doctor 会收敛）
+    if (e?.name === 'SyncWarning') {
+      showToast(`已恢复默认配置，但同步 OpenClaw 未通过校验：${e.message}。下次启动会自动修复`, "warning");
+    } else {
+      showToast("重置失败", "error");
+    }
+  }
 }
 
 async function testConnection() {

@@ -14,10 +14,11 @@ config
 /.dev-user-data
 # 便携数据目录与本地临时测试产物，不入库
 /data/
-/test/
-# 验收/探测**结果产物**：每次跑测试都会重写（时间戳、耗时、本机绝对路径），只写不读。
-# 单独列出是显式说明意图——`/test/` 已经覆盖它们，但 test/ 下的源码与 fixtures 是
-# 刻意 force-add 入库的，这里再点一遍，防后人以为结果产物也该入库。
+# 验收**产物**不入库（各套件的结果 JSON + esbuild 临时 bundle）。
+# ⚠️ 这里曾经写的是 /test/ ——整个验收目录被忽略：已跟踪的文件改动照常提交，
+# 但**新增**的验收脚本 git add -A 会静默跳过（曾长期靠 git add -f 入库），
+# 忘了就是新克隆跑 npm run accept 直接缺文件失败。只忽略产物，脚本与 fixtures 必须入库。
+/test/.tmp/
 /test/accept-result*.json
 /test/e2e-result.json
 /test/packaged-smoke-*.json

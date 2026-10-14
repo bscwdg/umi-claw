@@ -30,7 +30,8 @@
     "accept:platform": "node test/platform.accept.mjs",
     "smoke:shooting": "node test/shooting.real-smoke.mjs",
     "probe:scan": "node test/scan.probe.mjs",
-    "smoke:packaged": "node test/packaged-gateway.smoke.mjs"
+    "smoke:packaged": "node test/packaged-gateway.smoke.mjs",
+    "accept:config-writer": "esbuild electron/main/openClawConfigWriter.ts --bundle --platform=node --format=esm --target=node20 --outfile=test/.tmp/openclaw-config-writer.mjs && node --test test/openclaw-config-writer.accept.mjs"
   },
   "dependencies": {
     "@vueuse/core": "^10.9.0",

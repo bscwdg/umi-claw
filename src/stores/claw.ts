@@ -12,6 +12,8 @@ export const useClawStore = defineStore('claw', () => {
   const pid = ref<number | undefined>()
   const port = ref(3213)
   const startedAt = ref<number | undefined>()
+  /** doctor --fix / 状态库迁移进行中（网关未起但非静止）：前端据此显示「正在修复配置…」 */
+  const maintenance = ref(false)
   const logs = ref<LogEntry[]>([])
   const maxLogs = 1000
 
@@ -62,6 +64,7 @@ export const useClawStore = defineStore('claw', () => {
     pid.value = status.pid
     port.value = status.port
     startedAt.value = status.startedAt
+    maintenance.value = !!status.maintenance
   }
 
   async function start() {
@@ -107,6 +110,8 @@ export const useClawStore = defineStore('claw', () => {
     const offStatus = window.api.claw.onStatusChange((data) => {
       running.value = data.running
       if (data.port) port.value = data.port
+      // doctor 修复中：主进程在 maintenanceActive 翻转时主动推一次，实时更新「修复中」态
+      if (typeof data.maintenance === 'boolean') maintenance.value = data.maintenance
       if (data.running) {
         if (!startedAt.value) startedAt.value = Date.now()
       } else {
@@ -120,7 +125,7 @@ export const useClawStore = defineStore('claw', () => {
   }
 
   return {
-    running, pid, port, startedAt, logs, uptime,
+    running, pid, port, startedAt, maintenance, logs, uptime,
     addLog, clearLogs, fetchStatus,
     start, stop, restart, setupListeners
   }

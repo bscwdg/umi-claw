@@ -20,6 +20,14 @@ export const openClawPaths = {
   clawJs: (dataDir: string) =>
     join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'dist', 'index.js'),
 
+  /** 随包安装的绿色 Node 可执行文件（config patch / doctor 等子进程统一走它） */
+  nodeBinary: (dataDir: string) => {
+    const nodeDir = join(dataDir, 'runtime', 'node-' + process.platform + '-' + process.arch)
+    return process.platform === 'win32'
+      ? join(nodeDir, 'node.exe')
+      : join(nodeDir, 'bin', 'node')
+  },
+
   /** 内置技能所在目录 */
   builtinSkillsDir: (dataDir: string) =>
     join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'skills'),
