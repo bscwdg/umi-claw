@@ -335,7 +335,7 @@ export class DatabaseClient {
       // §四 备份触发时机：Schema 迁移前（已有数据才需要）
       if (from > 0) {
         try {
-          const b = await this.backup('pre-migration')
+          const b = await this.backupDuringInit('pre-migration')
           this.log(`[db] 迁移前快照: ${b.path}`)
         } catch (e) {
           this.log(`[db] 迁移前快照失败（继续迁移）: ${errorText(e)}`)
@@ -688,6 +688,26 @@ export class DatabaseClient {
       { path: target },
       { timeoutMs: this.opts.requestTimeoutMs * 4 }
     )) as { path: string; size: number }
+    const pruned = this.pruneBackups()
+    return { path: res?.path ?? target, size: Number(res?.size ?? 0), reason, pruned }
+  }
+
+  /**
+   * startWorker 迁移前快照专用。
+   *
+   * 调用方就在 startWorker 的 await 链上：ping 已通但 this.ready 还是 false、
+   * this.readyPromise 就是「当前这次初始化」。若走公共 backup() → ensureReady()，
+   * 会 await 一个只能由当前链自己 resolve 的 Promise（自等死锁）：旧版本库首次
+   * 升级时整个 DB 面永久挂起（商家列表/新建一直 loading）。故用初始化专用的
+   * sendRaw 发快照请求，不碰 ensureReady / request。
+   */
+  private async backupDuringInit(reason: string): Promise<BackupResult> {
+    const target = join(this.opts.backupDir, `umi-claw-${backupStamp()}.db`)
+    const res = (await this.sendRaw(
+      'maintenance.vacuumInto',
+      { path: target },
+      this.opts.requestTimeoutMs * 4
+    )) as { path?: string; size?: number }
     const pruned = this.pruneBackups()
     return { path: res?.path ?? target, size: Number(res?.size ?? 0), reason, pruned }
   }

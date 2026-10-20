@@ -350,6 +350,59 @@ try {
     return `保留 ${files.length} 份，最新=${files[files.length - 1]}`
   })
 
+  // ── C9b 旧版本库（user_version=1）首次启动：迁移前快照不能自等死锁 ──
+  await r.check('C9b', '旧版本库首启：迁移前快照 + 升级到最新（回归商家列表/新建永久 loading）', async () => {
+    const legacyDir = join(runDir, 'legacy')
+    const legacyDb = join(legacyDir, 'umi-claw.db')
+    const legacyBackup = join(legacyDir, 'backup')
+    mkdirSync(legacyBackup, { recursive: true })
+
+    // 造一个真实的 v1 旧库：只执行 v1 步骤（v1 的 contents 表没有 content_type 列）
+    const v1 = migrationMod.MIGRATION_STEPS.find((s) => s.version === 1)
+    direct(legacyDb, (db) => {
+      for (const stmt of v1.statements) db.exec(stmt)
+      db.exec('PRAGMA user_version = 1')
+    })
+    direct(legacyDb, (db) => {
+      const cols = db.prepare('PRAGMA table_info(contents)').all().map((c) => c.name)
+      assert(!cols.includes('content_type'), '前置条件：v1 库不应有 content_type 列')
+    })
+
+    const legacy = makeClient({ dbPath: legacyDb, backupDir: legacyBackup })
+    clients.add(legacy)
+
+    // 修复前：ensureReady() 死等自己（pre-migration backup → ensureReady），永久挂起；硬超时把死锁变成显式失败
+    const init = await Promise.race([
+      legacy.ensureReady().then(() => ({ ok: true })),
+      sleep(15_000).then(() => ({ ok: false }))
+    ])
+    assert(init.ok, '旧版本库初始化必须在 15s 内完成（修复前会永久挂起）')
+
+    const st = await legacy.dbStatus()
+    assertEq(st.userVersion, TARGET, `应迁移到 user_version=${TARGET}`)
+    assertEq(st.migrated, true, '本次应执行过迁移')
+
+    const snaps = readdirSync(legacyBackup).filter((f) => /^umi-claw-.*\.db$/.test(f))
+    assertEq(snaps.length, 1, `迁移前应留下 1 份快照（实际 ${snaps.length}）`)
+
+    // 快照应停留在迁移前状态：user_version=1、无 content_type 列、库完整
+    direct(join(legacyBackup, snaps[0]), (db) => {
+      assertEq(db.prepare('PRAGMA user_version').get().user_version, 1, '快照应为迁移前 user_version=1')
+      const cols = db.prepare('PRAGMA table_info(contents)').all().map((c) => c.name)
+      assert(!cols.includes('content_type'), '快照应不含 content_type 列')
+      assertEq(db.prepare('PRAGMA integrity_check').get().integrity_check, 'ok', '快照应完整可用')
+    })
+    // 主库已升级到 v2：content_type 列就位
+    direct(legacyDb, (db) => {
+      const cols = db.prepare('PRAGMA table_info(contents)').all().map((c) => c.name)
+      assert(cols.includes('content_type'), '主库应已新增 content_type 列')
+    })
+
+    await legacy.dispose()
+    clients.delete(legacy)
+    return `v1 → v${TARGET}，快照=${snaps[0]}`
+  })
+
   // ── C10 shutdown 优雅退出 → 再请求自动重新拉起，数据仍在 ──
   await r.check('C10', 'shutdown 优雅退出；再次请求自动拉起且数据仍在', async () => {
     const pidBefore = main.workerPid
