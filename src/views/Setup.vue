@@ -294,7 +294,7 @@
         <button
           class="btn btn-sm"
           style="margin-top: 8px"
-          @click="initializing = false"
+          @click="envSetup.dismissCard()"
         >
           重新尝试
         </button>
@@ -311,7 +311,7 @@
         <button
           class="btn"
           @click="
-            initializing = false;
+            envSetup.dismissCard();
             checkEnv();
           "
         >
@@ -339,21 +339,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, onMounted } from "vue";
 import { useRouter } from "vue-router";
+import { storeToRefs } from "pinia";
 import ConfirmDialog from "@/views/components/ConfirmDialog.vue";
+import { useEnvSetupStore } from "@/stores/envSetup";
 
 const router = useRouter();
+const envSetup = useEnvSetupStore();
+// 进度卡片状态来自 store：初始化/更新执行期间切走页面再切回，进度与步骤日志不丢失
+const { initializing, progress, stepLog, taskRunning } = storeToRefs(envSetup);
 const envInfo = ref<any>(null);
 const envLoading = ref(false);
-const initializing = ref(false);
 const useMirror = ref(true);
-const progress = ref<any>(null);
-const stepLog = ref<string[]>([]);
-let offProgress: (() => void) | null = null;
-// 任务进行中（进度进入完成态即为 false）：任务结束后 initializing 不会自动复位，
-// 状态区按钮若绑定 !initializing 就只能靠切换路由重挂载来恢复，故用此计算属性。
-const taskRunning = computed(() => initializing.value && !progress.value?.done);
 const checkingUpdate = ref(false);
 const showUpdateDialog = ref(false);
 const updateInfo = ref<{
@@ -375,44 +373,18 @@ async function checkEnv() {
 }
 
 async function startInit() {
-  initializing.value = true;
-  stepLog.value = [];
-  progress.value = {
-    stage: "环境准备",
-    step: "开始拉取初始化底座...",
-    percent: 0,
-    done: false,
-  };
-
-  // 监听底层管道回传的通知（包含主进程里正在安装的渠道进度）
-  offProgress = window.api.env.onProgress((p) => {
-    progress.value = p;
-    const msg = `[${p.stage}] ${p.step}`;
-    const last = stepLog.value[stepLog.value.length - 1];
-    if (last !== msg) stepLog.value.push(msg);
-  });
-
-  // 调用主进程
-  const res = await window.api.env.init({ useMirror: useMirror.value });
-  offProgress?.();
-  // 主进程回执与 env:progress 通知走不同通道，最终“完成”通知可能在 invoke
-  // 回执之后才到达，却被 offProgress 提前摘除而丢失，导致 UI 停在 98%。
-  // 此处以 invoke 回执为准兜底刷新完成态，保证进度条走到 100% 并退出“正在拼命装配”。
+  // 任务状态/进度订阅都在 store 单例里：切走页面时 Setup.vue 卸载不影响任务，
+  // 切回来进度卡片与步骤日志仍在，也无法重复触发第二次初始化（store + 主进程双保险）
+  const res = await envSetup.runTask(
+    "init",
+    { stage: "环境准备", step: "开始拉取初始化底座...", percent: 0, done: false },
+    () => window.api.env.init({ useMirror: useMirror.value })
+  );
+  if (res?.inFlight) return;
   if (res?.success) {
-    progress.value = {
-      stage: "完成",
-      step: "恭喜，全套环境初始化部署成功！",
-      percent: 100,
-      done: true,
-    };
-  } else if (res?.error && !progress.value?.error) {
-    progress.value = {
-      stage: "错误",
-      step: res.error,
-      percent: 0,
-      done: true,
-      error: res.error,
-    };
+    envSetup.markDone("恭喜，全套环境初始化部署成功！");
+  } else if (res?.error) {
+    envSetup.markError(res.error);
   }
   try {
     await checkEnv();
@@ -422,49 +394,23 @@ async function startInit() {
 }
 
 async function startUpdate() {
-  initializing.value = true;
-  stepLog.value = [];
-  progress.value = {
-    stage: "检查更新",
-    step: "正在准备更新 OpenClaw...",
-    percent: 0,
-    done: false,
-  };
-
-  offProgress = window.api.env.onProgress((p) => {
-    progress.value = p;
-    const msg = `[${p.stage}] ${p.step}`;
-    const last = stepLog.value[stepLog.value.length - 1];
-    if (last !== msg) stepLog.value.push(msg);
-  });
-
-  const res = await window.api.env.update({ useMirror: useMirror.value }).catch((e: any) => ({
-    success: false,
-    error: e?.message || "更新请求失败",
-  }));
-  offProgress?.();
-  // 同 startInit：以 invoke 回执为准兜底刷新完成态，避免最终通知丢失卡在 98%。
+  const res = (await envSetup.runTask(
+    "update",
+    { stage: "检查更新", step: "正在准备更新 OpenClaw...", percent: 0, done: false },
+    () => window.api.env.update({ useMirror: useMirror.value })
+  )) as any;
+  if (res?.inFlight) return;
   if (res?.success) {
     const upToDate =
       res.previousVersion && res.currentVersion === res.previousVersion;
-    progress.value = {
-      stage: "完成",
-      step:
-        (upToDate
-          ? `已是最新版本 v${res.currentVersion}`
-          : `更新成功：v${res.previousVersion ?? "未知"} → v${res.currentVersion ?? "未知"}`) +
-        (res.warning ? `（${res.warning}）` : ""),
-      percent: 100,
-      done: true,
-    };
-  } else if (res?.error && !progress.value?.error) {
-    progress.value = {
-      stage: "错误",
-      step: res.error,
-      percent: 0,
-      done: true,
-      error: res.error,
-    };
+    envSetup.markDone(
+      (upToDate
+        ? `已是最新版本 v${res.currentVersion}`
+        : `更新成功：v${res.previousVersion ?? "未知"} → v${res.currentVersion ?? "未知"}`) +
+        (res.warning ? `（${res.warning}）` : "")
+    );
+  } else if (res?.error) {
+    envSetup.markError(res.error);
   }
   try {
     await checkEnv();
@@ -489,9 +435,10 @@ async function startUpdate() {
   // 更新失败时保留原有 updateInfo（“有新版本”提示不消失），便于用户重新触发更新
 }
 
+
 async function checkUpdate() {
   // 上一任务刚结束时进度卡片可能停在完成态，先关闭，避免遮挡状态区操作
-  initializing.value = false;
+  envSetup.dismissCard();
   checkingUpdate.value = true;
   updateInfo.value = null;
   try {
@@ -598,46 +545,21 @@ async function startNodeUpdate() {
   if (!version) return;
 
   nodeUpdating.value = true;
-  initializing.value = true;
-  stepLog.value = [];
-  progress.value = {
-    stage: "Node.js",
-    step: `准备更新 Node 到 ${version}...`,
-    percent: 0,
-    done: false,
-  };
-
-  offProgress = window.api.env.onProgress((p) => {
-    progress.value = p;
-    const msg = `[${p.stage}] ${p.step}`;
-    const last = stepLog.value[stepLog.value.length - 1];
-    if (last !== msg) stepLog.value.push(msg);
-  });
-
-  const res = await window.api.env.updateNode({
-    version,
-    useMirror: useMirror.value,
-  }).catch((e: any) => ({
-    success: false,
-    error: e?.message || "更新请求失败",
-  }));
-  offProgress?.();
-
-  if (res?.success) {
-    progress.value = {
-      stage: "完成",
-      step: `Node.js 更新成功：${res.previousVersion ?? "旧版"} → ${res.currentVersion}${res.warning ? `（${res.warning}）` : ""}`,
-      percent: 100,
-      done: true,
-    };
-  } else if (res?.error && !progress.value?.error) {
-    progress.value = {
-      stage: "错误",
-      step: res.error,
-      percent: 0,
-      done: true,
-      error: res.error,
-    };
+  const res = (await envSetup.runTask(
+    "node",
+    { stage: "Node.js", step: `准备更新 Node 到 ${version}...`, percent: 0, done: false },
+    () => window.api.env.updateNode({ version, useMirror: useMirror.value })
+  )) as any;
+  if (!res?.inFlight) {
+    if (res?.success) {
+      envSetup.markDone(
+        `Node.js 更新成功：${res.previousVersion ?? "旧版"} → ${res.currentVersion}${
+          res.warning ? `（${res.warning}）` : ""
+        }`
+      );
+    } else if (res?.error) {
+      envSetup.markError(res.error);
+    }
   }
 
   nodeUpdating.value = false;
@@ -650,7 +572,6 @@ async function startNodeUpdate() {
 }
 
 onMounted(checkEnv);
-onUnmounted(() => offProgress?.());
 </script>
 
 <style scoped>

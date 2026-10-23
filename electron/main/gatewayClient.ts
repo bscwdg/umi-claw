@@ -80,10 +80,16 @@ export const GATEWAY_DEFAULT_TIMEOUTS = {
   requestTimeoutMs: 120_000,
   /** 流式：等响应头 + 每个 chunk 之间的空闲超时（首字实测 1.27s） */
   streamIdleTimeoutMs: 120_000,
-  /** 就绪轮询总预算：网关进程起来到监听端口之间的窗口 */
-  readyTimeoutMs: 90_000,
-  /** 就绪轮询间隔 */
-  readyPollIntervalMs: 500
+  /**
+   * 就绪轮询总预算。
+   * 曾按正常环境端口监听窗口给 90s，但 Windows 便携环境下每次冷启动都要复制
+   * 渠道插件隔离副本（数千小文件）+ agent 库准入检查，实测 health live 要 7~9 分钟。
+   * 该预算只用于等待、不会杀进程，超时后下一次调用仍会复用同一个网关进程继续探活，
+   * 所以宁可放宽也不要在网关正在启动时误判「未就绪」触发重复拉起。
+   */
+  readyTimeoutMs: 600_000,
+  /** 就绪轮询间隔：慢启动阶段 /health 自身也可能数秒不响应，2s 足够且不打扰满核启动 */
+  readyPollIntervalMs: 2_000
 } as const
 
 // ── 类型：请求体 ──────────────────────────────────────────────────────────────
@@ -864,11 +870,15 @@ export class GatewayClient {
    *
    * 幂等 + 单飞：并发调用共享同一个在途 promise；已经就绪时**不**调 starter。
    * 拉起后仍未就绪（轮询预算用尽）→ `OPENCLAW_TIMEOUT`；starter 抛错 → `OPENCLAW_NOT_READY`。
+   *
+   * @param opts.readyTimeoutMs 覆盖默认就绪预算（慢启动默认 10 分钟）。
+   *   注意单飞语义：并发调用共享同一次运行，预算以**首个**调用者为准。
+   *   聊天主路径不经过本方法（chat 自带 120s 请求超时），只有显式「重试/拉起」走这里。
    */
-  async ensureReady(): Promise<GatewayStatusSnapshot> {
+  async ensureReady(opts?: { readyTimeoutMs?: number }): Promise<GatewayStatusSnapshot> {
     if (this.readyCache?.ready) return this.readyCache
     if (this.inflightEnsure) return this.inflightEnsure
-    const run = this.ensureReadyInternal().finally(() => {
+    const run = this.ensureReadyInternal(opts?.readyTimeoutMs).finally(() => {
       this.inflightEnsure = null
     })
     this.inflightEnsure = run
@@ -878,7 +888,7 @@ export class GatewayClient {
   /** 就绪快照缓存（只在 ready 时缓存，避免「探活一半」状态被当成事实） */
   private readyCache: GatewayStatusSnapshot | null = null
 
-  private async ensureReadyInternal(): Promise<GatewayStatusSnapshot> {
+  private async ensureReadyInternal(budgetMsOverride?: number): Promise<GatewayStatusSnapshot> {
     const first = await this.getStatus()
     if (first.ready) {
       this.readyCache = first
@@ -905,7 +915,8 @@ export class GatewayClient {
       this.log('[gateway] 探活失败且未注入 starter，直接进入就绪轮询')
     }
 
-    const deadline = this.now() + this.timers.readyTimeoutMs
+    const readyBudgetMs = budgetMsOverride ?? this.timers.readyTimeoutMs
+    const deadline = this.now() + readyBudgetMs
     let last: GatewayStatusSnapshot = first
     let polls = 0
     while (this.now() < deadline) {
@@ -921,7 +932,7 @@ export class GatewayClient {
 
     const err = new AppError(
       ERROR_CODES.OPENCLAW_TIMEOUT,
-      `OpenClaw Gateway 在 ${this.timers.readyTimeoutMs}ms 内未就绪`,
+      `OpenClaw Gateway 在 ${readyBudgetMs}ms 内未就绪`,
       {
         reason: GATEWAY_TIMEOUT_REASONS.request,
         baseUrl: this.baseUrl,

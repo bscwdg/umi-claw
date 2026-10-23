@@ -268,6 +268,17 @@ let envUpdateInFlight = false
 const UPDATE_IN_PROGRESS_ERROR = 'OpenClaw 正在更新，请等待更新完成后再启动'
 
 /**
+ * 三个环境任务各自的单飞 promise。
+ * 用户在「环境初始化」页开始初始化/更新后切到别的页面再切回来（或重复点击）时，
+ * 前端虽然有任务态防护，主进程仍需兜底：第二次调用直接拒绝，绝不并发执行
+ * 第二套下载/安装/迁移——两个 npm 安装或两轮 doctor 并发会互相抢状态库锁。
+ * 进度仍由广播通道 env:progress 推送，切回来的页面重新挂载即可看到最新进度。
+ */
+let envInitInFlight: Promise<unknown> | null = null
+let envNodeUpdateInFlight: Promise<unknown> | null = null
+const ENV_TASK_BUSY_ERROR = '已有环境任务在进行中，请等待当前任务完成'
+
+/**
  * 统一的应用退出流程：标记退出、清理终端会话并停止 OpenClaw
  */
 function quitApp(): void {
@@ -915,7 +926,16 @@ function registerIpcHandlers(): void {
   // 环境初始化
   ipcMain.handle('env:check', () => downloadManager.checkEnvironment())
   ipcMain.handle('env:init', async (_e, options) => {
-    return downloadManager.initEnvironment(options)
+    if (envInitInFlight) {
+      return { success: false, error: ENV_TASK_BUSY_ERROR, inFlight: true }
+    }
+    const task = downloadManager
+      .initEnvironment(options)
+      .finally(() => {
+        if (envInitInFlight === task) envInitInFlight = null
+      })
+    envInitInFlight = task
+    return task
   })
   const envUpdateImpl = async (options: { useMirror?: boolean }) => {
     // 更新期间状态库不能被占用：先停网关，然后 update repair 收敛插件、
@@ -1043,6 +1063,9 @@ function registerIpcHandlers(): void {
     return result
   }
   ipcMain.handle('env:update', async (_e, options) => {
+    if (envUpdateInFlight) {
+      return { success: false, error: ENV_TASK_BUSY_ERROR, inFlight: true }
+    }
     // 全程闸住外部启动（claw:start/restart、网关客户端自动拉起），
     // 防止 doctor 迁移 / update repair 与手动启动抢同一个状态库
     envUpdateInFlight = true
@@ -1060,8 +1083,9 @@ function registerIpcHandlers(): void {
   ipcMain.handle('env:nodeVersions', async (_e, options) => {
     return downloadManager.getNodeVersions(options)
   })
-  // 更新内置便携 Node 到指定版本：先停网关释放文件锁，结束后（无论成败）恢复原运行状态
-  ipcMain.handle('env:updateNode', async (_e, options) => {
+  // 更新内置便携 Node：先停网关释放文件锁，结束后（无论成败）恢复原运行状态。
+  // 单飞由下方 handler 的 envNodeUpdateInFlight 保证，避免切页面重复点击并发更新。
+  const updateNodeImpl = async (options: { version?: string; useMirror?: boolean }) => {
     const wasRunning = clawManager.getStatus().running
     if (wasRunning) {
       await clawManager.stop()
@@ -1076,6 +1100,16 @@ function registerIpcHandlers(): void {
       }
     }
     return result
+  }
+  ipcMain.handle('env:updateNode', async (_e, options) => {
+    if (envNodeUpdateInFlight) {
+      return { success: false, error: ENV_TASK_BUSY_ERROR, inFlight: true }
+    }
+    const task = updateNodeImpl(options).finally(() => {
+      if (envNodeUpdateInFlight === task) envNodeUpdateInFlight = null
+    })
+    envNodeUpdateInFlight = task
+    return task
   })
 
   // 日志
