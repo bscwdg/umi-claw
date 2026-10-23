@@ -83,8 +83,10 @@ export const useEnvSetupStore = defineStore('envSetup', () => {
     taskAlive.value = true
     stepLog.value = []
     progress.value = initial
-    subscribeProgress()
+    // 订阅也放在 try 里：一旦 subscribeProgress 抛错（如预加载面缺失），
+    // finally 仍会复位 taskAlive，否则整个环境页会永久停在「任务进行中」。
     try {
+      subscribeProgress()
       return await invoke()
     } catch (e: any) {
       // 统一兜住 invoke reject（如 IPC 通道异常）：否则卡片停在初始态，
