@@ -63,9 +63,15 @@ const clawVersion = {
   },
 }
 
-// 新装环境内置的默认 Node 版本：必须满足 OpenClaw 2026.9.4+ 的引擎要求
-// (>=24.16.0 <25 || >=26.1.0)，OpenClaw 安装前会执行 preinstall 引擎检查。
-const NODE_VERSION = 'v24.21.0'
+// OpenClaw 当前的 Node 引擎要求（取自 openclaw@latest 的 engines.node）。
+// 2026.10.6 起为 >=24.22.1 <25 || >=26.12.1；OpenClaw 安装前会执行 preinstall
+// 引擎检查，不满足直接退出码 1，且换镜像源重试毫无意义（确定性失败）。
+// 上游再次抬高门槛时改这里即可 —— 安装失败时的错误兜底还会再解析一次。
+export const OPENCLAW_NODE_RANGE = '>=24.22.1 <25 || >=26.12.1'
+
+// 新装环境内置的默认 Node 版本：必须满足上面的引擎要求。
+// 必须与 src/views/Setup.vue 的 isNodeCompatible 保持一致。
+export const NODE_VERSION = 'v24.22.1'
 
 // OpenClaw 微信渠道插件的 npm 包名，也是 openclaw plugins install 的目标 spec。
 const WEIXIN_PLUGIN_PACKAGE = '@tencent-weixin/openclaw-weixin'
@@ -153,25 +159,119 @@ function copyDir(src: string, dest: string) {
   }
 }
 
-/** 归一化版本号：允许用户输入 24.21.0，统一补成 v24.21.0 */
+/** 归一化版本号：允许用户输入 24.22.1，统一补成 v24.22.1 */
 function normalizeNodeVersion(input: string): string {
   const t = input.trim()
   return /^\d+\.\d+\.\d+/.test(t) ? `v${t}` : t
 }
 
+/** 解析版本号为 [major, minor, patch]，缺失段补 0；无法解析返回 null。 */
+function parseVersionParts(version: string): number[] | null {
+  const m = version.trim().replace(/^v/, '').match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/)
+  if (!m) return null
+  return [
+    parseInt(m[1], 10),
+    m[2] === undefined ? 0 : parseInt(m[2], 10),
+    m[3] === undefined ? 0 : parseInt(m[3], 10)
+  ]
+}
+
+function compareVersionParts(a: number[], b: number[]): number {
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] ?? 0) > (b[i] ?? 0)) return 1
+    if ((a[i] ?? 0) < (b[i] ?? 0)) return -1
+  }
+  return 0
+}
+
+function testComparator(v: number[], op: string, target: number[]): boolean {
+  const c = compareVersionParts(v, target)
+  switch (op) {
+    case '>=':
+      return c >= 0
+    case '>':
+      return c > 0
+    case '<=':
+      return c <= 0
+    case '<':
+      return c < 0
+    default:
+      return c === 0
+  }
+}
+
 /**
- * 判断版本是否满足 OpenClaw 2026.9.4 起的 Node 引擎要求：
- * >=24.16.0 <25 || >=26.1.0（25.x 不在受支持区间）。
+ * 判断版本是否满足引擎区间（npm semver 的子集，够用即可）。
+ *
+ * 支持：`||` 或、空格连接的 AND、`>= > <= < = ^ ~`，以及 `24` / `24.22` / `24.x`
+ * 这类不完整版本。例：'>=24.22.1 <25 || >=26.12.1'。
+ * 预发布标签忽略，只比 major.minor.patch。
  */
-function satisfiesOpenClawNodeRange(version: string): boolean {
-  const m = version.replace(/^v/, '').match(/^(\d+)\.(\d+)\.(\d+)/)
-  if (!m) return false
-  const maj = parseInt(m[1], 10)
-  const min = parseInt(m[2], 10)
-  if (maj === 24) return min >= 16
-  if (maj === 25) return false
-  if (maj === 26) return min >= 1
-  return maj > 26
+export function satisfiesNodeRange(version: string, range: string): boolean {
+  const v = parseVersionParts(version)
+  if (!v) return false
+  return range.split('||').some((alt) => {
+    const tokens = alt.trim().split(/\s+/).filter(Boolean)
+    if (tokens.length === 0) return true
+    return tokens.every((token) => {
+      const m = token.match(/^(>=|<=|>|<|=|\^|~)?\s*(.+)$/)
+      if (!m) return false
+      const op = m[1] ?? ''
+      const raw = m[2].trim().replace(/^v/, '')
+      const nums = parseVersionParts(raw)
+      if (!nums) return false
+      const given = raw.split('.').filter((p) => /^\d+$/.test(p)).length
+      const lo = [...nums]
+
+      if (op === '^' || op === '~') {
+        const upper = [...lo]
+        const bump = op === '^' ? 0 : 1
+        upper[bump] += 1
+        for (let i = bump + 1; i < 3; i++) upper[i] = 0
+        return testComparator(v, '>=', lo) && testComparator(v, '<', upper)
+      }
+      if (op === '>' || op === '<' || op === '>=' || op === '<=') {
+        return testComparator(v, op, lo)
+      }
+      // 无运算符或 '='：完整版本比相等；不完整版本按该前缀的整段区间处理
+      if (given >= 3) return testComparator(v, '=', lo)
+      if (given === 0) return true
+      for (let i = given; i < 3; i++) lo[i] = 0
+      const upper = [...lo]
+      upper[given - 1] += 1
+      for (let i = given; i < 3; i++) upper[i] = 0
+      return testComparator(v, '>=', lo) && testComparator(v, '<', upper)
+    })
+  })
+}
+
+/** 便携 Node 是否满足 OpenClaw 当前的引擎要求。 */
+export function satisfiesOpenClawNodeRange(version: string): boolean {
+  return satisfiesNodeRange(version, OPENCLAW_NODE_RANGE)
+}
+
+/**
+ * 从 OpenClaw preinstall 的报错里取出要求的 Node 区间：
+ * `[openclaw] error: this OpenClaw release requires Node >=24.22.1 <25 || >=26.12.1.`
+ */
+export function parseRequiredNodeRange(text: string): string | null {
+  const m = text.match(/this OpenClaw release requires Node\s+([^\r\n]+)/i)
+  if (!m) return null
+  const range = m[1].trim().replace(/[.。]+$/, '')
+  return /\d/.test(range) ? range : null
+}
+
+/**
+ * OpenClaw 安装脚本因 Node 引擎不满足而失败。
+ * 这是确定性失败，与镜像源无关；携带要求的区间供上层自动升级运行时后重试。
+ */
+class OpenClawEngineMismatchError extends Error {
+  readonly requiredRange: string
+  constructor(requiredRange: string) {
+    super(`OpenClaw 需要 Node ${requiredRange}，当前便携运行时版本不满足`)
+    this.name = 'OpenClawEngineMismatchError'
+    this.requiredRange = requiredRange
+  }
 }
 
 function getNodeDownloadUrl(useMirror: boolean, version: string = NODE_VERSION): string {
@@ -483,18 +583,20 @@ export class DownloadManager extends EventEmitter {
 
       if (!info.nodeInstalled) {
         await this._downloadNode(useMirror)
-      } else if (info.nodeVersion && !satisfiesOpenClawNodeRange(info.nodeVersion)) {
-        // 已装 Node 不满足新版 OpenClaw 引擎要求（如 v22）：先自动升级内置 Node，避免 preinstall 失败
-        const upgraded = await this.updateNodeRuntime({ version: NODE_VERSION, useMirror })
-        if (!upgraded.success) {
-          throw new Error(upgraded.error || 'Node.js 运行时升级失败')
-        }
       } else {
-        this._progress('运行环境', 'Node.js 运行时已就绪', 20)
+        // 已装 Node 不满足新版 OpenClaw 引擎要求（如 v24.21.0 对 2026.10.6）：
+        // 先自动升级内置 Node，否则 preinstall 引擎检查必然失败。
+        const ensured = await this._ensureNodeRuntimeFor(OPENCLAW_NODE_RANGE, useMirror)
+        if (!ensured.ok) {
+          throw new Error(ensured.error || 'Node.js 运行时升级失败')
+        }
+        if (!ensured.upgraded) {
+          this._progress('运行环境', 'Node.js 运行时已就绪', 20)
+        }
       }
 
       if (!info.openClawInstalled || !info.channelsInstalled) {
-        await this._installOpenClaw(useMirror)
+        await this._installOpenClawWithNodeRecovery(useMirror)
       } else {
         this._progress('运行环境', 'OpenClaw 核心及渠道插件均已安装', 90)
       }
@@ -535,6 +637,8 @@ export class DownloadManager extends EventEmitter {
     warning?: string
     /** 更新失败后是否已自动回滚到原可用版本 */
     rolledBack?: boolean
+    /** 更新在动手前就中止（如 Node 预检未过）：环境原封不动，可安全重启网关 */
+    unchanged?: boolean
     previousVersion?: string
     currentVersion?: string
   }> {
@@ -556,12 +660,23 @@ export class DownloadManager extends EventEmitter {
 
     let snapshot: OpenClawUpdateSnapshot | null = null
     try {
+      // 更新链路也必须过 Node 引擎预检：新版 OpenClaw 会抬高 engines.node，
+      // 旧运行时会被 preinstall 直接拒掉（2026.10.6 要求 >=24.22.1）。
+      // 放在建快照之前 —— 升级 Node 失败时环境原封不动，不需要回滚。
+      const ensured = await this._ensureNodeRuntimeFor(OPENCLAW_NODE_RANGE, useMirror)
+      if (!ensured.ok) {
+        const error = ensured.error || 'Node.js 运行时升级失败'
+        this._progressError(error)
+        // 快照还没建、核心一行没动：标 unchanged 让 IPC 层照常把网关拉回来
+        return { success: false, error, previousVersion, unchanged: true }
+      }
+
       this._progress('检查更新', '正在为当前可用版本创建回滚快照...', 8)
       snapshot = await this._snapshotOpenClawForUpdate()
 
       // 快照已把旧 node_modules 整体挪走，候选版本直接安装到原路径，
       // forceOnline 强制 npm 联网重新解析并拉取 latest（否则会沿用旧版本）。
-      await this._installOpenClaw(useMirror, 0, true)
+      await this._installOpenClawWithNodeRecovery(useMirror, 0, true)
 
       // 候选版本冒烟：核心版本可读，且 CLI 能正常启动（防止装出残缺包）。
       const candidate = await this.checkEnvironment()
@@ -1043,7 +1158,7 @@ export class DownloadManager extends EventEmitter {
   }> {
     const target = normalizeNodeVersion(options.version || NODE_VERSION)
     if (!/^v\d+\.\d+\.\d+(-[\w.]+)?$/.test(target)) {
-      return { success: false, error: `版本号格式不正确：${options.version}（示例：v24.21.0）` }
+      return { success: false, error: `版本号格式不正确：${options.version}（示例：v24.22.1）` }
     }
     const useMirror = options.useMirror ?? true
     this.abortController = new AbortController()
@@ -1383,6 +1498,123 @@ export class DownloadManager extends EventEmitter {
     this._progress('Node.js', 'Node.js 运行时环境配置成功', 20)
   }
 
+  /**
+   * 确保便携 Node 满足给定引擎区间，不满足则自动升级内置运行时。
+   *
+   * 目标版本优先用内置默认版本；它也不满足时（上游骨架又抬高了）从镜像索引里
+   * 挑满足区间的最新补丁版本，避免用户被“请手动升级 Node”卡死。
+   */
+  private async _ensureNodeRuntimeFor(
+    range: string,
+    useMirror: boolean
+  ): Promise<{ ok: boolean; version?: string; error?: string; upgraded?: boolean }> {
+    const nodePath = this.configManager.getNodePath()
+    if (!existsSync(nodePath)) {
+      return { ok: false, error: 'Node.js 运行时尚未安装，请先完成环境初始化' }
+    }
+
+    let current: string
+    try {
+      const { stdout } = await execAsync(`"${nodePath}" --version`)
+      current = stdout.trim()
+    } catch (e: any) {
+      return { ok: false, error: `读取 Node 版本失败：${e.message}` }
+    }
+    if (satisfiesNodeRange(current, range)) return { ok: true, version: current }
+
+    const target = await this._pickNodeVersionFor(range, useMirror)
+    if (!target) {
+      return {
+        ok: false,
+        version: current,
+        error: `新版 OpenClaw 需要 Node ${range}，但镜像源未提供满足条件的版本，请稍后重试或手动指定 Node 版本`
+      }
+    }
+
+    this._writeDebugLog(`[NodeRange] ${current} 不满足 ${range}，自动升级到 ${target}`)
+    this._progress(
+      '运行环境',
+      `当前 Node ${current} 不满足新版本要求（需要 ${range}），正在自动升级到 ${target}...`,
+      10
+    )
+    const upgraded = await this.updateNodeRuntime({ version: target, useMirror })
+    if (!upgraded.success) {
+      return {
+        ok: false,
+        version: current,
+        error: `新版 OpenClaw 需要 Node ${range}，自动升级 Node 运行时失败：${upgraded.error || '未知原因'}`
+      }
+    }
+    const after = upgraded.currentVersion ?? target
+    if (!satisfiesNodeRange(after, range)) {
+      return { ok: false, version: after, error: `升级后 Node ${after} 仍不满足要求 ${range}` }
+    }
+    return { ok: true, version: after, upgraded: true }
+  }
+
+  /** 为给定引擎区间挑选可下载的 Node 版本：默认版本优先，否则取满足区间的最新版。 */
+  private async _pickNodeVersionFor(range: string, useMirror: boolean): Promise<string | null> {
+    if (satisfiesNodeRange(NODE_VERSION, range)) return NODE_VERSION
+
+    const bases = useMirror ? MIRRORS.nodeBase : [MIRRORS.nodeBase[1]]
+    for (const base of bases) {
+      try {
+        // 这条查询在更新/初始化的关键路径上，源站卡住会让整个任务无期限挂起
+        const resp = await fetch(`${base}/index.json`, {
+          signal: AbortSignal.timeout(15_000)
+        })
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+        const list = (await resp.json()) as Array<{ version: string }>
+        const candidates = list
+          .map((item) => item.version)
+          .filter((v) => /^v\d+\.\d+\.\d+$/.test(v) && satisfiesNodeRange(v, range))
+          .sort((a, b) => compareVersions(b, a))
+        if (candidates.length) return candidates[0]
+      } catch (e: any) {
+        this._writeDebugLog(`[NodeRange] 读取 Node 版本索引失败 ${base}: ${e.message}`)
+      }
+    }
+    return null
+  }
+
+  /**
+   * 安装核心，并在撞到 OpenClaw 的 Node 引擎闸门时自动升级运行时后重试一次。
+   *
+   * 引擎错误是确定性失败，和镜像源无关：原实现会把它当成「镜像源异常」，
+   * 白跑剩下两个源各几分钟才回滚。这里改为先升级 Node 再重装。
+   */
+  private async _installOpenClawWithNodeRecovery(
+    useMirror: boolean,
+    mirrorIndex?: number,
+    forceOnline = false
+  ): Promise<void> {
+    try {
+      await this._installOpenClaw(useMirror, mirrorIndex, forceOnline)
+    } catch (err: any) {
+      if (!(err instanceof OpenClawEngineMismatchError)) throw err
+
+      const ensured = await this._ensureNodeRuntimeFor(err.requiredRange, useMirror)
+      if (!ensured.ok) {
+        throw new Error(
+          `新版 OpenClaw 需要 Node ${err.requiredRange}，自动升级内置 Node 运行时失败：${ensured.error || '未知原因'}`
+        )
+      }
+
+      // 上一轮 npm 可能留下半装目录，清掉重装（更新场景的旧版本在快照里）。
+      const openClawDir = join(this.configManager.getDataDir(), 'openclaw')
+      for (const p of [join(openClawDir, 'node_modules'), join(openClawDir, 'package-lock.json')]) {
+        try {
+          if (existsSync(p)) rmSync(p, { recursive: true, force: true })
+        } catch (e: any) {
+          this._writeDebugLog(`[InstallOpenClaw] 重试前清理失败 ${p}: ${e.message}`)
+        }
+      }
+
+      this._progress('部署核心', `Node ${ensured.version ?? ''} 已就绪，正在重新部署核心服务...`, 30)
+      await this._installOpenClaw(useMirror, mirrorIndex, forceOnline)
+    }
+  }
+
   private async _installOpenClaw(useMirror: boolean, mirrorIndex?: number, forceOnline = false): Promise<void> {
     const dataDir = this.configManager.getDataDir();
     const nodePath = this.configManager.getNodePath();
@@ -1456,6 +1688,9 @@ export class DownloadManager extends EventEmitter {
       });
 
       let lastLine = '';
+      // 引擎报错可能出现在任意一段 stderr 里（后面还会跟 npm 的清理告警），
+      // 只留最后一行会漏掉，所以保留一小段尾部用于识别。
+      let stderrTail = '';
       // 🟢 2. 定义安全的智能解码器
       const decodeChunk = (chunk: any) => {
         try {
@@ -1478,6 +1713,7 @@ export class DownloadManager extends EventEmitter {
       // 🟢 4. 错误输出流解码（精准修复点：把原本的 d: string 改为 d: any，并调用解码器）
       proc.stderr?.on('data', (d: any) => {
         lastLine = decodeChunk(d);
+        stderrTail = `${stderrTail}\n${lastLine}`.slice(-8192);
         this._writeDebugLog(`[NPM STDERR] ${lastLine}`);
       });
 
@@ -1492,6 +1728,16 @@ export class DownloadManager extends EventEmitter {
         if (code === 0) resolve(true);
         else {
           this._writeDebugLog(`[安装失败详细归档] [${activeRegistry.name}] 退出码: ${code}, 截获最后一行提示: ${lastLine}`);
+
+          // Node 引擎不满足是确定性失败：换镜像源只会再失败一次，
+          // 先抛给上层升级运行时后重试（见 _installOpenClawWithNodeRecovery）。
+          const engineRange = parseRequiredNodeRange(`${lastLine}\n${stderrTail}`);
+          if (engineRange) {
+            this._writeDebugLog(`[InstallOpenClaw] Node 引擎不满足，跳过镜像重试: 需要 ${engineRange}`);
+            reject(new OpenClawEngineMismatchError(engineRange));
+            return;
+          }
+
           if (useMirror) {
             const nextIndex = (mirrorIndex ?? 0) + 1;
             if (nextIndex >= DOMESTIC_MIRRORS.length) {
