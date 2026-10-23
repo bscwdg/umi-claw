@@ -245,6 +245,11 @@ function createWorkGatewayClient(): GatewayClient {
     // 模型选择**按次解析**（不做启动快照）：Setup 完成 / 换 provider 后无需重启主进程即生效
     modelsResolver: resolveGatewayModels,
     starter,
+    // 就绪预算 10 分钟是为慢冷启动留的，但进程已经退出时不该继续空转：
+    // 拉起后进程消失 → ensureReady 立即失败。维护模式（doctor 迁移 / 自愈重启）
+    // 期间进程句柄为空是预期状态，不能据此判死，所以一并放行。
+    isGatewayProcessAlive: () =>
+      clawManager.getStatus().running || clawManager.isMaintenanceActive(),
     actualPortResolver: () => readActualGatewayPort(),
     logger: (message: string) => console.log(message)
   })
@@ -834,15 +839,32 @@ let envUpdateInFlight = false
 const UPDATE_IN_PROGRESS_ERROR = 'OpenClaw 正在更新，请等待更新完成后再启动'
 
 /**
- * 三个环境任务各自的单飞 promise。
- * 用户在「环境初始化」页开始初始化/更新后切到别的页面再切回来（或重复点击）时，
- * 前端虽然有任务态防护，主进程仍需兜底：第二次调用直接拒绝，绝不并发执行
- * 第二套下载/安装/迁移——两个 npm 安装或两轮 doctor 并发会互相抢状态库锁。
- * 进度仍由广播通道 env:progress 推送，切回来的页面重新挂载即可看到最新进度。
+ * 环境任务（初始化 / OpenClaw 更新 / Node 更新）的**全局**单飞 promise。
+ *
+ * 三个任务互相也不能并发：初始化与更新都要写同一个安装目录，Node 更新会替换
+ * 正在被 npm 安装使用的运行时，任意两个并发都会互相抢文件/状态库锁。所以这里用
+ * 一个共享闸，而不是每个任务各一个（那只能挡住自己的重复点击）。
+ *
+ * 用户在「环境初始化」页开始任务后切到别的页面再切回来（或重复点击）时，前端虽然有
+ * 任务态防护，主进程仍需兜底：第二次调用直接拒绝。进度仍由 env:progress 广播推送，
+ * 切回来的页面重新挂载即可看到最新进度。
  */
-let envInitInFlight: Promise<unknown> | null = null
-let envNodeUpdateInFlight: Promise<unknown> | null = null
+let envTaskInFlight: Promise<unknown> | null = null
 const ENV_TASK_BUSY_ERROR = '已有环境任务在进行中，请等待当前任务完成'
+
+/** 环境任务统一入口：并发调用直接返回 inFlight 回执，绝不排队执行第二套安装/迁移 */
+function runExclusiveEnvTask<T>(
+  task: () => Promise<T>
+): Promise<T> | { success: false; error: string; inFlight: true } {
+  if (envTaskInFlight) {
+    return { success: false, error: ENV_TASK_BUSY_ERROR, inFlight: true }
+  }
+  const run = task().finally(() => {
+    if (envTaskInFlight === run) envTaskInFlight = null
+  })
+  envTaskInFlight = run
+  return run
+}
 
 /**
  * 统一的应用退出流程：标记退出、清理终端会话并停止 OpenClaw
@@ -1175,18 +1197,9 @@ function registerIpcHandlers(): void {
 
   // 环境初始化
   ipcMain.handle('env:check', () => downloadManager.checkEnvironment())
-  ipcMain.handle('env:init', async (_e, options) => {
-    if (envInitInFlight) {
-      return { success: false, error: ENV_TASK_BUSY_ERROR, inFlight: true }
-    }
-    const task = downloadManager
-      .initEnvironment(options)
-      .finally(() => {
-        if (envInitInFlight === task) envInitInFlight = null
-      })
-    envInitInFlight = task
-    return task
-  })
+  ipcMain.handle('env:init', (_e, options) =>
+    runExclusiveEnvTask(() => downloadManager.initEnvironment(options))
+  )
   const envUpdateImpl = async (options: { useMirror?: boolean }) => {
     // 更新期间状态库不能被占用：先停网关，然后 update repair 收敛插件、
     // doctor 迁移 schema、启动探针裁决，最后按需重启（全程由 envUpdateInFlight 闸住外部启动）
@@ -1312,19 +1325,18 @@ function registerIpcHandlers(): void {
     }
     return result
   }
-  ipcMain.handle('env:update', async (_e, options) => {
-    if (envUpdateInFlight) {
-      return { success: false, error: ENV_TASK_BUSY_ERROR, inFlight: true }
-    }
-    // 全程闸住外部启动（claw:start/restart、网关客户端自动拉起），
-    // 防止 doctor 迁移 / update repair 与手动启动抢同一个状态库
-    envUpdateInFlight = true
-    try {
-      return await envUpdateImpl(options)
-    } finally {
-      envUpdateInFlight = false
-    }
-  })
+  ipcMain.handle('env:update', (_e, options) =>
+    runExclusiveEnvTask(async () => {
+      // 全程闸住外部启动（claw:start/restart、网关客户端自动拉起），
+      // 防止 doctor 迁移 / update repair 与手动启动抢同一个状态库
+      envUpdateInFlight = true
+      try {
+        return await envUpdateImpl(options)
+      } finally {
+        envUpdateInFlight = false
+      }
+    })
+  )
   ipcMain.handle('env:checkLatest', async (_e, options) => {
     return downloadManager.checkLatestVersion(options)
   })
@@ -1334,7 +1346,7 @@ function registerIpcHandlers(): void {
     return downloadManager.getNodeVersions(options)
   })
   // 更新内置便携 Node：先停网关释放文件锁，结束后（无论成败）恢复原运行状态。
-  // 单飞由下方 handler 的 envNodeUpdateInFlight 保证，避免切页面重复点击并发更新。
+  // 单飞由 runExclusiveEnvTask 保证（与 init/update 共享同一把闸，防止并发改安装目录）。
   const updateNodeImpl = async (options: { version?: string; useMirror?: boolean }) => {
     const wasRunning = clawManager.getStatus().running
     if (wasRunning) {
@@ -1351,16 +1363,18 @@ function registerIpcHandlers(): void {
     }
     return result
   }
-  ipcMain.handle('env:updateNode', async (_e, options) => {
-    if (envNodeUpdateInFlight) {
-      return { success: false, error: ENV_TASK_BUSY_ERROR, inFlight: true }
-    }
-    const task = updateNodeImpl(options).finally(() => {
-      if (envNodeUpdateInFlight === task) envNodeUpdateInFlight = null
+  ipcMain.handle('env:updateNode', (_e, options) =>
+    runExclusiveEnvTask(async () => {
+      // Node 更新会替换正在使用的运行时并停/起网关，同样要闸住外部启动，
+      // 否则手动「启动」可能在 node_modules 被替换到一半时拉起进程。
+      envUpdateInFlight = true
+      try {
+        return await updateNodeImpl(options)
+      } finally {
+        envUpdateInFlight = false
+      }
     })
-    envNodeUpdateInFlight = task
-    return task
-  })
+  )
 
   // 日志
   ipcMain.handle('log:getLogs', () => clawManager.getLogs())
