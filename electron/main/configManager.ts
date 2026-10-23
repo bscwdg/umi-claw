@@ -392,7 +392,9 @@ export class ConfigManager {
    *   说明：doctor 只收敛 openclaw.json、不碰 app.json；这里重读 app.json 是防御性刷新（万一外部
    *   工具/手改也动了 app.json），常规同步不要开。
    */
-  async syncOpenClawConfig(opts?: { reloadFromDisk?: boolean }): Promise<{ ok: boolean; error?: string }> {
+  async syncOpenClawConfig(
+    opts?: { reloadFromDisk?: boolean }
+  ): Promise<{ ok: boolean; error?: string; kind?: 'rejected' | 'timeout' | 'process' }> {
     if (opts?.reloadFromDisk) {
       try {
         this.config = this._load()
@@ -909,7 +911,7 @@ export class ConfigManager {
    * 由官方写入器做整份 schema 校验 + 旧键迁移 + meta 自动盖戳；本方法只负责计算
    * 「原配置 → 目标配置」的最小 merge patch。全新安装、文件尚不存在时才直接落首文件骨架。
    */
-private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string }> {
+private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string; kind?: 'rejected' | 'timeout' | 'process' }> {
   try {
     const workspacePath = join(openClawPaths.configDir(this.dataDir), 'workspace')
 
@@ -947,7 +949,13 @@ private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string }> {
         if (!parsedExisting || typeof parsedExisting !== 'object') parsedExisting = null
       } catch (parseErr) {
         console.error('[ConfigManager] openclaw.json parse failed; skip sync to avoid overwriting config with skeleton', parseErr)
-        return { ok: false, error: 'openclaw.json 解析失败，已跳过同步以免骨架覆盖真实配置' }
+        // 确定性的配置损坏（非法 JSON）：doctor --fix 是官方收敛入口，归为 rejected
+        // 让启动链路走 doctor，而不是当成瞬时失败带病拉起网关。
+        return {
+          ok: false,
+          kind: 'rejected',
+          error: 'openclaw.json 解析失败，已跳过同步以免骨架覆盖真实配置'
+        }
       }
     }
     // 变更前留底：existingConfig 必须是 parsedExisting 的深拷贝，而非同一引用。
@@ -1241,7 +1249,7 @@ private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string }> {
     const result: OpenClawPatchResult = await applyOpenClawConfigPatch(this.dataDir, patch)
     if (!result.ok) {
       console.error('[ConfigManager] openclaw.json 同步被官方写入器拒绝:', result.error)
-      return { ok: false, error: result.error }
+      return { ok: false, error: result.error, kind: result.kind }
     }
     console.log('[ConfigManager] openclaw.json 已通过官方 config patch 同步。')
 
@@ -1252,7 +1260,9 @@ private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string }> {
     return { ok: true }
   } catch (err: any) {
     console.error('[ConfigManager] 同步 OpenClaw 配置失败:', err.message)
-    return { ok: false, error: err.message }
+    // 内部异常（读 workspace / IO 失败等）：明确归类为 process，
+    // 不与 schema 拒绝混淆，也不靠 kind=undefined 的隐式默认。
+    return { ok: false, kind: 'process', error: err.message }
   }
 }
 
