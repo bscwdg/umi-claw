@@ -32,7 +32,7 @@
               class="text-sm"
               style="margin-top: 2px; color: var(--red)"
             >
-              ⚠️ 版本过低，OpenClaw 2026.9+ 需要 Node v24.16+ / v26.1+，请更新
+              ⚠️ 版本过低，新版 OpenClaw 需要 Node v24.22.1+ / v26.12.1+，请更新
             </div>
           </div>
           <div
@@ -169,7 +169,7 @@
           v-model="customNodeVersion"
           class="form-input"
           style="width: 160px"
-          placeholder="如 v24.21.0"
+          placeholder="如 v24.22.1"
         />
         <button
           class="btn btn-primary btn-sm"
@@ -184,7 +184,7 @@
         class="text-sm"
         style="margin-top: 8px; color: var(--red)"
       >
-        {{ nodeVersionsError }}，可选择「自定义版本」直接填写，例如 v24.21.0。
+        {{ nodeVersionsError }}，可选择「自定义版本」直接填写，例如 v24.22.1。
       </div>
     </div>
 
@@ -383,7 +383,10 @@ async function startInit() {
   );
   if (res?.inFlight) return;
   if (res?.success) {
-    envSetup.markDone("恭喜，全套环境初始化部署成功！");
+    // 初始化成功后仍可能有非致命警告（如网关重启失败），不能静默吞掉
+    envSetup.markDone(
+      "恭喜，全套环境初始化部署成功！" + (res.warning ? `（${res.warning}）` : "")
+    );
   } else if (res?.error) {
     envSetup.markError(res.error);
   }
@@ -490,14 +493,15 @@ const selectedNodeVersion = ref("");
 const customNodeVersion = ref("");
 const nodeVersionsError = ref("");
 
+// 必须与 electron/main/downloadManager.ts 的 OPENCLAW_NODE_RANGE 保持一致：
+// 新版 OpenClaw 的 engines.node 为 >=24.22.1 <25 || >=26.12.1。
 function isNodeCompatible(v: string): boolean {
-  const m = v.replace(/^v/, "").match(/^(\d+)\.(\d+)\./);
+  const m = v.replace(/^v/, "").match(/^(\d+)\.(\d+)\.(\d+)/);
   if (!m) return true;
-  const maj = Number(m[1]);
-  const min = Number(m[2]);
-  if (maj === 24) return min >= 16;
+  const [maj, min, patch] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (maj === 24) return min > 22 || (min === 22 && patch >= 1);
   if (maj === 25) return false;
-  if (maj === 26) return min >= 1;
+  if (maj === 26) return min > 12 || (min === 12 && patch >= 1);
   return maj > 26;
 }
 
@@ -519,16 +523,16 @@ async function toggleNodePanel() {
         selectedNodeVersion.value = recommended
           ? recommended.version
           : "__custom__";
-        if (!recommended) customNodeVersion.value = "v24.21.0";
+        if (!recommended) customNodeVersion.value = "v24.22.1";
       } else {
         nodeVersionsError.value = res?.error || "获取推荐版本失败";
         selectedNodeVersion.value = "__custom__";
-        customNodeVersion.value = "v24.21.0";
+        customNodeVersion.value = "v24.22.1";
       }
     } catch (e: any) {
       nodeVersionsError.value = e?.message || "获取推荐版本失败";
       selectedNodeVersion.value = "__custom__";
-      customNodeVersion.value = "v24.21.0";
+      customNodeVersion.value = "v24.22.1";
     } finally {
       loadingNodeVersions.value = false;
     }
