@@ -250,6 +250,51 @@ export class ClawManager extends EventEmitter {
   }
 
   /**
+   * 清理 OpenClaw 插件隔离副本（tmp/plugin-captures/<uuid>）的历史残留。
+   *
+   * 背景：OpenClaw 每个新进程启动前都会把渠道插件整体复制到该目录做隔离加载，
+   * 而飞书插件自带数千个 node_modules 小文件。短命 CLI（config patch / doctor）
+   * 退出后来不及回收，实测堆积十余个副本、占用 1GB+；副本越多，OpenClaw 启动时
+   * 自己的目录巡检也越慢，是冷启动从十几秒劣化到数分钟的原因之一。
+   *
+   * 安全前提：必须在 _killGhostProcesses 之后调用——此刻已无 openclaw 进程，
+   * 所有副本都是非活动残留。只删 UUID 形态的直接子目录，其他条目一律跳过。
+   * best-effort：删除失败（占用/权限）只记日志，绝不阻断启动。
+   */
+  private async _cleanStalePluginCaptures(dataDir: string): Promise<void> {
+    try {
+      const capturesDir = join(openClawPaths.configDir(dataDir), 'tmp', 'plugin-captures')
+      if (!existsSync(capturesDir)) return
+      const uuidDirRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      let removed = 0
+      // 异步 rm：十余个副本、数万小文件的递归删除在 Windows 上可能耗时数十秒，
+      // 同步 rmSync 会冻结事件循环，期间所有 IPC 与渲染层「启动中」UI 全部卡死。
+      const entries = await fs.readdir(capturesDir, { withFileTypes: true })
+      const staleDirs = entries
+        .filter((entry) => entry.isDirectory() && uuidDirRe.test(entry.name))
+        .map((entry) => join(capturesDir, entry.name))
+      const results = await Promise.allSettled(
+        staleDirs.map((dir) =>
+          fs.rm(dir, {
+            recursive: true,
+            force: true,
+            maxRetries: 2,
+            retryDelay: 200
+          })
+        )
+      )
+      for (const result of results) {
+        if (result.status === 'fulfilled') removed++
+      }
+      if (removed > 0) {
+        this._addLog(`已清理 ${removed} 个插件隔离副本残留（tmp/plugin-captures）`, 'system')
+      }
+    } catch (e: any) {
+      this._addLog(`插件隔离副本清理失败（可忽略）：${e?.message || e}`, 'stderr')
+    }
+  }
+
+  /**
    * 按命令行精确清理残留网关进程。
    *
    * 为什么不能像 bun/openclaw 那样按镜像名杀：真实网关是 **node.exe**
@@ -375,6 +420,8 @@ export class ClawManager extends EventEmitter {
     // 清理要在确认运行时/核心库存在之后：两者都缺时启动本来就发不出去，
     // 没必要为此去扫进程、更没必要误伤别的实例。
     await this._killGhostProcesses(dataDir)
+    // 已无 openclaw 进程：顺手回收插件隔离副本残留（实测能堆到 1GB+，还会拖慢启动巡检）
+    await this._cleanStalePluginCaptures(dataDir)
 
     const targetConfigDir = toPosix(openClawPaths.configDir(dataDir))
 
@@ -403,32 +450,54 @@ export class ClawManager extends EventEmitter {
     // 避免此前在本类内重复实现（且曾用 p.id 取 OFFICIAL_MODEL_PRESETS 导致死分支）。
     // 写入一律走官方 config patch：被 schema 拒绝时绝不 spawn 网关（否则必 exit 78）。
     let syncResult = await this.configManager.syncOpenClawConfig()
+    // patch 超时/进程错误（非 schema 拒绝）时不跑 doctor，仅作为启动 warning 透给前端
+    let syncTransientWarning: string | undefined
     if (!syncResult.ok) {
-      // patch 被拒只说明「当前磁盘配置不被已安装版本接受」（上游退役键 / legacy 迁移
-      // 未收敛等）。doctor --fix 是官方唯一且幂等的收敛入口——正常配置上跑也无副作用，
-      // 所以这里**无条件**收敛一次再重试，而不去匹配 CLI 的英文报错文案（文案不是稳定
-      // 契约，上游改个措辞就会漏判）。只重试一次，仍失败即中止启动，绝不带病拉起网关。
-      this._addLog(
-        'openclaw.json 未通过官方校验，正在运行 doctor --fix 自动收敛（可能需要数分钟，期间网关暂不启动）...',
-        'system'
-      )
-      const doctor = await this.runDoctorFix()
-      if (doctor.success) {
-        // doctor --fix 就地收敛了磁盘上的 openclaw.json，但 ConfigManager 内存里的 this.config
-        // 仍是加载时的旧快照。先 reloadFromDisk 重读（doctor 不碰 app.json，重读是防御性刷新），
-        // 否则重试同步会基于旧快照重算 merge patch，把 doctor 刚修掉的退役键/旧结构重新写回去
-        //（doctor 白跑，下次启动再触发 78）。
-        syncResult = await this.configManager.syncOpenClawConfig({ reloadFromDisk: true })
-      } else {
-        return {
-          success: false,
-          error: `配置自动修复失败（doctor --fix 未成功）：${doctor.error || syncResult.error}`
+      // 只有「CLI 正常退出但明确拒绝补丁」（schema 非法 / 退役键等）才允许 doctor 介入。
+      // timeout / process 只说明这个短命 CLI 没跑完——冷启动时它要先复制渠道插件的
+      // 数千个小文件（Windows + fs-safe 逐文件准入），实测可达数分钟，与配置是否合法无关。
+      // 历史上这里对任何失败都无条件跑 doctor --fix：doctor 的复制量比 patch 更大还要
+      // 逐文件哈希，慢环境下 20 分钟超时都跑不完，随后网关永远拉不起来（「启不起来」死局）。
+      // 这类瞬时失败改为只告警、继续拉起网关；磁盘配置本身无效时网关会自行 exit 78，
+      // 再由既有的退出码自愈链路决定是否 doctor。
+      if (syncResult.kind === 'rejected') {
+        this._addLog(
+          'openclaw.json 未通过官方校验，正在运行 doctor --fix 自动收敛（可能需要数分钟，期间网关暂不启动）...',
+          'system'
+        )
+        const doctor = await this.runDoctorFix()
+        if (doctor.success) {
+          // doctor --fix 就地收敛了磁盘上的 openclaw.json，但 ConfigManager 内存里的 this.config
+          // 仍是加载时的旧快照。先 reloadFromDisk 重读（doctor 不碰 app.json，重读是防御性刷新），
+          // 否则重试同步会基于旧快照重算 merge patch，把 doctor 刚修掉的退役键/旧结构重新写回去
+          //（doctor 白跑，下次启动再触发 78）。
+          syncResult = await this.configManager.syncOpenClawConfig({ reloadFromDisk: true })
+        } else {
+          return {
+            success: false,
+            error: `配置自动修复失败（doctor --fix 未成功）：${doctor.error || syncResult.error}`
+          }
         }
+        if (!syncResult.ok && syncResult.kind === 'rejected') {
+          return { success: false, error: `openclaw.json 同步未通过官方校验，未启动网关：${syncResult.error}` }
+        }
+        if (syncResult.ok) {
+          this._addLog('doctor 收敛完成，openclaw.json 已通过官方校验，继续启动网关。', 'system')
+        } else {
+          // doctor 已跑完，重试同步仍是超时/进程类瞬时失败：与主路径同口径，
+          // 告警并继续拉起（doctor 已就地收敛磁盘配置，大概率可启动）；
+          // 仍被 schema 拒绝的情况上面已中止，不会带病启动。
+          syncTransientWarning =
+            `doctor 收敛完成，但配置同步未确认（${syncResult.error || 'CLI 未正常结束'}），已继续启动网关；` +
+            '若模型或渠道配置未生效，请稍后重试启动。'
+          this._addLog(syncTransientWarning, 'stderr')
+        }
+      } else {
+        syncTransientWarning =
+          `openclaw.json 同步未完成（${syncResult.error || 'CLI 未正常结束'}），已继续启动网关；` +
+          '若模型或渠道配置未生效，请稍后重试启动。'
+        this._addLog(syncTransientWarning, 'stderr')
       }
-      if (!syncResult.ok) {
-        return { success: false, error: `openclaw.json 同步未通过官方校验，未启动网关：${syncResult.error}` }
-      }
-      this._addLog('doctor 收敛完成，openclaw.json 已通过官方校验，继续启动网关。', 'system')
     }
 
     const commonEnv = buildOpenClawEnv(dataDir, nodePath, {
@@ -487,7 +556,8 @@ export class ClawManager extends EventEmitter {
         // 持续健康运行 30s 后允许下一次退出码 78 再触发自愈
         if (this.process) this.maintenanceAutoFixUsed = false
       }, 30000)
-      return { success: true, warning: peerLinkWarning || undefined }
+      const warning = [peerLinkWarning, syncTransientWarning].filter(Boolean).join('；') || undefined
+      return { success: true, warning }
     } catch (err: any) {
       this.process = null
       return { success: false, error: err.message }
@@ -980,7 +1050,9 @@ export class ClawManager extends EventEmitter {
    * 不会自己去改 schema，所以「启动一次看看」是安全的。
    *
    * 判定用「进程退出 vs 就绪」竞速，而不是固定超时：本机实测成功路径约 6s 就监听端口，
-   * 而 schema 拒绝要约 65s 才退 78；现成就绪轮询预算（90s）和 65s 贴得太近，容易误判。
+   * 而 schema 拒绝要约 65s 才退 78；若用固定短预算（如旧的 90s）会和 65s 贴得太近，
+   * 容易误判——故本方法改用「进程退出 vs 就绪」竞速，不依赖 gatewayClient 的就绪预算
+   *（该预算已放宽到 10 分钟以覆盖 Windows 慢冷启动）。
    * 进程一退出就立刻下结论，既快又准。
    *
    * `refused` 的判据被刻意收窄成「**进程确实起来了、又自己退出了**」：

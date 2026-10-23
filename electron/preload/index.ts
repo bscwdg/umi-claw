@@ -52,7 +52,7 @@ const api = {
       ipcRenderer.on('claw:log', handler)
       return () => ipcRenderer.off('claw:log', handler)
     },
-    onStatusChange: (cb: (data: { running: boolean; port?: number }) => void) => {
+    onStatusChange: (cb: (data: { running: boolean; port?: number; maintenance?: boolean }) => void) => {
       const handler = (_: unknown, data: any) => cb(data)
       ipcRenderer.on('claw:statusChange', handler)
       return () => ipcRenderer.off('claw:statusChange', handler)
