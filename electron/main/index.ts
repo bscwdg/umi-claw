@@ -1197,8 +1197,45 @@ function registerIpcHandlers(): void {
 
   // 环境初始化
   ipcMain.handle('env:check', () => downloadManager.checkEnvironment())
+  // 初始化/重装会替换 node_modules，且 Node 不满足新核心要求时还会自动升级运行时
+  // （升级会结束占用便携 Node 的进程）——所以先停网关，结束后按原状态恢复。
+  const envInitImpl = async (options: { useMirror?: boolean }) => {
+    const wasRunning = clawManager.getStatus().running
+    if (wasRunning) {
+      await clawManager.stop()
+    }
+    let result: { success: boolean; error?: string; warning?: string } =
+      await downloadManager.initEnvironment(options)
+    if (wasRunning) {
+      try {
+        const restarted = await clawManager.start()
+        // start() 自己吞异常、以 {success:false} 返回；'已在运行中' 也会返回
+        // success:false 但进程确实在跑，所以以「是否真的有进程」为准。
+        if (!restarted.success && !clawManager.getStatus().running) {
+          throw new Error(restarted.error || '未知原因')
+        }
+      } catch (e: any) {
+        // 网关重启失败不改变初始化结果本身：成功转 warning，失败拼进 error，
+        // 否则 UI 在失败分支只显示 error，这条信息会被吞掉。
+        const restartWarning = `网关重启失败：${e.message}`
+        result = result.success
+          ? { ...result, warning: restartWarning }
+          : { ...result, error: `${result.error ?? '初始化失败'}；${restartWarning}` }
+      }
+    }
+    return result
+  }
   ipcMain.handle('env:init', (_e, options) =>
-    runExclusiveEnvTask(() => downloadManager.initEnvironment(options))
+    runExclusiveEnvTask(async () => {
+      // 与 update / updateNode 共用同一把启动闸：安装期间手动「启动」或网关客户端
+      // 自动拉起会抢同一个安装目录与状态库，必须挡在外面。
+      envUpdateInFlight = true
+      try {
+        return await envInitImpl(options)
+      } finally {
+        envUpdateInFlight = false
+      }
+    })
   )
   const envUpdateImpl = async (options: { useMirror?: boolean }) => {
     // 更新期间状态库不能被占用：先停网关，然后 update repair 收敛插件、
@@ -1304,7 +1341,12 @@ function registerIpcHandlers(): void {
     }
     // 恢复网关运行（旧版本回滚后重启可做到更新不中断工作）；
     // 更新本身就没成功且没回滚时环境不确定，不贸然重启。
-    if (wasRunning && !gatewayRunning && (result.success || result.rolledBack)) {
+    // unchanged：更新在动手前就中止（Node 预检未过）——环境没动过，照常重启。
+    if (
+      wasRunning &&
+      !gatewayRunning &&
+      (result.success || result.rolledBack || result.unchanged)
+    ) {
       try {
         const restarted = await clawManager.start()
         // start() 自己吞掉异常、以 {success:false} 返回，只 try/catch 的话

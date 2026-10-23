@@ -16,6 +16,7 @@
     "typecheck:web": "tsc -p tsconfig.web.json --noEmit --composite false",
     "accept:db": "node test/db-worker.accept.mjs",
     "accept:gateway": "node test/gateway.accept.mjs",
+    "accept:node-runtime": "node test/node-runtime.accept.mjs",
     "accept:maintenance": "node test/claw-maintenance.accept.mjs",
     "accept:work": "node test/work.accept.mjs",
     "accept:record": "node test/record.accept.mjs",
