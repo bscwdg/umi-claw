@@ -257,37 +257,70 @@ export class ClawManager extends EventEmitter {
    * 退出后来不及回收，实测堆积十余个副本、占用 1GB+；副本越多，OpenClaw 启动时
    * 自己的目录巡检也越慢，是冷启动从十几秒劣化到数分钟的原因之一。
    *
-   * 安全前提：必须在 _killGhostProcesses 之后调用——此刻已无 openclaw 进程，
-   * 所有副本都是非活动残留。只删 UUID 形态的直接子目录，其他条目一律跳过。
+   * 安全前提（比「杀完幽灵进程」更严格，因为那是必要不充分条件）：
+   *  1. `_killGhostNodeGateways` 刻意**不杀** doctor / config patch（它们同样会用到
+   *     captures 目录），非 Windows 上整个 `_killGhostProcesses` 更是空操作。
+   *     `start()` 又不走维护互斥锁——维护任务在途（退出码 78 自愈、更新链路）时
+   *     用户完全可能点「启动」。所以这里必须自己看维护闸：维护在途直接跳过。
+   *  2. 只处理 UUID 形态（或本方法上一轮改名残留的 `.stale-` 前缀）的直接子目录。
+   *  3. **先 rename 再 rm**（与官方回收实现同口径）：UUID 目录被 OpenClaw 视为
+   *     带 owner token 的活跃副本，原地 rm 半途失败会留下一个「看起来合法、实际残缺」
+   *     的副本；改成 `.stale-` 前缀后，即使删除失败，下次启动也只会被本方法继续清理，
+   *     不会当成有效副本加载。
+   *
    * best-effort：删除失败（占用/权限）只记日志，绝不阻断启动。
    */
   private async _cleanStalePluginCaptures(dataDir: string): Promise<void> {
+    // 维护任务在途时跳过：doctor / config patch / 更新链路都在用同一个 captures 目录，
+    // 而 _killGhostProcesses 不会（也不该）杀它们。
+    if (this.maintenanceActive || this.doctorInFlight || this.maintenanceAutoFixInFlight) {
+      this._addLog('维护任务进行中，跳过插件隔离副本清理（避免误删在用副本）', 'system')
+      return
+    }
+    // 非 Windows 上前面的幽灵进程清理是空操作，「已无 openclaw 进程」不成立，
+    // 不做无条件删除（该目录堆积是 Windows 便携环境的实测问题）。
+    if (process.platform !== 'win32') return
+
+    const STALE_PREFIX = '.stale-'
     try {
       const capturesDir = join(openClawPaths.configDir(dataDir), 'tmp', 'plugin-captures')
       if (!existsSync(capturesDir)) return
       const uuidDirRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-      let removed = 0
-      // 异步 rm：十余个副本、数万小文件的递归删除在 Windows 上可能耗时数十秒，
-      // 同步 rmSync 会冻结事件循环，期间所有 IPC 与渲染层「启动中」UI 全部卡死。
       const entries = await fs.readdir(capturesDir, { withFileTypes: true })
-      const staleDirs = entries
-        .filter((entry) => entry.isDirectory() && uuidDirRe.test(entry.name))
-        .map((entry) => join(capturesDir, entry.name))
-      const results = await Promise.allSettled(
-        staleDirs.map((dir) =>
-          fs.rm(dir, {
-            recursive: true,
-            force: true,
-            maxRetries: 2,
-            retryDelay: 200
-          })
+      const staleNames = entries
+        .filter(
+          (entry) =>
+            entry.isDirectory() &&
+            (uuidDirRe.test(entry.name) || entry.name.startsWith(STALE_PREFIX))
         )
-      )
-      for (const result of results) {
-        if (result.status === 'fulfilled') removed++
+        .map((entry) => entry.name)
+
+      let removed = 0
+      let skipped = 0
+      // 串行处理：Windows 上数万小文件的递归删除本身就慢，并发只会加剧磁盘争用。
+      // 全部走异步 fs：同步 rmSync 会冻结事件循环，期间所有 IPC 与「启动中」UI 全部卡死。
+      for (const name of staleNames) {
+        const original = join(capturesDir, name)
+        // 已是上一轮改名残留的目录直接删；UUID 目录先改名。
+        const target = name.startsWith(STALE_PREFIX) ? original : join(capturesDir, STALE_PREFIX + name)
+        try {
+          if (target !== original) await fs.rename(original, target)
+          await fs.rm(target, { recursive: true, force: true, maxRetries: 2, retryDelay: 200 })
+          removed++
+        } catch (e: any) {
+          // 占用 / 权限：保留原状（UUID 目录名字不变，下次启动仍会被识别为待清理候选）
+          skipped++
+          console.warn(`[ClawManager] 清理插件隔离副本失败（跳过）: ${name}`, e?.message || e)
+        }
       }
       if (removed > 0) {
         this._addLog(`已清理 ${removed} 个插件隔离副本残留（tmp/plugin-captures）`, 'system')
+      }
+      if (skipped > 0) {
+        this._addLog(
+          `${skipped} 个插件隔离副本仍被占用，已跳过（不影响本次启动，下次启动会重试）`,
+          'system'
+        )
       }
     } catch (e: any) {
       this._addLog(`插件隔离副本清理失败（可忽略）：${e?.message || e}`, 'stderr')
@@ -1064,9 +1097,11 @@ export class ClawManager extends EventEmitter {
    */
   async probeStartup(
     readyProbe: () => Promise<boolean>,
-    // 实测缺插件的冷启动要 ~200s（bootstrap 内补装尝试就占 ~163s），
-    // 150s 会把「其实在正常启动」误判成证据不足。正常收敛后的启动只需 30~60s。
-    budgetMs = 240000,
+    // 预算必须与 gatewayClient 的就绪预算同一口径：Windows 便携环境冷启动要复制渠道插件
+    // 隔离副本（实测 7~9 分钟），曾用 150s/240s 会把「正在正常启动」判成「未在预期时间内
+    // 就绪」——更新流程随后还会把进程停掉。这里只用于「没退出也没就绪」的兜底，
+    // 进程自行退出仍由下面的竞速第一时间下结论。
+    budgetMs = 600_000,
     pollMs = 1000
   ): Promise<StartupProbeResult> {
     const started = await this.start()

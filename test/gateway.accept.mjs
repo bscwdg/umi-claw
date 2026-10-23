@@ -23,7 +23,7 @@
 // 用法：node test/gateway.accept.mjs    （加 --keep-tmp 保留临时目录；npm run accept:gateway）
 
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -286,6 +286,88 @@ function writeLegacyOpenClawConfig(targetDataDir, extra = {}) {
   }
   writeFileSync(p, JSON.stringify(legacy, null, 2), 'utf-8')
   return p
+}
+
+/**
+ * 假 OpenClaw CLI 源码（CJS，由便携 Node 执行）。
+ *
+ * 只实现 `config patch --stdin` 的官方语义子集：RFC 7396 递归合并、null 删除路径、
+ * 一次落盘；并把本次收到的补丁写到 `<OPENCLAW_CONFIG_DIR>/.last-patch.json`，
+ * 让测试能断言「应用到底下发了什么、有没有多余补丁」。故意**不**盖 meta 版本戳，
+ * 因为那属于官方写入器行为，应用侧不该依赖、也不该自己写。
+ */
+const FAKE_CLI_SOURCE = `
+const fs = require('fs')
+const path = require('path')
+const args = process.argv.slice(2)
+const chunks = []
+process.stdin.on('data', (chunk) => chunks.push(chunk))
+process.stdin.on('end', () => {
+  if (args[0] !== 'config' || args[1] !== 'patch') {
+    process.stderr.write('fake openclaw: unsupported command ' + args.join(' ') + '\\n')
+    process.exitCode = 2
+    return
+  }
+  const raw = Buffer.concat(chunks).toString('utf8').trim()
+  const patch = raw ? JSON.parse(raw) : {}
+  const configDir = process.env.OPENCLAW_CONFIG_DIR
+  fs.writeFileSync(path.join(configDir, '.last-patch.json'), JSON.stringify(patch, null, 2), 'utf8')
+  const configPath = path.join(configDir, 'openclaw.json')
+  const current = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+  mergePatch(current, patch)
+  fs.writeFileSync(configPath, JSON.stringify(current, null, 2), 'utf8')
+})
+function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+function mergePatch(target, patch) {
+  for (const key of Object.keys(patch)) {
+    const value = patch[key]
+    if (value === null) delete target[key]
+    else if (isPlainObject(value) && isPlainObject(target[key])) mergePatch(target[key], value)
+    else target[key] = value
+  }
+}
+`.trimStart()
+
+/**
+ * 在临时 dataDir 里装一套「假 OpenClaw 运行时」，让 ConfigManager 的同步链路可以
+ * 走**真实的** applyOpenClawConfigPatch（真 spawn、真 stdin、真串行队列）：
+ *   - runtime/node-<platform>-<arch>/node[.exe]：本进程可执行文件的硬链接（同一二进制；
+ *     跨卷等无法硬链接时退化为拷贝）；
+ *   - openclaw/node_modules/openclaw/dist/index.js：上面的假 CLI。
+ *
+ * 官方 CLI 在临时目录里凭空不存在，测试又不能碰用户真实安装，这是唯一能覆盖
+ * 「老用户迁移 → 生成最小补丁 → 官方通道落盘」整条链路的做法。
+ */
+function installFakeOpenClawCli(targetDataDir) {
+  const runtimeDir = join(targetDataDir, 'runtime', `node-${process.platform}-${process.arch}`)
+  const nodeBin =
+    process.platform === 'win32' ? join(runtimeDir, 'node.exe') : join(runtimeDir, 'bin', 'node')
+  mkdirSync(dirname(nodeBin), { recursive: true })
+  try {
+    linkSync(process.execPath, nodeBin)
+  } catch {
+    copyFileSync(process.execPath, nodeBin)
+  }
+
+  const pkgDir = join(targetDataDir, 'openclaw', 'node_modules', 'openclaw')
+  const cliDir = join(pkgDir, 'dist')
+  mkdirSync(cliDir, { recursive: true })
+  // type: commonjs → dist/index.js 按 CJS 加载（假 CLI 用 require）
+  writeFileSync(
+    join(pkgDir, 'package.json'),
+    JSON.stringify({ name: 'openclaw', version: '2026.10.0', type: 'commonjs' }),
+    'utf-8'
+  )
+  writeFileSync(join(cliDir, 'index.js'), FAKE_CLI_SOURCE, 'utf-8')
+  // 与 runPatchProcess 的存在性检查同一口径
+  mkdirSync(join(targetDataDir, 'openclaw'), { recursive: true })
+  return {
+    nodeBin,
+    clawJs: join(cliDir, 'index.js'),
+    patchLogPath: join(targetDataDir, 'config', '.openclaw', '.last-patch.json')
+  }
 }
 
 const r = new Recorder('gateway（Gateway Client：探活/拉起/SSE/中止/会话隔离，打真 gatewayClient.ts）')
@@ -689,6 +771,49 @@ try {
     return `starter 失败→${res.details.reason}；轮询用尽→${to.code}`
   })
 
+  // ── G14b 慢启动预算下的「进程已退出」快速失败 ──
+  await r.check(
+    'G14b',
+    '拉起后进程已退出 → 立即 OPENCLAW_NOT_READY(start-failed)，不空等 10 分钟就绪预算',
+    async () => {
+      const slow = createFakeGateway()
+      servers.push(slow)
+      await slow.listen()
+      slow.state.mode = 'modelsDisabled' // 永远不就绪，模拟慢启动窗口
+
+      // 进程在第一次轮询前退出：应立即判死，而不是等满 10 分钟预算
+      const clock = fakeClock(1_000)
+      let alive = true
+      const dying = makeClientNoTrack(`http://127.0.0.1:${slow.state.port}`, {
+        starter: () => ({ started: true }),
+        isGatewayProcessAlive: () => alive,
+        sleepImpl: async () => {
+          alive = false
+        },
+        now: clock.now,
+        timers: { readyTimeoutMs: 600_000, readyPollIntervalMs: 500 }
+      })
+      const died = await outcome(dying.ensureReady())
+      assertEq(died.ok, false, '进程退出应失败')
+      assertEq(died.code, 'OPENCLAW_NOT_READY', '进程退出应是 NOT_READY 而不是 TIMEOUT')
+      assertEq(died.details.reason, GATEWAY_TIMEOUT_REASONS.startFailed, '原因应为 start-failed')
+
+      // 进程仍存活（只是慢）→ 继续轮询到预算用尽，仍是 TIMEOUT（不能提前判死）
+      const slowClock = fakeClock(1_000)
+      const aliveClient = makeClientNoTrack(`http://127.0.0.1:${slow.state.port}`, {
+        starter: () => ({ started: true }),
+        isGatewayProcessAlive: () => true,
+        sleepImpl: async () => {},
+        now: slowClock.now,
+        timers: { readyTimeoutMs: 5_000, readyPollIntervalMs: 500 }
+      })
+      const stillSlow = await outcome(aliveClient.ensureReady())
+      assertEq(stillSlow.code, 'OPENCLAW_TIMEOUT', '进程仍存活时应等满预算再判超时')
+      await slow.close()
+      return `进程退出→${died.code}(${died.details.reason})；进程存活→${stillSlow.code}`
+    }
+  )
+
   // G15 编号刻意未用：曾把「截断」与「流内 error」写在同一个用例里，拆分后留下了空号（仅编号观感）
   // ── G16 SSE→IPC 透传助手 ──
   await r.check('G16', '透传助手：chunk*N → done 事件序；cancel 后静默；错误走 error 事件；销毁自动中止', async () => {
@@ -980,6 +1105,9 @@ try {
     try {
       const manager = new ConfigManager()
       const p = join(dir, 'config', '.openclaw', 'openclaw.json')
+      // 构造函数只在运行时已安装时才做初始同步；本用例没有真实运行时，
+      // 显式调一次首文件骨架路径（该路径不 spawn，不需要运行时）。
+      await manager.syncOpenClawConfig()
       assert(existsSync(p), '应生成 openclaw.json')
       const json = JSON.parse(readFileSync(p, 'utf-8'))
       assertEq(
@@ -988,7 +1116,7 @@ try {
         '新装配置必须默认开启 OpenAI 兼容面（§六 实测默认 false）'
       )
       assertEq(json.gateway.auth.mode, 'token', '鉴权仍为 token 模式')
-      manager.syncOpenClawConfig()
+      await manager.syncOpenClawConfig()
       const again = JSON.parse(readFileSync(p, 'utf-8'))
       assertEq(
         again?.gateway?.http?.endpoints?.chatCompletions?.enabled,
@@ -1007,10 +1135,15 @@ try {
     const dir = join(runDir, 'cfg-legacy')
     mkdirSync(dir, { recursive: true })
     const p = writeLegacyOpenClawConfig(dir)
+    const { patchLogPath } = installFakeOpenClawCli(dir)
     const prev = process.env.CLAW_DATA_DIR
     process.env.CLAW_DATA_DIR = dir
     try {
-      const manager = new ConfigManager() // 构造即同步一次
+      const manager = new ConfigManager() // 构造即异步同步一次（fire-and-forget）
+      // 构造期那次不 await；显式再同步一次并等待——它排在同一 configPath 的串行队列之后，
+      // 返回时构造期那次也已落盘，随后读文件不会与它竞态。
+      const first = await manager.syncOpenClawConfig()
+      assertEq(first.ok, true, '老配置同步应成功（官方 patch 通道）')
       const migrated = JSON.parse(readFileSync(p, 'utf-8'))
       assertEq(
         migrated.gateway.http.endpoints.chatCompletions.enabled,
@@ -1034,47 +1167,50 @@ try {
         '鉴权 token 应非空（由应用接管，既有行为）'
       )
 
-      manager.syncOpenClawConfig()
+      // 收敛后不应再下发任何补丁：清掉上一次的补丁日志，若又 spawn 了会被重新写出来
+      rmSync(patchLogPath, { force: true })
+      const second = await manager.syncOpenClawConfig()
+      assertEq(second.ok, true, '第二次同步应成功')
+      assertEq(existsSync(patchLogPath), false, '配置已收敛时不应再产生补丁（无变更不 spawn）')
       const twice = readFileSync(p, 'utf-8')
-      manager.syncOpenClawConfig()
+      await manager.syncOpenClawConfig()
       const thrice = readFileSync(p, 'utf-8')
       assertEq(twice, thrice, '重复同步必须幂等（第二次与第三次字节一致）')
     } finally {
       if (prev === undefined) delete process.env.CLAW_DATA_DIR
       else process.env.CLAW_DATA_DIR = prev
     }
-    return `开关补齐 + 4 处自定义字段保留 + 二次同步字节一致`
+    return `开关补齐 + 4 处自定义字段保留 + 收敛后不再 spawn + 二次同步字节一致`
   })
 
-  // ── G19 待办 #15 ──
-  await r.check('G19', '#15：meta 不再写非法字段（删 lastTouchedAt；lastTouchedVersion 写真实版本或省略）', async () => {
+  // ── G19 待办 #15（官方写入器接管 meta 后的新口径） ──
+  await r.check('G19', '#15：meta 只剥离退役的 lastTouchedAt；版本戳交由官方写入器，应用不得自己写', async () => {
     const dir = join(runDir, 'cfg-meta')
     mkdirSync(dir, { recursive: true })
     const p = writeLegacyOpenClawConfig(dir)
-    // 让「真实安装版本」可读：<dataDir>/openclaw/node_modules/openclaw/package.json
-    const pkgDir = join(dir, 'openclaw', 'node_modules', 'openclaw')
-    mkdirSync(pkgDir, { recursive: true })
-    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'openclaw', version: '2026.9.4' }), 'utf-8')
+    const { patchLogPath } = installFakeOpenClawCli(dir)
     const prev = process.env.CLAW_DATA_DIR
     process.env.CLAW_DATA_DIR = dir
     try {
       const manager = new ConfigManager()
+      // 构造期同步是 fire-and-forget：显式等待一次，才能断定「补丁已落盘」
+      const sync = await manager.syncOpenClawConfig()
+      assertEq(sync.ok, true, '同步应成功')
+
       const json = JSON.parse(readFileSync(p, 'utf-8'))
-      assertEq('lastTouchedAt' in (json.meta || {}), false, 'lastTouchedAt 不是 schema 字段，必须删掉')
-      assertEq(json.meta.lastTouchedVersion, '2026.9.4', '应写真实安装版本，而不是字面量 latest')
+      assertEq('lastTouchedAt' in (json.meta || {}), false, 'lastTouchedAt 已退役（残留即 exit 78），必须剥离')
       assertEq(json.meta.customMeta, 'keep-meta', 'meta 里其它字段必须保留')
 
-      // 读不到安装版本时：宁可不写该字段，也不写非法值
-      rmSync(join(pkgDir, 'package.json'))
-      manager.syncOpenClawConfig()
-      const without = JSON.parse(readFileSync(p, 'utf-8'))
-      assertEq('lastTouchedVersion' in (without.meta || {}), false, '读不到版本时应省略该字段')
-      assertEq('lastTouchedAt' in (without.meta || {}), false, '仍然不得写 lastTouchedAt')
+      // 应用只负责下发「删除退役键」；lastTouchedVersion 显式写会被官方整单拒绝，
+      // 版本戳由官方写入器自动盖，补丁里出现即回归 bug。
+      const patch = JSON.parse(readFileSync(patchLogPath, 'utf-8'))
+      assertEq(patch.meta.lastTouchedAt, null, '退役键必须以 null 删除形式下发')
+      assertEq('lastTouchedVersion' in patch.meta, false, '补丁里不得出现 lastTouchedVersion')
     } finally {
       if (prev === undefined) delete process.env.CLAW_DATA_DIR
       else process.env.CLAW_DATA_DIR = prev
     }
-    return `lastTouchedAt 已删；lastTouchedVersion=2026.9.4 → 读不到时省略；其它 meta 字段保留`
+    return `lastTouchedAt 以 null 删除；补丁不含 lastTouchedVersion；customMeta 保留`
   })
 
   // ── G28 #15 的第二处：安装期保底配置（真跑 downloadManager._ensureOpenClawConfig） ──

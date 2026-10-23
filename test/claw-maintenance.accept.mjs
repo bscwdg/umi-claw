@@ -286,7 +286,9 @@ await rec.check(
       getNodePath: () => process.execPath
     })
     let cleans = 0
-    cm.prepareForDoctor = async () => {
+    // runDoctorFix 在维护锁内直接调用无锁实现（_prepareForDoctorUnlocked），
+    // 公开的 prepareForDoctor 只给更新链路用，桩错位置会永远数到 0。
+    cm._prepareForDoctorUnlocked = async () => {
       cleans += 1
     }
     const cleansAtCall = []
@@ -527,6 +529,46 @@ await rec.check(
     assert(ghostDead, `本数据目录的网关进程应被清理（exitCode=${ghost.exitCode}）`)
     assert(innocentAlive, '命令行不含本数据目录 openclaw 入口的 node 进程不得被误杀')
     return `ghost(pid ${ghost.pid}) 已清理；无关 node(pid ${innocent.pid}) 存活`
+  }
+)
+
+// ── 插件隔离副本清理（tmp/plugin-captures） ────────────────────────────────────
+await rec.check(
+  'plugin-captures-cleanup',
+  '插件隔离副本：只清 UUID/上轮 .stale- 残留，不碰其它目录；维护在途必须跳过',
+  async () => {
+    // 清理按设计只在 Windows 执行（幽灵进程清理在其它平台是空操作，无法保证「无 openclaw 进程」）
+    if (process.platform !== 'win32') return '非 Windows：清理按设计跳过'
+    const { existsSync, mkdirSync, mkdtempSync, rmSync } = await import('node:fs')
+    const os = await import('node:os')
+
+    const sandbox = mkdtempSync(join(os.tmpdir(), 'umi-captures-'))
+    const capturesDir = join(sandbox, 'config', '.openclaw', 'tmp', 'plugin-captures')
+    mkdirSync(capturesDir, { recursive: true })
+    const uuidA = '11111111-1111-1111-1111-111111111111'
+    const uuidB = '22222222-2222-2222-2222-222222222222'
+    const uuidC = '33333333-3333-3333-3333-333333333333'
+    mkdirSync(join(capturesDir, uuidA))
+    mkdirSync(join(capturesDir, `.stale-${uuidB}`))
+    mkdirSync(join(capturesDir, 'keep-me'))
+
+    const cm = new ClawManager({ getDataDir: () => sandbox, getNodePath: () => process.execPath })
+    await cm._cleanStalePluginCaptures(sandbox)
+    assert(!existsSync(join(capturesDir, uuidA)), 'UUID 形态的残留副本应被清理')
+    assert(!existsSync(join(capturesDir, `.stale-${uuidB}`)), '上一轮改名残留应被清理')
+    assert(existsSync(join(capturesDir, 'keep-me')), '非 UUID 目录一律不碰')
+
+    // 维护任务在途（doctor / config patch / 更新）：一个都不删
+    mkdirSync(join(capturesDir, uuidC))
+    cm.maintenanceActive = true
+    await cm._cleanStalePluginCaptures(sandbox)
+    assert(existsSync(join(capturesDir, uuidC)), '维护在途必须跳过清理')
+    cm.maintenanceActive = false
+    await cm._cleanStalePluginCaptures(sandbox)
+    assert(!existsSync(join(capturesDir, uuidC)), '维护结束后恢复清理')
+
+    rmSync(sandbox, { recursive: true, force: true })
+    return 'UUID/.stale- 清理、非 UUID 保留、维护中跳过'
   }
 )
 

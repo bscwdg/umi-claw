@@ -549,26 +549,6 @@ export class ConfigManager {
   }
 
   /**
-   * 读取当前安装的 OpenClaw 版本（`data/openclaw/node_modules/openclaw/package.json`）。
-   *
-   * 用途：写 `meta.lastTouchedVersion`（§九 待办 #15）。该字段语义是「最后写这份配置的
-   * OpenClaw 版本」，写 'latest' 会被 schema 拒绝；读不到（未安装/文件损坏）返回 null，
-   * 调用方据此不写该字段。**只读**，绝不修改 data/openclaw（硬规则 1）。
-   */
-  private _readInstalledOpenClawVersion(): string | null {
-    try {
-      const pkgPath = join(this.dataDir, 'openclaw', 'node_modules', 'openclaw', 'package.json')
-      if (!existsSync(pkgPath)) return null
-      const version = JSON.parse(readFileSync(pkgPath, 'utf-8'))?.version
-      if (typeof version !== 'string') return null
-      const trimmed = version.trim()
-      return trimmed && trimmed !== 'latest' ? trimmed : null
-    } catch {
-      return null
-    }
-  }
-
-  /**
    * 解析 SKILL.md 的 YAML Front Matter，返回顶层标量字段（只读，绝不写文件）。
    * 旧的单行正则只认 `key: value` 一种写法，以下情况全部会「读不出来」：
    * - description 用双引号/单引号且跨行（含 \"、\\ 转义，单引号 '' 转义）

@@ -39,7 +39,7 @@ if (!existsSync(bundled)) {
   ], { stdio: 'inherit', shell: process.platform === 'win32' })
 }
 
-const { buildJsonMergePatch, summarizePatchError, applyOpenClawConfigPatch } =
+const { buildJsonMergePatch, summarizePatchError, isConfigRejectionOutput, applyOpenClawConfigPatch } =
   await import(pathToFileURL(bundled).href)
 
 test('完全相等（含嵌套/数组）→ null，触发无变更跳过', () => {
@@ -130,6 +130,29 @@ test('summarizePatchError：剥掉 TQ 框线装饰，保留尾部有效信息', 
 test('summarizePatchError：无有效输出时给出稳定前缀', () => {
   const msg = summarizePatchError('', '', 1)
   assert.match(msg, /被官方校验拒绝/)
+})
+
+test('isConfigRejectionOutput：官方非法配置诊断面 → true（可走 doctor）', () => {
+  assert.equal(
+    isConfigRejectionOutput(
+      'OpenClaw config is invalid\n- meta: Unrecognized key: "lastTouchedAt"\nRun "openclaw doctor --fix" to repair the config, then retry.',
+      ''
+    ),
+    true,
+    '官方 Invalid config + doctor 提示应归为配置拒绝'
+  )
+  assert.equal(isConfigRejectionOutput('', 'Error: Invalid config at /x/openclaw.json: ...'), true)
+  assert.equal(isConfigRejectionOutput('', 'CONFIG_READ_FAILED'), true)
+})
+
+test('isConfigRejectionOutput：崩溃/无输出 → false（不触发 doctor）', () => {
+  assert.equal(isConfigRejectionOutput('', ''), false, '空输出不能当作配置非法的证据')
+  assert.equal(
+    isConfigRejectionOutput('', 'FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory'),
+    false,
+    'OOM/崩溃不是配置非法'
+  )
+  assert.equal(isConfigRejectionOutput('', 'Error: spawn ENOENT'), false)
 })
 
 test('applyOpenClawConfigPatch：运行时未安装 → 立即 ok:false，不 spawn', async () => {

@@ -245,6 +245,15 @@ export interface GatewayClientOptions {
   /** 自动拉起（复用 clawManager 启停）；不给 = 不自动拉起，只探活+轮询 */
   starter?: GatewayStarter
   /**
+   * 网关进程是否仍存活（仅在 starter 报告「本次确实拉起过」后使用）。
+   *
+   * 就绪预算已放宽到 10 分钟以覆盖 Windows 慢冷启动，但冷启动慢和「起不来」必须区分：
+   * 进程已经退出时继续空等 10 分钟只会让 UI 一直转圈。提供本回调后，轮询期间发现进程
+   * 已消失会立即以 OPENCLAW_NOT_READY(start-failed) 失败。
+   * 不给 = 不做存活判断（与旧行为一致）。
+   */
+  isGatewayProcessAlive?: () => boolean
+  /**
    * 解析网关实际监听端口（配置端口被占时 OpenClaw 自动退让）；不给 = 只探配置端口。
    * 见 GatewayActualPortResolver。
    */
@@ -526,6 +535,7 @@ export class GatewayClient {
   private readonly models: Partial<GatewayModels>
   private readonly modelsResolver?: () => Partial<GatewayModels>
   private readonly starter?: GatewayStarter
+  private readonly isGatewayProcessAlive?: () => boolean
   private readonly actualPortResolver?: GatewayActualPortResolver
   private readonly conversationKeyResolver?: (projectId: string) => Promise<string> | string
   private readonly logger?: (message: string) => void
@@ -555,6 +565,7 @@ export class GatewayClient {
     this.models = options.models ?? { text: GATEWAY_MODEL_DEFAULT }
     this.modelsResolver = options.modelsResolver
     this.starter = options.starter
+    this.isGatewayProcessAlive = options.isGatewayProcessAlive
     this.actualPortResolver = options.actualPortResolver
     this.conversationKeyResolver = options.conversationKeyResolver
     this.logger = options.logger
@@ -895,10 +906,13 @@ export class GatewayClient {
       return first
     }
 
+    /** 本次 ensureReady 是否真的拉起过进程（只有这种进程消失才可直接判死） */
+    let startedByStarter = false
     if (this.starter) {
       let started: GatewayStarterResult
       try {
         started = await this.starter()
+        startedByStarter = started.started === true
       } catch (e) {
         const code = errorCodeOf(e)
         const err = new AppError(
@@ -922,6 +936,24 @@ export class GatewayClient {
     while (this.now() < deadline) {
       await this.sleepImpl(this.timers.readyPollIntervalMs)
       polls += 1
+      // 慢启动 ≠ 起不来：本次拉起的进程已经退出时，继续等满 10 分钟没有意义。
+      // 只在「确实由本方法拉起过」时判死，避免把外部已存在的进程/维护重启误杀。
+      if (startedByStarter && this.isGatewayProcessAlive && !this.isGatewayProcessAlive()) {
+        const err = new AppError(
+          ERROR_CODES.OPENCLAW_NOT_READY,
+          `OpenClaw Gateway 进程已退出（拉起后未就绪），请重试或查看日志：${last.lastError?.message ?? '无就绪输出'}`,
+          {
+            reason: GATEWAY_TIMEOUT_REASONS.startFailed,
+            baseUrl: this.baseUrl,
+            polls,
+            lastError: last.lastError
+          }
+        )
+        this.lastError = toEnvelope(err)
+        this.readyCache = null
+        this.log(`[gateway] 进程已退出，终止就绪轮询（轮询 ${polls} 次）`)
+        throw err
+      }
       last = await this.getStatus()
       if (last.ready) {
         this.log(`[gateway] 就绪（轮询 ${polls} 次）`)
