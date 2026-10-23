@@ -15,14 +15,30 @@ import { openClawPaths, buildOpenClawEnv } from './openClawPaths'
 
 export interface OpenClawPatchResult {
   ok: boolean
+  /**
+   * 失败类别，供调用方决定后续动作：
+   * - rejected：CLI 退出码非 0（多为 schema 校验拒绝），可走 doctor --fix 收敛；
+   * - timeout：CLI 在预算内没跑完。短命 CLI 冷启动也要复制插件隔离副本，
+   *   Windows 下数千小文件 + fs-safe 逐文件准入可达数分钟，这不是配置非法的证据，
+   *   绝不能据此触发 doctor；
+   * - process：spawn / 管道层面的进程错误，同样不代表配置非法。
+   */
+  kind?: 'rejected' | 'timeout' | 'process'
   /** 失败原因（已裁剪为适合直接展示给用户的 CLI 错误尾部） */
   error?: string
   stdout: string
   stderr: string
 }
 
-/** 单次 config patch 的超时：本机冷启动 spawn 约 2~12s，60s 仅作兜底 */
-const PATCH_TIMEOUT_MS = 60_000
+/**
+ * 单次 config patch 的超时预算。
+ * config patch 是短命 CLI 进程，冷启动也要走一遍 OpenClaw 插件隔离副本复制
+ * （渠道插件自带数千个 node_modules 文件，实测可达数分钟）。曾用 60s，慢环境下
+ * 补丁还没执行进程就被中止，被上层误判为「配置非法」触发 doctor --fix，而 doctor
+ * 复制量更大、还要逐文件哈希，20 分钟都跑不完，网关于是永远起不来。放宽到 5 分钟，
+ * 串行队列保证同一时刻只有一次写入。
+ */
+const PATCH_TIMEOUT_MS = 300_000
 
 /**
  * 按配置路径串行化所有写入：config patch 内部要开 state 库事务，
@@ -108,7 +124,13 @@ function runPatchProcess(
     const nodePath = openClawPaths.nodeBinary(dataDir)
     const clawJsPath = openClawPaths.clawJs(dataDir)
     if (!existsSync(nodePath) || !existsSync(clawJsPath)) {
-      resolve({ ok: false, error: 'OpenClaw 运行时未安装，请先完成环境初始化', stdout: '', stderr: '' })
+      resolve({
+        ok: false,
+        kind: 'process',
+        error: 'OpenClaw 运行时未安装，请先完成环境初始化',
+        stdout: '',
+        stderr: ''
+      })
       return
     }
 
@@ -134,6 +156,7 @@ function runPatchProcess(
       try { child.kill() } catch { /* ignore */ }
       resolve({
         ok: false,
+        kind: 'timeout',
         error: 'openclaw config patch 超过 ' + Math.round(timeoutMs / 1000) + 's 未结束，已中止',
         stdout,
         stderr
@@ -147,7 +170,13 @@ function runPatchProcess(
       if (settled) return
       settled = true
       clearTimeout(timer)
-      resolve({ ok: false, error: '调用 openclaw config patch 失败: ' + err.message, stdout, stderr })
+      resolve({
+        ok: false,
+        kind: 'process',
+        error: '调用 openclaw config patch 失败: ' + err.message,
+        stdout,
+        stderr
+      })
     })
 
     child.on('close', (code) => {
@@ -158,7 +187,13 @@ function runPatchProcess(
         resolve({ ok: true, stdout, stderr })
         return
       }
-      resolve({ ok: false, error: summarizePatchError(stdout, stderr, code), stdout, stderr })
+      resolve({
+        ok: false,
+        kind: 'rejected',
+        error: summarizePatchError(stdout, stderr, code),
+        stdout,
+        stderr
+      })
     })
 
     // 官方只吃 JSON5，JSON 是其子集；写完即关 stdin 触发执行。
