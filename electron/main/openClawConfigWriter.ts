@@ -17,11 +17,13 @@ export interface OpenClawPatchResult {
   ok: boolean
   /**
    * 失败类别，供调用方决定后续动作：
-   * - rejected：CLI 退出码非 0（多为 schema 校验拒绝），可走 doctor --fix 收敛；
+   * - rejected：CLI 非 0 退出**且**输出命中官方非法配置诊断面（见
+   *   isConfigRejectionOutput），是可交给 doctor --fix 收敛的确定性失败；
    * - timeout：CLI 在预算内没跑完。短命 CLI 冷启动也要复制插件隔离副本，
    *   Windows 下数千小文件 + fs-safe 逐文件准入可达数分钟，这不是配置非法的证据，
    *   绝不能据此触发 doctor；
-   * - process：spawn / 管道层面的进程错误，同样不代表配置非法。
+   * - process：spawn / 管道层面的进程错误，或非 0 退出但没有配置非法的证据
+   *   （崩溃 / OOM / 被信号杀死），同样不代表配置非法。
    */
   kind?: 'rejected' | 'timeout' | 'process'
   /** 失败原因（已裁剪为适合直接展示给用户的 CLI 错误尾部） */
@@ -187,10 +189,22 @@ function runPatchProcess(
         resolve({ ok: true, stdout, stderr })
         return
       }
+      // 非 0 退出并不都是「配置非法」：崩溃 / OOM / 被信号杀死同样非 0。
+      // 只有命中官方 CLI 自己的非法配置诊断面才算 rejected；其余归 process，
+      // 避免因为一次 CLI 崩溃白跑一轮最长 20 分钟的 doctor --fix。
+      // 若上游改了文案导致漏判，网关会以 exit 78 自退，由既有退出码自愈兜底。
+      const rejected = isConfigRejectionOutput(stdout, stderr)
       resolve({
         ok: false,
-        kind: 'rejected',
-        error: summarizePatchError(stdout, stderr, code),
+        kind: rejected ? 'rejected' : 'process',
+        error: rejected
+          ? summarizePatchError(stdout, stderr, code)
+          : summarizePatchError(
+              stdout,
+              stderr,
+              code,
+              'openclaw config patch 非正常退出（exit ' + (code ?? 'unknown') + '）'
+            ),
         stdout,
         stderr
       })
@@ -205,14 +219,39 @@ function runPatchProcess(
   })
 }
 
-/** 从 CLI 输出里挑出真正的拒绝原因（去掉 TQ 框线装饰，保留最后几行有效信息） */
-export function summarizePatchError(stdout: string, stderr: string, code: number | null): string {
+/**
+ * 识别「官方 CLI 明确判定配置非法」的输出特征。
+ *
+ * 官方在 src/config/io.invalid-config.ts 里把非法配置统一渲染成
+ * `Invalid config at <path>:` / `Config could not be read at <path>:`，并在非交互模式
+ * 追加 `Run "openclaw doctor --fix" to repair the config, then retry.`；错误码为
+ * INVALID_CONFIG / CONFIG_READ_FAILED。命中这些才是可交给 doctor 收敛的确定性失败。
+ *
+ * 只做**收窄**，不做扩张：漏判时降到 process（告警并继续拉起），网关遇到非法配置
+ * 仍会 exit 78，由既有退出码自愈链路触发 doctor，不会带病长期运行。
+ */
+export function isConfigRejectionOutput(stdout: string, stderr: string): boolean {
+  const combined = (stderr || '') + '\n' + (stdout || '')
+  return /(?:invalid config|config is invalid|config could not be read|INVALID_CONFIG|CONFIG_READ_FAILED|doctor --fix)/i.test(
+    combined
+  )
+}
+
+/**
+ * 从 CLI 输出里挑出真正的拒绝原因（去掉 TQ 框线装饰，保留最后几行有效信息）。
+ * @param prefix 失败前缀；调用方在「非配置拒绝」场景可传入不同措辞
+ */
+export function summarizePatchError(
+  stdout: string,
+  stderr: string,
+  code: number | null,
+  prefix = 'openclaw config patch 被官方校验拒绝（exit ' + (code ?? 'unknown') + '）'
+): string {
   const combined = (stderr || '') + (stdout || '')
   const lines = combined
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && !/^[+|o\-]{1,3}\s*$/.test(line))
   const tail = lines.slice(-4).join('；')
-  const prefix = 'openclaw config patch 被官方校验拒绝（exit ' + (code ?? 'unknown') + '）'
   return tail ? prefix + '：' + tail : prefix
 }
