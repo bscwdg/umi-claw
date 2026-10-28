@@ -8,7 +8,8 @@ import {
   Menu,
   nativeImage,
   protocol,
-  powerMonitor
+  powerMonitor,
+  safeStorage
 } from 'electron'
 import { join, parse, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -21,6 +22,14 @@ import { ObsidianManager } from './obsidian/obsidianManager'
 import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv, GATEWAY_TOKEN, toPosix } from './openClawPaths'
 import { DatabaseClient } from './database/database'
+import {
+  VoiceSecretStore,
+  VoiceCloneManager,
+  type VoiceManager,
+  createDatabaseVoiceStorage,
+  createVoiceManager,
+  registerVoiceIpc
+} from './fish/voice'
 import { subprocessRegistry } from './subprocessRegistry'
 import {
   registerMarketingIpc,
@@ -82,6 +91,7 @@ let skillSyncService: SkillSyncService
 // marketing DB Worker 客户端（Commit 02）。构造是廉价的：惰性初始化，
 // 应用启动不建库、不拉 Worker，首次 marketing IPC 才 spawn。
 let marketingDatabase: DatabaseClient | null = null
+let voiceManager: VoiceManager | null = null
 // marketing Project 层（Commit 03）：只依赖 DatabaseClient + dataDir，构造零 IO 副作用。
 let marketingProjectManager: ProjectManager | null = null
 // marketing Business / Watchlist 层（Commit 04）：只依赖 DatabaseClient，构造零 IO 副作用。
@@ -1697,6 +1707,37 @@ app.whenReady().then(() => {
       mainWindow.webContents.send('obsidian:index-progress', data)
     }
   })
+
+  // ── 鱼语音：预设 TTS + 克隆音色（初始化失败只降级，不阻断启动）──
+  try {
+    if (!marketingDatabase) throw new Error('marketingDatabase 尚未初始化')
+    const voiceSecretStore = new VoiceSecretStore(
+      join(configManager.getDataDir(), 'voice', 'key.bin'),
+      safeStorage
+    )
+    const voiceStorage = createDatabaseVoiceStorage(marketingDatabase)
+    voiceManager = createVoiceManager({
+      storage: voiceStorage,
+      secrets: voiceSecretStore,
+      cacheDir: join(configManager.getDataDir(), 'fish', 'audio'),
+      logger: (message) => console.log(message)
+    })
+    const voiceCloneManager = new VoiceCloneManager({
+      storage: voiceStorage,
+      secrets: voiceSecretStore,
+      voicesDir: join(configManager.getDataDir(), 'fish', 'voices'),
+      voiceManager,
+      logger: (message) => console.log(message)
+    })
+    registerVoiceIpc(voiceManager, voiceCloneManager)
+  } catch (error) {
+    voiceManager = null
+    console.log(
+      `[voice] 初始化失败，语音功能降级（不影响主流程）: ${
+        (error as Error)?.message ?? String(error)
+      }`
+    )
+  }
 
   registerIpcHandlers()
   createWindow()

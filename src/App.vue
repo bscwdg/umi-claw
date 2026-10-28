@@ -119,6 +119,7 @@ const navGroups = [
     title: 'OpenClaw',
     items: [
       { to: '/config', icon: '⚙️', label: '模型配置' },
+      { to: '/voice', icon: '🔊', label: '语音设置' },
       { to: '/skills', icon: '🧩', label: '能力中心' },
       { to: '/channelsPage', icon: '📩', label: '渠道' },
       { to: '/terminal', icon: '💻', label: 'OpenClaw终端' },

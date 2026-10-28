@@ -1,0 +1,119 @@
+{
+  "version": "1",
+  "updatedAt": "2026-10-28",
+  "provider": "volcengine",
+  "model": "seed-tts-2.0",
+  "endpoint": "/api/v3/plan/tts/unidirectional",
+  "source": {
+    "title": "豆包语音在线音色列表",
+    "url": "https://docs.volcengine.com/docs/DoubaoVoice/Tonelist-1?lang=zh"
+  },
+  "selectionPolicy": [
+    "优先通用场景和客服场景",
+    "首批不选IP角色、儿童音色和强角色扮演音色",
+    "保持男女声和不同语气均衡",
+    "上线前逐个实测可用性"
+  ],
+  "voices": [
+    {
+      "order": 1,
+      "name": "Vivi 2.0",
+      "voiceType": "zh_female_vv_uranus_bigtts",
+      "scene": "通用场景",
+      "gender": "female",
+      "languageSummary": "中文、日文、印尼语、墨西哥西班牙语；支持30+语种识别；粤语、上海、河南、北京、天津、四川、陕西、东北",
+      "capabilities": ["指令遵循"],
+      "isDefault": true
+    },
+    {
+      "order": 2,
+      "name": "小何 2.0",
+      "voiceType": "zh_female_xiaohe_uranus_bigtts",
+      "scene": "通用场景",
+      "gender": "female",
+      "languageSummary": "中文；支持30+语种识别；粤语、上海、河南、北京、天津、四川、陕西、东北",
+      "capabilities": ["指令遵循"],
+      "isDefault": false
+    },
+    {
+      "order": 3,
+      "name": "云舟 2.0",
+      "voiceType": "zh_male_m191_uranus_bigtts",
+      "scene": "通用场景",
+      "gender": "male",
+      "languageSummary": "中文；支持30+语种识别；粤语、上海、河南、北京、天津、四川、陕西、东北",
+      "capabilities": ["指令遵循"],
+      "isDefault": false
+    },
+    {
+      "order": 4,
+      "name": "小天 2.0",
+      "voiceType": "zh_male_taocheng_uranus_bigtts",
+      "scene": "通用场景",
+      "gender": "male",
+      "languageSummary": "中文；支持30+语种识别；粤语、上海、河南、北京、天津、四川、陕西、东北",
+      "capabilities": ["指令遵循"],
+      "isDefault": false
+    },
+    {
+      "order": 5,
+      "name": "刘飞 2.0",
+      "voiceType": "zh_male_liufei_uranus_bigtts",
+      "scene": "通用场景",
+      "gender": "male",
+      "languageSummary": "中文；支持30+语种识别",
+      "capabilities": ["指令遵循"],
+      "isDefault": false
+    },
+    {
+      "order": 6,
+      "name": "清新女声 2.0",
+      "voiceType": "zh_female_qingxinnvsheng_uranus_bigtts",
+      "scene": "通用场景",
+      "gender": "female",
+      "languageSummary": "中文；支持30+语种识别",
+      "capabilities": ["指令遵循"],
+      "isDefault": false
+    },
+    {
+      "order": 7,
+      "name": "爽快思思 2.0",
+      "voiceType": "zh_female_shuangkuaisisi_uranus_bigtts",
+      "scene": "通用场景",
+      "gender": "female",
+      "languageSummary": "中文；支持30+语种识别",
+      "capabilities": ["指令遵循"],
+      "isDefault": false
+    },
+    {
+      "order": 8,
+      "name": "邻家女孩 2.0",
+      "voiceType": "zh_female_linjianvhai_uranus_bigtts",
+      "scene": "通用场景",
+      "gender": "female",
+      "languageSummary": "中文；支持30+语种识别",
+      "capabilities": ["指令遵循"],
+      "isDefault": false
+    },
+    {
+      "order": 9,
+      "name": "少年梓辛 2.0",
+      "voiceType": "zh_male_shaonianzixin_uranus_bigtts",
+      "scene": "通用场景",
+      "gender": "male",
+      "languageSummary": "中文；支持30+语种识别",
+      "capabilities": ["指令遵循"],
+      "isDefault": false
+    },
+    {
+      "order": 10,
+      "name": "暖阳女声 2.0",
+      "voiceType": "zh_female_kefunvsheng_uranus_bigtts",
+      "scene": "客服场景",
+      "gender": "female",
+      "languageSummary": "中文；支持30+语种识别",
+      "capabilities": ["指令遵循"],
+      "isDefault": false
+    }
+  ]
+}
