@@ -7,7 +7,8 @@ import {
   Tray,
   Menu,
   nativeImage,
-  protocol
+  protocol,
+  safeStorage
 } from 'electron'
 import { join, parse, dirname } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -22,6 +23,14 @@ import { openClawPaths, buildOpenClawEnv, GATEWAY_TOKEN } from './openClawPaths'
 import { readFileSync, existsSync } from 'fs'
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
 import type { TerminalRuntime } from '../../src/types/terminal'
+import {
+  VoiceSecretStore,
+  VoiceCloneManager,
+  type VoiceManager,
+  createJsonVoiceStorage,
+  createVoiceManager,
+  registerVoiceIpc
+} from './fish/voice'
 
 // 类型定义
 interface TerminalSession {
@@ -37,6 +46,7 @@ let downloadManager: DownloadManager
 let channelManager: ChannelManager
 let obsidianManager: ObsidianManager
 let skillSyncService: SkillSyncService
+let voiceManager: VoiceManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -1194,6 +1204,38 @@ app.whenReady().then(() => {
       mainWindow.webContents.send('obsidian:index-progress', data)
     }
   })
+
+  // ── 鱼语音：1.0 无数据库，走 userData/fish/voice.json（失败只降级）──
+  try {
+    const voiceSecretStore = new VoiceSecretStore(
+      join(configManager.getDataDir(), 'voice', 'key.bin'),
+      safeStorage
+    )
+    const voiceStorage = createJsonVoiceStorage(
+      join(configManager.getDataDir(), 'fish', 'voice.json')
+    )
+    voiceManager = createVoiceManager({
+      storage: voiceStorage,
+      secrets: voiceSecretStore,
+      cacheDir: join(configManager.getDataDir(), 'fish', 'audio'),
+      logger: (message) => console.log(message)
+    })
+    const voiceCloneManager = new VoiceCloneManager({
+      storage: voiceStorage,
+      secrets: voiceSecretStore,
+      voicesDir: join(configManager.getDataDir(), 'fish', 'voices'),
+      voiceManager,
+      logger: (message) => console.log(message)
+    })
+    registerVoiceIpc(voiceManager, voiceCloneManager)
+  } catch (error) {
+    voiceManager = null
+    console.log(
+      `[voice] 初始化失败，语音功能降级（不影响主流程）: ${
+        (error as Error)?.message ?? String(error)
+      }`
+    )
+  }
 
   registerIpcHandlers()
   createWindow()

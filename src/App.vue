@@ -90,6 +90,7 @@ const version = ref('')
 const navItems = [
   { to: '/dashboard', icon: '🏠', label: '控制台' },
   { to: '/config',    icon: '⚙️', label: '模型配置' },
+  { to: '/voice', icon: '🔊', label: '语音设置' },
   { to: '/skills',    icon: '🧩', label: '技能管理' },
   { to: '/logs',      icon: '📋', label: '运行日志' },
   { to: '/setup',     icon: '🔧', label: '环境初始化' },

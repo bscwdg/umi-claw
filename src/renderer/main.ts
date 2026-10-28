@@ -14,6 +14,7 @@ const router = createRouter({
     { path: '/skills', component: () => import('../views/Skills.vue') },
     { path: '/logs', component: () => import('../views/Logs.vue') },
     { path: '/setup', component: () => import('../views/Setup.vue') },
+    { path: '/voice', component: () => import('../views/voice/VoicePage.vue') },
     { path: '/channelsPage', component: () => import('../views/ChannelsPage.vue') },
     { path: '/terminal', component: () => import('../views/TerminalPage.vue') },
     { path: '/about', component: () => import('../views/About.vue') },
