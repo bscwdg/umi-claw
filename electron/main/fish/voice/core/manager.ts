@@ -24,7 +24,6 @@ import type {
   VoiceTestResult,
   VoiceUsageDay,
   OpenClawTtsChannel,
-  OpenClawTtsChannelSetting,
   VoiceOpenClawStatus,
   VoiceOpenClawTestResult
 } from './types'
