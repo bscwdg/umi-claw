@@ -1376,6 +1376,77 @@ await r.check('P37', 'work 插件：激活后 work:* 通道可用，停用后全
   assertEq(ipc.handlers.size, 0, '停用后 work:* 通道全部摘除')
   return `work 插件通道 ${status.channels.length} 条，停用清零`
 })
+// ── P38 work 插件：停用 → 重新启用后数据仍在（真插件库） ─────────────────────
+await r.check('P38', 'work 插件启停循环：停用摘通道，重新启用后数据仍在', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'umi-workcycle-'))
+  const pluginDb = createPluginDbService({
+    dataDir: root,
+    nodePath: resolveNodePath(),
+    workerScriptPath: join(repoRoot, 'resources', 'database', 'db-worker.mjs')
+  })
+  const ipc = createFakeIpc()
+  const services = {
+    db: () => pluginDb.forPlugin({ id: 'work', dir: join(repoRoot, 'plugins', 'work') }),
+    openclaw: () => ({
+      getStatus: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
+      ensureReady: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
+      chat: async () => ({ text: '', model: null }),
+      stream: () => {
+        throw new Error('not used')
+      }
+    }),
+    hostOps: () => ({
+      notify: () => undefined,
+      push: async () => ({ ok: true }),
+      listPushChannels: async () => [],
+      listPushTargets: async () => [],
+      locateOldDbs: () => [],
+      readOldDb: async () => ({})
+    }),
+    config: () => ({ get: () => undefined, set: () => undefined, all: () => ({}) })
+  }
+  const manifestForWork = JSON.parse(
+    readFileSync(join(repoRoot, 'resources', 'plugins', 'work', 'plugin.json'), 'utf-8')
+  )
+  const registry = new PluginRegistry({
+    hostServices: availableServices(services),
+    persistedEnabled: { work: true }
+  })
+  registry.register({
+    dir: join(repoRoot, 'plugins', 'work'),
+    source: 'resources/plugins/work/plugin.json',
+    manifest: manifestForWork,
+    loadMain: async () => workMod.default
+  })
+  const host = makeHost(registry, ipc, {
+    services,
+    activationTimeoutMs: 20000,
+    paths: { appPath: repoRoot, resourcesPath: join(repoRoot, 'resources'), isPackaged: false }
+  })
+
+  try {
+    const first = await host.activate('work')
+    assertEq(first.state, 'activated', '首次激活：' + JSON.stringify(first.error))
+
+    await ipc.invoke('work:matters:create', { name: '合同', status: 'active' })
+    const list1 = await ipc.invoke('work:matters:list', {})
+    assertEq(list1.data.length, 1, '创建后能查到')
+
+    const disabled = await host.setEnabled('work', false)
+    assertEq(disabled.state, 'disabled', '停用')
+    assertEq(ipc.handlers.size, 0, '停用后 work:* 通道清零')
+
+    const again = await host.setEnabled('work', true)
+    assertEq(again.state, 'activated', '重新启用：' + JSON.stringify(again.error))
+    const list2 = await ipc.invoke('work:matters:list', {})
+    assertEq(list2.data.length, 1, '重新启用后数据仍在（同一个插件库）')
+    assertEq(list2.data[0].name, '合同', '内容一致')
+  } finally {
+    await host.disposeAll()
+    await pluginDb.disposeAll()
+  }
+  return '停用摘通道 + 数据持久'
+})
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin.json'), result)

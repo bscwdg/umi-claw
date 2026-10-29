@@ -44,6 +44,7 @@ import {
 } from './kernel'
 import { PLUGIN_MAIN_ENTRIES } from './kernel/plugins.main.generated'
 import { createPluginDbService } from './services/pluginDb'
+import { getWorkRuntime } from '../../plugins/work/main'
 
 // ── 2.0 营销域 imports（合并自 release/2.0）────────────────────────────────────
 // 与 work 域同名的模块内标识符加 `Marketing*` / `*Lib` 别名区分：
@@ -90,7 +91,7 @@ import {
   type GatewayModels,
   type GatewayStarterResult
 } from './gatewayClient'
-import { registerGatewayIpc, registerWorkIpc } from './ipc'
+import { registerGatewayIpc } from './ipc'
 import {
   VoiceSecretStore,
   VoiceCloneManager,
@@ -103,7 +104,6 @@ import { AppError, ERROR_CODES } from './database/errors'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
 import type { WizardManager } from './work/wizardManager'
-import { createWorkRuntime, type WorkRuntime } from './work/runtime'
 // pdfjs 资产解析：两域的 parsers/pdfjsAssets.ts 逐字节相同（合并时已 diff 确认），
 // 统一用 work 这一份实现，避免同名 import 重复声明；marketing 的调用点语义不变。
 import { resolvePdfjsAssets } from './work/parsers/pdfjsAssets'
@@ -1033,38 +1033,6 @@ async function listPushTargetOptions(
   })
 }
 
-/**
- * 取 work 域各 Manager 单例（Commit 02）。
- *
- * 全部共用同一个 DatabaseClient 单例（硬规则 2：DB Worker 全局单例）。
- * 消费者是 IPC 层（ipc/work.ts）；渲染端拿不到 Manager 本身。
- */
-function initWorkManagers(): WorkRuntime {
-  if (!workDatabase) throw new Error('DB 客户端尚未初始化')
-  if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
-
-  const runtime = createWorkRuntime({
-    database: workDatabase,
-    gateway: workGatewayClient,
-    dataDir: configManager.getDataDir(),
-    pdfjsAssets: resolvePdfjsAssets({
-      isPackaged: app.isPackaged,
-      appPath: app.getAppPath(),
-      resourcesPath: process.resourcesPath
-    }),
-    logger: (m) => console.log(m),
-    notifier: (id, payload) => showReminderNotification(id, payload),
-    pusher: (_id, payload, dest) => pushReminderMessage(dest, payload),
-    listPushChannels: () => listPushChannelOptions(),
-    listPushTargets: (channel) => listPushTargetOptions(channel),
-    locateOldDbs: () => locateLegacyDbs(configManager.getDataDir()),
-    readOldDb: (info) => readLegacyDb(info)
-  })
-
-  // 只有向导单例还被宿主引用（autoStart 的协议闸门）；其余 Manager 已由运行时持有。
-  workWizardManager = runtime.wizard
-  return runtime
-}
 
 /**
  * 安全地终止并清理指定的终端会话
@@ -2368,7 +2336,7 @@ if (app.isPackaged) {
 // 注（合并点）：2.0 在这里还有一份单参 triggerVoiceAutoSpeak，已删除；
 // 统一用上面那份（eventId 可选，兼容 2.0 的单参调用）。
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.clawdesktop.app')
   protocol.handle('app', async (request) => {
     let urlPath = request.url.replace('app://', '')
@@ -2433,7 +2401,11 @@ app.whenReady().then(() => {
   // （getMarketingGatewayClient() 返回同一对象），所以必须先于 marketing 各 Manager 构造。
   workGatewayClient = createWorkGatewayClient()
   workDatabase = createWorkDatabase()
-  const workManagers = initWorkManagers()
+
+  // 插件宿主（Phase 2）：work 由插件装配（Manager + work:* 通道 + 提醒循环）。
+  // 必须在创建窗口之前完成，否则渲染端首屏调 work:* 会撞到「没有 handler」。
+  await initPlugins()
+  workWizardManager = getWorkRuntime()?.wizard ?? null
 
   downloadManager = new DownloadManager(configManager)
   channelManager =
@@ -2487,8 +2459,7 @@ app.whenReady().then(() => {
   // ── work.gateway（Commit 01：只读快照 + 探活/自动拉起/就绪轮询）──
   // 只注册两条通道；业务流（qa/tools/reports 的 SSE 增量）归各自 Commit
   registerGatewayIpc(workGatewayClient)
-  // ── work.profile / work.matters / work.todos（Commit 02）──
-  registerWorkIpc(workManagers)
+  // work 的业务通道（work:*）由插件在 initPlugins() 里注册，宿主不再直接注册
   // ── 鱼语音：预设 TTS + 克隆音色共用 /voice 配置与音频缓存 ──
   // 语音是增强能力：初始化失败只降级，绝不阻断主流程启动。
   try {
@@ -2548,7 +2519,7 @@ app.whenReady().then(() => {
     )
   }
   // ── 两个固定本地通知的轻量定时检查（硬规则22；不是调度系统）──
-  workManagers.reminder.start()
+  // 提醒循环已随 work 插件启动（plugins/work/main.ts），此处不再重复 start
   createWindow()
   createTray()
   setupLogForwarding()
@@ -2585,9 +2556,6 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
     else mainWindow?.show()
   })
-
-  // 插件宿主（Phase 0）：不 await，插件挂掉不能拖住宿主启动
-  void initPlugins()
 })
 
 app.on('window-all-closed', () => {

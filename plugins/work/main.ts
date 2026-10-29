@@ -96,14 +96,23 @@ export default definePlugin({
 
     registerWorkIpc(work as unknown as WorkIpcDeps)
     runtime = work
+
+    // 提醒循环属于域行为：随插件启停（30s 检查、到点通知/外发、日报草稿）
+    work.reminder.start()
     ctx.logger.info(`工作域就绪（库 ${db.path}）`)
 
     return () => {
+      work.reminder.stop()
       runtime = null
       setWorkIpcRegistrar(null)
     }
   },
   deactivate() {
+    try {
+      runtime?.reminder.stop()
+    } catch {
+      // 停用路径上不阻塞
+    }
     runtime = null
     setWorkIpcRegistrar(null)
   }

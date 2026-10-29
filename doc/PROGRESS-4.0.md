@@ -156,3 +156,15 @@
 
 **验收**：plugin **43/43**（+P37）；全量 19 套 **350/350**；双 typecheck 0 错；build 通过（work 插件代码进 bundle）。
 下一步：把 main 从「内联装配 work」切到「激活 work 插件」，并切到插件自己的 `data.db` + 一次性数据导入。
+
+### 2026-10-30 · Phase 2 切换：宿主不再内联装配 work
+
+- `main/index.ts` 删除 `initWorkManagers` 与 `registerWorkIpc` 调用；`await initPlugins()` 提前到
+  `workDatabase`/`workGatewayClient` 创建之后、`createWindow()` 之前（否则首屏调 work:* 会撞「没有 handler」）。
+- 宿主只保留 `workWizardManager`（协议闸门）一个引用，从 `getWorkRuntime()` 取。
+- 提醒循环（30s check / 到点通知 / 日报草稿）移入插件 `activate`，`return cleanup` 与 `deactivate` 都 `stop()`。
+- work 插件 `defaultEnabled: true`（老用户升级后功能不消失）。
+- 过渡适配 `db.migrate()` 改为**惰性无操作**：work 库沿用「首次请求才 spawn worker」的原行为，环境未初始化时不会让整个工作域消失。
+- 新验收 P38：真插件库上「创建事项 → 停用（通道清零）→ 重新启用 → 数据仍在」。
+
+**验收**：plugin **44/44**（+P38）；全量 19 套 **350/350**；双 typecheck 0 错；build 通过。

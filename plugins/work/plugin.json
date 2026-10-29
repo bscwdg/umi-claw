@@ -15,5 +15,5 @@
   "channels": ["work"],
   "activation": ["onStartup"],
   "contributes": {},
-  "defaultEnabled": false
+  "defaultEnabled": true
 }
