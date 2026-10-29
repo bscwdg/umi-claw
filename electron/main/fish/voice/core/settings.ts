@@ -50,6 +50,7 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   sampleRate: 24000,
   autoSpeak: 'off',
   conversationTts: 'off',
+  conversationChannel: 'auto',
   dailyCharLimit: 0,
   cacheLimitMB: 500,
   cloneMode: 'postpaid',
@@ -169,6 +170,10 @@ export function normalizeVoiceSettings(
     autoSpeak:
       src.autoSpeak === 'tagged' || src.autoSpeak === 'always' ? src.autoSpeak : 'off',
     conversationTts: normalizeOpenClawTtsAuto(src.conversationTts),
+    conversationChannel:
+      src.conversationChannel === 'bridge' || src.conversationChannel === 'volcengine'
+        ? src.conversationChannel
+        : 'auto',
     dailyCharLimit: Math.floor(clampNumber(src.dailyCharLimit, 0, 10_000_000, 0)),
     cacheLimitMB: Math.floor(clampNumber(src.cacheLimitMB, 50, 5000, 500)),
     cloneMode: src.cloneMode === 'prepaid' ? 'prepaid' : 'postpaid',
@@ -224,6 +229,12 @@ export function applyVoiceSettingsPatch(
       src.conversationTts === undefined
         ? current.conversationTts
         : normalizeOpenClawTtsAuto(src.conversationTts),
+    conversationChannel:
+      src.conversationChannel === undefined
+        ? current.conversationChannel
+        : src.conversationChannel === 'bridge' || src.conversationChannel === 'volcengine'
+          ? src.conversationChannel
+          : 'auto',
     dailyCharLimit:
       src.dailyCharLimit === undefined
         ? current.dailyCharLimit

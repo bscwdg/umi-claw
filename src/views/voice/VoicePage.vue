@@ -285,6 +285,23 @@
             </p>
           </div>
           <div class="form-group">
+            <label class="form-label">对话内语音通道</label>
+            <select v-model="voiceForm.conversationChannel" class="form-input">
+              <option value="auto">自动（有语音控制台 Key 优先标准接口）</option>
+              <option value="bridge">本地桥接（Agent Plan Key）</option>
+              <option value="volcengine">标准接口（语音控制台 Key）</option>
+            </select>
+            <p class="field-hint">{{ openclawStatusText }}</p>
+            <div class="actions">
+              <button class="btn btn-sm" :disabled="busy" @click="testOpenClaw">
+                测试通道
+              </button>
+              <button class="btn btn-sm" :disabled="busy" @click="restartOpenClaw">
+                重启网关
+              </button>
+            </div>
+          </div>
+          <div class="form-group">
             <label class="form-label">复刻模型（仅克隆音色）</label>
             <select
               v-model="voiceForm.cloneModel"
@@ -544,7 +561,8 @@ import type {
   VoiceCloneValidation,
   VoiceKeyKind,
   VoiceSettingsView,
-  VoiceUsageDay
+  VoiceUsageDay,
+  VoiceOpenClawStatus
 } from '../../../electron/main/fish/voice/core/types'
 import {
   VOICE_ENDPOINTS,
@@ -582,6 +600,7 @@ const activeTab = ref<TabId>('overview')
 const settings = ref<VoiceSettingsView | null>(null)
 const catalog = ref<VoiceCatalogFile | null>(null)
 const budget = ref<VoiceUsageDay | null>(null)
+const openclawStatus = ref<VoiceOpenClawStatus | null>(null)
 const cloneRecords = ref<VoiceCloneRecord[]>([])
 /** 最近一次远端对账结果，按 speakerId 索引。 */
 const reconcileItems = ref<VoiceReconcileItem[]>([])
@@ -627,6 +646,7 @@ const voiceForm = reactive({
   emotion: '',
   autoSpeak: 'off' as 'off' | 'tagged' | 'always',
   conversationTts: 'off' as 'off' | 'always' | 'inbound' | 'tagged',
+  conversationChannel: 'auto' as 'auto' | 'bridge' | 'volcengine',
   cloneModel: 'seed-tts-2.0-standard' as 'seed-tts-2.0-standard' | 'seed-tts-2.0-expressive'
 })
 
@@ -726,6 +746,49 @@ async function refreshSettings(): Promise<void> {
   syncAdvancedForm(next)
 }
 
+const openclawStatusText = computed(() => {
+  const s = openclawStatus.value
+  if (!s) return '正在检测对话内语音通道…'
+  if (s.effective === 'bridge') return `当前生效：本地桥接 · ${s.reason}`
+  if (s.effective === 'volcengine') return `当前生效：OpenClaw 标准接口 · ${s.reason}`
+  return `当前不可用：${s.reason}`
+})
+
+async function refreshOpenClawStatus(): Promise<void> {
+  try {
+    openclawStatus.value = await api.openclaw.status()
+  } catch {
+    openclawStatus.value = null
+  }
+}
+
+async function testOpenClaw(): Promise<void> {
+  busy.value = true
+  try {
+    const result = await api.openclaw.test()
+    if (result.audio) await playAudio(result.audio.audioId, result.audio.mime)
+    showNotice(`${result.message}（通道：${result.channel ?? '无'}）`)
+  } catch (e) {
+    showError(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function restartOpenClaw(): Promise<void> {
+  if (!window.confirm('重启 OpenClaw 网关？当前对话会短暂中断。')) return
+  busy.value = true
+  try {
+    await window.api.claw.restart()
+    showNotice('网关已重启；对话内语音配置已生效')
+    await refreshOpenClawStatus()
+  } catch (e) {
+    showError(e)
+  } finally {
+    busy.value = false
+  }
+}
+
 async function refreshBudget(): Promise<void> {
   budget.value = await api.budget.get()
 }
@@ -785,9 +848,11 @@ async function load(): Promise<void> {
     voiceForm.emotion = nextSettings.emotion
     voiceForm.autoSpeak = nextSettings.autoSpeak
     voiceForm.conversationTts = nextSettings.conversationTts
+    voiceForm.conversationChannel = nextSettings.conversationChannel
     voiceForm.cloneModel = nextSettings.cloneModel
     budgetLimit.value = nextSettings.dailyCharLimit
     syncAdvancedForm(nextSettings)
+    void refreshOpenClawStatus()
   } catch (e) {
     showError(e)
   } finally {
@@ -897,9 +962,15 @@ async function saveVoiceSettings(): Promise<void> {
       emotion: voiceForm.emotion,
       autoSpeak: voiceForm.autoSpeak,
       conversationTts: voiceForm.conversationTts,
+      conversationChannel: voiceForm.conversationChannel,
       cloneModel: voiceForm.cloneModel
     })
-    showNotice('语音设置已保存')
+    await refreshOpenClawStatus()
+    showNotice(
+      voiceForm.conversationTts === 'off'
+        ? '语音设置已保存'
+        : '已保存；对话内语音需重启网关生效'
+    )
   } catch (e) {
     showError(e)
   } finally {
