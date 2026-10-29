@@ -41,6 +41,10 @@ export { createJsonStateStore, createMemoryStateStore, type PluginStateStore } f
 export { createPluginConfigStore, type PluginConfigStore } from './pluginConfigStore'
 export {
   availableServices,
+  SERVICE_NAMES,
+  type HostOpsApi,
+  type ServiceInfo,
+  type ServiceName,
   type NotificationsApi,
   type OpenClawApi,
   type OpenClawChatInput,

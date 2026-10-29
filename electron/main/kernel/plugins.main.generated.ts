@@ -6,5 +6,6 @@
 import type { PluginModule } from './plugin'
 
 export const PLUGIN_MAIN_ENTRIES: Record<string, () => Promise<PluginModule>> = {
-  "hello": () => import('../../../plugins/hello/main').then((m) => m.default)
+  "hello": () => import('../../../plugins/hello/main').then((m) => m.default),
+  "work": () => import('../../../plugins/work/main').then((m) => m.default)
 }

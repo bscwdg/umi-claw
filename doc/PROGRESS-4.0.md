@@ -143,3 +143,16 @@
 
 **验收**：全量 19 套 **349/349**；双 typecheck 0 错；build 通过。
 下一步：`plugins/work/main` 用 `ctx.services.db` + `ctx.services.openclaw` 调 `createWorkRuntime`，并把 main 从「内联装配」切到「激活插件」。
+
+### 2026-10-30 · Phase 2 插件化第一步（work 插件可激活）
+
+- 新增 `plugins/work`：manifest（`channels: ["work"]`、inject host/db/config/openclaw/hostOps）与 `main.ts`。
+- `main.ts` 装配链路：`db.migrate()` → `createWorkRuntime`（注入插件库 + openclaw 适配器 + hostOps）→
+  `setWorkIpcRegistrar` + `registerWorkIpc` 把 `work:*` 通道交给 `ctx.registerChannelIpc`。
+- 新增服务 `hostOps`（过渡）：通知 / 渠道外发 / 旧库只读定位——都需要 electron 与 OpenClaw 环境，插件自己实现不了。
+- `ctx.host.paths`（appPath / resourcesPath / isPackaged）：插件不再自己摸 `app` 对象即可解析 pdfjs 资产。
+- 过渡期 `db` 服务对 `work` 返回宿主 `work.db` 的 PluginDbApi 适配（voice 也绑在这个库上）；下一步切 `plugins/work/data.db`。
+- 验收 P37：激活后 `work:matters:list` 等通道存在且能经 Manager 查到数据；停用后 handler 清零。
+
+**验收**：plugin **43/43**（+P37）；全量 19 套 **350/350**；双 typecheck 0 错；build 通过（work 插件代码进 bundle）。
+下一步：把 main 从「内联装配 work」切到「激活 work 插件」，并切到插件自己的 `data.db` + 一次性数据导入。

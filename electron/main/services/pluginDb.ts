@@ -88,6 +88,12 @@ export function createPluginDbService(opts: PluginDbServiceOptions): PluginDbSer
         async request(method, params) {
           return (await client.request(method, (params ?? {}) as Record<string, unknown>)) as never
         },
+        async metaGet(key) {
+          return client.metaGet(key)
+        },
+        async metaSet(key, value) {
+          return client.metaSet(key, value)
+        },
         async list(table, query) {
           ensureTable(table)
           return (await client.request(`${table}.list`, query ?? {})) as never

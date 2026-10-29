@@ -1,0 +1,19 @@
+{
+  "id": "work",
+  "name": "工作域",
+  "version": "1.0.0",
+  "description": "工作记录 / 事项 / 待办 / 今日 / 报告 / 问答 / 知识库（官方内置插件）",
+  "capabilities": [
+    "host.ipc.v1",
+    "host.jobs.v1",
+    "host.db.v1",
+    "host.config.v1",
+    "host.openclaw.v1",
+    "host.notifications.v1"
+  ],
+  "inject": ["host", "db", "config", "openclaw", "hostOps"],
+  "channels": ["work"],
+  "activation": ["onStartup"],
+  "contributes": {},
+  "defaultEnabled": false
+}

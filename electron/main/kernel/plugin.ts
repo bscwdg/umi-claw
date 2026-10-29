@@ -33,11 +33,17 @@ export interface PluginHostInfo {
   /** 数据目录（插件自己的数据应放 `<dataDir>/plugins/<id>/`） */
   dataDir: string
   platform: string
+  /** 宿主路径（dev / 打包双路径由宿主解析，插件不要自己摸 app 对象） */
+  paths: {
+    appPath: string
+    resourcesPath: string
+    isPackaged: boolean
+  }
 }
 
 /**
  * 通道处理函数。第二个参数是**原始 IPC 事件**（Electron 的 IpcMainInvokeEvent）。
- * 之所以透传：work/marketing 的流式通道需要 vent.sender 往渲染端推增量，
+ * 之所以透传：work/marketing 的流式通道需要 event.sender 往渲染端推增量，
  * 内核不解读它，只原样传递，保持与 electron 解耦。
  */
 export type PluginIpcHandler = (

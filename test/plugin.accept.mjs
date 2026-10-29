@@ -41,6 +41,14 @@ const {
 } = kernelMod
 
 const helloMod = await import(pathToFileURL(bundleEntry('plugins/hello/main.ts', 'hello-main.mjs')).href)
+const workMod = await import(
+  pathToFileURL(
+    bundleEntry('plugins/work/main.ts', 'work-main.mjs', {
+      alias: ['electron=./test/.tmp/electron-stub.mjs'],
+      externals: ['mammoth', 'exceljs', 'docx', 'pdfjs-dist']
+    })
+  ).href
+)
 const helloManifestRaw = JSON.parse(
   readFileSync(join(repoRoot, 'resources', 'plugins', 'hello', 'plugin.json'), 'utf-8')
 )
@@ -1276,6 +1284,98 @@ await r.check('P31', '配置落盘健壮性：坏文件先备份、坏值只影�
   return '落盘失败可见、坏值隔离'
 })
 
+// ── P37 work 插件：装配 Manager + 注册 work:* 通道 + 停用摘除 ────────────────
+await r.check('P37', 'work 插件：激活后 work:* 通道可用，停用后全部摘除', async () => {
+  const ipc = createFakeIpc()
+  const calls = []
+  const fakeDb = {
+    path: ':memory:',
+    async migrate() {},
+    async metaGet() {
+      return null
+    },
+    async metaSet() {
+      return { changes: 1 }
+    },
+    async request(method, params) {
+      calls.push({ method, params })
+      if (method === 'matters.list') return [{ id: 'm1', name: '合同', status: 'active' }]
+      if (method.endsWith('.list')) return []
+      if (method.endsWith('.get')) return null
+      return { changes: 1 }
+    },
+    async list() {
+      return []
+    },
+    async get() {
+      return null
+    },
+    async create() {
+      return {}
+    },
+    async update() {
+      return { changes: 1 }
+    },
+    async remove() {
+      return { deleted: true }
+    },
+    async backup() {
+      return { path: ':memory:' }
+    }
+  }
+  const gateway = {
+    getStatus: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
+    ensureReady: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
+    chat: async () => ({ text: '', model: null }),
+    stream: () => {
+      throw new Error('not used')
+    }
+  }
+  const hostOps = {
+    notify: () => undefined,
+    push: async () => ({ ok: true }),
+    listPushChannels: async () => [],
+    listPushTargets: async () => [],
+    locateOldDbs: () => [],
+    readOldDb: async () => ({})
+  }
+  const services = {
+    db: () => fakeDb,
+    openclaw: () => gateway,
+    hostOps: () => hostOps,
+    config: () => ({ get: () => undefined, set: () => undefined, all: () => ({}) })
+  }
+
+  const manifestForWork = JSON.parse(
+    readFileSync(join(repoRoot, 'resources', 'plugins', 'work', 'plugin.json'), 'utf-8')
+  )
+  const registry = new PluginRegistry({
+    hostServices: availableServices(services),
+    persistedEnabled: { work: true }
+  })
+  registry.register({
+    dir: join(repoRoot, 'plugins', 'work'),
+    source: 'resources/plugins/work/plugin.json',
+    manifest: manifestForWork,
+    loadMain: async () => workMod.default
+  })
+  const host = makeHost(registry, ipc, {
+    services,
+    paths: { appPath: repoRoot, resourcesPath: join(repoRoot, 'resources'), isPackaged: false }
+  })
+  const status = await host.activate('work')
+  assertEq(status.state, 'activated', 'work 激活：' + JSON.stringify(status.error))
+  assert(status.channels.some((c) => c.startsWith('work:')), '注册了 work:* 通道')
+  assert(status.channels.includes('work:matters:list'), 'matters.list 通道存在')
+
+  const rows = await ipc.invoke('work:matters:list', {})
+  assertEq(rows.data.length, 1, '通道能查到数据（经 Manager → 注入的 db）')
+  assert(calls.some((c) => c.method === 'matters.list'), 'Manager 真的走到了注入的数据库')
+
+  await host.disposeAll()
+  assertEq(ipc.handlers.size, 0, '停用后 work:* 通道全部摘除')
+  return `work 插件通道 ${status.channels.length} 条，停用清零`
+})
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin.json'), result)

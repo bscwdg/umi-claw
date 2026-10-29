@@ -12,7 +12,7 @@ import type { PluginConfigApi } from './plugin'
 export type ServiceId = 'host' | 'config' | 'db' | 'openclaw' | 'notifications' | 'voice'
 
 /** 真实服务名（不含 host）；availableServices 与解析共用这一份 */
-export const SERVICE_NAMES = ['config', 'db', 'openclaw', 'notifications', 'voice'] as const
+export const SERVICE_NAMES = ['config', 'db', 'openclaw', 'notifications', 'voice', 'hostOps'] as const
 export type ServiceName = (typeof SERVICE_NAMES)[number]
 
 /** 工厂入参：插件身份与目录（db 用它定位 migrations） */
@@ -43,6 +43,9 @@ export interface PluginDbApi {
    * 内置方法也走这里——work/marketing 的 Manager 只依赖 database.request，装箱时可以直接复用。
    */
   request<T = unknown>(method: string, params?: unknown): Promise<T>
+  /** app_meta 读写（偏好类配置；work/marketing 的提醒与外发开关都落这里） */
+  metaGet(key: string): Promise<string | null>
+  metaSet(key: string, value: string | null): Promise<{ changes: number }>
   /** 迁移前快照 */
   backup(reason: string): Promise<{ path: string }>
   /**
@@ -101,6 +104,25 @@ export interface VoiceApi {
   speak(input: { text: string; voiceId?: string }): Promise<void>
 }
 
+/**
+ * 宿主副作用集合（过渡服务，Phase 4 会拆细）。
+ *
+ * work 装箱时遇到的三类宿主能力：系统通知、渠道外发（spawn OpenClaw CLI）、旧库只读定位。
+ * 它们都需要 electron / openclaw 环境，插件侧自己实现不了，所以由宿主以窄方法暴露。
+ */
+export interface HostOpsApi {
+  notify(id: string, payload: { title: string; body: string }): void
+  push(
+    id: string,
+    payload: { title: string; body: string },
+    dest: { channel: string; target: string }
+  ): Promise<unknown>
+  listPushChannels(): Promise<unknown[]>
+  listPushTargets(channel: string): Promise<unknown[]>
+  locateOldDbs(): unknown[]
+  readOldDb(info: unknown): Promise<unknown>
+}
+
 /** 注入给插件的服务袋：只有 manifest.inject 里声明的键会出现 */
 export interface PluginServiceBag {
   config?: PluginConfigApi
@@ -108,6 +130,7 @@ export interface PluginServiceBag {
   openclaw?: OpenClawApi
   notifications?: NotificationsApi
   voice?: VoiceApi
+  hostOps?: HostOpsApi
 }
 
 /** 宿主实际提供的服务名（由 ServiceFactories 的键推导，避免两处写死） */
@@ -117,6 +140,7 @@ export interface ServiceFactories {
   openclaw?: (info: ServiceInfo) => OpenClawApi
   notifications?: (info: ServiceInfo) => NotificationsApi
   voice?: (info: ServiceInfo) => VoiceApi
+  hostOps?: (info: ServiceInfo) => HostOpsApi
 }
 
 /** 服务名清单：注册期校验与实际解析用**同一份**（审查 R12） */

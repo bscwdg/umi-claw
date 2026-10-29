@@ -35,8 +35,10 @@ import {
   discoverPlugins,
   PluginHost,
   PluginRegistry,
+  type HostOpsApi,
   type NotificationsApi,
   type OpenClawApi,
+  type PluginDbApi,
   type PluginStatus,
   type ServiceFactories
 } from './kernel'
@@ -482,6 +484,63 @@ let pluginDbService: ReturnType<typeof createPluginDbService> | null = null
 
 // ── 服务适配器（Phase 1 WP1）：窄接口，不把 manager 递给插件 ─────────────────
 
+/**
+ * 过渡适配（Phase 2）：work 目前仍用宿主自建的 work.db（voice 也绑在这个库上），
+ * 所以把 DatabaseClient 包成 PluginDbApi 交给插件；等 Phase 2 收尾再切到插件自己的 data.db。
+ */
+function workDatabaseAsPluginService(): PluginDbApi {
+  if (!workDatabase) throw new Error('work 数据库尚未初始化')
+  const db = workDatabase
+  return {
+    path: db.dbPath,
+    async migrate() {
+      await db.ensureReady()
+    },
+    async request(method, params) {
+      return db.request(method, (params ?? {}) as Record<string, unknown>)
+    },
+    async metaGet(key) {
+      return db.metaGet(key)
+    },
+    async metaSet(key, value) {
+      return db.metaSet(key, value)
+    },
+    async list(table, query) {
+      return db.request(`${table}.list`, query ?? {}) as never
+    },
+    async get(table, idValue) {
+      return (await db.request(`${table}.get`, { pk: idValue })) as never
+    },
+    async create(table, values) {
+      return (await db.request(`${table}.create`, { data: values })) as never
+    },
+    async update(table, idValue, patch) {
+      const res = await db.request<{ changes: number }>(`${table}.update`, { pk: idValue, data: patch })
+      return { changes: res?.changes ?? 0 }
+    },
+    async remove(table, idValue) {
+      const res = await db.request<{ deleted: boolean }>(`${table}.delete`, { pk: idValue })
+      return { deleted: Boolean(res?.deleted) }
+    },
+    async backup(reason) {
+      const res = await db.backup(reason)
+      return { path: res.path }
+    }
+  }
+}
+
+/** 宿主副作用（过渡服务，Phase 4 拆细）：通知 / 渠道外发 / 旧库只读 */
+function createHostOpsService(): HostOpsApi {
+  return {
+    notify: (id, payload) => showReminderNotification(id, payload as never),
+    push: async (_id, payload, dest) => (await pushReminderMessage(dest, payload as never)) as never,
+    listPushChannels: async () => (await listPushChannelOptions()) as never,
+    listPushTargets: async (channel) => (await listPushTargetOptions(channel)) as never,
+    locateOldDbs: () => locateLegacyDbs(configManager.getDataDir()) as never,
+    readOldDb: async (info) => (await readLegacyDb(info as never)) as never
+  }
+}
+
 /** 系统通知：插件只能发标题 + 正文 */
 function createNotificationsService(): NotificationsApi {
   return {
@@ -546,7 +605,10 @@ async function initPlugins(): Promise<void> {
 
     const serviceFactories: ServiceFactories = {
       config: (info) => pluginConfigStore!.serviceFor(info.id),
-      db: (info) => pluginDbService!.forPlugin(info),
+      // work 暂用宿主库（voice 也依赖它）；其它插件走自己的 data.db
+      db: (info) =>
+        info.id === 'work' && workDatabase ? workDatabaseAsPluginService() : pluginDbService!.forPlugin(info),
+      hostOps: () => createHostOpsService(),
       notifications: () => createNotificationsService(),
       openclaw: () => createOpenClawService()
     }
