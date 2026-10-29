@@ -29,7 +29,7 @@
       </div>
 
       <p class="meta">
-        通道 {{ p.ipcMethods.length }} 个 · 定时任务 {{ p.jobCount }} 个
+        通道 {{ p.ipcMethods.length + (p.channels?.length ?? 0) }} 个 · 定时任务 {{ p.jobCount }} 个
         <template v-if="p.contributes?.routes?.length">
           · 页面 {{ p.contributes.routes.join('、') }}
         </template>

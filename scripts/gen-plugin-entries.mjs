@@ -4,7 +4,7 @@
 // 运行期才知道有哪些入口可以 import。手工维护入口表容易漏（漏了就是「装了但不生效」），
 // 所以由清单生成，并在 predev/prebuild 自动跑。
 
-import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -91,6 +91,8 @@ for (const p of plugins) {
   const migrationsSrc = join(pluginsDir, p.id, 'migrations')
   if (existsSync(migrationsSrc)) {
     const migrationsDst = join(targetDir, 'migrations')
+    // 先清空：删掉的 SQL 不能继续被应用（审查 P2-13）
+    rmSync(migrationsDst, { recursive: true, force: true })
     mkdirSync(migrationsDst, { recursive: true })
     for (const file of readdirSync(migrationsSrc)) {
       if (!file.endsWith('.sql')) continue

@@ -14,6 +14,12 @@
   "inject": ["host", "db", "config", "openclaw", "hostOps"],
   "channels": ["work"],
   "activation": ["onStartup"],
-  "contributes": {},
+  "contributes": {
+    "navGroup": { "id": "work", "label": "工作", "order": 10 },
+    "routes": [
+      "/work/today", "/work/records", "/work/qa", "/work/reports",
+      "/work/tools", "/work/knowledge", "/work/context", "/work/settings"
+    ]
+  },
   "defaultEnabled": true
 }

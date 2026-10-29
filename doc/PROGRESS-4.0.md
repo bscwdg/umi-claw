@@ -192,3 +192,30 @@
 - P32 边界检查放宽为「纯 UI 插件可不调 IPC；一旦调了必须走 host.invoke」。
 
 **验收**：plugin **45/45**；ui.accept **17/17**（页面已在新路径）；全量 19 套 **352/352**；双 typecheck 0 错；build 通过。
+
+### 2026-10-30 · Phase 2 审查/对抗修复（R13–R22）
+
+两路子代理（只读审查 + 对抗验收）报告：对抗 9/17（4 组高危），审查 12 条（2×P0、3×P1）。逐条修复：
+
+| 编号 | 问题 | 修复 |
+|---|---|---|
+| R13 | 导入错误分类：所有异常都当「缺表」跳过，随后照写 `.imported` → 永久零导入 | 只有 `no such table`/`未知方法` 才跳过，其它抛出且不写标记 |
+| R14 | 逐行 `create`（INSERT）：中断后重跑必撞主键，永远导不完 | 改 `upsert`（worker 已支持）；失败不写标记，下次续传 |
+| R15 | `limit: 100_000` 被 worker 夹到 5000 → 静默丢行 | 按 5000 分页拉满，记录 `pages`，日志可见 |
+| R16 | voice 的 `app_meta` 被整表搬进插件库 | 导入时过滤 `voice:` / `voice_` 前缀 |
+| R17 | 协议闸门依赖插件 runtime：停用/激活失败 `?.` 静默放行 | 宿主自持 `assertConsent()`：读插件库（宿主持有）→ 回落宿主 work.db → 都没有则拒绝 |
+| R18 | 导入在 `createWindow` 前同步跑，大库首启卡白屏 | 改后台执行 + 只对启用中的插件 + 失败不写标记 |
+| R19 | work 激活预算 5s，慢机误判超时 | 宿主 `activationTimeoutMs: 20000` |
+| R20 | 清单 `contributes` 为空：管理页显示「通道 0 / 页面 0」，停用不弹确认 | 填 `navGroup` + 8 条路由；管理页通道数改 `ipcMethods + channels` |
+| R21 | 向导完成硬编码 `push('/work/today')`，work 停用时白屏 | 改跳 `/dashboard` |
+| R22 | 其它 | gen 复制 migrations 前先清空（删掉的 SQL 不再残留）；`gatewayAdapter` 透传 `model`；`registerWorkIpc` 失败时 `setWorkIpcRegistrar(null)`；`services.ts` 注释被转义破坏已修 |
+
+**新增验收**：P40（分页/续传/错误分类/缺表跳过/voice 过滤 五段），P39 断言跟随 `skipped` 数组化。
+
+**验收**：plugin **46/46**；全量 19 套 **353/353**；双 typecheck 0 错；build 通过。
+
+**仍待处理（记录）**：
+- 在途 SSE / 提醒 check 在停用后不会立即中止（需 cleanup 里 abort 各 Manager 的 run）；
+- 导入失败目前只有控制台，插件管理页还没有「导入失败 + 重试」入口；
+- 知识库附件仍写全局 `<dataDir>/knowledge`（兼容旧 `source_path`，Phase 4 再评估）；
+- 回滚到 3.0 后新数据只在插件库，需 runbook。

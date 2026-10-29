@@ -29,14 +29,19 @@ function gatewayAdapter(openclaw: NonNullable<PluginContext['services']['opencla
   return {
     getStatus: () => openclaw.status(),
     ensureReady: () => openclaw.ensureReady(),
-    chat: async (input) => ({
-      text: (await openclaw.chat(input)).text,
-      chunks: 0,
-      usage: null,
-      model: null,
-      aborted: false,
-      ms: 0
-    }),
+    chat: async (input) => {
+      const started = Date.now()
+      const res = await openclaw.chat(input)
+      return {
+        text: res.text,
+        chunks: 0,
+        usage: null,
+        // model 必须透传：报告落库的 generation_context.model 依赖它（审查 P2 附注）
+        model: res.model ?? null,
+        aborted: false,
+        ms: Date.now() - started
+      }
+    },
     createChatStream: (input) => {
       const handle = openclaw.stream(input)
       return {
@@ -94,7 +99,13 @@ export default definePlugin({
         )
     })
 
-    registerWorkIpc(work as unknown as WorkIpcDeps)
+    try {
+      registerWorkIpc(work as unknown as WorkIpcDeps)
+    } catch (e) {
+      // 中途失败：把模块级 registrar 复位，避免残留指向已关闭的 ctx（审查 P2-12）
+      setWorkIpcRegistrar(null)
+      throw e
+    }
     runtime = work
 
     // 提醒循环属于域行为：随插件启停（30s 检查、到点通知/外发、日报草稿）

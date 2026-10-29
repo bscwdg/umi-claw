@@ -44,7 +44,6 @@ import {
 import { PLUGIN_MAIN_ENTRIES } from './kernel/plugins.main.generated'
 import { createPluginDbService } from './services/pluginDb'
 import { importWorkDataIfNeeded } from './work/migrate'
-import { getWorkRuntime } from '../../plugins/work/main'
 
 // ── 2.0 营销域 imports（合并自 release/2.0）────────────────────────────────────
 // 与 work 域同名的模块内标识符加 `Marketing*` / `*Lib` 别名区分：
@@ -103,7 +102,6 @@ import {
 import { AppError, ERROR_CODES } from './database/errors'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
-import type { WizardManager } from './work/wizardManager'
 // pdfjs 资产解析：两域的 parsers/pdfjsAssets.ts 逐字节相同（合并时已 diff 确认），
 // 统一用 work 这一份实现，避免同名 import 重复声明；marketing 的调用点语义不变。
 import { resolvePdfjsAssets } from './work/parsers/pdfjsAssets'
@@ -127,7 +125,6 @@ let skillSyncService: SkillSyncService
 let workGatewayClient: GatewayClient | null = null
 /** DB Worker 客户端单例（Commit 02 起被各 Manager 消费；硬规则 2：全局单例） */
 let workDatabase: DatabaseClient | null = null
-let workWizardManager: WizardManager | null = null
 /** 语音管理器（合并后只有一份；初始化绑 workDatabase，见 app.whenReady 的 voice 段） */
 let voiceManager: VoiceManager | null = null
 
@@ -331,7 +328,7 @@ function createWorkGatewayClient(): GatewayClient {
     }
     // 硬性闸门（北 2026-09-24）：未同意用户协议不得拉起 OpenClaw
     try {
-      await workWizardManager?.ensureConsent()
+      await assertConsent()
     } catch (e) {
       throw new AppError(
         ERROR_CODES.OPENCLAW_NOT_READY,
@@ -625,6 +622,8 @@ async function initPlugins(): Promise<void> {
       hostVersion: app.getVersion(),
       dataDir,
       services: serviceFactories,
+      // work 激活要 spawn 便携 node + 建库/迁移，5s 在慢机上会误判超时（审查 P1-4）
+      activationTimeoutMs: 20000,
       logger: (line) => console.log(line),
       onStatusChange: () => broadcastPluginStatus()
     })
@@ -658,19 +657,23 @@ async function initPlugins(): Promise<void> {
     })
 
     // work 数据一次性导入（只读旧库 work.db → plugins/work/data.db，D2）
-    try {
-      if (workDatabase && pluginDbService && registry.get('work')) {
-        const result = await importWorkDataIfNeeded({
-          source: workDatabase,
-          target: pluginDbService.forPlugin({ id: 'work', dir: join(resourcesRoot(), 'plugins', 'work') }),
-          pluginDataDir: join(dataDir, 'plugins', 'work'),
-          logger: (line) => console.log(line)
+    // 后台执行：可能上万行，不能在建窗口之前卡住启动（审查 P1-4）；
+    // 只对启用中的插件执行（P2-6）；失败不写标记，下次启动重试（P1-5）。
+    if (workDatabase && pluginDbService && registry.isEnabled('work')) {
+      const source = workDatabase
+      const target = pluginDbService.forPlugin({ id: 'work', dir: join(resourcesRoot(), 'plugins', 'work') })
+      void importWorkDataIfNeeded({
+        source,
+        target,
+        pluginDataDir: join(dataDir, 'plugins', 'work'),
+        logger: (line) => console.log(line)
+      })
+        .then((result) => {
+          if (result.imported) console.log('[work] 旧库数据已导入插件库：', JSON.stringify(result.counts))
         })
-        if (result.imported) console.log('[work] 旧库数据已导入插件库：', JSON.stringify(result.counts))
-      }
-    } catch (e) {
-      // 导入失败不阻断启动：插件库缺失时 work 域会以空库运行，用户可在下次启动重试
-      console.error('[work] 数据导入失败（继续启动，可重试）:', e)
+        .catch((e) => {
+          console.error('[work] 数据导入失败（下次启动重试）:', e)
+        })
     }
 
     await host.activateAll()
@@ -684,6 +687,34 @@ async function initPlugins(): Promise<void> {
     // 插件子系统整体失败 → 宿主以「零插件模式」继续运行（PLAN-4.0 验收标准 1）
     console.error('[plugin] 初始化失败（宿主继续运行，零插件模式）：', e)
   }
+}
+
+/**
+ * 用户协议闸门（宿主自持，Phase 2 审查 P1-3）。
+ *
+ * 以前依赖 work 插件的 wizardManager：插件停用或激活失败时 `?.` 会静默放行，
+ * 未同意协议也能拉起 OpenClaw。现在直接读**插件库的 app_meta**——库由宿主持有
+ * （pluginDbService），不依赖插件是否激活；读不到时回落宿主 work.db。
+ */
+async function assertConsent(): Promise<void> {
+  const granted = (value: string | null): boolean => value === 'granted'
+
+  try {
+    if (pluginDbService) {
+      const db = pluginDbService.forPlugin({ id: 'work', dir: join(resourcesRoot(), 'plugins', 'work') })
+      if (granted(await db.metaGet('wizard_consent'))) return
+    }
+  } catch (e) {
+    console.warn('[Main] 读取插件库协议状态失败，回落宿主库：', (e as Error)?.message ?? e)
+  }
+
+  try {
+    if (workDatabase && granted(await workDatabase.metaGet('wizard_consent'))) return
+  } catch {
+    // 读不到即视为未同意
+  }
+
+  throw new Error('请先同意用户协议，再启动 OpenClaw')
 }
 
 /** resources/ 根（dev / 打包双路径，与 createWorkDatabase 同口径） */
@@ -1267,7 +1298,7 @@ function createTray(): void {
           } else {
             // 硬性闸门：未同意用户协议不得启动（与 IPC 同口径）
             try {
-              await workWizardManager?.ensureConsent()
+              await assertConsent()
               await clawManager.start()
             } catch (e) {
               console.error('[Tray] 启动被拒:', (e as Error)?.message)
@@ -1561,7 +1592,7 @@ function registerIpcHandlers(): void {
   // 硬性闸门（北 2026-09-24）：启动前必须已同意用户协议，否则拒绝并让前端弹回协议弹窗。
   const ensureConsentGate = async (): Promise<{ ok: true } | { ok: false; result: unknown }> => {
     try {
-      await workWizardManager?.ensureConsent()
+      await assertConsent()
       return { ok: true }
     } catch (e) {
       return {
@@ -2376,8 +2407,6 @@ app.whenReady().then(async () => {
   // 插件宿主（Phase 2）：work 由插件装配（Manager + work:* 通道 + 提醒循环）。
   // 必须在创建窗口之前完成，否则渲染端首屏调 work:* 会撞到「没有 handler」。
   await initPlugins()
-  workWizardManager = getWorkRuntime()?.wizard ?? null
-
   downloadManager = new DownloadManager(configManager)
   channelManager =
     new ChannelManager(
@@ -2517,8 +2546,7 @@ app.whenReady().then(async () => {
 
   // 自动启动服务：应用启动时自动运行 OpenClaw（同样受用户协议闸门约束）
   if (startupConfig.autoStart) {
-    workWizardManager
-      ?.ensureConsent()
+    assertConsent()
       .then(() => clawManager.start())
       .catch((err) => {
         console.error('[Main] 自动启动 OpenClaw 失败:', err)

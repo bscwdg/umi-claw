@@ -41,6 +41,8 @@ const {
 } = kernelMod
 
 const helloMod = await import(pathToFileURL(bundleEntry('plugins/hello/main.ts', 'hello-main.mjs')).href)
+const mergeDir = (base, name) => join(base, name)
+
 const workMod = await import(
   pathToFileURL(
     bundleEntry('plugins/work/main.ts', 'work-main.mjs', {
@@ -1511,13 +1513,126 @@ await r.check('P39', '旧库导入：只读 work.db 把数据搬进插件库，�
       pluginDataDir: join(root, 'plugins', 'work')
     })
     assertEq(again.imported, false, '第二次跳过')
-    assertEq(again.skipped, 'already-imported', '跳过原因')
+    assert(again.skipped.includes('already-imported'), '跳过原因')
     assertEq((await target.request('matters.list', {})).length, 1, '重复导入不会翻倍')
   } finally {
     await oldDb.dispose()
     await pluginDb.disposeAll()
   }
   return '导入幂等 + 旧库只读'
+})
+// ── P40 导入健壮性（P2 报告 A2/A3/A5）：分页 / upsert 续传 / 错误分类 / 缺表跳过 ──
+await r.check('P40', '导入健壮性：分页拉满、重跑靠 upsert 续传、非缺表错误不写标记', async () => {
+  const { importWorkDataIfNeeded } = migrateMod
+  const dir = mkdtempSync(join(tmpdir(), 'umi-import-'))
+
+  // 1) 分页：source 每次最多给 2 行，7 行数据应分 4 页全导入
+  {
+    const rows = Array.from({ length: 7 }, (_, i) => ({ id: 'm' + i, name: 'n' + i }))
+    const source = {
+      async request(method, params = {}) {
+        const table = method.split('.')[0]
+        if (table !== 'matters') return []
+        const offset = Number(params.offset ?? 0)
+        const limit = Number(params.limit ?? 5000)
+        return rows.slice(offset, offset + limit)
+      }
+    }
+    const written = []
+    const target = { async request(method, params) { written.push(params.data); return {} } }
+    const res = await importWorkDataIfNeeded({ source, target, pluginDataDir: mergeDir(dir, 'page'), pageSize: 2 })
+    assertEq(res.counts.matters, 7, '分页拉满 7 行')
+    assertEq(written.length, 7, '目标写入 7 行')
+    assert(res.pages.matters >= 4, '页数 >= 4：' + res.pages.matters)
+  }
+
+  // 2) 续传：第一次第 3 张表抛错 → 不写标记；第二次全成功；重跑用 upsert 不冲突
+  {
+    let failOnce = true
+    const source = {
+      async request(method) {
+        const table = method.split('.')[0]
+        if (table === 'todos' && failOnce) throw new Error('磁盘打嗝')
+        return table === 'profile' ? [{ id: 'default', call_name: '老王' }] : []
+      }
+    }
+    const seen = new Map()
+    const target = {
+      async request(method, params) {
+        seen.set(params.data.id, params.data)
+        return {}
+      }
+    }
+    let threw = false
+    try {
+      await importWorkDataIfNeeded({ source, target, pluginDataDir: mergeDir(dir, 'retry') })
+    } catch {
+      threw = true
+    }
+    assert(threw, '第一次应抛错')
+    assertEq(existsSync(join(dir, 'retry', '.imported')), false, '失败不写标记')
+    failOnce = false
+    const second = await importWorkDataIfNeeded({ source, target, pluginDataDir: mergeDir(dir, 'retry') })
+    assertEq(second.imported, true, '第二次成功')
+    assertEq(second.counts.profile, 1, 'profile 续传成功')
+    assertEq(seen.size, 1, '不会重复写入（upsert 收敛）')
+  }
+
+  // 3) 错误分类：库未就绪类错误必须冒泡，不能当缺表吞掉
+  {
+    const source = {
+      async request() {
+        throw new Error('库结构与工作域不符，缺少表: knowledge')
+      }
+    }
+    const target = { async request() { return {} } }
+    let threw = false
+    try {
+      await importWorkDataIfNeeded({ source, target, pluginDataDir: mergeDir(dir, 'strict') })
+    } catch {
+      threw = true
+    }
+    assert(threw, '库未就绪必须抛错')
+    assertEq(existsSync(join(dir, 'strict', '.imported')), false, '不能写完成标记')
+  }
+
+  // 4) 缺表只跳过该表，其它表照常导入
+  {
+    const source = {
+      async request(method) {
+        const table = method.split('.')[0]
+        if (table === 'knowledge') throw new Error('no such table: knowledge')
+        return table === 'matters' ? [{ id: 'm1', name: '合同' }] : []
+      }
+    }
+    const target = { async request() { return {} } }
+    const res = await importWorkDataIfNeeded({ source, target, pluginDataDir: mergeDir(dir, 'skip') })
+    assert(res.skipped.includes('knowledge'), 'knowledge 被跳过')
+    assertEq(res.counts.matters, 1, '其它表照常导入')
+  }
+
+  // 5) voice 配置不随导入进入插件库
+  {
+    const source = {
+      async request(method) {
+        const table = method.split('.')[0]
+        if (table === 'app_meta') {
+          return [
+            { key: 'wizard_consent', value: 'granted' },
+            { key: 'voice:v1:settings', value: '{"secret":1}' }
+          ]
+        }
+        return []
+      }
+    }
+    const written = []
+    const target = { async request(method, params) { written.push(params.data.key); return {} } }
+    await importWorkDataIfNeeded({ source, target, pluginDataDir: mergeDir(dir, 'voice') })
+    assert(written.includes('wizard_consent'), '合规状态要导入')
+    assert(!written.includes('voice:v1:settings'), 'voice 配置不应导入')
+  }
+
+  return '分页 / 续传 / 错误分类 / 缺表 / voice 过滤 全部正确'
 })
 const result = r.toJSON()
 const ok = printResult(result)

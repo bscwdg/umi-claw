@@ -252,7 +252,8 @@ async function ensureFirstRunWizard(): Promise<void> {
 
 /** 向导弹窗关闭（完成态）：进「今日」 */
 function onWizardDone(): void {
-  router.push('/work/today')
+  // work 是插件：停用/激活失败时该路由不存在，跳宿主控制台更稳（审查 P2-11）
+  router.push('/dashboard')
 }
 
 /** 同意用户协议：落库 → 关弹窗 → 继续首启向导（如未完成） */
