@@ -85,6 +85,9 @@ export function createPluginDbService(opts: PluginDbServiceOptions): PluginDbSer
         async migrate() {
           await client.ensureReady()
         },
+        async request(method, params) {
+          return (await client.request(method, (params ?? {}) as Record<string, unknown>)) as never
+        },
         async list(table, query) {
           ensureTable(table)
           return (await client.request(`${table}.list`, query ?? {})) as never

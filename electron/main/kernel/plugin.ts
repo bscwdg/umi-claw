@@ -35,7 +35,12 @@ export interface PluginHostInfo {
   platform: string
 }
 
-export type PluginIpcHandler = (payload?: unknown) => unknown | Promise<unknown>
+/**
+ * 通道处理函数。第二个参数是**原始 IPC 事件**（Electron 的 IpcMainInvokeEvent）。
+ * 之所以透传：work/marketing 的流式通道需要 vent.sender 往渲染端推增量，
+ * 内核不解读它，只原样传递，保持与 electron 解耦。
+ */
+export type PluginIpcHandler = (payload?: unknown, event?: unknown) => unknown | Promise<unknown>
 
 export interface PluginContext {
   readonly id: PluginId

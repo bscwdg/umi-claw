@@ -116,3 +116,14 @@
 - 规则：**先改测试再搬代码**，避免搬完一半「断言失效」与「功能回归」混在一起。
 
 **验收**：plugin **41/41**（新增 P34 租约唯一/命名空间校验/停用摘除、P35 domainSrc 行为）；双 typecheck 0 错。
+
+### 2026-10-30 · Phase 2 准备（第二批）
+
+- `PluginDbApi.request(method, params)`：装箱逃生门。work/marketing 的 Manager 只依赖 `database.request`，装上这个适配层后**不用改 Manager 一行**就能跑在插件库上（worker 白名单仍然兜底）。
+- `PluginContext` 的通道 handler 增加**原始 IPC 事件**第二参：work 的流式通道需要 `event.sender` 推增量，内核只透传、不解读（保持与 electron 解耦）。
+- 从现有 `schema.ts` / `migration.ts` **生成** `plugins/work/migrations/001..003.sql`（脚本化，不手抄）：
+  - 解析结果与手写 schema 逐表比对一致（8 表、v2 `remind_at`、v3 `due_at`、`app_meta` 主键 `key`、`conversations` 无 `updated_at`）。
+  - 真 worker 建库后能 `matters.create` / `matters.list`，且 `projects.*`（营销表）被拒——库边界正确。
+- 宿主能力表补 `host.db.v1` / `host.openclaw.v1` / `host.notifications.v1`（work 插件清单要用）。
+
+**验收**：plugin **42/42**（新增 P36）；全量 19 套 **349/349**；双 typecheck 0 错；build 通过。

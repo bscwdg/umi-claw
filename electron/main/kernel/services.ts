@@ -38,6 +38,11 @@ export interface PluginDbApi {
   create<T = Record<string, unknown>>(table: string, values: Record<string, unknown>): Promise<T>
   update(table: string, id: unknown, patch: Record<string, unknown>): Promise<{ changes: number }>
   remove(table: string, id: unknown): Promise<{ deleted: boolean }>
+  /**
+   * 底层方法调用（装箱用逃生门）。	able.op 形式由 worker 白名单校验，migrate/schema.info 等
+   * 内置方法也走这里——work/marketing 的 Manager 只依赖 database.request，装箱时可以直接复用。
+   */
+  request<T = unknown>(method: string, params?: unknown): Promise<T>
   /** 迁移前快照 */
   backup(reason: string): Promise<{ path: string }>
   /**

@@ -128,15 +128,15 @@ await r.check('P2', '能力版本：缺能力拒绝注册并列出缺失项；�
   const registry = new PluginRegistry()
   let thrown = null
   try {
-    registry.register(makeSource({ capabilities: ['host.ipc.v1', 'host.db.v1'] }))
+    registry.register(makeSource({ capabilities: ['host.ipc.v1', 'host.nonexistent.v1'] }))
   } catch (e) {
     thrown = e
   }
   assert(thrown instanceof PluginManifestError, '缺能力应抛错')
-  assert(thrown.message.includes('host.db.v1'), '错误里应点名缺失能力')
+  assert(thrown.message.includes('host.nonexistent.v1'), '错误里应点名缺失能力')
 
-  const okRegistry = new PluginRegistry({ hostCapabilities: ['host.db.v1'] })
-  okRegistry.register(makeSource({ capabilities: ['host.db.v1'] }))
+  const okRegistry = new PluginRegistry({ hostCapabilities: ['host.nonexistent.v1'] })
+  okRegistry.register(makeSource({ capabilities: ['host.nonexistent.v1'] }))
   assertEq(okRegistry.list().length, 1, '注入能力表后可注册')
   return '缺能力拒绝 + 能力表可注入'
 })
@@ -727,6 +727,49 @@ await r.check('P27', '插件库隔离：两插件各自的库互不可见；重�
     await svc.disposeAll()
   }
   return '库隔离 + 迁移幂等'
+})
+
+// ── P36 work 装箱准备：SQL 迁移与现有 work.db 结构等价 ─────────────────────
+await r.check('P36', 'work 装箱准备：插件 migrations 解析出的结构与 work.db 等价（8 表 + v3 列）', async () => {
+  const schema = loadPluginSchema(join(repoRoot, 'plugins', 'work', 'migrations'))
+  assertEq(schema.targetUserVersion, 3, '目标版本 v3（与现有 work.db 一致）')
+  assertEq(
+    Object.keys(schema.tables).sort().join(','),
+    'activity_log,app_meta,conversations,knowledge,matters,profile,reports,todos',
+    '8 张表与 schema.ts 一致'
+  )
+  assertEq(schema.tables.todos.columns.includes('due_at'), true, 'v3 的 due_at 被合并进结构')
+  assertEq(schema.tables.todos.columns.includes('remind_at'), true, 'v2 的 remind_at 被合并进结构')
+  assertEq(schema.tables.app_meta.pk.join(','), 'key', 'app_meta 主键')
+  assertEq(schema.tables.conversations.updatedAt, null, 'conversations 没有 updated_at')
+
+  const root = mkdtempSync(join(tmpdir(), 'umi-workdb-'))
+  const svc = createPluginDbService({
+    dataDir: join(root, 'data'),
+    nodePath: resolveNodePath(),
+    workerScriptPath: join(repoRoot, 'resources', 'database', 'db-worker.mjs')
+  })
+  try {
+    const db = svc.forPlugin({ id: 'work', dir: join(repoRoot, 'plugins', 'work') })
+    await db.migrate()
+    await db.request('matters.create', {
+      data: { id: 'm1', name: '合同', status: 'active', created_at: 1, updated_at: 1 }
+    })
+    const rows = await db.request('matters.list', {})
+    assertEq(rows.length, 1, '迁移后能写入并查回')
+    assertEq(rows[0].name, '合同', '内容正确')
+
+    let marketingTableBlocked = false
+    try {
+      await db.request('projects.list', {})
+    } catch {
+      marketingTableBlocked = true
+    }
+    assert(marketingTableBlocked, '营销域的表不在 work 插件库里')
+  } finally {
+    await svc.disposeAll()
+  }
+  return 'work 结构可迁移、可用、不越界'
 })
 
 const uiMod = await import(pathToFileURL(bundleEntry('src/renderer/pluginUi.ts', 'plugin-ui.mjs')).href)

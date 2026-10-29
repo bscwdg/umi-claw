@@ -332,7 +332,7 @@ export class PluginHost {
         }
         const channel = pluginIpcChannel(id, method)
         this.ipc.removeHandler(channel)
-        this.ipc.handle(channel, (_event, payload) => handler(payload))
+        this.ipc.handle(channel, (event, payload) => handler(payload, event))
         record.ipcMethods.add(method)
         active.disposers.push({
           label: `ipc ${channel}`,
@@ -363,7 +363,7 @@ export class PluginHost {
         }
         this.owners().set(channel, id)
         this.ipc.removeHandler(channel)
-        this.ipc.handle(channel, (_event, payload) => handler(payload))
+        this.ipc.handle(channel, (event, payload) => handler(payload, event))
         record.channels.add(channel)
         active.disposers.push({
           label: `channel ${channel}`,

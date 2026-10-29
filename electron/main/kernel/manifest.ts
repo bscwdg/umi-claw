@@ -185,7 +185,15 @@ export function parseManifest(raw: unknown, source = '<inline>'): PluginManifest
 }
 
 /** 宿主当前提供的能力版本（Phase 0：只有基础设施能力） */
-export const HOST_CAPABILITIES = ['host.ipc.v1', 'host.jobs.v1', 'host.config.v1', 'host.ui.slot.v1'] as const
+export const HOST_CAPABILITIES = [
+  'host.ipc.v1',
+  'host.jobs.v1',
+  'host.config.v1',
+  'host.db.v1',
+  'host.openclaw.v1',
+  'host.notifications.v1',
+  'host.ui.slot.v1'
+] as const
 
 /** 返回清单要求但宿主未提供的能力（空数组 = 满足） */
 export function missingCapabilities(
