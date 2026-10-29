@@ -164,8 +164,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import type { TodayView } from '../../electron/main/work/todayManager'
-import type { SummaryStatus } from '../../electron/main/work/openclawSummaryManager'
+import type { TodayView } from '../../../../electron/main/work/todayManager'
+import type { SummaryStatus } from '../../../../electron/main/work/openclawSummaryManager'
 import { useToast } from '@/composables/useToast'
 
 const router = useRouter()

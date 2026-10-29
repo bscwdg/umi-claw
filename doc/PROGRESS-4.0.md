@@ -180,3 +180,15 @@
 - 验收 P39：旧库建两个表各一行 → 导入 → 插件库查得到、旧库未被改动、第二次导入跳过、重复导入不翻倍。
 
 **验收**：plugin **45/45**（+P39）；全量 19 套 **352/352**；双 typecheck 0 错；build 通过。
+
+### 2026-10-30 · Phase 2 UI 装箱（work 页面/路由/导航进插件）
+
+- 8 个页面从 `src/views/work/*` 移到 `plugins/work/ui/pages/`（**不能**放 `plugins/work/renderer/pages/`：
+  同目录下已有 `renderer.ts`，`renderer/` 目录会让打包器把 `./pages/x.vue` 解析错，实测 build 直接报
+  "Could not resolve"）。相对类型 import 深度从 `../../` 改为 `../../../../`。
+- 新增 `plugins/work/renderer.ts`：9 条路由 + 「工作」导航组（order 10）。
+- 壳里删除 work 的 9 条路由与「工作」导航组；`App.vue` 只保留核心分组。
+- `tsconfig.web.json` 纳入 `plugins/**/*.vue`；`test/_lib.mjs` 增 `domainUiSrc()`，`ui.accept` 用它定位页面（脚本零改动）。
+- P32 边界检查放宽为「纯 UI 插件可不调 IPC；一旦调了必须走 host.invoke」。
+
+**验收**：plugin **45/45**；ui.accept **17/17**（页面已在新路径）；全量 19 套 **352/352**；双 typecheck 0 错；build 通过。

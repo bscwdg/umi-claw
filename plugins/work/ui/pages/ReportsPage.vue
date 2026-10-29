@@ -116,7 +116,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import type { ReportDetail, ReportSummary } from '../../electron/main/work/reportManager'
+import type { ReportDetail, ReportSummary } from '../../../../electron/main/work/reportManager'
 import { useWorkStream } from '@/composables/useWorkStream'
 import { useToast } from '@/composables/useToast'
 

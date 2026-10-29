@@ -128,19 +128,8 @@ const version = ref('')
 // 分组导航：work 组来自 3.0，营销组来自 2.0；`/dashboard` 标签已拍板为「控制台」，
 // `/skills` 标签已拍板为「能力中心」（2026-10-30）。
 const navGroups = [
-  {
-    title: '工作',
-    items: [
-      { to: '/work/today', icon: '☀️', label: '新的一天' },
-      { to: '/work/records', icon: '🗂', label: '工作记录' },
-      { to: '/work/qa', icon: '💬', label: '工作问答' },
-      { to: '/work/reports', icon: '📊', label: '报告' },
-      { to: '/work/tools', icon: '🧰', label: '工具箱' },
-      { to: '/work/knowledge', icon: '📚', label: '工作知识库' },
-      { to: '/work/context', icon: '🔍', label: 'AI的世界' },
-      { to: '/work/settings', icon: '⚙️', label: '工作设置' }
-    ]
-  },
+  // 工作域导航由 plugins/work/renderer.ts 贡献（Phase 2 装箱）
+
   {
     title: '控制台',
     items: [{ to: '/dashboard', icon: '🏠', label: '控制台' }]

@@ -18,6 +18,12 @@ export const tmpDir = join(__dirname, '.tmp')
  *
  * 规则：装箱后路径存在就用新路径，否则回落到旧路径。
  */
+export function domainUiSrc(pluginId, relPath) {
+  const migrated = join('plugins', pluginId, 'ui', relPath)
+  if (existsSync(join(repoRoot, migrated))) return migrated
+  return join('src', 'views', relPath)
+}
+
 export function domainSrc(pluginId, relPath) {
   const migrated = join(repoRoot, 'plugins', pluginId, 'main', relPath)
   if (existsSync(migrated)) return migrated

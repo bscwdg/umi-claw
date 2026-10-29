@@ -24,7 +24,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { Recorder, assert, assertEq, printResult, writeJson, __dirname, repoRoot } from './_lib.mjs'
+import { Recorder, assert, assertEq, printResult, writeJson, __dirname, repoRoot, domainUiSrc } from './_lib.mjs'
 import {
   writeStubs, compileVuePage, importPreloadApi, mountPage, esbuildBundle,
   collectRendererChannels, loadWorkIpcChannels, serialize
@@ -32,6 +32,14 @@ import {
 
 const r = new Recorder('UI · work 域页面组件级验收')
 const stubs = writeStubs()
+
+/** Phase 2 装箱后，工作域页面在 plugins/work/renderer/pages/；统一在这里解析路径 */
+const WORK_UI_PREFIX = 'PLUGIN_UI_WORK/'
+function resolvePage(file) {
+  return file.startsWith(WORK_UI_PREFIX)
+    ? domainUiSrc('work', 'pages/' + file.slice(WORK_UI_PREFIX.length))
+    : file
+}
 
 /** 注入 IPC 响应：channel → 值或 (…args) => 值；同时清空上一轮的调用记录 */
 function setIpc(map) {
@@ -76,7 +84,10 @@ try {
   // ── 挂载辅助 ──
   async function mount(file, outName, ipcMap, compileOpts = {}) {
     setIpc(ipcMap)
-    const bundle = compileVuePage(file, outName, { routerStub: stubs.routerStub, ...compileOpts })
+    const bundle = compileVuePage(resolvePage(file), outName, {
+    routerStub: stubs.routerStub,
+    ...compileOpts
+  })
     const mod = await import(pathToFileURL(bundle).href)
     const res = await mountPage(mod.default, { api })
     if (res.mountError) throw new Error('挂载异常: ' + res.mountError.message)
@@ -85,7 +96,7 @@ try {
 
   // ── U2 今日页 ──
   await r.check('U2', '今日页挂载：调 today.get，渲染问候/待办/记录', async () => {
-    const res = await mount('src/views/work/TodayPage.vue', 'ui-today', {
+    const res = await mount('PLUGIN_UI_WORK/TodayPage.vue', 'ui-today', {
       'work:today:get': {
         date: '2026-09-23', weekday: 3, greeting: '早上好',
         todos: [
@@ -113,7 +124,7 @@ try {
 
   // ── U3 工作记录页 ──
   await r.check('U3', '工作记录页挂载：调 matters.list + records.list，渲染来源/事项', async () => {
-    const res = await mount('src/views/work/RecordsPage.vue', 'ui-records', {
+    const res = await mount('PLUGIN_UI_WORK/RecordsPage.vue', 'ui-records', {
       'work:matters:list': [
         { id: 'm1', name: 'Q3活动', status: 'active', color: '#F59E0B', created_at: 1, updated_at: 1 }
       ],
@@ -138,7 +149,7 @@ try {
   // ── U13 删除工作记录二次确认 ──
   await r.check('U13', '删除工作记录 / 事项均二次确认：同一 ConfirmDialog，先弹窗后删除', async () => {
     const res = await mount(
-      'src/views/work/RecordsPage.vue',
+      'PLUGIN_UI_WORK/RecordsPage.vue',
       'ui-records-del',
       {
         'work:matters:list': [
@@ -230,7 +241,7 @@ try {
   // ── U14 删除知识资料二次确认 ──
   await r.check('U14', '删除知识资料二次确认：全系统一的 ConfirmDialog，先弹窗后删除', async () => {
     const res = await mount(
-      'src/views/work/KnowledgePage.vue',
+      'PLUGIN_UI_WORK/KnowledgePage.vue',
       'ui-knowledge-del',
       {
         'work:knowledge:list': [
@@ -292,7 +303,7 @@ try {
     const pad = (n) => String(n).padStart(2, '0')
     const now = new Date()
     const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-    const res = await mount('src/views/work/ReportsPage.vue', 'ui-reports', {
+    const res = await mount('PLUGIN_UI_WORK/ReportsPage.vue', 'ui-reports', {
       'work:reports:list': [
         { id: 'p0', type: 'daily', period: today, status: 'draft', created_at: 0, updated_at: 0 },
         { id: 'p1', type: 'daily', period: '2026-09-23', status: 'confirmed', created_at: 1, updated_at: 1 },
@@ -318,7 +329,7 @@ try {
 
   // ── U5 工具箱页 ──
   await r.check('U5', '工具箱页挂载：调 tools.list，渲染六工具与类型标记', async () => {
-    const res = await mount('src/views/work/ToolsPage.vue', 'ui-tools', {
+    const res = await mount('PLUGIN_UI_WORK/ToolsPage.vue', 'ui-tools', {
       'work:tools:list': [
         { id: 'minutes', label: '会议纪要', kind: 'productive', needsSource: true, description: '长文本 → 纪要 + 待办' },
         { id: 'polish', label: '润色', kind: 'processing', needsSource: true, description: '改通顺/改语气' },
@@ -335,7 +346,7 @@ try {
 
   // ── U6 设置页 ──
   await r.check('U6', '工作设置页挂载：profile + reminder.isEnabled×2 + wizard.status', async () => {
-    const res = await mount('src/views/work/SettingsPage.vue', 'ui-settings', {
+    const res = await mount('PLUGIN_UI_WORK/SettingsPage.vue', 'ui-settings', {
       'work:profile:get': {
         profile: {
           id: 'default', call_name: '小北', position: '产品经理', department: null,
@@ -361,7 +372,7 @@ try {
 
   // ── U7 Context 页 ──
   await r.check('U7', 'Context 页挂载：调 context.snapshot，渲染资料组成与 dropped', async () => {
-    const res = await mount('src/views/work/ContextPage.vue', 'ui-context2', {
+    const res = await mount('PLUGIN_UI_WORK/ContextPage.vue', 'ui-context2', {
       'work:context:snapshot': {
         scope: 'latest', builtAt: 1790000000000,
         memory_snapshot: {
@@ -401,7 +412,7 @@ try {
 
   // ── U9 无 Vue 警告/错误 ──
   await r.check('U9', '挂载全程无 Vue 警告/错误（模板引用错字段、指令钩子异常都会被抓到）', async () => {
-    const res = await mount('src/views/work/TodayPage.vue', 'ui-today2', {
+    const res = await mount('PLUGIN_UI_WORK/TodayPage.vue', 'ui-today2', {
       'work:today:get': {
         date: '2026-09-23', weekday: 3, greeting: '下午好',
         todos: [], candidateTodos: [], records: [], candidateRecords: [],
@@ -541,7 +552,7 @@ try {
       report: { exists: false, reportId: null, status: null, canGenerate: false },
       counts: { todos: 0, candidateTodos: 0, records: 0, candidateRecords: 0 }
     }
-    const res = await mount('src/views/work/TodayPage.vue', 'ui-today-interact', {
+    const res = await mount('PLUGIN_UI_WORK/TodayPage.vue', 'ui-today-interact', {
       'work:today:get': emptyToday,
       // 新口径：外发就绪 = 总开关开 + 通道与目标配齐（关着时页面不调度，见第 5 步）
       'work:reminder:getPushConfig': {
@@ -610,7 +621,7 @@ try {
     )
 
     // 4) 渠道未配置：弱提示 + 去工作设置外发段落
-    const res2 = await mount('src/views/work/TodayPage.vue', 'ui-today-nopush', {
+    const res2 = await mount('PLUGIN_UI_WORK/TodayPage.vue', 'ui-today-nopush', {
       'work:today:get': emptyToday,
       'work:reminder:getPushConfig': {
         enabled: false, channel: null, fallbackChannel: null, target: null, fallbackTarget: null
@@ -625,7 +636,7 @@ try {
 
     // 5) 通道配好但**外发总开关关着**（v0.17 口径）：提示「外发开关未开启」+ 去开启入口，
     //    但**照样调度**——到点本机通知必达，总开关只管外发（与主进程同口径）
-    const res3 = await mount('src/views/work/TodayPage.vue', 'ui-today-pushoff', {
+    const res3 = await mount('PLUGIN_UI_WORK/TodayPage.vue', 'ui-today-pushoff', {
       'work:today:get': emptyToday,
       'work:reminder:getPushConfig': {
         enabled: false, channel: 'feishu', fallbackChannel: null, target: 'u1', fallbackTarget: null
@@ -686,7 +697,7 @@ try {
     }
 
     // 1) 今日页：按钮**永远在**（不受自动开关影响），点击 → runToday → 刷新列表 + 状态一句话
-    const res = await mount('src/views/work/TodayPage.vue', 'ui-today-summary', {
+    const res = await mount('PLUGIN_UI_WORK/TodayPage.vue', 'ui-today-summary', {
       'work:today:get': emptyToday,
       'work:reminder:getPushConfig': pushOff,
       'work:openclaw-summary:getStatus': noStatus,
@@ -712,7 +723,7 @@ try {
     assert(serialize(res.root).includes('新增 2 条待确认记录'), '成功后状态行给出结果')
 
     // 2) 失败态：状态行点名原因 + 提示可重试；再点一次仍能重跑
-    const res2 = await mount('src/views/work/TodayPage.vue', 'ui-today-summary-fail', {
+    const res2 = await mount('PLUGIN_UI_WORK/TodayPage.vue', 'ui-today-summary-fail', {
       'work:today:get': emptyToday,
       'work:reminder:getPushConfig': pushOff,
       'work:openclaw-summary:getStatus': {
@@ -739,7 +750,7 @@ try {
     )
 
     // 3) 设置页开关：change → setAutoEnabled；连点只落一次（并发防抖）
-    const res3 = await mount('src/views/work/SettingsPage.vue', 'ui-settings-summary', {
+    const res3 = await mount('PLUGIN_UI_WORK/SettingsPage.vue', 'ui-settings-summary', {
       'work:profile:get': {
         profile: { id: 'default', call_name: '小北' },
         completeness: { filled: 1, total: 6, percent: 17, missing: [] }

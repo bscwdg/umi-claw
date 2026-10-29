@@ -501,7 +501,10 @@ await r.check('P32', '渲染端边界：插件 renderer 不得直接用 window.a
     assert(!/window\.electron/.test(src), `${name} 不应使用 window.electron`)
     assert(!/from ['"]electron['"]/.test(src), `${name} 不应 import electron`)
     assert(!/require\(/.test(src), `${name} 不应 require`)
-    assert(/host\.invoke|invoke</.test(src), `${name} 应通过 host.invoke 调自己的能力`)
+    // 纯 UI 插件不需要调 IPC；一旦调了，必须走宿主注入的 host.invoke（而不是 window.api）
+    if (/\.invoke\(/.test(src)) {
+      assert(/host\.invoke/.test(src), `${name} 调 IPC 时必须走 host.invoke`)
+    }
   }
   return `${files.length} 个插件 renderer 都守边界`
 })

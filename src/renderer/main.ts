@@ -24,16 +24,8 @@ const router = createRouter({
     { path: '/obsidian', component: () => import('../views/ObsidianPage.vue') },
     // 插件管理（宿主页面，不是插件页面）
     { path: '/plugins', component: () => import('../views/PluginManager.vue') },
-    // ── work 域（3.0 UI）──
-    { path: '/work', redirect: '/work/today' },
-    { path: '/work/today', component: () => import('../views/work/TodayPage.vue') },
-    { path: '/work/records', component: () => import('../views/work/RecordsPage.vue') },
-    { path: '/work/qa', component: () => import('../views/work/QaPage.vue') },
-    { path: '/work/reports', component: () => import('../views/work/ReportsPage.vue') },
-    { path: '/work/tools', component: () => import('../views/work/ToolsPage.vue') },
-    { path: '/work/knowledge', component: () => import('../views/work/KnowledgePage.vue') },
-    { path: '/work/context', component: () => import('../views/work/ContextPage.vue') },
-    { path: '/work/settings', component: () => import('../views/work/SettingsPage.vue') },
+    // work 域路由由 plugins/work/renderer.ts 贡献（Phase 2 装箱）
+
     // ── marketing 域（2.0 UI）──
     {
       path: '/marketing/business',

@@ -156,8 +156,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import type { RecordRow } from '../../electron/main/work/recordManager'
-import type { MatterRow } from '../../electron/main/work/matterManager'
+import type { RecordRow } from '../../../../electron/main/work/recordManager'
+import type { MatterRow } from '../../../../electron/main/work/matterManager'
 import { useToast } from '@/composables/useToast'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 
