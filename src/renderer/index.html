@@ -3,7 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <!--
+      media-src 必须放行 blob:：语音合成结果由主进程回传字节，渲染端用
+      URL.createObjectURL 生成 blob 后交给 <audio> 播放。只写 default-src 'self'
+      会让 CSP 拒绝 blob:，浏览器报 “Failed to load because no supported source
+      was found”（实为策略拦截，不是音频损坏）。
+      img-src 同理：待办自动朗读与日志导出也走 blob:。
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' blob:; img-src 'self' blob: data:" />
     <title>Umi Claw</title>
   </head>
   <body>

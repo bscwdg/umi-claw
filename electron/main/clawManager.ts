@@ -232,10 +232,21 @@ export class ClawManager extends EventEmitter {
   /** resources/ 根路径（dev/打包双路径，定位 list-node-starts.ps1）；可选 */
   private resourcesRoot?: string
 
+  /**
+   * 语音 TTS 环境变量提供器（由主进程在语音初始化后注入）。
+   * 密钥只走环境变量，不进 openclaw.json —— 见 configManager._injectOpenClawTts。
+   */
+  private voiceTtsEnvProvider: (() => Promise<Record<string, string>>) | null = null
+
   constructor(configManager: ConfigManager, resourcesRoot?: string) {
     super()
     this.configManager = configManager
     this.resourcesRoot = resourcesRoot
+  }
+
+  /** 注入语音 TTS 环境变量提供器（关闭对话内语音或没密钥时返回空对象）。 */
+  setVoiceTtsEnvProvider(fn: (() => Promise<Record<string, string>>) | null): void {
+    this.voiceTtsEnvProvider = fn
   }
 
   async _killGhostProcesses(dataDir: string) {
@@ -533,6 +544,19 @@ export class ClawManager extends EventEmitter {
       }
     }
 
+    // 对话内语音：密钥只以环境变量注入，绝不写进 openclaw.json。
+    let voiceTtsEnv: Record<string, string> = {}
+    if (this.voiceTtsEnvProvider) {
+      try {
+        voiceTtsEnv = await this.voiceTtsEnvProvider()
+      } catch (e) {
+        this._addLog(
+          `语音 TTS 环境变量注入失败（不影响网关启动）: ${(e as Error)?.message}`,
+          'stderr'
+        )
+      }
+    }
+
     const commonEnv = buildOpenClawEnv(dataDir, nodePath, {
       PORT: String(this.port),
       OPENCLAW_DISABLE_BONJOUR: '1',
@@ -562,7 +586,8 @@ export class ClawManager extends EventEmitter {
     const env = {
       ...process.env,
       ...commonEnv,
-      ...providerEnv
+      ...providerEnv,
+      ...voiceTtsEnv
     }
 
     this._addLog(`正在启动 OpenClaw (端口 ${this.port})...`, 'system')

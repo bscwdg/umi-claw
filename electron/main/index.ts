@@ -1738,6 +1738,10 @@ app.whenReady().then(() => {
       secrets: voiceSecretStore,
       cacheDir: join(configManager.getDataDir(), 'fish', 'audio'),
       logger: (message) => console.log(message),
+      onSettingsChanged: () => {
+        // tts 块写入 openclaw.json；环境变量部分由网关下次启动生效。
+        void configManager.syncOpenClawConfig().catch(() => undefined)
+      },
       onProgress: (event) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('fish:voice:progress', event)
@@ -1752,6 +1756,21 @@ app.whenReady().then(() => {
       logger: (message) => console.log(message)
     })
     registerVoiceIpc(voiceManager, voiceCloneManager)
+    // 硬规则 25：对话内语音走 OpenClaw 的 tts 块与 /tts 命令族。
+    // openclaw.json 只写非密字段；apiKey 由网关启动时以环境变量注入。
+    // 块内已被 if 判空，但闭包逃逸出作用域后 TS 不再收窄，故先取局部引用。
+    const activeVoice = voiceManager
+    configManager.setOpenClawTtsInjector(() => activeVoice.buildOpenClawTtsConfigSync())
+    clawManager.setVoiceTtsEnvProvider(() => activeVoice.buildOpenClawTtsEnv())
+    // 设置一变就把 tts 块同步进 openclaw.json（密钥走环境变量，需下次启动网关生效）。
+    void configManager.syncOpenClawConfig().catch(() => undefined)
+    // 训练是异步的：启动时把上次没跑完的训练接回后台轮询，
+    // 否则页面关掉后任务会永远停在「训练中」。
+    void voiceCloneManager
+      .resumeTrainingPolls()
+      .catch((error) => {
+        console.log(`[voice] 恢复克隆轮询失败: ${(error as Error)?.message ?? String(error)}`)
+      })
   } catch (error) {
     voiceManager = null
     console.log(

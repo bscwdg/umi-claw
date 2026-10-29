@@ -4,6 +4,7 @@ import { basename, extname, join, resolve, sep } from 'path'
 import { VOICE_ERROR_CODES, VoiceError } from './errors'
 import type { VoiceStorage } from './storage'
 import type {
+  VoiceReconcileItem,
   VoiceCloneActivateInput,
   VoiceCloneRecord,
   VoiceCloneSample,
@@ -13,6 +14,7 @@ import type {
 } from './types'
 import type { VoiceSecretStore } from '../secretStore'
 import { VOICE_ENDPOINTS } from './settings'
+import { normalizeCloneLanguage } from './cloneLanguage'
 import type { VoiceManager } from './manager'
 import { VolcengineCloneProvider, type CloneProviderStatus } from '../providers/volcengineClone'
 
@@ -21,6 +23,9 @@ const MAX_SAMPLE_BYTES = 10 * 1024 * 1024
 const SAMPLE_TOKEN_TTL_MS = 30 * 60 * 1000
 const CLONE_EXPIRE_MS = 7 * 24 * 60 * 60 * 1000
 const ALLOWED_FORMATS = new Set(['wav', 'mp3', 'ogg', 'm4a', 'aac', 'pcm'])
+/** 后台轮询：基础间隔取 pollIntervalMs（默认 2s），指数退避封顶 10s，最长 10 分钟。 */
+const POLL_MAX_DELAY_MS = 10_000
+const POLL_MAX_MS = 10 * 60 * 1000
 
 type FetchLike = typeof fetch
 
@@ -103,6 +108,7 @@ export class VoiceCloneManager {
   private recordsCache: VoiceCloneRecord[] | null = null
   private readonly samples = new Map<string, SampleRegistration>()
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly polls = new Map<string, { attempts: number; startedAt: number }>()
   private readonly activationInflight = new Map<string, Promise<VoiceSpeakResult>>()
 
   constructor(options: VoiceCloneManagerOptions) {
@@ -127,6 +133,21 @@ export class VoiceCloneManager {
         message: '该克隆音色首次正式合成将收取槽位费，请先在克隆向导中确认'
       }
     })
+  }
+
+  /**
+   * 取当前生效的克隆相关端点。
+   * 走设置而非常量，这样「接口与模型」里改的地址真的会作用到训练/查询。
+   */
+  private async cloneEndpoints(): Promise<{
+    train: string
+    status: string
+  }> {
+    const settings = await this.voiceManager.getSettings()
+    return {
+      train: settings.cloneTrainEndpoint || VOICE_ENDPOINTS.cloneTrain,
+      status: settings.cloneStatusEndpoint || VOICE_ENDPOINTS.cloneStatus
+    }
   }
 
   private async loadRecords(): Promise<VoiceCloneRecord[]> {
@@ -296,7 +317,7 @@ export class VoiceCloneManager {
       consentAt: at,
       sampleHash: createHash('sha256').update(audio).digest('hex'),
       sampleFileName: entry.sample.fileName,
-      language: Math.min(8, Math.max(0, Math.floor(Number(input.language) || 0))),
+      language: normalizeCloneLanguage(input.language),
       modelTypes: [],
       demos: [],
       activated: false,
@@ -309,28 +330,35 @@ export class VoiceCloneManager {
     await this.saveRecords([record, ...records])
 
     try {
+      const eps = await this.cloneEndpoints()
       const status = await this.provider.train({
-        endpoint: VOICE_ENDPOINTS.cloneTrain,
+        endpoint: eps.train,
         apiKey: key,
         customSpeakerId: speakerId,
         audioBase64: audio.toString('base64'),
         format: entry.sample.format,
         text: typeof input.text === 'string' ? input.text.trim().slice(0, 2000) : undefined,
-        language: record.language
+        language: record.language,
+        demoText: typeof input.demoText === 'string' ? input.demoText.trim() : undefined,
+        enableAudioDenoise: input.enableAudioDenoise === true,
+        disableVolumeNormalization: input.disableVolumeNormalization === true
       })
       this.samples.delete(input.token)
       const next = await this.applyRemoteStatus(speakerId, status)
+      this.afterRemoteStatus(speakerId, next)
       return next
     } catch (error) {
       // 请求超时也可能已被供应商受理；先查询一次，避免用户重复提交。
       try {
+        const eps = await this.cloneEndpoints()
         const status = await this.provider.getStatus(
-          VOICE_ENDPOINTS.cloneStatus,
+          eps.status,
           key,
           speakerId
         )
         if (status.status !== 0) {
           const next = await this.applyRemoteStatus(speakerId, status)
+          this.afterRemoteStatus(speakerId, next)
           return next
         }
       } catch {
@@ -351,6 +379,10 @@ export class VoiceCloneManager {
   ): Promise<VoiceCloneRecord> {
     const current = await this.findRecord(speakerId)
     if (!current) throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '克隆音色记录不存在')
+    if (status.logId) {
+      // 官方建议保存 X-Tt-Logid 便于报障定位；脱敏日志里只留 logid 与音色 ID。
+      this.logger(`[voice] clone logid=${status.logId} speaker=${speakerId}`)
+    }
     const mapped = statusName(status.status)
     let next = await this.updateRecord(speakerId, {
       status: current.activated && (mapped === 'success' || mapped === 'active') ? 'active' : mapped,
@@ -366,11 +398,19 @@ export class VoiceCloneManager {
     return next
   }
 
+  /** 训练仍是异步的：拿到 training 就交给主进程后台跟进，页面关掉也不会停。 */
+  private afterRemoteStatus(speakerId: string, record: VoiceCloneRecord): void {
+    if (record.status === 'training') this.startPolling(speakerId)
+    else this.stopPolling(speakerId)
+  }
+
   private async downloadDemos(
     record: VoiceCloneRecord,
     status: CloneProviderStatus
   ): Promise<VoiceCloneRecord> {
-    const wanted = status.demos.filter((demo) => demo.modelType === 4 || demo.modelType === 5)
+    // 不再按 model_type 白名单过滤：resource 可升级（1.0 返回 1/2/3，2.0 返回 4/5），
+    // 写死 4/5 会让切到旧资源的用户一个试听都拿不到。凡是服务端给了 demo_audio 就落盘。
+    const wanted = status.demos.filter((demo) => demo.modelType > 0 && !!demo.demoAudio)
     if (!wanted.length) return record
     const dir = this.voiceDir(record.speakerId)
     await fs.mkdir(dir, { recursive: true })
@@ -413,10 +453,14 @@ export class VoiceCloneManager {
 
   private schedulePoll(speakerId: string, delay: number, startedAt: number): void {
     if (this.timers.has(speakerId)) return
-    if (this.now() - startedAt > 10 * 60 * 1000) return
+    if (this.now() - startedAt > POLL_MAX_MS) {
+      this.polls.delete(speakerId)
+      this.logger(`[voice] 克隆轮询超过 10 分钟仍未完成，停止后台轮询 ${speakerId}（可手动刷新）`)
+      return
+    }
     const timer = setTimeout(() => {
       this.timers.delete(speakerId)
-      void this.refresh(speakerId).catch((error) => {
+      void this.pollOnce(speakerId).catch((error) => {
         this.logger(`[voice] 克隆轮询失败 ${speakerId}: ${safeError(error)}`)
       })
     }, delay)
@@ -425,12 +469,87 @@ export class VoiceCloneManager {
     this.timers.set(speakerId, timer)
   }
 
+  /**
+   * 启动后台轮询。训练是异步的，页面关闭后主进程必须继续跟进，
+   * 否则训练结果要等用户下次手动刷新才知道。
+   */
+  private startPolling(speakerId: string): void {
+    if (this.polls.has(speakerId)) return
+    const startedAt = this.now()
+    this.polls.set(speakerId, { attempts: 0, startedAt })
+    this.schedulePoll(speakerId, this.pollIntervalMs, startedAt)
+  }
+
+  private stopPolling(speakerId: string): void {
+    const timer = this.timers.get(speakerId)
+    if (timer) clearTimeout(timer)
+    this.timers.delete(speakerId)
+    this.polls.delete(speakerId)
+  }
+
+  private async pollOnce(speakerId: string): Promise<void> {
+    const state = this.polls.get(speakerId) ?? {
+      attempts: 0,
+      startedAt: this.now()
+    }
+    state.attempts += 1
+    this.polls.set(speakerId, state)
+    try {
+      const record = await this.refreshStatus(speakerId)
+      if (record.status !== 'training') {
+        this.stopPolling(speakerId)
+        return
+      }
+    } catch (error) {
+      // 鉴权/Key/记录缺失是确定性失败，继续轮询只会刷日志。
+      const code = error instanceof VoiceError ? error.code : ''
+      if (
+        code === VOICE_ERROR_CODES.KEY_REQUIRED ||
+        code === VOICE_ERROR_CODES.AUTH_ERROR ||
+        code === VOICE_ERROR_CODES.NOT_FOUND
+      ) {
+        this.stopPolling(speakerId)
+        this.logger(`[voice] 克隆轮询终止 ${speakerId}: ${safeError(error)}`)
+        return
+      }
+      // 网络抖动按退避继续重试，直到 10 分钟上限。
+      this.logger(`[voice] 克隆轮询失败 ${speakerId}: ${safeError(error)}`)
+    }
+    const cap = Math.max(this.pollIntervalMs, POLL_MAX_DELAY_MS)
+    const next = Math.min(cap, Math.round(this.pollIntervalMs * 1.5 ** state.attempts))
+    this.schedulePoll(speakerId, next, state.startedAt)
+  }
+
+  /**
+   * 启动时恢复未结束的训练轮询：应用重启或页面关闭都不该让任务停在「训练中」。
+   * 返回恢复的任务数，便于启动日志核对。
+   */
+  async resumeTrainingPolls(): Promise<number> {
+    const records = await this.loadRecords()
+    let resumed = 0
+    for (const record of records) {
+      if (record.status !== 'training') continue
+      this.startPolling(record.speakerId)
+      resumed += 1
+    }
+    if (resumed) this.logger(`[voice] 已恢复 ${resumed} 个克隆训练轮询`)
+    return resumed
+  }
+
   async refresh(speakerId: string): Promise<VoiceCloneRecord> {
+    const record = await this.refreshStatus(speakerId)
+    this.afterRemoteStatus(speakerId, record)
+    return record
+  }
+
+  /** 只做一次远端查询并落库；不碰轮询生命周期，避免与 pollOnce 双向调度形成双定时器。 */
+  private async refreshStatus(speakerId: string): Promise<VoiceCloneRecord> {
     const record = await this.findRecord(speakerId)
     if (!record) throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '克隆音色不存在')
     const key = await this.secrets.get('clone')
     if (!key) throw new VoiceError(VOICE_ERROR_CODES.KEY_REQUIRED, '请先保存语音服务 Key')
-    const status = await this.provider.getStatus(VOICE_ENDPOINTS.cloneStatus, key, speakerId)
+    const eps = await this.cloneEndpoints()
+    const status = await this.provider.getStatus(eps.status, key, speakerId)
     return this.applyRemoteStatus(speakerId, status)
   }
 
@@ -492,6 +611,84 @@ export class VoiceCloneManager {
       throw new VoiceError(VOICE_ERROR_CODES.INVALID_INPUT, '非法音色目录')
     }
     return dir
+  }
+
+  /**
+   * 本地记录与远端逐条对账。
+   *
+   * 本地只记录自己创建过的音色，但远端可能已因 7 天未转正被删、训练失败、或已回收。
+   * 不核对就会出现「列表里还在，实际早就没了」。
+   *
+   * 只调 get_voice（这把 Key 有权限的接口），不依赖 AK/SK。
+   */
+  async reconcile(): Promise<VoiceReconcileItem[]> {
+    const records = await this.loadRecords()
+    const key = await this.secrets.get('clone')
+    if (!key) {
+      throw new VoiceError(VOICE_ERROR_CODES.KEY_REQUIRED, '请先保存语音服务 Key')
+    }
+    const eps = await this.cloneEndpoints()
+    const out: VoiceReconcileItem[] = []
+    for (const record of records) {
+      const item: VoiceReconcileItem = {
+        speakerId: record.speakerId,
+        displayName: record.displayName,
+        localStatus: record.status,
+        verdict: 'unknown',
+        remoteStatus: null,
+        remoteModelTypes: [],
+        newModelTypes: [],
+        availableTrainingTimes: record.availableTrainingTimes,
+        message: ''
+      }
+      try {
+        const status = await this.provider.getStatus(
+          eps.status,
+          key,
+          record.speakerId
+        )
+        item.remoteStatus = status.status
+        item.remoteModelTypes = status.modelTypes.slice()
+        item.availableTrainingTimes = status.availableTrainingTimes
+        const localModels = new Set(record.modelTypes)
+        item.newModelTypes = status.modelTypes.filter((m) => !localModels.has(m))
+        if (status.status === 0) {
+          item.verdict = 'remote-missing'
+          item.message = '远端已不存在（可能超过 7 天未转正被删除，或已被回收）'
+        } else if (status.status === 3) {
+          item.verdict = 'remote-failed'
+          item.message = status.message || '远端训练失败'
+        } else {
+          const mapped = statusName(status.status)
+          // success 与 active 在业务上都表示「可用」，只是本地是否已转正的差别。
+          // 按语义等价比较，避免把「远端 Active + 本地 active」误判成已变化。
+          const normalize = (v: string): string =>
+            v === 'success' || v === 'active' ? 'usable' : v
+          if (normalize(mapped) !== normalize(record.status)) {
+            item.verdict = 'remote-changed'
+            item.message = `远端已是「${mapped}」，本地仍记为「${record.status}」，点刷新即可同步`
+          } else if (item.newModelTypes.length) {
+            item.verdict = 'remote-changed'
+            item.message = `远端新增试听版本 ${item.newModelTypes.join('/')}，点刷新即可下载`
+          } else {
+            item.verdict = 'remote-ok'
+            item.message = '本地与远端一致'
+          }
+        }
+      } catch (error) {
+        const code = error instanceof VoiceError ? error.code : ''
+        item.remoteStatus = null
+        if (code === VOICE_ERROR_CODES.AUTH_ERROR || code === VOICE_ERROR_CODES.KEY_REQUIRED) {
+          item.verdict = 'unknown'
+          item.message = 'Key 无效或缺失，无法核对'
+        } else {
+          item.verdict = 'unknown'
+          item.message = `查询失败：${safeError(error)}`
+        }
+      }
+      out.push(item)
+    }
+    return out
   }
 
   async remove(speakerId: string): Promise<{ removed: true; remoteDelete: 'unsupported' }> {

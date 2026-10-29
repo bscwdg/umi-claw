@@ -218,9 +218,20 @@ export class ConfigManager {
   private modelPresets: ModelPresetService
   /** Obsidian MCP 注入器：返回 mcp.servers.obsidian 配置，未启用返回 null */
   private obsidianMcpInjector: (() => Record<string, unknown> | null) | null = null
+  /** OpenClaw 对话内语音（tts 块）注入器：返回待写入的 tts 配置，未启用返回 null */
+  private openClawTtsInjector: (() => Record<string, unknown> | null | undefined) | null = null
 
   setObsidianMcpInjector(fn: (() => Record<string, unknown> | null) | null): void {
     this.obsidianMcpInjector = fn
+  }
+
+  /**
+   * 注入 OpenClaw 	ts 配置块（硬规则 25：语音能力走底座自带通道）。
+   * 注入的是非密字段（auto / provider / resourceId / speakerVoice）；
+   * **apiKey 故意不进来**——它只存在于 safeStorage，由网关启动时以环境变量注入。
+   */
+  setOpenClawTtsInjector(fn: (() => Record<string, unknown> | null | undefined) | null): void {
+    this.openClawTtsInjector = fn
   }
 
   constructor() {
@@ -1243,6 +1254,8 @@ private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string; kind
 
     // 注入 Obsidian MCP server 配置（由 ObsidianManager 提供）
     this._injectObsidianMcp(existingConfig)
+    // 注入对话内语音 tts 块（由语音设置提供）
+    this._injectOpenClawTts(existingConfig)
 
     if (!parsedExisting) {
       // 全新安装、文件尚不存在：state 库可能还没初始化，官方 CLI 在空环境无法 patch 建库，
@@ -1301,6 +1314,26 @@ private _injectObsidianMcp(existingConfig: any): void {
   //（timeout 等），整删会把它们一起抹掉。
   if (existingConfig.mcp.servers && Object.keys(existingConfig.mcp.servers).length === 0) {
     delete existingConfig.mcp.servers
+  }
+}
+
+/**
+ * 注入 OpenClaw 	ts 配置块。
+ *
+ * 未启用（conversationTts=off）或没有 tts Key 时**移除已有 tts 块**：
+ * 「关掉」必须是能力整体下线，而不是留一份配好的配置等用户再点 /tts on。
+ */
+private _injectOpenClawTts(existingConfig: any): void {
+  if (!this.openClawTtsInjector) return
+  const ttsCfg = this.openClawTtsInjector()
+  // 三态：undefined = 状态未知（启动早期快照尚未加载）→ 原样不动；
+  // null = 明确关闭 → 删除整段；对象 = 写入。
+  // 用 undefined 表达「不知道」，避免首次同步把用户在用的 tts 段误删。
+  if (ttsCfg === undefined) return
+  if (ttsCfg) {
+    existingConfig.tts = ttsCfg
+  } else if (existingConfig.tts) {
+    delete existingConfig.tts
   }
 }
 

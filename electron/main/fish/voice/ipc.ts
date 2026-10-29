@@ -35,7 +35,8 @@ export const VOICE_CHANNELS = {
   cloneList: 'fish:voice:clone:list',
   cloneRemove: 'fish:voice:clone:remove',
   cloneActivate: 'fish:voice:clone:activate',
-  cloneDemoAudio: 'fish:voice:clone:demoAudio'
+  cloneDemoAudio: 'fish:voice:clone:demoAudio',
+  cloneReconcile: 'fish:voice:clone:reconcile'
 } as const
 
 async function wrap<T>(fn: () => Promise<T>): Promise<VoiceIpcResult<T>> {
@@ -130,4 +131,5 @@ export function registerVoiceIpc(manager: VoiceManager, clone: VoiceCloneManager
   handle(VOICE_CHANNELS.cloneDemoAudio, (speakerId: string, modelType: number) =>
     wrap(() => clone.readDemo(speakerId, modelType))
   )
+  handle(VOICE_CHANNELS.cloneReconcile, () => wrap(() => clone.reconcile()))
 }
