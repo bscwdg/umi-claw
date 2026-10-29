@@ -386,11 +386,20 @@ const api = {
     }
   },
 
-  // 插件管理（Phase 0：列表 + 启停；插件自己的能力走 plugin:<id>:<method>）
+  // 插件管理 + 插件能力调用
+  //
+  // 插件自己的能力通道是 `plugin:<id>:<method>`（kernel/plugin.ts 里唯一出处）。
+  // 渲染端不直连别的插件，只通过这个入口按 id 调；宿主保证「未启用/未注册」时
+  // 该通道根本没有 handler（invoke 会失败，而不是打到别人的实现上）。
   plugins: {
     list: () => call<PluginStatus[]>('plugin:list'),
     setEnabled: (id: string, enabled: boolean) =>
       call<PluginStatus[]>('plugin:setEnabled', { id, enabled }),
+    invoke: <T = unknown>(id: string, method: string, payload?: unknown): Promise<T> => {
+      if (!/^[a-z][a-z0-9-]*$/.test(id)) return Promise.reject(new Error(`插件 id 非法：${id}`))
+      if (!method || /[\s:]/.test(method)) return Promise.reject(new Error(`插件方法名非法：${method}`))
+      return call<T>(`plugin:${id}:${method}`, payload)
+    },
     onChanged: (cb: (statuses: PluginStatus[]) => void) => {
       const handler = (_e: unknown, statuses: PluginStatus[]): void => cb(statuses)
       ipcRenderer.on('plugin:changed', handler)
