@@ -32,7 +32,7 @@
 | Phase 1 · WP2 每插件独立库 | ✅ | plugin 39/39、全量 346/346 |
 | Phase 1 · 审查/对抗修复 | ✅ | 见下节 R1–R12 |
 | Phase 1 · WP3 类型化 IPC 生成 | ⬜（建议并入 Phase 2） | — |
-| Phase 2 work 装箱 | ⬜ | — |
+| Phase 2 work 装箱 | 🚧 前置完成（D1 通道租约 + D3 domainSrc） | plugin 41/41 |
 | Phase 3 marketing 装箱 | ⬜ | — |
 | Phase 4 加固与打包 | ⬜ | — |
 
@@ -100,3 +100,19 @@
 | R7/R8/R9/R11 | 管理页：排序用错 ref、空态与错误同显、订阅晚于 reload（可能泄漏）、停用插件也给「打开页面」 | 模板改用 `list`；空态加 `!loadError` 并给重试；先订阅再 reload + disposed 兜底；`openableRoute` 只在 activated 时给链接 |
 | R10 | `onDispose` 未走 assertOpen（迟到登记永不执行） | closed 时立即执行一次并记日志 |
 | 其他 | stateStore 裸写、pluginDb 不释放 | stateStore 改临时文件+rename；pluginDb 增 `dispose()` 由 lifecycle 在停用时调用 |
+
+### 2026-10-30 · Phase 2 前置（D1 / D3）
+
+**D1 通道命名空间租约**
+
+- `manifest.channels?: string[]`：插件可保留历史通道名（`work:*` / `marketing:*`），但必须显式租用命名空间；`plugin` 前缀为宿主保留。
+- `registry` 保证**跨插件唯一**（重复租用直接拒绝注册）。
+- `ctx.registerChannelIpc(channel, handler)`：只能注册自己租的命名空间；`plugin:` 前缀拒绝；通道已被其它插件占用 → `CHANNEL_CONFLICT`；停用自动摘除（owners 表按 ipc 面共享，WeakMap 回收）。
+- 为什么不用 `plugin:<id>:*` 统一：渲染端 200+ 调用点与 33 个脚本的静态断言都要改，收益只是命名整齐；租约给了同样的隔离（唯一 + 仅激活期存在）。
+
+**D3 测试源码适配层**
+
+- `test/_lib.mjs` 新增 `domainSrc(pluginId, relPath)`：装箱后路径存在就用 `plugins/<id>/main/**`，否则回落 `electron/main/**`。装箱时脚本不用改。
+- 规则：**先改测试再搬代码**，避免搬完一半「断言失效」与「功能回归」混在一起。
+
+**验收**：plugin **41/41**（新增 P34 租约唯一/命名空间校验/停用摘除、P35 domainSrc 行为）；双 typecheck 0 错。

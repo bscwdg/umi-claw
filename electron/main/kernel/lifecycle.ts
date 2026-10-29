@@ -24,6 +24,8 @@ export interface PluginStatus {
   enabled: boolean
   error?: { code: string; stage?: string; message: string; field?: string }
   ipcMethods: string[]
+  /** 租约命名空间下注册的通道（Phase 2 装箱用） */
+  channels: string[]
   jobCount: number
   /** 清单贡献点（渲染端注册用） */
   contributes: PluginRecord['manifest']['contributes']
@@ -66,6 +68,9 @@ interface ActivePlugin {
   closed: boolean
 }
 
+/** ipc 面 → (通道 → 插件 id)。用 WeakMap 让它随 ipc 生命周期回收 */
+const CHANNEL_OWNERS = new WeakMap<object, Map<string, string>>()
+
 const DEFAULT_ACTIVATION_TIMEOUT_MS = 5000
 /** 单个清理动作的上限：disposer 永不 settle 时不能让启停卡死（审查 P2） */
 const CLEANUP_TIMEOUT_MS = 2000
@@ -77,6 +82,15 @@ export class PluginHost {
   private readonly active = new Map<string, ActivePlugin>()
   /** 进行中的激活（并发 setEnabled 去重） */
   private readonly inflight = new Map<string, Promise<PluginStatus>>()
+  /** 租约通道 → 插件 id；**按 ipc 面共享**（同一 ipcMain 上多个宿主实例也不该撞通道） */
+  private owners(): Map<string, string> {
+    let map = CHANNEL_OWNERS.get(this.ipc)
+    if (!map) {
+      map = new Map<string, string>()
+      CHANNEL_OWNERS.set(this.ipc, map)
+    }
+    return map
+  }
   /** 进行中的激活尝试（可被停用打断：置 closed 后迟到注册被拒） */
   private readonly attempts = new Map<string, ActivePlugin>()
 
@@ -99,6 +113,7 @@ export class PluginHost {
       enabled: record.enabled,
       error: record.error,
       ipcMethods: [...record.ipcMethods].sort(),
+      channels: [...record.channels].sort(),
       jobCount: record.jobCount,
       contributes: record.manifest.contributes
     }
@@ -324,6 +339,38 @@ export class PluginHost {
           run: () => {
             this.ipc.removeHandler(channel)
             record.ipcMethods.delete(method)
+          }
+        })
+      },
+      registerChannelIpc: (channel, handler) => {
+        assertOpen(active, id)
+        const ns = channel.split(':')[0]
+        if (!record.manifest.channels.includes(ns)) {
+          const err = new Error(
+            `插件 ${id} 没有租用通道命名空间 ${JSON.stringify(ns)}（已租：${record.manifest.channels.join(', ') || '无'}）`
+          )
+          ;(err as { code?: string }).code = 'CHANNEL_NOT_LEASED'
+          throw err
+        }
+        if (channel.startsWith('plugin:')) {
+          throw new Error('plugin: 前缀是宿主保留通道，插件请用 registerIpc / 自有租约')
+        }
+        const owner = this.owners().get(channel)
+        if (owner && owner !== id) {
+          const err = new Error(`通道 ${channel} 已被插件 ${owner} 占用`)
+          ;(err as { code?: string }).code = 'CHANNEL_CONFLICT'
+          throw err
+        }
+        this.owners().set(channel, id)
+        this.ipc.removeHandler(channel)
+        this.ipc.handle(channel, (_event, payload) => handler(payload))
+        record.channels.add(channel)
+        active.disposers.push({
+          label: `channel ${channel}`,
+          run: () => {
+            this.ipc.removeHandler(channel)
+            if (this.owners().get(channel) === id) this.owners().delete(channel)
+            record.channels.delete(channel)
           }
         })
       },

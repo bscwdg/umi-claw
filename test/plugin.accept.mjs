@@ -21,7 +21,8 @@ import {
   writeJson,
   __dirname,
   repoRoot,
-  resolveNodePath
+  resolveNodePath,
+  domainSrc
 } from './_lib.mjs'
 
 const r = new Recorder('Phase 0 · 插件内核（manifest / registry / lifecycle / UI registry）')
@@ -528,6 +529,98 @@ await r.check('P33', '管理页新增逻辑：确认条件 / 可打开路由 / �
   assert(threw, '非数组载荷应报错而不是塞进 v-for')
   assertEq(normalizeListPayload([running]).length, 1, '数组原样返回')
   return '4 个新增函数行为正确'
+})
+
+// ── P34/P35 通道租约（D1）+ 域源码定位（D3）────────────────────────────────
+await r.check('P34', '通道租约：跨插件唯一、只能注册租用命名空间、停用即摘除', async () => {
+  const ipc = createFakeIpc()
+  const manifestWithChannels = (id, channels) => ({ ...manifest, id, channels })
+  const registry = new PluginRegistry()
+
+  // 租约唯一
+  registry.register({
+    dir: '/fake/w1',
+    source: '<test>',
+    manifest: manifestWithChannels('w1', ['work']),
+    loadMain: async () => ({ activate: () => undefined })
+  })
+  let dup = false
+  try {
+    registry.register({
+      dir: '/fake/w2',
+      source: '<test>',
+      manifest: manifestWithChannels('w2', ['work']),
+      loadMain: async () => ({ activate: () => undefined })
+    })
+  } catch (e) {
+    dup = String(e.message).includes('已被插件 w1 租用')
+  }
+  assert(dup, '同一命名空间不能租给两个插件')
+
+  // 只能注册自己租的命名空间
+  const reg2 = new PluginRegistry()
+  reg2.register({
+    dir: '/fake/lease',
+    source: '<test>',
+    manifest: manifestWithChannels('lease', ['work']),
+    loadMain: async () => ({
+      activate(ctx) {
+        ctx.registerChannelIpc('work:records:list', () => [{ id: 'r1' }])
+        try {
+          ctx.registerChannelIpc('other:whatever', () => 1)
+        } catch (e) {
+          ctx.registerIpc('no-lease', () => e.code ?? 'NO_CODE')
+        }
+        try {
+          ctx.registerChannelIpc('plugin:hack', () => 1)
+        } catch (e) {
+          ctx.registerIpc('reserved', () => (e instanceof Error ? 'PLUGIN_PREFIX_REJECTED' : 'NOPE'))
+        }
+      }
+    })
+  })
+  const host = makeHost(reg2, ipc)
+  const status = await host.activate('lease')
+  assertEq(status.state, 'activated', '激活成功')
+  assertEq(status.channels.join(','), 'work:records:list', '只登记了租约通道')
+  assertEq((await ipc.invoke('work:records:list'))[0].id, 'r1', '通道可调用')
+  assertEq(await ipc.invoke('plugin:lease:no-lease'), 'CHANNEL_NOT_LEASED', '未租命名空间被拒')
+  assertEq(await ipc.invoke('plugin:lease:reserved'), 'PLUGIN_PREFIX_REJECTED', 'plugin: 前缀被拒')
+
+  // 另一个插件抢同一通道 → 冲突
+  const reg3 = new PluginRegistry()
+  reg3.register({
+    dir: '/fake/steal',
+    source: '<test>',
+    manifest: manifestWithChannels('steal', ['work']),
+    loadMain: async () => ({
+      activate(ctx) {
+        try {
+          ctx.registerChannelIpc('work:records:list', () => [])
+        } catch (e) {
+          ctx.registerIpc('steal', () => e.code ?? 'NO_CODE')
+        }
+      }
+    })
+  })
+  const host2 = makeHost(reg3, ipc)
+  const stealStatus = await host2.activate('steal')
+  assertEq(stealStatus.state, 'activated', 'steal 应激活：' + JSON.stringify(stealStatus.error))
+  assertEq(await ipc.invoke('plugin:steal:steal'), 'CHANNEL_CONFLICT', '同一通道不能双占')
+
+  await host.disposeAll()
+  await host2.disposeAll()
+  assertEq(ipc.handlers.size, 0, '停用后租约通道也被摘除')
+  return '租约唯一 + 命名空间校验 + 停用摘除'
+})
+
+await r.check('P35', 'domainSrc：装箱前后都能定位到域源码（D3 适配层）', async () => {
+  const before = domainSrc('work', 'index.ts')
+  assertEq(before, join(repoRoot, 'electron', 'main', 'index.ts'), '当前未装箱 → 回落旧路径')
+  assert(existsSync(before), '回落路径存在')
+  const missing = domainSrc('work', 'not-exists.ts')
+  assertEq(missing, join(repoRoot, 'electron', 'main', 'not-exists.ts'), '不存在的文件也给出旧路径（由断言自己报缺失）')
+  return '适配层可用'
 })
 
 // ── P25~P27 每插件独立库（Phase 1 WP2）──────────────────────────────────────

@@ -35,6 +35,8 @@ export interface PluginRecord {
   error?: PluginRuntimeError
   /** 已注册的 IPC 方法（相对名，不含 plugin:<id>: 前缀） */
   ipcMethods: Set<string>
+  /** 租约命名空间下注册的通道（Phase 2） */
+  channels: Set<string>
   jobCount: number
 }
 
@@ -61,6 +63,8 @@ export interface PluginRegistryOptions {
 
 export class PluginRegistry {
   private readonly records = new Map<string, PluginRecord>()
+  /** 通道命名空间 → 插件 id（租约唯一性） */
+  private readonly channelOwners = new Map<string, string>()
   private readonly hostCapabilities: readonly string[]
   private readonly hostServices: readonly string[]
   private readonly persistedEnabled: Record<string, boolean>
@@ -106,6 +110,23 @@ export class PluginRegistry {
         { pluginId: manifest.id, field: 'inject' }
       )
     }
+    // 通道命名空间租约必须跨插件唯一（D1）：两个插件都声明 work 是配置错误，
+    // 放过去的结果是「谁后激活谁顶掉对方的通道」，静默且难查。
+    for (const ns of manifest.channels) {
+      const owner = this.channelOwners.get(ns)
+      if (owner && owner !== manifest.id) {
+        throw new PluginManifestError(
+          'MANIFEST_INVALID',
+          `通道命名空间 ${ns} 已被插件 ${owner} 租用`,
+          {
+            pluginId: manifest.id,
+            field: 'channels'
+          }
+        )
+      }
+    }
+    for (const ns of manifest.channels) this.channelOwners.set(ns, manifest.id)
+
     const persisted = this.persistedEnabled[manifest.id]
     const record: PluginRecord = {
       manifest,
@@ -115,6 +136,7 @@ export class PluginRegistry {
       state: 'validated',
       enabled: typeof persisted === 'boolean' ? persisted : manifest.defaultEnabled,
       ipcMethods: new Set(),
+      channels: new Set(),
       jobCount: 0
     }
     this.records.set(manifest.id, record)
@@ -141,6 +163,7 @@ export class PluginRegistry {
         version: '0.0.0',
         capabilities: [],
         inject: [],
+        channels: [],
         activation: [],
         defaultEnabled: false,
         raw: {}
@@ -152,6 +175,7 @@ export class PluginRegistry {
       enabled: false,
       error: { ...error, stage: error.stage ?? 'manifest' },
       ipcMethods: new Set(),
+      channels: new Set(),
       jobCount: 0
     }
     this.records.set(entryId, record)

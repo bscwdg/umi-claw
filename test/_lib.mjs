@@ -12,6 +12,18 @@ export const __dirname = dirname(fileURLToPath(import.meta.url))
 export const repoRoot = join(__dirname, '..')
 export const tmpDir = join(__dirname, '.tmp')
 
+/**
+ * 域源码定位（D3）：Phase 2/3 装箱时域代码会从 `electron/main/**` 搬到
+ * `plugins/<id>/main/**`。所有断言源码的验收脚本都走这里，搬家时**不用改脚本**。
+ *
+ * 规则：装箱后路径存在就用新路径，否则回落到旧路径。
+ */
+export function domainSrc(pluginId, relPath) {
+  const migrated = join(repoRoot, 'plugins', pluginId, 'main', relPath)
+  if (existsSync(migrated)) return migrated
+  return join(repoRoot, 'electron', 'main', relPath)
+}
+
 /** 便携 Node（data/runtime/node-<platform>-<arch>）优先，缺失时回退当前 node */
 export function resolveNodePath() {
   const platform = process.platform

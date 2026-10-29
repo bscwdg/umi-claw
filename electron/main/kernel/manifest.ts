@@ -34,6 +34,13 @@ export interface PluginManifest {
   activation: string[]
   /** 迁移目录（相对插件目录） */
   migrations?: string
+  /**
+   * 通道命名空间租约（Phase 2 / D1）。
+   *
+   * 插件可保留历史通道名（如 work:*），但必须在这里声明命名空间，宿主保证
+   * **跨插件唯一**、且只在该插件激活期间存在。plugin 是宿主保留前缀，不可租用。
+   */
+  channels: string[]
   contributes?: PluginContributes
   /** 首次安装是否默认启用 */
   defaultEnabled: boolean
@@ -108,6 +115,14 @@ export function parseManifest(raw: unknown, source = '<inline>'): PluginManifest
 
   const inject = asStringArray(obj.inject, 'inject', id)
 
+  const channels = asStringArray(obj.channels, 'channels', id)
+  for (const ns of channels) {
+    if (!ID_PATTERN.test(ns)) {
+      fail(`通道命名空间必须匹配 ${ID_PATTERN}（实际 ${JSON.stringify(ns)}）`, 'channels', id)
+    }
+    if (ns === 'plugin') fail('plugin 是宿主保留的通道前缀，不能作为插件命名空间', 'channels', id)
+  }
+
   const activation = obj.activation === undefined ? ['onStartup'] : asStringArray(obj.activation, 'activation', id)
   for (const when of activation) {
     if (!KNOWN_ACTIVATIONS.has(when)) fail(`未知 activation：${when}`, 'activation', id)
@@ -160,6 +175,7 @@ export function parseManifest(raw: unknown, source = '<inline>'): PluginManifest
     version,
     capabilities,
     inject,
+    channels,
     activation,
     migrations,
     contributes,

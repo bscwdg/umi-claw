@@ -52,6 +52,14 @@ export interface PluginContext {
   readonly services: PluginServiceBag
   /** 注册 `plugin:<id>:<method>` 通道（停用自动 removeHandler） */
   registerIpc(method: string, handler: PluginIpcHandler): void
+  /**
+   * 注册**租约命名空间**下的通道（Phase 2 装箱用，如 `work:records:list`）。
+   *
+   * 为什么要它：work/marketing 的渲染端已按 `work:*` / `marketing:*` 写死，统一改名
+   * 要动 200+ 调用点。租约保留了历史通道名，同时由宿主保证「跨插件唯一 + 仅激活期存在」。
+   * 通道必须以 manifest.channels 里的某个命名空间开头，否则拒绝。
+   */
+  registerChannelIpc(channel: string, handler: PluginIpcHandler): void
   /** 登记额外清理动作（与注册物一起 LIFO 执行；抛错不影响其它清理） */
   onDispose(fn: () => void | Promise<void>): void
 }
