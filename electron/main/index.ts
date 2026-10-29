@@ -10,7 +10,6 @@ import {
   protocol,
   Notification,
   // marketing 域（2.0）：热点定时器在系统唤醒后补检
-  powerMonitor,
   safeStorage
 } from 'electron'
 import { join, parse, dirname, resolve, sep } from 'path'
@@ -50,36 +49,11 @@ import { createPluginDbService } from './services/pluginDb'
 // 其余（DatabaseClient / Voice* / ipc / gatewayClient / AppError / fs）两域同源，只在下方
 // work 域 import 块里出现一次，避免重复声明。
 import {
-  registerMarketingIpc,
-  registerAdvisorIpc,
-  registerScanIpc,
-  registerContentIpc,
-  registerHotIpc,
   abortAllAdvisorStreams,
   abortAllScanStreams,
   abortAllContentGenerations,
   abortHotCollectors
 } from './ipc'
-import { createProjectManager, type ProjectManager } from './marketing/projectManager'
-import {
-  createBusinessManager,
-  createWatchlistManager,
-  type BusinessManager,
-  type WatchlistManager
-} from './marketing/businessManager'
-import {
-  createKnowledgeManager as createMarketingKnowledgeManagerLib,
-  type KnowledgeManager as MarketingKnowledgeManager
-} from './marketing/knowledgeManager'
-import {
-  createContextEngine as createMarketingContextEngineLib,
-  type ContextEngine as MarketingContextEngine
-} from './marketing/contextEngine'
-import { createAdvisorManager, type AdvisorManager } from './marketing/advisorManager'
-import { createScanRecognizer, type ScanRecognizer } from './marketing/scanRecognizer'
-import { createContentManager, type ContentManager } from './marketing/contentManager'
-import { createHotManager, type HotManager } from './marketing/hotManager'
-import { createHotScoreManager, type HotScoreManager } from './marketing/hotScoreManager'
 import type { TerminalRuntime } from '../../src/types/terminal'
 import {
   createGatewayClient,
@@ -101,9 +75,6 @@ import {
 import { AppError, ERROR_CODES } from './database/errors'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
-// pdfjs 资产解析：两域的 parsers/pdfjsAssets.ts 逐字节相同（合并时已 diff 确认），
-// 统一用 work 这一份实现，避免同名 import 重复声明；marketing 的调用点语义不变。
-import { resolvePdfjsAssets } from './work/parsers/pdfjsAssets'
 
 // 类型定义
 interface TerminalSession {
@@ -127,51 +98,6 @@ let workDatabase: DatabaseClient | null = null
 /** 语音管理器（合并后只有一份；初始化绑 workDatabase，见 app.whenReady 的 voice 段） */
 let voiceManager: VoiceManager | null = null
 
-// ── marketing 域（release/2.0）────────────────────────────────────────────────
-// marketing DB Worker 客户端（Commit 02）。构造是廉价的：惰性初始化，
-// 应用启动不建库、不拉 Worker，首次 marketing IPC 才 spawn。
-let marketingDatabase: DatabaseClient | null = null
-// marketing Project 层（Commit 03）：只依赖 DatabaseClient + dataDir，构造零 IO 副作用。
-let marketingProjectManager: ProjectManager | null = null
-// marketing Business / Watchlist 层（Commit 04）：只依赖 DatabaseClient，构造零 IO 副作用。
-let marketingBusinessManager: BusinessManager | null = null
-let marketingWatchlistManager: WatchlistManager | null = null
-// marketing Knowledge 层（Commit 05a）：依赖 DatabaseClient + dataDir + pdfjs 资产路径，构造零 IO 副作用。
-let marketingKnowledgeManager: MarketingKnowledgeManager | null = null
-// marketing Context Engine（Commit 06）：纯组装层，依赖四个 Manager（硬规则 9：全部显式 projectId）。
-// 07（Gateway Client）/ 08（Advisor）/ 09（Content Center）是它的消费者；
-// 它的产出是主进程内部数据结构，§五 没有渲染端通道，故此处不注册 IPC。
-let marketingContextEngine: MarketingContextEngine | null = null
-// marketing Gateway Client（Commit 07）：**合并后不再单独持有实例**。
-// 全应用只有一个 GatewayClient（work 域创建）；营销域经 getMarketingGatewayClient() 拿到同一个对象，
-// 「按 Project 派生 conversation_key」由这个 client 注入的 conversationKeyResolver 承担（硬规则 13）。
-// marketing AI Advisor（Commit 08）：只依赖 06 引擎 + 07 客户端 + 04 Watchlist，构造零 IO 副作用。
-let marketingAdvisorManager: AdvisorManager | null = null
-// marketing 扫描件/图片 AI 识别兑底（Commit 05b）：只依赖 07 客户端 + pdfjs 资产，构造零 IO 副作用；
-// 确认入库的写库动作在 knowledgeManager（05a 联动），识别本身不碰库（硬规则 10）。
-let marketingScanRecognizer: ScanRecognizer | null = null
-// marketing Content Center（Commit 09）：06 引擎 + 07 客户端 + DatabaseClient，构造零 IO 副作用。
-let marketingContentManager: ContentManager | null = null
-// marketing 热点雷达（Commit 11）：collector 短命子进程 + DB Worker，构造零 IO 副作用。
-let marketingHotManager: HotManager | null = null
-let marketingHotScoreManager: HotScoreManager | null = null
-// 热点后台 tick 定时器（退出时清掉，避免 before-quit 清理途中又起一轮 collector）
-let hotTickTimer: ReturnType<typeof setInterval> | null = null
-
-/**
- * 取 Context Engine 单例（Commit 06）。
- *
- * 存在的意义：07/08/09 在主进程里取引擎的统一入口（它们此刻尚未落地，所以这里没有调用点）。
- * §五 没有 context pack 的渲染端通道，所以**不要**在 IPC 层暴露它——
- * 引用端一律走这里，避免各自去 `createContextEngine` 造第二个实例（账本/日志会分家）。
- */
-export function getMarketingContextEngine(): MarketingContextEngine {
-  if (!marketingContextEngine) {
-    throw new Error('Context Engine 尚未初始化（应在 app.whenReady 之后取用）')
-  }
-  return marketingContextEngine
-}
-
 /**
  * 取 Gateway Client 单例（Commit 07 → 合并后指向 work 域的唯一实例）。
  *
@@ -184,20 +110,6 @@ export function getMarketingGatewayClient(): GatewayClient {
     throw new Error('Gateway Client 尚未初始化（应在 app.whenReady 之后取用）')
   }
   return workGatewayClient
-}
-
-/**
- * 取 AI Advisor 单例（Commit 08）。
- *
- * 主进程里的唯一入口：面板经 `marketing:advisor:*` IPC 调到它（渲染端拿不到 Manager 本身）。
- * 09（Content Center）会复用同一个 Context Engine 与 Gateway Client，但**不复用 Advisor**
- * （生成走 content 面，两者的 prompt 与产物形态不同）。
- */
-export function getMarketingAdvisorManager(): AdvisorManager {
-  if (!marketingAdvisorManager) {
-    throw new Error('AI Advisor 尚未初始化（应在 app.whenReady 之后取用）')
-  }
-  return marketingAdvisorManager
 }
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
@@ -362,22 +274,19 @@ function createWorkGatewayClient(): GatewayClient {
       clawManager.getStatus().running || clawManager.isMaintenanceActive(),
     // ── marketing 域借道（合并点）：只给 projectId 时按 Project 的 conversation_key 派生会话键 ──
     // work 域调用方始终传完整 `conv:` 键，永远不会走到这里（见 gatewayClient.resolveConversationUser）。
+    // 营销域借道：只给 projectId 时按 Project 的 conversation_key 派生会话键。
+    // Phase 3 起营销域数据在插件库，宿主直读（不依赖插件是否激活，也不需要它的 Manager）。
     conversationKeyResolver: async (projectId?: string) => {
       if (!projectId) {
-        throw new AppError(
-          ERROR_CODES.VALIDATION_ERROR,
-          '缺少 projectId：营销域会话键必须由 Project 派生',
-          { field: 'projectId' }
-        )
+        throw new AppError(ERROR_CODES.VALIDATION_ERROR, '缺少 projectId：营销域会话键必须由 Project 派生', {
+          field: 'projectId'
+        })
       }
-      if (!marketingProjectManager) {
-        throw new AppError(
-          ERROR_CODES.OPENCLAW_NOT_READY,
-          'marketing Project 管理器尚未初始化（应在 app.whenReady 之后取用）'
-        )
+      if (!pluginDbService) {
+        throw new AppError(ERROR_CODES.OPENCLAW_NOT_READY, '插件库服务尚未初始化（应在 app.whenReady 之后取用）')
       }
-      // getProject 找不到时自身抛 NOT_FOUND（不返回 null），这里只兜 conversation_key 为空
-      const project = await marketingProjectManager.getProject(projectId)
+      const db = pluginDbService.forPlugin({ id: 'marketing', dir: join(resourcesRoot(), 'plugins', 'marketing') })
+      const project = await db.request<{ conversation_key?: string } | null>('projects.get', { pk: projectId })
       const conversationKey = project?.conversation_key
       if (!conversationKey) {
         throw new AppError(
@@ -560,9 +469,14 @@ async function initPlugins(): Promise<void> {
       // 宿主 work.db 只剩 voice 的 app_meta（见 whenReady 的语音段）。
       db: (info) => pluginDbService!.forPlugin(info),
       hostOps: () => createHostOpsService(),
-      // 旧库只读：work → work.db，marketing → umi-claw.db；插件 activate 时自行决定怎么搬
+      // 旧库只读：work → work.db，marketing → umi-claw.db（都是宿主老库，插件自己决定怎么搬）
       legacyDb: (info) => {
-        const client = info.id === 'marketing' ? marketingDatabase : workDatabase
+        const client =
+          info.id === 'marketing'
+            ? openLegacyDatabase('umi-claw.db', 'marketing')
+            : info.id === 'work'
+              ? workDatabase
+              : null
         if (!client) throw new Error(`旧库尚未初始化：${info.id}`)
         return {
           list: (table, params) =>
@@ -704,6 +618,27 @@ async function assertConsent(): Promise<void> {
   }
 
   throw new Error('请先同意用户协议，再启动 OpenClaw')
+}
+
+/**
+ * 旧库只读客户端（Phase 3）：仅用于把老库数据搬进插件库。
+ *
+ * 构造廉价（不 spawn），第一次 list 才起 worker；营销旧库是 11 表 schema，
+ * 所以必须带 schemaId，否则 worker 会按 work 的 8 表白名单校验。
+ */
+function openLegacyDatabase(fileName: string, schemaId: 'marketing'): DatabaseClient {
+  const dataDir = configManager.getDataDir()
+  const isDev = !app.isPackaged
+  const resRoot = isDev ? join(app.getAppPath(), 'resources') : join(process.resourcesPath, 'resources')
+  return new DatabaseClient({
+    dbPath: join(dataDir, fileName),
+    backupDir: join(dataDir, 'backup'),
+    schemaId,
+    workerScriptPath: join(resRoot, 'database', 'db-worker-marketing.mjs'),
+    nodePath: configManager.getNodePath(),
+    subprocessName: 'legacy-marketing-db',
+    logger: (message) => console.log(message)
+  })
 }
 
 /** resources/ 根（dev / 打包双路径，与 createWorkDatabase 同口径） */
@@ -1320,232 +1255,6 @@ function createTray(): void {
 
 // ─── marketing DB Worker wiring（Electron 相关路径解析集中在这里） ───────────────
 
-/**
- * 构造 DB Worker 客户端：把 Electron 专属的路径解析（dev / 安装包 resources、
- * 便携 Node、数据目录）注入 database.ts，后者保持纯 Node 可测。
- */
-function createMarketingDatabase(): DatabaseClient {
-  const dataDir = configManager.getDataDir()
-  const isDev = !app.isPackaged
-  const resRoot = isDev
-    ? join(app.getAppPath(), 'resources')
-    : join(process.resourcesPath, 'resources')
-  return new DatabaseClient({
-    dbPath: join(dataDir, 'umi-claw.db'),
-    backupDir: join(dataDir, 'backup'),
-    // 营销域是 11 表 schema（projects / businesses / knowledge_items / contents / hot_*），
-    // 与 work 的 8 表互斥 → 必须指定 schemaId + 配套的 worker 白名单（MERGE-INVENTORY R2）。
-    schemaId: 'marketing',
-    workerScriptPath: join(resRoot, 'database', 'db-worker-marketing.mjs'),
-    nodePath: configManager.getNodePath(),
-    subprocessName: 'marketing-db-worker',
-    // 启动即注册（§四 子进程注册表）：_stopRuntimeProcesses / 退出清理先优雅停
-    onSpawn: (info) => subprocessRegistry.register(info),
-    logger: (message) => console.log(message)
-  })
-}
-
-/**
- * 构造 Project 管理器（Commit 03）：dataDir 决定 `data/projects/<id>/` 的落点，
- * 与 DB Worker 共用同一个 DatabaseClient 单例（硬规则 8）。
- */
-function createMarketingProjectManager(database: DatabaseClient): ProjectManager {
-  return createProjectManager({
-    database,
-    dataDir: configManager.getDataDir(),
-    logger: (message) => console.log(message)
-  })
-}
-
-/**
- * 构造 Business / Watchlist 管理器（Commit 04）。
- * 只依赖 DatabaseClient（硬规则 8：唯一数据通道）；Watchlist 是本地的「关注点记录」，
- * **不联网、不采集**（采集只属于 Commit 11 的 collector adapter）。
- */
-function createMarketingBusinessManagers(database: DatabaseClient): {
-  businessManager: BusinessManager
-  watchlistManager: WatchlistManager
-} {
-  const logger = (message: string) => console.log(message)
-  return {
-    businessManager: createBusinessManager({ database, logger }),
-    watchlistManager: createWatchlistManager({ database, logger })
-  }
-}
-
-/**
- * 构造 Knowledge 管理器（Commit 05a）：知识库导入需要三个 Electron 侧事实——
- * dataDir（原文落 `data/projects/<id>/`）、pdfjs 运行时资产路径、以及默认的 url 抓取器。
- * 路径解析沿用 `createMarketingDatabase()` / obsidianManager.getScriptPath() 的 dev/打包双路径口径，
- * 避免出现「dev 能抽中文、安装包里抽不出」这种只在打包态暴露的错位。
- */
-function createMarketingKnowledgeManager(database: DatabaseClient): MarketingKnowledgeManager {
-  const isDev = !app.isPackaged
-  const pdfjsAssets = resolvePdfjsAssets({
-    isPackaged: !isDev,
-    appPath: app.getAppPath(),
-    resourcesPath: process.resourcesPath
-  })
-  const manager = createMarketingKnowledgeManagerLib({
-    database,
-    dataDir: configManager.getDataDir(),
-    pdfjsAssets,
-    logger: (message: string) => console.log(message)
-  })
-  console.log(`[knowledge] pdfjs 资产目录: ${pdfjsAssets.root}`)
-  return manager
-}
-
-// ─── marketing Context Engine wiring（Commit 06） ──────────────────────────────
-
-/**
- * 构造 Context Engine（Commit 06）：把 Business + Knowledge + Watchlist + Platform
- * 组装成 §六 的 Context Pack，并在本地预算内决定「全量注入 or LIKE 裁剪」。
- *
- * 依赖注入四个 Manager（而不是直接拿 DatabaseClient）：引擎只走既有管理层，
- * 因此 project 不存在时拿到的就是 `NOT_FOUND`、便携 Node 缺失时拿到的就是 `SETUP_REQUIRED`，
- * 错误码不需要在引擎里二次翻译（§五 要求渲染端按 code 分支）。
- * 本函数零 IO 副作用；真正的数据库触碰发生在第一次 buildContextPack。
- */
-function createMarketingContextEngine(
-  projectManager: ProjectManager,
-  businessManager: BusinessManager,
-  knowledgeManager: MarketingKnowledgeManager,
-  watchlistManager: WatchlistManager
-): MarketingContextEngine {
-  const engine = createMarketingContextEngineLib({
-    projectManager,
-    businessManager,
-    knowledgeManager,
-    watchlistManager,
-    logger: (message: string) => console.log(message)
-  })
-  console.log('[context] Context Engine 就绪（§六：预算内全量打包 / 超预算 LIKE 裁剪）')
-  return engine
-}
-
-// ─── marketing Gateway 复用（合并点，原 Commit 07 的独立 client 已删除） ──────────
-//
-// release/2.0 的 `createMarketingGatewayClient(projectManager)` 与配套的
-// `marketingGatewayClient` 单例**已删除**：全应用只保留 `createWorkGatewayClient()` 一个
-// GatewayClient 实例（硬规则 3/13：token 与出站 HTTP 只在一处）。营销域需要的
-// 「按 Project 取 conversation_key」改为注入到该实例的 `conversationKeyResolver`（见上），
-// 因此 08 Advisor / 09 Content / 05b 扫描件 / 12 热点评分仍经 `getMarketingGatewayClient()`
-// 拿到同一个对象，行为与 2.0 一致。
-//
-// 同名的 `resolveGatewayModels` / `readActualGatewayPort` / `isProcessAlive` 也只保留
-// work 域那一份（签名完全一致，marketing 的引用自动指向它），不再重复定义。
-
-// ─── marketing Advisor wiring（Commit 08） ─────────────────────────────────────
-
-/**
- * 构造 AI Advisor（Commit 08）：06 的 Context Engine（唯一上下文来源）+ 07 的 Gateway Client
- * （唯一出站通道；token 在它手里）+ 04 的 Watchlist（扩词候选要去重既有词）。
- *
- * 三者都是**注入**而不是自己 new：Advisor 不持有 token、不直连 HTTP、不自己读配置（硬规则 13/8）。
- * 本函数零 IO 副作用；真正的读库/HTTP 发生在 ask / suggestWatchlist。
- */
-function createMarketingAdvisorManager(): AdvisorManager {
-  const advisor = createAdvisorManager({
-    contextEngine: getMarketingContextEngine(),
-    gateway: getMarketingGatewayClient(),
-    watchlistManager: marketingWatchlistManager!,
-    logger: (message: string) => console.log(message)
-  })
-  console.log('[advisor] AI Advisor 就绪（Context Pack + SSE 流式 + 停止生成 + 事实护栏）')
-  return advisor
-}
-
-// ─── marketing 扫描件识别 wiring（Commit 05b） ────────────────────────────────────
-
-/**
- * 构造扫描件/图片 AI 识别器（Commit 05b）：注入 07 的 Gateway Client（唯一出站通道，
- * multimodal 按次解析也在它手里）+ 05a 已解析好的 pdfjs 运行时资产（与文字层抽取同一套
- * dev/打包双路径，不会出现「dev 能取图、包里取不到」）。
- * 本函数零 IO 副作用；取图/HTTP 发生在第一次 recognize。不碰库：确认入库走 knowledgeManager。
- */
-function createMarketingScanRecognizer(): ScanRecognizer {
-  const pdfjsAssets = resolvePdfjsAssets({
-    isPackaged: app.isPackaged,
-    appPath: app.getAppPath(),
-    resourcesPath: process.resourcesPath
-  })
-  const recognizer = createScanRecognizer({
-    gateway: getMarketingGatewayClient(),
-    pdfjsAssets,
-    // 多模态预检（栅格化之前的廉价判定）：复用 07 的按次解析，Setup 后换模型即时生效；
-    // 最终防线仍在 07（selectGatewayModel），预检只是不让用户白等几秒 PDF 解码
-    multimodalConfigured: () => Boolean(resolveGatewayModels().multimodal),
-    logger: (message: string) => console.log(message)
-  })
-  console.log('[scan] 扫描件识别就绪（扫描 PDF 逐页 + 资料图；显式触发、人工确认后入库）')
-  return recognizer
-}
-
-// ─── marketing Content Center wiring（Commit 09） ──────────────────────────────
-
-/**
- * 构造 Content Center 管理器（Commit 09）：06 引擎（Context Pack）+ 07 客户端（唯一出站）
- * + DatabaseClient（硬规则 8）。生成一次 3 路并行流式；版本落库在各自流 resolve 前完成；
- * 不自动发布（硬规则 10）。零 IO 副作用；生成请求发生在 generate()。
- */
-function createMarketingContentManager(): ContentManager {
-  const manager = createContentManager({
-    database: marketingDatabase!,
-    contextEngine: getMarketingContextEngine(),
-    gateway: getMarketingGatewayClient(),
-    logger: (message: string) => console.log(message)
-  })
-  console.log('[content] Content Center 就绪（一次 3 版供选 + 版本 prompt 快照 + 人工审核发布标记）')
-  return manager
-}
-
-// ─── marketing 热点雷达 wiring（Commit 11） ───────────────────────────────────
-
-/**
- * 构造热点管理器：collector 路径沿用 obsidianManager.getScriptPath 的 dev/安装包
- * 双路径口径（dev=app.getAppPath()/resources；安装包=process.resourcesPath/resources，
- * extraResources 整目录复制 resources/，打包配置零改动）；node 用便携 Node。
- * base URL 每次采集按次从配置读（v1.22 modelsResolver 同精神：改配置无需重启）。
- */
-function createMarketingHotManager(): HotManager {
-  const isDev = !app.isPackaged
-  const resourcesRoot = isDev ? join(app.getAppPath(), 'resources') : join(process.resourcesPath, 'resources')
-  const collectorScriptPath = join(resourcesRoot, 'collector', 'index.mjs')
-  const manager = createHotManager({
-    database: marketingDatabase!,
-    collectorScriptPath,
-    nodePath: configManager.getNodePath(),
-    logger: (message: string) => console.log(message),
-    getDailyhotBase: () => {
-      const hot = (configManager.getConfig() as { hot?: { dailyhotBaseUrl?: string | null } }).hot
-      const v = hot?.dailyhotBaseUrl
-      return typeof v === 'string' && v.trim() ? v.trim() : null
-    }
-  })
-  console.log('[hot] 热点雷达就绪（时间差定时 + 唤醒补检 + 打开即刷；collector=' + collectorScriptPath + '）')
-  return manager
-}
-
-// ─── marketing 热点 AI 评分 wiring（Commit 12） ────────────────────────────────
-
-/**
- * 构造热点评分器（Commit 12）：注入 02 DB（project_hot_topics 缓存）+ 06 Context Engine
- * （评分唯一事实来源）+ 07 Gateway（唯一出站）。懒评分、24h TTL、每批 ≤30；
- * 采集与评分分离——网关不可用时热点榜本身（11）照常工作。零 IO 副作用，调用 scoreBatch 才花钱。
- */
-function createMarketingHotScoreManager(): HotScoreManager {
-  const scoreManager = createHotScoreManager({
-    database: marketingDatabase!,
-    contextEngine: getMarketingContextEngine(),
-    gateway: getMarketingGatewayClient(),
-    logger: (message) => console.log(message)
-  })
-  console.log('[hot-score] 热点 AI 评分就绪（Project × 平台懒评分，24h TTL，每批 ≤30）')
-  return scoreManager
-}
-
-// ─── IPC 处理器 ───────────────────────────────────────────────────────────────
 
 function registerIpcHandlers(): void {
   // 窗口控制
@@ -2223,32 +1932,6 @@ function registerIpcHandlers(): void {
   // 检索测试：失败时抛出，由渲染进程统一捕获展示
   ipcMain.handle('obsidian:testSearch', async (_e, arg) => obsidianManager.testSearch(arg))
 
-  // ── marketing（Commit 02：system 面；Commit 03：project / context 面；Commit 04：business / watchlist 面；
-  //               Commit 05a：knowledge 面） ──
-  registerMarketingIpc(
-    marketingDatabase!,
-    marketingProjectManager!,
-    marketingBusinessManager!,
-    marketingWatchlistManager!,
-    marketingKnowledgeManager!
-  )
-
-  // ── marketing gateway（Commit 07：只读快照 + 探活/自动拉起/就绪轮询） ──
-  // 合并约定：**不在这里注册**。registerGatewayIpc 只调用一次（见 app.whenReady），
-  // ipc/index.ts 内的一次注册已同时覆盖 work:gateway:* 与 marketing:gateway:* 四条通道；
-  // 分两次注册会因 removeHandler 静默覆盖而只活一个域。
-
-  // ── marketing advisor（Commit 08：grounded 问答 + 停止生成 + 扩词候选） ──
-  registerAdvisorIpc(marketingAdvisorManager!)
-
-  // ── marketing 扫描件识别（Commit 05b：显式触发 + 人工确认后入库；流式增量走 07 事件名） ──
-  registerScanIpc(marketingScanRecognizer!, marketingKnowledgeManager!)
-
-  // ── marketing Content Center（Commit 09：生成/编辑/版本/审核；流式增量走 07 事件名） ──
-  registerContentIpc(marketingContentManager!)
-
-  // ── marketing 热点雷达（Commit 11：list/get/refresh；score 归 12） ──
-  registerHotIpc(marketingHotManager!, marketingHotScoreManager!)
 }
 
 // ─── 推送日志到渲染进程 ────────────────────────────────────────────────────────
@@ -2402,34 +2085,6 @@ app.whenReady().then(async () => {
       configManager
     )
   obsidianManager = new ObsidianManager(configManager)
-  // marketing DB Worker 客户端（惰性：构造时不建库、不 spawn）
-  marketingDatabase = createMarketingDatabase()
-  // marketing Project 管理器（无 IO 副作用；首次 IPC 才触碰文件系统/数据库）
-  marketingProjectManager = createMarketingProjectManager(marketingDatabase)
-  // marketing Business / Watchlist 管理器（无 IO 副作用；同样惰性）
-  const businessManagers = createMarketingBusinessManagers(marketingDatabase)
-  marketingBusinessManager = businessManagers.businessManager
-  marketingWatchlistManager = businessManagers.watchlistManager
-  // marketing Knowledge 管理器（无 IO 副作用；pdfjs 资产路径此刻只做字符串拼接）
-  marketingKnowledgeManager = createMarketingKnowledgeManager(marketingDatabase)
-  // marketing Context Engine（Commit 06）：同样无 IO 副作用，首次 buildContextPack 才读库
-  marketingContextEngine = createMarketingContextEngine(
-    marketingProjectManager!,
-    marketingBusinessManager!,
-    marketingKnowledgeManager!,
-    marketingWatchlistManager!
-  )
-  // marketing AI Advisor（Commit 08）：用上面两个单例拼装（注入式，零 IO 副作用）
-  // 注：marketing 不再自建 Gateway Client（Commit 07 的独立实例已并入 work 域唯一实例）。
-  marketingAdvisorManager = createMarketingAdvisorManager()
-  // marketing 扫描件识别（Commit 05b）：同样注入式零副作用；pdfjs 资产路径与 05a 双路径同口径
-  marketingScanRecognizer = createMarketingScanRecognizer()
-  // marketing Content Center（Commit 09）：注入 06/07/DB 三个单例（硬规则 8/13）
-  marketingContentManager = createMarketingContentManager()
-  // marketing 热点雷达（Commit 11）：零 IO 副作用，首次 tick/打开页面才拉 collector
-  marketingHotManager = createMarketingHotManager()
-  // marketing 热点 AI 评分（Commit 12）：懒评分，打开雷达按批评，零 IO 副作用
-  marketingHotScoreManager = createMarketingHotScoreManager()
   // 注入 Obsidian MCP 配置生成器：_syncOpenClawConfig 写回 openclaw.json 时调用
   configManager.setObsidianMcpInjector(() => obsidianManager.buildMcpServerConfig())
 
@@ -2515,20 +2170,6 @@ app.whenReady().then(async () => {
   createTray()
   setupLogForwarding()
 
-  // ── 热点雷达后台调度（Commit 11，§六 v1.7 拍板） ──
-  // 每分钟 tick，但「是否采集」由 hotManager 按 app_meta.hot_last_fetch_at 时间差判断
-  // （≥60min 才跑）；不用 setInterval 直接计时，睡眠唤醒后靠 powerMonitor resume 补检。
-  const hotTick = (): void => {
-    marketingHotManager
-      ?.tickDue()
-      .then((s) => {
-        if (s) console.log('[hot] 定时采集完成：total=' + s.topicsTotal + ' +' + s.inserted)
-      })
-      .catch((e) => console.warn('[hot] 定时采集失败:', (e as Error)?.message || e))
-  }
-  hotTickTimer = setInterval(hotTick, 60 * 1000)
-  powerMonitor.on('resume', hotTick)
-
   // 启动时同步开机自启项，保证与配置一致
   const startupConfig = configManager.getConfig()
   applyLoginItemSettings(startupConfig.launchOnBoot)
@@ -2612,10 +2253,6 @@ async function runQuitCleanup(): Promise<void> {
   }
   // 在途的热点 collector（11：短命子进程，退出时别留下孤儿）
   try {
-    if (hotTickTimer) {
-      clearInterval(hotTickTimer)
-      hotTickTimer = null
-    }
     const killed = abortHotCollectors()
     if (killed > 0) console.log('[Main] 已停止在途热点采集进程')
   } catch (e) {

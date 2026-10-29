@@ -232,8 +232,8 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useMarketingStore, MarketingIpcError, PRICE_SUSPECT_REGEX } from '@/stores/marketing'
-import { useProjectSwitcher } from '@/composables/useProjectSwitcher'
+import { useMarketingStore, MarketingIpcError, PRICE_SUSPECT_REGEX } from '../store'
+import { useProjectSwitcher } from '../composables/useProjectSwitcher'
 import { useToast } from '@/composables/useToast'
 
 const marketing = useMarketingStore()

@@ -196,8 +196,8 @@ import {
   useMarketingStore,
   WATCHLIST_MAX,
   WATCHLIST_PRESET_TYPES
-} from '@/stores/marketing'
-import { useProjectSwitcher } from '@/composables/useProjectSwitcher'
+} from '../store'
+import { useProjectSwitcher } from '../composables/useProjectSwitcher'
 import { useToast } from '@/composables/useToast'
 import {
   BUSINESS_FIELD_LABELS,

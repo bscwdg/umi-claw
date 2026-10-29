@@ -483,7 +483,7 @@ try {
     assert(/MARKETING_PROJECT_CHANNELS/.test(ipcSrc) && /MARKETING_CONTEXT_CHANNELS/.test(ipcSrc), '应导出两个通道表')
     assert(/registerMarketingIpc\([\s\S]*projectManager/.test(ipcSrc), 'registerMarketingIpc 应接收 projectManager')
 
-    const storeSrc = readFileSync(join(__dirname, '..', 'src', 'stores', 'marketing.ts'), 'utf-8')
+    const storeSrc = readFileSync(join(__dirname, '..', 'plugins', 'marketing', 'ui', 'store.ts'), 'utf-8')
     // 去掉行注释：注释里写明「禁止 message.includes()」，不能拿注释当违规证据
     const storeCode = storeSrc
       .replace(/\/\*[\s\S]*?\*\//g, '')

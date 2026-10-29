@@ -290,8 +290,8 @@ import {
   type ContentItem,
   type ContentAngleSlot,
   type ContentVersion
-} from '@/stores/marketing'
-import { useProjectSwitcher } from '@/composables/useProjectSwitcher'
+} from '../store'
+import { useProjectSwitcher } from '../composables/useProjectSwitcher'
 import { useToast } from '@/composables/useToast'
 import { consumeContentPrefill, type HotTopicPayload } from '@/composables/useContentPrefill'
 

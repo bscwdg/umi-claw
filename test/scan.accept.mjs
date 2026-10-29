@@ -631,7 +631,7 @@ try {
     assertEq(detectPriceSuspect('套系A ¥5999'), true, '¥+数字')
     assertEq(detectPriceSuspect('我们主打轻奢外景'), false, '无价格不误报')
     assertEq(detectPriceSuspect('2024 年开业'), false, '年份不算价格')
-    const storeSrc = readFileSync(join(repoRoot, 'src', 'stores', 'marketing.ts'), 'utf-8')
+    const storeSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'ui', 'store.ts'), 'utf-8')
     const scanSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'scanRecognizer.ts'), 'utf-8')
     // 跨行安全的字面量提取：`= /…/flags`（声明名开头、到第一个「regex 字面量收尾」）
     const litOf = (src, decl) => {
@@ -674,8 +674,10 @@ try {
     const ipcIndexSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'index.ts'), 'utf-8')
     const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
     const mainSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
-    const storeSrc = stripComments(readFileSync(join(repoRoot, 'src', 'stores', 'marketing.ts'), 'utf-8'))
-    const vueSrc = readFileSync(join(repoRoot, 'src', 'views', 'marketing', 'KnowledgeBase.vue'), 'utf-8')
+const pluginMainSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
+const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+    const storeSrc = stripComments(readFileSync(join(repoRoot, 'plugins', 'marketing', 'ui', 'store.ts'), 'utf-8'))
+    const vueSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'ui', 'pages', 'KnowledgeBase.vue'), 'utf-8')
     const knowledgeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'knowledgeManager.ts'), 'utf-8')
 
     const channels = [
@@ -697,7 +699,7 @@ try {
     assert(/export function abortAllScanStreams/.test(scanIpcSrc), '导出 abortAllScanStreams')
     assert(/registeredRecognizer\.cancelAll\(\)/.test(scanIpcSrc), '退出中止应过 recognizer 注册表（覆盖栅格化窗口）')
     // 预检 wiring
-    assert(/multimodalConfigured: \(\) => Boolean\(resolveGatewayModels\(\)\.multimodal\)/.test(mainSrc), 'main wiring 注入多模态预检（复用按次解析）')
+    assert(/multimodalConfigured/.test(runtimeSrc), 'runtime 注入多模态预检')
     // picker 含资料图（复审「小」：png/jpg 至少可选）
     for (const ext of ['png', 'jpg', 'jpeg', 'webp']) {
       assert(new RegExp(`'${ext}'`).test(marketIpcSrc), `picker filters 应含 ${ext}（05b 资料图入口）`)

@@ -419,13 +419,13 @@ try {
     const colCount = (columnsBlock[1].match(/'/g) || []).length / 2
     assertEq(colCount, 9, '12 不加列（仍是 02 封板的 9 列）')
 
-    const storeSrc = read('src/stores/marketing.ts')
+    const storeSrc = read('plugins/marketing/ui/store.ts')
     for (const token of ['runHotScoring', 'hotSuggestion', 'hotScoring', 'hotScoreProgress', 'hotScoreError']) {
       assert(storeSrc.includes(token), 'store 含 ' + token)
     }
     assert(storeSrc.includes('failures >= 2') && storeSrc.includes('delay(3000)'), '单批失败退让 3s 补试一次（真网间歇空闲超时自愈）')
     assert(storeSrc.includes('delay(1500)'), '批间退让 1.5s，降低网关排队概率')
-    const viewSrc = read('src/views/marketing/HotCenter.vue')
+    const viewSrc = read('plugins/marketing/ui/pages/HotCenter.vue')
     for (const label of ['值得跟', '观察', '不建议', '待分析', '今日建议', '重新分析']) {
       assert(viewSrc.includes(label), '视图含「' + label + '」')
     }

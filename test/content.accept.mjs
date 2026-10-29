@@ -566,10 +566,14 @@ try {
     const ipcSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'content.ts'), 'utf-8')
     const indexSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'index.ts'), 'utf-8')
     const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
-    const mainSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
-    const storeSrc = stripComments(readFileSync(join(repoRoot, 'src', 'stores', 'marketing.ts'), 'utf-8'))
-    const vueSrc = readFileSync(join(repoRoot, 'src', 'views', 'marketing', 'ContentCenter.vue'), 'utf-8')
-    const routeSrc = readFileSync(join(repoRoot, 'src', 'renderer', 'main.ts'), 'utf-8')
+    const mainSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8') +
+  + readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
+  + readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+const pluginMainSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
+const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+    const storeSrc = stripComments(readFileSync(join(repoRoot, 'plugins', 'marketing', 'ui', 'store.ts'), 'utf-8'))
+    const vueSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'ui', 'pages', 'ContentCenter.vue'), 'utf-8')
+    const routeSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'renderer.ts'), 'utf-8')
     // 4.0 合并：营销域 schema 在 db-worker-marketing.mjs（work 的 worker 只有 8 表）
     const workerSrc = readFileSync(join(repoRoot, 'resources', 'database', 'db-worker-marketing.mjs'), 'utf-8')
 
@@ -592,7 +596,7 @@ try {
     assert(!/\.send\(\s*['"]marketing:(?!gateway)/.test(ipcSrc), '不自造流事件名（复用 07 三事件）')
     assert(/forwardGatewayStream\(/.test(ipcSrc), '经 07 forwardGatewayStream')
     assert(/abortGenerate:\s*\(genTaskId\?: string \| null, projectId\?: string \| null\)/.test(preloadSrc), 'preload abort 两路参数')
-    assert(/registerContentIpc\(marketingContentManager!\)/.test(mainSrc), 'main 注册 content IPC')
+    assert(/registerContentIpc\(marketing\.content\)/.test(pluginMainSrc), '插件注册 content IPC')
     assert(/abortAllContentGenerations\(\)/.test(mainSrc), 'before-quit 第四路')
     // §五 扩面在代码注释里注明
     assert(/扩面/.test(ipcSrc), '扩面注释在位（delete/abort/versions）')
@@ -624,7 +628,7 @@ try {
     assert(/watch\(\s*\(\) => marketing\.currentProjectId[\s\S]{0,220}clearGenerate/.test(vueSrc), '四路之切商家')
     assert(/onBeforeUnmount\([\s\S]{0,200}clearGenerate[\s\S]{0,80}disposeContent/.test(vueSrc), '四路之卸载')
     assert(/永不自动发布/.test(vueSrc), 'UI 明示不自动发（§一 不做全自动）')
-    assert(routeSrc.includes("import('../views/marketing/ContentCenter.vue')"), '路由换真页')
+    assert(routeSrc.includes("./ui/pages/ContentCenter.vue"), '路由换真页（插件 renderer 贡献）')
     // Commit 11 上线后，热点路由由 Placeholder 换为 HotCenter（payload 接收端仍在本页，见 prefill 用例）
     assert(/marketing\/hot[\s\S]{0,160}HotCenter\.vue/.test(routeSrc), '热点路由 11 已换真页 HotCenter')
 

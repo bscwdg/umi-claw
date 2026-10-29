@@ -1648,7 +1648,7 @@ await r.check('P40', '导入健壮性：分页拉满、重跑靠 upsert 续传�
   return '分页 / 续传 / 错误分类 / 缺表 / voice 过滤 全部正确'
 })
 // ── P41 marketing 插件：装配 Manager + 注册 marketing:* 通道，停用即摘除 ──────
-await r.check('P41', 'marketing 插件：默认关闭；启用后 marketing:* 通道可用，停用清零', async () => {
+await r.check('P41', 'marketing 插件：默认开启；启用后 marketing:* 通道可用，停用清零', async () => {
   const ipc = createFakeIpc()
   const calls = []
   const dataDir = mkdtempSync(join(tmpdir(), 'umi-mkt-'))
@@ -1713,7 +1713,9 @@ await r.check('P41', 'marketing 插件：默认关闭；启用后 marketing:* �
   const manifestForMkt = JSON.parse(
     readFileSync(join(repoRoot, 'resources', 'plugins', 'marketing', 'plugin.json'), 'utf-8')
   )
-  assertEq(manifestForMkt.defaultEnabled, false, '营销域默认关闭（PLAN 决策）')
+  // 决策调整：营销域默认**开启**（承接 3.0/2.0 已有功能，升级后菜单不能消失）；
+  // 用户可在能力中心关闭。
+  assertEq(manifestForMkt.defaultEnabled, true, '营销域默认开启')
 
   const registry = new PluginRegistry({
     hostServices: availableServices(services),

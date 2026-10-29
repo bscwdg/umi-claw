@@ -817,8 +817,13 @@ try {
     const ipcSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'marketing.ts'), 'utf-8')
     const ipcIndexSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'index.ts'), 'utf-8')
     const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
-    const mainSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
-    const storeSrc = readFileSync(join(repoRoot, 'src', 'stores', 'marketing.ts'), 'utf-8')
+    const mainSrc =
+      readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8') +
+      readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8') +
+      readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+const pluginMainSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
+const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+    const storeSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'ui', 'store.ts'), 'utf-8')
     const storeCode = stripComments(storeSrc)
 
     const channels = [
@@ -842,11 +847,11 @@ try {
       'registerMarketingIpc 应接收 knowledgeManager'
     )
     // 主进程 wiring：工厂 + pdfjs 资产双路径解析 + 第 5 个依赖
-    assert(/createKnowledgeManager/.test(mainSrc), 'main/index.ts 应创建 knowledgeManager')
-    assert(/resolvePdfjsAssets\(/.test(mainSrc), 'main/index.ts 应用 resolvePdfjsAssets 解析资产路径')
+    assert(/createKnowledgeManager/.test(runtimeSrc), 'marketing runtime 应创建 knowledgeManager')
+    assert(/resolvePdfjsAssets\(/.test(mainSrc), '装配链应用 resolvePdfjsAssets 解析资产路径')
     assert(/app\.isPackaged/.test(mainSrc) && /process\.resourcesPath/.test(mainSrc), 'wiring 应含 dev/打包双路径取值')
     assert(
-      /registerMarketingIpc\(\s*marketingDatabase!,\s*marketingProjectManager!,\s*marketingBusinessManager!,\s*marketingWatchlistManager!,\s*marketingKnowledgeManager!\s*\)/.test(
+      /registerMarketingIpc\(\s*facade,\s*marketing\.projects,\s*marketing\.business,\s*marketing\.watchlist,\s*marketing\.knowledge\s*\)/.test(
         mainSrc
       ),
       'main/index.ts 应把 5 个依赖都传给 registerMarketingIpc'

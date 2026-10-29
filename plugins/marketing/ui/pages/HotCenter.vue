@@ -241,8 +241,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useMarketingStore, type HotTopic } from '@/stores/marketing'
-import { useProjectSwitcher } from '@/composables/useProjectSwitcher'
+import { useMarketingStore, type HotTopic } from '../store'
+import { useProjectSwitcher } from '../composables/useProjectSwitcher'
 import { setContentPrefill } from '@/composables/useContentPrefill'
 
 const marketing = useMarketingStore()

@@ -72,6 +72,7 @@ export function createMarketingRuntime(deps: MarketingRuntimeDeps): MarketingRun
     pdfjsAssets: deps.pdfjsAssets,
     logger: log
   })
+  // §五 没有 context pack 通道：引擎产出是主进程内部数据，不注册 IPC（宿主/插件都不暴露）。
   const contextEngine = createContextEngine({
     projectManager: projects,
     businessManager: business,

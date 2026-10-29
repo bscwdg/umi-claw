@@ -163,8 +163,8 @@
 // （advisorManager）。错误一律按 `error.code` 分支（§五），不解析 message。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ADVISOR_PLATFORMS, ERROR_TEXT, WATCHLIST_MAX, WATCHLIST_PRESET_TYPES, useMarketingStore } from '@/stores/marketing'
-import { useProjectSwitcher } from '@/composables/useProjectSwitcher'
+import { ADVISOR_PLATFORMS, ERROR_TEXT, WATCHLIST_MAX, WATCHLIST_PRESET_TYPES, useMarketingStore } from '../store'
+import { useProjectSwitcher } from '../composables/useProjectSwitcher'
 import { useToast } from '@/composables/useToast'
 
 const marketing = useMarketingStore()

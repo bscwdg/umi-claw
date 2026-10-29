@@ -26,40 +26,16 @@ const router = createRouter({
     { path: '/plugins', component: () => import('../views/PluginManager.vue') },
     // work 域路由由 plugins/work/renderer.ts 贡献（Phase 2 装箱）
 
-    // ── marketing 域（2.0 UI）──
-    {
-      path: '/marketing/business',
-      component: () => import('../views/marketing/BusinessBrain.vue'),
-      meta: { title: '商家大脑', icon: '🏪' }
-    },
-    {
-      path: '/marketing/knowledge',
-      component: () => import('../views/marketing/KnowledgeBase.vue'),
-      meta: { title: '知识库', icon: '📚' }
-    },
-    {
-      path: '/marketing/advisor',
-      component: () => import('../views/marketing/AdvisorPanel.vue'),
-      meta: { title: 'AI 顾问（AI Advisor）', icon: '💬' }
-    },
-    {
-      path: '/marketing/content',
-      component: () => import('../views/marketing/ContentCenter.vue'),
-      meta: { title: '内容中心（Content Center）', icon: '✍️' }
-    },
-    {
-      path: '/marketing/hot',
-      component: () => import('../views/marketing/HotCenter.vue'),
-      meta: { title: '热点雷达', icon: '🔥' }
-    }
+    // marketing 域路由由 plugins/marketing/renderer.ts 贡献（Phase 3 装箱）
+
   ]
 })
+
 
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
 app.mount('#app')
-
 // ── 插件 UI 同步（构建期装配 + 运行期注册/注销）─────────────────────────────
 //
 // 只对「已启用且已激活」的插件安装 UI；停用后路由、导航组、插槽一起撤掉。

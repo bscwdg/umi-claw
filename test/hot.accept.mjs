@@ -706,19 +706,22 @@ try {
     const errSrc = read('electron/main/database/errors.ts')
     assert(errSrc.includes("HOT_SOURCE_ERROR: 'HOT_SOURCE_ERROR'"), '错误码表含 HOT_SOURCE_ERROR')
 
-    const mainSrc = read('electron/main/index.ts')
-    for (const token of ['registerHotIpc', 'createMarketingHotManager', 'abortHotCollectors', 'powerMonitor']) {
+    const mainSrc =
+      read('electron/main/index.ts') +
+      readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8') +
+      readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+    for (const token of ['registerHotIpc', 'ctx.jobs.every', 'abortHotCollectors']) {
       assert(mainSrc.includes(token), '主进程接线含 ' + token)
     }
 
-    const storeSrc = read('src/stores/marketing.ts')
+    const storeSrc = read('plugins/marketing/ui/store.ts')
     for (const token of ['hotRadar', 'loadHotRadar', 'refreshHot', 'clearHot', 'HOT_SOURCE_ERROR']) {
       assert(storeSrc.includes(token), 'store hot 切片含 ' + token)
     }
 
-    const routeSrc = read('src/renderer/main.ts')
-    assert(routeSrc.includes("import('../views/marketing/HotCenter.vue')"), '/marketing/hot 换真页')
-    const viewSrc = read('src/views/marketing/HotCenter.vue')
+    const routeSrc = read('plugins/marketing/renderer.ts')
+    assert(routeSrc.includes('./ui/pages/HotCenter.vue'), '/marketing/hot 换真页（插件 renderer 贡献）')
+    const viewSrc = read('plugins/marketing/ui/pages/HotCenter.vue')
     assert(viewSrc.includes('setContentPrefill'), '热点页带 payload 跳 Content Center')
     for (const field of ['topicId', 'title', 'sourcePlatform', 'platform', 'contentAngle', 'lifecycleAdvice']) {
       assert(viewSrc.includes(field), 'payload 六字段含 ' + field)
@@ -732,7 +735,8 @@ try {
     assert(mgrSrc.includes("code !== 'CONFLICT'") && mgrSrc.includes('C1 防线'), 'C1 UNIQUE 冲突回退更新')
     assert(mgrSrc.includes('本轮缺失的观测值不覆盖旧值'), 'A3 空观测不覆盖旧热度')
     assert(mgrSrc.includes('节日已过') || mgrSrc.includes('本轮没见到的旧节点'), 'C3 过期日历节点主动下线')
-    assert(/clearInterval\(hotTickTimer\)/.test(mainSrc), '⑧ 退出时清理 hot tick 定时器')
+    // Phase 3 装箱：定时器归插件（ctx.jobs.every），停用/退出由内核统一清理
+    assert(/ctx\.jobs\.every\(/.test(mainSrc) && mainSrc.includes('hot-tick'), '⑧ hot tick 由插件 jobs 管，随停用清理')
     assert(storeSrc.includes('hotCallSeq'), 'C6 store 请求代际令牌')
     assert(/parsed\.protocol/.test(viewSrc) && viewSrc.includes("'https:'"), '③ openUrl 只放行 http(s)')
     assert(viewSrc.includes('forceRefresh') && viewSrc.includes('refreshHot()'), 'C4 立即刷先走 refreshHot，失败信号回状态条')

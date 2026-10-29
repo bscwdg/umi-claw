@@ -29,8 +29,10 @@
           {{ clawStore.running ? 'OpenClaw 运行中' : 'OpenClaw 已停止' }}
         </div>
 
-        <!-- 当前商家（2.0 营销域；无 Project 概念的工作域用户会看到空态，Phase 2 装箱时改为插件插槽） -->
-        <ProjectSwitcher />
+        <!-- 顶栏插件插槽：营销域的「当前商家」切换器随插件启停（Phase 3 装箱） -->
+        <template v-for="(slotComp, slotIndex) in pluginSlots.topbar ?? []" :key="'topbar-' + slotIndex">
+          <component :is="slotComp" />
+        </template>
 
         <!-- 导航（分组：工作 / 控制台 / 营销 / OpenClaw / 系统） -->
         <nav class="nav">
@@ -104,9 +106,8 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useClawStore } from '@/stores/claw'
 import { useConfigStore } from '@/stores/config'
-import { pluginNavGroups } from '@/renderer/pluginUi'
+import { pluginNavGroups, pluginSlots } from '@/renderer/pluginUi'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
-import ProjectSwitcher from '@/views/components/ProjectSwitcher.vue'
 import UserAgreementModal from '@/views/components/UserAgreementModal.vue'
 import WizardModal from '@/views/components/WizardModal.vue'
 import { wizardVisible } from '@/composables/useWizardGate'
@@ -134,16 +135,7 @@ const navGroups = [
     title: '控制台',
     items: [{ to: '/dashboard', icon: '🏠', label: '控制台' }]
   },
-  {
-    title: '营销',
-    items: [
-      { to: '/marketing/business', icon: '🏪', label: '商家大脑' },
-      { to: '/marketing/knowledge', icon: '📚', label: '知识库' },
-      { to: '/marketing/advisor', icon: '💬', label: 'AI 顾问（AI Advisor）' },
-      { to: '/marketing/content', icon: '✍️', label: '内容中心（Content Center）' },
-      { to: '/marketing/hot', icon: '🔥', label: '热点雷达' }
-    ]
-  },
+  // 营销域导航由 plugins/marketing/renderer.ts 贡献（Phase 3 装箱）
   {
     title: 'OpenClaw',
     items: [

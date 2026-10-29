@@ -111,6 +111,22 @@ export default definePlugin({
       throw e
     }
 
+    // 热点后台采集：60s 一轮，随插件启停（宿主不再持有定时器）
+    ctx.jobs.every(
+      60_000,
+      async () => {
+        try {
+          const summary = await marketing.hot.tickDue()
+          if (summary) {
+            ctx.logger.info(`[hot] 定时采集 total=${summary.topicsTotal} +${summary.inserted}`)
+          }
+        } catch (e) {
+          ctx.logger.warn('[hot] 定时采集失败', { message: (e as Error)?.message ?? String(e) })
+        }
+      },
+      { name: 'hot-tick' }
+    )
+
     runtime = marketing
     ctx.logger.info(`营销域就绪（库 ${db.path}）`)
 

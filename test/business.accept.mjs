@@ -489,8 +489,13 @@ try {
     const ipcSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'marketing.ts'), 'utf-8')
     const ipcIndexSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'index.ts'), 'utf-8')
     const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
-    const mainSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
-    const storeSrc = readFileSync(join(repoRoot, 'src', 'stores', 'marketing.ts'), 'utf-8')
+    const mainSrc =
+      readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8') +
+      readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8') +
+      readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+const pluginMainSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
+const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+    const storeSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'ui', 'store.ts'), 'utf-8')
     const storeCode = stripComments(storeSrc)
 
     const channels = [
@@ -517,11 +522,11 @@ try {
     // 1:1 → 不应出现 business:list / business:create 通道
     assert(!/marketing:business:(list|create)/.test(ipcSrc), 'Business 与 Project 1:1，不应有 list/create 通道')
     // 主进程 wiring
-    assert(/createBusinessManager/.test(mainSrc), 'main/index.ts 应创建 businessManager')
+    assert(/createBusinessManager/.test(pluginMainSrc + runtimeSrc), 'marketing runtime 应创建 businessManager')
     assert(/createWatchlistManager/.test(mainSrc), 'main/index.ts 应创建 watchlistManager')
     assert(
       // Commit 05a 起多了第 5 个依赖（knowledgeManager）；前 4 个的顺序与名字仍被逐字锁定
-      /registerMarketingIpc\(\s*marketingDatabase!,\s*marketingProjectManager!,\s*marketingBusinessManager!,\s*marketingWatchlistManager!(?:\s*,\s*marketingKnowledgeManager!)?\s*\)/.test(
+      /registerMarketingIpc\(\s*facade,\s*marketing\.projects,\s*marketing\.business,\s*marketing\.watchlist,\s*marketing\.knowledge\s*\)/.test(
         mainSrc
       ),
       'main/index.ts 应把 4 个（Commit 05a 起为 5 个）依赖都传给 registerMarketingIpc'

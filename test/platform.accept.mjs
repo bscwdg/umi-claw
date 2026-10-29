@@ -370,11 +370,11 @@ try {
     assert(!read('electron/main/ipc/content.ts').includes('platformRule'), 'content IPC 不新增规则面')
     assert(!read('resources/database/db-worker.mjs').includes('platform_rule'), 'worker 白名单零扩展（无 platform_rule 方法）')
     const srcRenderer = []
-    for (const f of ['src/views/marketing/ContentCenter.vue', 'src/views/marketing/AdvisorPanel.vue']) {
+    for (const f of ['plugins/marketing/ui/pages/ContentCenter.vue', 'plugins/marketing/ui/pages/AdvisorPanel.vue']) {
       srcRenderer.push(read(f))
     }
     assert(!srcRenderer.some((s) => s.includes('marketing/platformRules')), '渲染端不引主进程规则模块')
-    const vue = read('src/views/marketing/ContentCenter.vue')
+    const vue = read('plugins/marketing/ui/pages/ContentCenter.vue')
     for (const marker of ['图文笔记', '口播脚本', '不做视频', '人工复制发布']) {
       assert(vue.includes(marker), 'UI 平台提示含：' + marker)
     }

@@ -530,20 +530,27 @@ try {
   // ── C19 主进程 wiring ──
   await r.check('C19', '主进程 wiring：构造 Context Engine 并注入四个 Manager；不新增 §五 之外的 IPC 通道', async () => {
     const mainSrc = readFileSync(mainSrcPath, 'utf-8')
-    const code = flat(mainSrc)
-    assert(/from '\.\/marketing\/contextEngine'/.test(code), 'main/index.ts 应引入 contextEngine')
-    // 4.0 合并：两域各有一个 ContextEngine 工厂，营销侧 import 起别名（createMarketingContextEngineLib）
-    // 以便与 work 域的 createContextEngine 并存于同一个文件。
-    assert(/createMarketingContextEngineLib\(|createContextEngine\(/.test(code), '应调用 contextEngine 工厂')
+    const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+    const runtimeCode = flat(runtimeSrc)
+    // Phase 3 装箱：引擎装配搬进 marketing/runtime.ts（插件调用它），宿主不再直接引入
+    assert(/from '\.\/contextEngine'/.test(runtimeCode), 'runtime 应引入 contextEngine')
+    assert(/createContextEngine\(/.test(runtimeCode), 'runtime 应调用 contextEngine 工厂')
     assert(
-      /(createMarketingContextEngineLib|createContextEngine)\(\{[\s\S]{0,400}projectManager[\s\S]{0,200}businessManager[\s\S]{0,200}knowledgeManager[\s\S]{0,200}watchlistManager/.test(
-        code
+      /createContextEngine\(\{[\s\S]{0,400}projectManager[\s\S]{0,200}businessManager[\s\S]{0,200}knowledgeManager[\s\S]{0,200}watchlistManager/.test(
+        runtimeCode
       ),
       '构造时应注入四个 Manager（硬规则 9：全部显式 projectId）'
     )
-    assert(/marketingContextEngine = createMarketingContextEngine\(/.test(code), '应在 whenReady 里 wiring 单例')
-    assert(/export function getMarketingContextEngine\(/.test(code), '应导出 07/08 取用单例的入口（避免各处自建第二个引擎）')
-    assert(/不注册 IPC|没有渲染端通道|§五 没有/.test(mainSrc), '应写明「Context Pack 不新增 IPC 通道」的理由')
+    // Phase 3 装箱后：引擎由插件 runtime 装配（createMarketingRuntime），宿主不再持有单例
+    assert(/createContextEngine\(/.test(runtimeSrc), 'runtime 里装配引擎')
+    assert(
+      /export function createMarketingRuntime\(/.test(runtimeSrc),
+      'runtime 是唯一装配入口（避免各处自建第二个引擎）'
+    )
+    assert(
+      /不注册 IPC|没有渲染端通道|§五 没有/.test(runtimeSrc) || /不注册 IPC|没有渲染端通道|§五 没有/.test(mainSrc),
+      '应写明「Context Pack 不新增 IPC 通道」的理由（runtime 或宿主）'
+    )
     // §五 没有 context pack 通道 → 不应偷偷加
     const ipcSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'marketing.ts'), 'utf-8')
     assert(

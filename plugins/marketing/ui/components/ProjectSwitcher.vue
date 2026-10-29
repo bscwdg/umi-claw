@@ -103,9 +103,9 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useMarketingStore } from '@/stores/marketing'
-import { useProjectSwitcher } from '@/composables/useProjectSwitcher'
-import ConfirmDialog from './ConfirmDialog.vue'
+import { useMarketingStore } from '../store'
+import { useProjectSwitcher } from '../composables/useProjectSwitcher'
+import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 
 const store = useMarketingStore()
 const switcher = useProjectSwitcher()

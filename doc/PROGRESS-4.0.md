@@ -248,3 +248,21 @@
 **验收**：plugin **48/48**（+P42）；全量 19 套 **355/355**；双 typecheck 0 错；build 通过。
 
 下一步：marketing 宿主切换 + UI/store 装箱（必须同一批做——宿主 IPC 撤掉而 UI 还指向插件路由会白屏）。
+
+### 2026-10-30 · Phase 3 收口：marketing 宿主切换 + UI/Store 装箱
+
+- **宿主不再装配 marketing**：12 个全局、11 个工厂函数、2 个单例 getter、5 组 IPC 注册、热点定时器全部移出 `main/index.ts`（净减约 380 行）。
+- `conversationKeyResolver` 改为**直读插件库**（`projects.get`），宿主不再持有 ProjectManager；网关单例约束不变。
+- 热点采集改为插件 `ctx.jobs.every(60s, …, { name: 'hot-tick' })`：随启停自动清理，`powerMonitor` 钩子随宿主定时器一起移除。
+- 新服务 `legacyDb` 的 marketing 分支改用 `openLegacyDatabase('umi-claw.db','marketing')`（带 schemaId，避免按 work 白名单校验）。
+- **UI 装箱**：6 个页面 + `stores/marketing.ts` + `ProjectSwitcher` + `useProjectSwitcher` 移入 `plugins/marketing/ui/`；
+  `plugins/marketing/renderer.ts` 贡献 5 条路由、营销导航组、以及顶栏插槽（`slot: { topbar: ProjectSwitcher }`）。
+- 壳 `App.vue`：删除硬编码 `ProjectSwitcher` 与营销导航组，改为渲染 `pluginSlots.topbar`（通用插槽机制）。
+- 决策调整（记录）：**营销域改为默认启用**——它承接 3.0/2.0 已有功能，默认关闭会导致升级后菜单消失；用户可在能力中心关闭。
+- 兼容垫片（Phase 4 删除）：`src/stores/marketing.ts` 与 `src/composables/useProjectSwitcher.ts` 只做单点再导出，
+  因为宿主 Dashboard 仍在展示营销摘要；不复制实现，避免两份真相。
+- 8 套 marketing 验收跟随新架构：页面/store 路径改指插件、路由断言改查 `plugins/marketing/renderer.ts`、
+  装配断言改查「宿主 + 插件 main + runtime」整条链。
+
+**验收**：plugin **48/48**；全量 19 套 **355/355**；双 typecheck 0 错；build 通过。
+下一步：Phase 3 审查 + 对抗（子代理），按报告修复后收口，再进 Phase 4。
