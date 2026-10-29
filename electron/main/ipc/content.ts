@@ -20,7 +20,7 @@
 
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
-import { forwardGatewayStream, type GatewayStreamSink } from '../gatewayClient'
+import { forwardGatewayStream, MARKETING_STREAM_EVENTS, type GatewayStreamSink } from '../gatewayClient'
 import type { AdvisorPackSummary } from './advisor'
 import { summarizePack } from './advisor'
 import type {
@@ -112,7 +112,7 @@ export function registerContentIpc(manager: ContentManager): void {
       const streamIds: string[] = []
       run.streams.forEach((streamHandle, i) => {
         const streamId = run.angles[i].streamId
-        const forward = forwardGatewayStream(sink, streamId, streamHandle)
+        const forward = forwardGatewayStream(sink, streamId, streamHandle, MARKETING_STREAM_EVENTS)
         activeStreams.set(streamId, forward)
         streamIds.push(streamId)
         void forward.done.finally(() => activeStreams.delete(streamId))

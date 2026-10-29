@@ -21,7 +21,7 @@
 
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
-import { forwardGatewayStream, type GatewayStreamSink } from '../gatewayClient'
+import { forwardGatewayStream, MARKETING_STREAM_EVENTS, type GatewayStreamSink } from '../gatewayClient'
 import type { ScanRecognizer, RecognitionRun } from '../marketing/scanRecognizer'
 import type { CommitRecognizedInput, KnowledgeManager, KnowledgeRow } from '../marketing/knowledgeManager'
 
@@ -77,7 +77,7 @@ export function registerScanIpc(scanRecognizer: ScanRecognizer, knowledgeManager
       })
       // 推给**发起调用的那个** webContents；事件名/载荷形状是 07 定的（chunk/done/error + streamId）
       const sink = event.sender as unknown as GatewayStreamSink
-      const forward = forwardGatewayStream(sink, run.taskId, run.handle)
+      const forward = forwardGatewayStream(sink, run.taskId, run.handle, MARKETING_STREAM_EVENTS)
       activeScans.set(run.taskId, forward)
       void forward.done.finally(() => activeScans.delete(run.taskId))
       return {

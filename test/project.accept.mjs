@@ -53,6 +53,7 @@ function makeClient(overrides = {}) {
     dbPath,
     backupDir,
     workerScriptPath: marketingWorkerScriptPath,
+    schemaId: 'marketing',
     nodePath,
     subprocessName: 'marketing-db-worker-project-test',
     requestTimeoutMs: 30_000,

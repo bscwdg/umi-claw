@@ -46,6 +46,25 @@ export const GATEWAY_STREAM_EVENTS = {
   error: 'work:stream:error'
 } as const
 
+/**
+ * 营销域的流事件名（2.0 定死，渲染端 `stores/marketing.ts` 按它订阅）。
+ *
+ * 4.0 合并（MERGE-INVENTORY C-1）：work 与 marketing 各有一套事件名，**都保留**；
+ * `forwardGatewayStream` 的第 4 个参数决定用哪套，默认 work。
+ * 之所以不统一改名：两套渲染端订阅代码已在各自域里稳定运行，改名要同时动两域的 store 与测试。
+ */
+export const MARKETING_STREAM_EVENTS = {
+  chunk: 'marketing:gateway:chunk',
+  done: 'marketing:gateway:done',
+  error: 'marketing:gateway:error'
+} as const
+
+export interface GatewayStreamEventSet {
+  chunk: string
+  done: string
+  error: string
+}
+
 /** §六 实测：`model` 取值是 `openclaw`（默认 agent）或 `openclaw/<agentId>` */
 export const GATEWAY_MODEL_DEFAULT = 'openclaw'
 
@@ -1315,7 +1334,8 @@ function isStreamHandle(source: unknown): source is GatewayStreamHandle {
 export function forwardGatewayStream(
   webContents: GatewayStreamSink,
   runId: string,
-  source: AsyncIterable<GatewayStreamDelta> | GatewayStreamHandle
+  source: AsyncIterable<GatewayStreamDelta> | GatewayStreamHandle,
+  events: GatewayStreamEventSet = GATEWAY_STREAM_EVENTS
 ): { cancel: () => void; done: Promise<void> } {
   const id = String(runId)
   let cancelled = false
@@ -1333,8 +1353,12 @@ export function forwardGatewayStream(
           break
         }
         chunks += 1
-        webContents.send(GATEWAY_STREAM_EVENTS.chunk, {
+        webContents.send(events.chunk, {
           runId: id,
+          // 兼容键：2.0 的营销流（advisor / content / scan / hot-score）按 `streamId` 归并，
+          // 3.0 的 work 流按 `runId`。合并后两域共用这一个助手（MERGE-INVENTORY C-1），
+          // 所以两个键都发——语义相同（一次执行只有一个 ID），渲染端各取所需。
+          streamId: id,
           index: delta.index,
           delta: delta.delta
         })
@@ -1345,8 +1369,9 @@ export function forwardGatewayStream(
       // 让它落到下面的 catch → error 事件；渲染端已累积的 chunk 仍在，可走「复制原文」兜底。
       const res = handle ? await handle.result : null
       if (cancelled) return
-      webContents.send(GATEWAY_STREAM_EVENTS.done, {
+      webContents.send(events.done, {
         runId: id,
+        streamId: id,
         chunks: res?.chunks ?? chunks,
         text: res?.text ?? null,
         aborted: res?.aborted ?? false,
@@ -1354,7 +1379,7 @@ export function forwardGatewayStream(
       })
     } catch (e) {
       if (cancelled) return
-      webContents.send(GATEWAY_STREAM_EVENTS.error, { runId: id, error: toEnvelope(e) })
+      webContents.send(events.error, { runId: id, streamId: id, error: toEnvelope(e) })
     }
   })()
   done.catch(() => undefined)

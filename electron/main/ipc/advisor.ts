@@ -14,7 +14,7 @@
 
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
-import { forwardGatewayStream, type GatewayStreamSink } from '../gatewayClient'
+import { forwardGatewayStream, MARKETING_STREAM_EVENTS, type GatewayStreamSink } from '../gatewayClient'
 import type { AdvisorAskInput, AdvisorManager, WatchCandidate } from '../marketing/advisorManager'
 import type { ContextPack } from '../marketing/contextEngine'
 
@@ -99,7 +99,7 @@ export function registerAdvisorIpc(advisor: AdvisorManager): void {
       const streamId = `advisor-${++streamSeq}-${Date.now().toString(36)}`
       // 推给**发起调用的那个** webContents（多窗口/多面板各自归并自己的 streamId）
       const sink = event.sender as unknown as GatewayStreamSink
-      const forward = forwardGatewayStream(sink, streamId, turn.handle)
+      const forward = forwardGatewayStream(sink, streamId, turn.handle, MARKETING_STREAM_EVENTS)
       activeStreams.set(streamId, forward)
       void forward.done.finally(() => activeStreams.delete(streamId))
       return {

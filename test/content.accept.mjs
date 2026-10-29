@@ -234,6 +234,7 @@ try {
     dbPath,
     backupDir,
     workerScriptPath: marketingWorkerScriptPath,
+    schemaId: 'marketing',
     nodePath,
     subprocessName: 'marketing-db-worker-content-test',
     requestTimeoutMs: 30_000
@@ -569,7 +570,8 @@ try {
     const storeSrc = stripComments(readFileSync(join(repoRoot, 'src', 'stores', 'marketing.ts'), 'utf-8'))
     const vueSrc = readFileSync(join(repoRoot, 'src', 'views', 'marketing', 'ContentCenter.vue'), 'utf-8')
     const routeSrc = readFileSync(join(repoRoot, 'src', 'renderer', 'main.ts'), 'utf-8')
-    const workerSrc = readFileSync(join(repoRoot, 'resources', 'database', 'db-worker.mjs'), 'utf-8')
+    // 4.0 合并：营销域 schema 在 db-worker-marketing.mjs（work 的 worker 只有 8 表）
+    const workerSrc = readFileSync(join(repoRoot, 'resources', 'database', 'db-worker-marketing.mjs'), 'utf-8')
 
     const channels = [
       'marketing:content:list',

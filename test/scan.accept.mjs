@@ -87,7 +87,7 @@ const {
   normalizeRecognizedText,
   stripProgressMarkers
 } = scanMod
-const { createGatewayClient, forwardGatewayStream, GATEWAY_STREAM_EVENTS } = gwMod
+const { createGatewayClient, forwardGatewayStream, GATEWAY_STREAM_EVENTS, MARKETING_STREAM_EVENTS } = gwMod
 const { createKnowledgeManager, RECOGNIZED_TYPES } = knowMod
 const { createProjectManager } = projMod
 const { DatabaseClient } = dbMod
@@ -238,6 +238,7 @@ try {
     dbPath,
     backupDir,
     workerScriptPath: marketingWorkerScriptPath,
+    schemaId: 'marketing',
     nodePath,
     subprocessName: 'marketing-db-worker-scan-test',
     requestTimeoutMs: 30_000
@@ -517,18 +518,19 @@ try {
       isDestroyed: () => false,
       once: () => {}
     }
-    const forward = forwardGatewayStream(sink, run.taskId, run.handle)
+    // 4.0 合并：营销流用 marketing:gateway:* 事件名（work 用 work:stream:*），由第 4 参数选择
+    const forward = forwardGatewayStream(sink, run.taskId, run.handle, MARKETING_STREAM_EVENTS)
     await forward.done
-    const chunks = events.filter((e) => e.channel === GATEWAY_STREAM_EVENTS.chunk)
-    const doneEv = events.find((e) => e.channel === GATEWAY_STREAM_EVENTS.done)
-    assertEq(events.some((e) => e.channel === GATEWAY_STREAM_EVENTS.error), false, '成功路径不该有 error 事件')
+    const chunks = events.filter((e) => e.channel === MARKETING_STREAM_EVENTS.chunk)
+    const doneEv = events.find((e) => e.channel === MARKETING_STREAM_EVENTS.done)
+    assertEq(events.some((e) => e.channel === MARKETING_STREAM_EVENTS.error), false, '成功路径不该有 error 事件')
     assert(chunks.length >= 2, `应有 chunk 事件，实际 ${chunks.length}`)
     assert(chunks.every((e) => e.payload.streamId === run.taskId), 'chunk.streamId = 05b 的 taskId')
     assert(doneEv.payload.streamId === run.taskId, 'done.streamId = taskId')
     assertEq(typeof doneEv.payload.text, 'string', 'done 带汇总 text（确认弹窗的数据源）')
     assert(!String(doneEv.payload.text).includes('正在识别'), 'done.text 是干净权威汇总')
     assertEq(doneEv.payload.aborted, false, 'done.aborted 形状与 07 一致')
-    assertEq(GATEWAY_STREAM_EVENTS.chunk, 'marketing:gateway:chunk', '事件名就是 07 定死那三个，不新造')
+    assertEq(MARKETING_STREAM_EVENTS.chunk, 'marketing:gateway:chunk', '营销事件名就是 07 定死那三个，不新造')
     return `${chunks.length} chunk + done（streamId=${run.taskId.slice(0, 14)}…）✓`
   })
 

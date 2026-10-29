@@ -17,8 +17,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { AppError, ERROR_CODES, type ErrorCode } from './errors'
-import { TARGET_USER_VERSION, pendingSteps } from './migration'
-import { SCHEMA_TABLES } from './schema'
+import { resolveDbSchema, type SchemaId } from './schemas'
 
 /**
  * 3.0 工作库文件名（与 2.0 的 `umi-claw.db` 区分开）。
@@ -52,6 +51,13 @@ export interface DatabaseClientOptions {
   gracefulStopTimeoutMs?: number
   /** worker 在子进程注册表里的名字 */
   subprocessName?: string
+  /**
+   * 使用哪一套 schema（默认 `work`）。
+   *
+   * 4.0 起 work 与 marketing 是两套互斥 schema（8 表 / 11 表，仅 app_meta 重叠），
+   * 每套有自己的 DDL 与 user_version 序列，因此必须显式选库，不能靠文件名推断。
+   */
+  schemaId?: SchemaId
   /** 子进程启动钩子：返回反注册函数（index.ts 把它接到 subprocessRegistry） */
   onSpawn?: (info: { name: string; pid: number; gracefulStop: () => Promise<void> }) => () => void
   /** 日志（默认静默） */
@@ -162,7 +168,7 @@ export class DatabaseClient {
       | 'autoBackupIntervalMs'
       | 'gracefulStopTimeoutMs'
     >
-  > & { subprocessName: string }
+  > & { subprocessName: string; schemaId: SchemaId }
 
   private child: ChildProcess | null = null
   private pending = new Map<string, PendingEntry>()
@@ -194,7 +200,8 @@ export class DatabaseClient {
       maxBackups: options.maxBackups ?? DEFAULT_MAX_BACKUPS,
       autoBackupIntervalMs: options.autoBackupIntervalMs ?? DEFAULT_AUTO_BACKUP_INTERVAL_MS,
       gracefulStopTimeoutMs: options.gracefulStopTimeoutMs ?? DEFAULT_GRACEFUL_STOP_MS,
-      subprocessName: options.subprocessName ?? 'work-db-worker'
+      subprocessName: options.subprocessName ?? `${options.schemaId ?? 'work'}-db-worker`,
+      schemaId: options.schemaId ?? 'work'
     }
     this.onSpawn = options.onSpawn
     this.logger = options.logger
@@ -202,6 +209,11 @@ export class DatabaseClient {
 
   private onSpawn?: DatabaseClientOptions['onSpawn']
   private logger?: DatabaseClientOptions['logger']
+
+  /** 当前库的 schema 档案（tables / 目标版本 / 迁移步骤） */
+  private get schema() {
+    return resolveDbSchema(this.opts.schemaId)
+  }
 
   // ── 只读状态 ────────────────────────────────────────────────────────────────
   get dbPath(): string {
@@ -345,32 +357,34 @@ export class DatabaseClient {
       tables?: string[]
     }
     if (!Array.isArray(info?.tables)) return
+    const schema = this.schema
     const tables = info.tables
-    const missing = SCHEMA_TABLES.filter((t) => !tables.includes(t))
+    const missing = schema.tables.filter((t) => !tables.includes(t))
     if (!missing.length) return
     throw new AppError(
       ERROR_CODES.DB_ERROR,
-      `库结构与 3.0 不符，缺少表: ${missing.join(', ')}` +
-        `（疑似旧版本同名库；3.0 的库文件应为 ${WORK_DB_FILENAME}，旧库请交给向导的「沿用/另起」处理）`,
-      { missing, dbPath: this.opts.dbPath }
+      `库结构与${schema.label}不符，缺少表: ${missing.join(', ')}` +
+        `（疑似旧版本同名库；${schema.label}的库文件应为 ${schema.dbFileName}，旧库请交给向导的「沿用/另起」处理）`,
+      { missing, dbPath: this.opts.dbPath, schemaId: schema.id }
     )
   }
 
-  /** 启动时把 user_version 推到 TARGET_USER_VERSION（DDL 来自 schema.ts） */
+  /** 启动时把 user_version 推到该 schema 的目标版本（DDL 来自 schema.ts / marketingSchema.ts） */
   private async runMigrations(): Promise<void> {
+    const schema = this.schema
     const info = (await this.sendRaw('schema.info', {}, this.opts.requestTimeoutMs)) as {
       userVersion?: number
       tables?: string[]
     }
     const from = Number(info?.userVersion) || 0
-    if (from > TARGET_USER_VERSION) {
+    if (from > schema.targetUserVersion) {
       throw new AppError(
         ERROR_CODES.DB_ERROR,
-        `数据库 user_version=${from} 高于当前应用支持的 ${TARGET_USER_VERSION}，请升级 Umi Claw`,
-        { userVersion: from, supported: TARGET_USER_VERSION }
+        `数据库 user_version=${from} 高于当前应用支持的 ${schema.targetUserVersion}（${schema.label}），请升级 Umi Claw`,
+        { userVersion: from, supported: schema.targetUserVersion, schemaId: schema.id }
       )
     }
-    if (from < TARGET_USER_VERSION) {
+    if (from < schema.targetUserVersion) {
       // §四 备份触发时机：Schema 迁移前（已有数据才需要）
       if (from > 0) {
         try {
@@ -382,7 +396,7 @@ export class DatabaseClient {
           this.log(`[db] 迁移前快照失败（继续迁移）: ${errorText(e)}`)
         }
       }
-      const steps = pendingSteps(from).map((s) => ({
+      const steps = schema.pendingSteps(from).map((s) => ({
         version: s.version,
         name: s.name,
         statements: s.statements
@@ -395,10 +409,10 @@ export class DatabaseClient {
       const after = (await this.sendRaw('schema.info', {}, this.opts.requestTimeoutMs)) as {
         userVersion?: number
       }
-      if (Number(after?.userVersion) !== TARGET_USER_VERSION) {
+      if (Number(after?.userVersion) !== schema.targetUserVersion) {
         throw new AppError(
           ERROR_CODES.DB_ERROR,
-          `迁移后 user_version=${after?.userVersion}，期望 ${TARGET_USER_VERSION}`
+          `迁移后 user_version=${after?.userVersion}，期望 ${schema.targetUserVersion}（${schema.label}）`
         )
       }
       this.migrated = true

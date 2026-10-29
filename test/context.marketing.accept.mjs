@@ -96,6 +96,7 @@ function makeClient(overrides = {}) {
     dbPath,
     backupDir,
     workerScriptPath: marketingWorkerScriptPath,
+    schemaId: 'marketing',
     nodePath,
     subprocessName: 'marketing-db-worker-context-test',
     requestTimeoutMs: 30_000,
@@ -531,9 +532,11 @@ try {
     const mainSrc = readFileSync(mainSrcPath, 'utf-8')
     const code = flat(mainSrc)
     assert(/from '\.\/marketing\/contextEngine'/.test(code), 'main/index.ts 应引入 contextEngine')
-    assert(/createContextEngine\(/.test(code), '应调用 createContextEngine')
+    // 4.0 合并：两域各有一个 ContextEngine 工厂，营销侧 import 起别名（createMarketingContextEngineLib）
+    // 以便与 work 域的 createContextEngine 并存于同一个文件。
+    assert(/createMarketingContextEngineLib\(|createContextEngine\(/.test(code), '应调用 contextEngine 工厂')
     assert(
-      /createContextEngine\(\{[\s\S]{0,400}projectManager[\s\S]{0,200}businessManager[\s\S]{0,200}knowledgeManager[\s\S]{0,200}watchlistManager/.test(
+      /(createMarketingContextEngineLib|createContextEngine)\(\{[\s\S]{0,400}projectManager[\s\S]{0,200}businessManager[\s\S]{0,200}knowledgeManager[\s\S]{0,200}watchlistManager/.test(
         code
       ),
       '构造时应注入四个 Manager（硬规则 9：全部显式 projectId）'

@@ -174,6 +174,7 @@ try {
     dbPath,
     backupDir,
     workerScriptPath: marketingWorkerScriptPath,
+    schemaId: 'marketing',
     nodePath,
     subprocessName: 'marketing-db-worker-platform-test',
     requestTimeoutMs: 30_000

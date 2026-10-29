@@ -281,6 +281,7 @@ try {
     dbPath,
     backupDir,
     workerScriptPath: marketingWorkerScriptPath,
+    schemaId: 'marketing',
     nodePath,
     subprocessName: 'marketing-db-worker-hot-test',
     requestTimeoutMs: 30_000
@@ -675,7 +676,8 @@ try {
       assert(preloadSrc.includes(ch), 'preload 暴露通道 ' + ch)
     }
 
-    const workerSrc = read('resources/database/db-worker.mjs')
+    // 4.0 合并：营销域 11 表 schema 独立在 db-worker-marketing.mjs（work 的 db-worker.mjs 只有 8 表）
+    const workerSrc = read('resources/database/db-worker-marketing.mjs')
     for (const t of ['hot_topics:', 'hot_topic_samples:', 'project_hot_topics:']) {
       assert(workerSrc.includes(t), 'worker 白名单含 ' + t + '（02 建表，11 零改）')
     }

@@ -216,6 +216,7 @@ try {
     dbPath,
     backupDir,
     workerScriptPath: marketingWorkerScriptPath,
+    schemaId: 'marketing',
     nodePath,
     subprocessName: 'db-worker-shooting-test',
     requestTimeoutMs: 30_000

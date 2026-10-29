@@ -92,6 +92,7 @@ try {
     dbPath,
     backupDir,
     workerScriptPath: marketingWorkerScriptPath,
+    schemaId: 'marketing',
     nodePath,
     subprocessName: 'marketing-db-worker-hotscore-test',
     requestTimeoutMs: 30_000
@@ -411,7 +412,8 @@ try {
     const hotSrc = read('electron/main/marketing/hotManager.ts')
     assert(!hotSrc.includes('gatewayClient') && !hotSrc.includes('createChatStream'), '边界：hotManager 源码不引用 Gateway（采集独立于 AI）')
 
-    const workerSrc = read('resources/database/db-worker.mjs')
+    // 4.0 合并：营销域 11 表 schema 独立在 db-worker-marketing.mjs（work 的 db-worker.mjs 只有 8 表）
+    const workerSrc = read('resources/database/db-worker-marketing.mjs')
     const columnsBlock = workerSrc.match(/project_hot_topics:[\s\S]*?columns:[\s\S]*?\[([\s\S]*?)\]/)
     assert(columnsBlock, 'worker 含 project_hot_topics 定义')
     const colCount = (columnsBlock[1].match(/'/g) || []).length / 2

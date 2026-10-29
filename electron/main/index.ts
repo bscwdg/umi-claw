@@ -1288,7 +1288,10 @@ function createMarketingDatabase(): DatabaseClient {
   return new DatabaseClient({
     dbPath: join(dataDir, 'umi-claw.db'),
     backupDir: join(dataDir, 'backup'),
-    workerScriptPath: join(resRoot, 'database', 'db-worker.mjs'),
+    // 营销域是 11 表 schema（projects / businesses / knowledge_items / contents / hot_*），
+    // 与 work 的 8 表互斥 → 必须指定 schemaId + 配套的 worker 白名单（MERGE-INVENTORY R2）。
+    schemaId: 'marketing',
+    workerScriptPath: join(resRoot, 'database', 'db-worker-marketing.mjs'),
     nodePath: configManager.getNodePath(),
     subprocessName: 'marketing-db-worker',
     // 启动即注册（§四 子进程注册表）：_stopRuntimeProcesses / 退出清理先优雅停

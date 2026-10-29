@@ -28,7 +28,33 @@ const router = createRouter({
     { path: '/work/tools', component: () => import('../views/work/ToolsPage.vue') },
     { path: '/work/knowledge', component: () => import('../views/work/KnowledgePage.vue') },
     { path: '/work/context', component: () => import('../views/work/ContextPage.vue') },
-    { path: '/work/settings', component: () => import('../views/work/SettingsPage.vue') }
+    { path: '/work/settings', component: () => import('../views/work/SettingsPage.vue') },
+    // ── marketing 域（2.0 UI）──
+    {
+      path: '/marketing/business',
+      component: () => import('../views/marketing/BusinessBrain.vue'),
+      meta: { title: '商家大脑', icon: '🏪' }
+    },
+    {
+      path: '/marketing/knowledge',
+      component: () => import('../views/marketing/KnowledgeBase.vue'),
+      meta: { title: '知识库', icon: '📚' }
+    },
+    {
+      path: '/marketing/advisor',
+      component: () => import('../views/marketing/AdvisorPanel.vue'),
+      meta: { title: 'AI 顾问（AI Advisor）', icon: '💬' }
+    },
+    {
+      path: '/marketing/content',
+      component: () => import('../views/marketing/ContentCenter.vue'),
+      meta: { title: '内容中心（Content Center）', icon: '✍️' }
+    },
+    {
+      path: '/marketing/hot',
+      component: () => import('../views/marketing/HotCenter.vue'),
+      meta: { title: '热点雷达', icon: '🔥' }
+    }
   ]
 })
 
