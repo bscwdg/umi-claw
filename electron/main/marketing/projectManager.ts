@@ -18,7 +18,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { AppError, ERROR_CODES, errorCodeOf } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { MarketingDatabase } from './database'
 
 /** `app_meta` 中存放「当前 Project」的键名（§四 app_meta 白名单内） */
 export const CURRENT_PROJECT_META_KEY = 'current_project_id'
@@ -74,7 +74,7 @@ export interface DeleteProjectResult {
 
 export interface ProjectManagerOptions {
   /** DB Worker 客户端（唯一的数据访问通道，硬规则 8） */
-  database: DatabaseClient
+  database: MarketingDatabase
   /** 应用数据目录（约定 `.../data`）；本项目只在该目录下操作 `projects/` 子目录 */
   dataDir: string
   /** 日志（默认静默）；删除重试、幂等路径、孤儿指针自愈都走这里 */
@@ -86,7 +86,7 @@ export interface ProjectManagerOptions {
 }
 
 export class ProjectManager {
-  private readonly database: DatabaseClient
+  private readonly database: MarketingDatabase
   private readonly dataDir: string
   private readonly logger?: (message: string) => void
   private readonly dirRemoveRetries: number

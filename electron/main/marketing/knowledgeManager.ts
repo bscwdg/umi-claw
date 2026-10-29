@@ -40,7 +40,7 @@ import { randomUUID } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { basename, extname, join, resolve } from 'node:path'
 import { AppError, ERROR_CODES, errorCodeOf } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { MarketingDatabase } from './database'
 import { PROJECTS_SUBDIR } from './projectManager'
 import {
   PARSEABLE_FILE_TYPES,
@@ -152,7 +152,7 @@ export interface KnowledgeSearchHit {
 
 export interface KnowledgeManagerOptions {
   /** DB Worker 客户端（唯一的数据访问通道，硬规则 8） */
-  database: DatabaseClient
+  database: MarketingDatabase
   /** 应用数据目录（约定 `.../data`）；原文落在 `data/projects/<id>/` */
   dataDir: string
   /** pdfjs 运行时资产（cmaps / standard_fonts / worker）；缺失时 PDF 中文会抽不出来 */
@@ -166,7 +166,7 @@ export interface KnowledgeManagerOptions {
 }
 
 export class KnowledgeManager {
-  private readonly database: DatabaseClient
+  private readonly database: MarketingDatabase
   private readonly dataDir: string
   private readonly pdfjsAssets: PdfjsAssets | null
   private readonly htmlFetcher: HtmlFetcher
@@ -799,7 +799,7 @@ function clamp(value: unknown, def: number, min: number, max: number): number {
 }
 
 /** projectId 必须真实存在——写一个不存在的 project 只会留下孤儿行 */
-async function assertProjectExists(database: DatabaseClient, projectId: string): Promise<void> {
+async function assertProjectExists(database: MarketingDatabase, projectId: string): Promise<void> {
   const row = await database.request<{ id: string } | null>('projects.get', { keys: { id: projectId } })
   if (!row) {
     throw new AppError(ERROR_CODES.NOT_FOUND, `Project 不存在: ${projectId}`, { projectId })

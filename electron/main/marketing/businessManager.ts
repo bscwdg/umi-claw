@@ -20,7 +20,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { AppError, ERROR_CODES, errorCodeOf } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { MarketingDatabase } from './database'
 
 /** businesses 表可写字段白名单（与 §四 DDL / db-worker.mjs 的 businesses 白名单一一对应） */
 export const BUSINESS_FIELDS = [
@@ -95,20 +95,20 @@ export interface WatchRow {
 
 export interface BusinessManagerOptions {
   /** DB Worker 客户端（唯一的数据访问通道，硬规则 8） */
-  database: DatabaseClient
+  database: MarketingDatabase
   /** 日志（默认静默） */
   logger?: (message: string) => void
 }
 
 export interface WatchlistManagerOptions {
-  database: DatabaseClient
+  database: MarketingDatabase
   logger?: (message: string) => void
 }
 
 // ── Business：商家大脑（1:1） ─────────────────────────────────────────────────
 
 export class BusinessManager {
-  private readonly database: DatabaseClient
+  private readonly database: MarketingDatabase
   private readonly logger?: (message: string) => void
 
   constructor(options: BusinessManagerOptions) {
@@ -250,7 +250,7 @@ export class BusinessManager {
 // ── Watchlist：老板关注词（手工增删，**不采集**） ──────────────────────────────
 
 export class WatchlistManager {
-  private readonly database: DatabaseClient
+  private readonly database: MarketingDatabase
   private readonly logger?: (message: string) => void
 
   constructor(options: WatchlistManagerOptions) {
@@ -407,7 +407,7 @@ function requireId(value: unknown, method: string): string {
 }
 
 /** projectId 必须真实存在——写一个不存在的 project 只会留下孤儿行（外键报错太晚、文案也不好用） */
-async function assertProjectExists(database: DatabaseClient, projectId: string): Promise<void> {
+async function assertProjectExists(database: MarketingDatabase, projectId: string): Promise<void> {
   const row = await database.request<{ id: string } | null>('projects.get', { keys: { id: projectId } })
   if (!row) {
     throw new AppError(ERROR_CODES.NOT_FOUND, `Project 不存在: ${projectId}`, { projectId })

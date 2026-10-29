@@ -9,7 +9,8 @@
 // listRadar 内部已按 §六「整体失败降级裸榜」处理：采集全败也返回库内热点 + lastError，
 // 只有参数错误才回失败信封。
 
-import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { type IpcMainInvokeEvent } from 'electron'
+import { channelHandleEvent } from './channelRegistrar'
 import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
 import type { HotManager, RadarView, HotTopicRow, HotCollectStatus } from '../marketing/hotManager'
 import type { HotScoreManager, HotScoreBatchResult } from '../marketing/hotScoreManager'
@@ -37,8 +38,7 @@ function handle(
   channel: string,
   fn: (event: IpcMainInvokeEvent, ...args: any[]) => Promise<HotIpcResult<unknown>>
 ): void {
-  ipcMain.removeHandler(channel)
-  ipcMain.handle(channel, fn)
+  channelHandleEvent(channel, fn)
 }
 
 export function registerHotIpc(manager: HotManager, scoreManager: HotScoreManager): void {

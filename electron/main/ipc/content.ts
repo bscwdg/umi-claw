@@ -18,7 +18,8 @@
 //
 // 失败统一信封：`{ ok: false, error: { code, message, details? } }`（与 advisor/scan 同构）。
 
-import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { type IpcMainInvokeEvent } from 'electron'
+import { channelHandleEvent } from './channelRegistrar'
 import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
 import { forwardGatewayStream, MARKETING_STREAM_EVENTS, type GatewayStreamSink } from '../gatewayClient'
 import type { AdvisorPackSummary } from './advisor'
@@ -81,8 +82,7 @@ function handle(
   channel: string,
   fn: (event: IpcMainInvokeEvent, ...args: any[]) => Promise<ContentIpcResult<unknown>>
 ): void {
-  ipcMain.removeHandler(channel)
-  ipcMain.handle(channel, (event, ...args) => fn(event, ...args))
+  channelHandleEvent(channel, fn)
 }
 
 export function registerContentIpc(manager: ContentManager): void {

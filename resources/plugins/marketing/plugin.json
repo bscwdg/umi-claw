@@ -1,0 +1,27 @@
+{
+  "id": "marketing",
+  "name": "营销域",
+  "version": "1.0.0",
+  "description": "项目管理 / 商业大脑 / 知识库 / 内容中心 / 热点雷达 / AI 顾问（官方内置插件）",
+  "capabilities": [
+    "host.ipc.v1",
+    "host.jobs.v1",
+    "host.db.v1",
+    "host.config.v1",
+    "host.openclaw.v1"
+  ],
+  "inject": ["host", "db", "config", "openclaw", "hostOps"],
+  "channels": ["marketing"],
+  "activation": ["onStartup"],
+  "contributes": {
+    "navGroup": { "id": "marketing", "label": "营销", "order": 20 },
+    "routes": [
+      "/marketing/business",
+      "/marketing/knowledge",
+      "/marketing/content",
+      "/marketing/hot",
+      "/marketing/advisor"
+    ]
+  },
+  "defaultEnabled": false
+}

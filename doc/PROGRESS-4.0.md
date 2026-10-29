@@ -219,3 +219,18 @@
 - 导入失败目前只有控制台，插件管理页还没有「导入失败 + 重试」入口；
 - 知识库附件仍写全局 `<dataDir>/knowledge`（兼容旧 `source_path`，Phase 4 再评估）；
 - 回滚到 3.0 后新数据只在插件库，需 runbook。
+
+### 2026-10-30 · Phase 3 第一步：marketing 插件可激活
+
+- `marketing/database.ts`：`MarketingDatabase` 最小依赖面；7 个 Manager 的 options 从 `DatabaseClient` 解耦（与 work 同套路）。
+- `marketing/runtime.ts`：`createMarketingRuntime(deps)` 装配 10 个 Manager（project/business/watchlist/knowledge/contextEngine/advisor/content/scan/hot/hotScore）。
+- `ipc/channelRegistrar.ts`：5 个 marketing ipc 文件（marketing/advisor/scan/content/hot）共用的注册器注入点，
+  激活时接 `ctx.registerChannelIpc`，停用即摘除（替代各自复制一份 ipcMain 直注册）。
+- `plugins/marketing`：manifest（`channels:["marketing"]`、默认 **关闭**、contributes 5 条路由 + 「营销」导航组）+ main.ts。
+  装配链路：`db.migrate()` → `createMarketingRuntime` → `setChannelRegistrar` → 5 组 IPC 注册。
+- `ctx.host.paths.nodePath`：collector / markdown 解析与 db worker 用同一个便携 node。
+- 迁移 SQL 由 `marketingMigration.ts` 脚本生成（11 表，含复合主键 `project_hot_topics(project_id,topic_id,platform)` 解析正确）。
+
+**验收**：plugin **47/47**（+P41：默认关闭、激活后 marketing:* 通道可用且经 Manager 查库、停用清零）；全量 19 套 **354/354**；双 typecheck 0 错；build 通过。
+
+下一步：marketing UI 装箱（6 页 + `stores/marketing.ts` 跟插件走）+ 宿主切换 + `umi-claw.db` 一次性导入。

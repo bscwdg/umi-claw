@@ -15,7 +15,8 @@
 //   - code 取自 §五 错误码表（errors.ts 的 ERROR_CODES）
 //   - 渲染端**禁止**用 error.message.includes() 判断，一律按 code 分支
 
-import { dialog, ipcMain } from 'electron'
+import { dialog } from 'electron'
+import { channelHandle } from './channelRegistrar'
 import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
 import type { BackupResult, DatabaseClient, DatabaseStatus } from '../database/database'
 import type {
@@ -103,8 +104,7 @@ async function wrap<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
 
 function handle(channel: string, fn: (...args: any[]) => Promise<IpcResult<unknown>>): void {
   // 防御性：重复注册会抛 "Attempted to register a second handler"，先移除
-  ipcMain.removeHandler(channel)
-  ipcMain.handle(channel, (_e, ...args) => fn(...args))
+  channelHandle(channel, fn)
 }
 
 export function registerMarketingIpc(

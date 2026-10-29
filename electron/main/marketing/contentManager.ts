@@ -35,7 +35,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { MarketingDatabase } from './database'
 import { PLATFORMS, renderContextPackText, type ContextEngine, type ContextPack, type Platform } from './contextEngine'
 import { renderPackRuleSection } from './platformRules'
 import {
@@ -272,7 +272,7 @@ export interface ContentGenerationRun {
 }
 
 export interface ContentManagerOptions {
-  database: DatabaseClient
+  database: MarketingDatabase
   /** 06 引擎（唯一上下文来源） */
   contextEngine: ContextEngine
   /** 07 客户端（唯一出站通道；硬规则 13） */
@@ -286,7 +286,7 @@ export interface ContentManagerOptions {
 let genTaskSeq = 0
 
 export class ContentManager {
-  private readonly database: DatabaseClient
+  private readonly database: MarketingDatabase
   private readonly contextEngine: ContextEngine
   private readonly gateway: GatewayClient
   private readonly logger?: (message: string) => void
@@ -1040,7 +1040,7 @@ function requireBody(value: unknown, method: string): string {
 }
 
 /** 热点溯源预检：给了就必须是真实存在的 hot_topics 行（FK 错误翻成人话） */
-async function assertSourceTopic(database: DatabaseClient, value: unknown): Promise<string | null> {
+async function assertSourceTopic(database: MarketingDatabase, value: unknown): Promise<string | null> {
   const id = optionalText(value)
   if (!id) return null
   const row = await database.request<{ id: string } | null>('hot_topics.get', { keys: { id } })
@@ -1073,7 +1073,7 @@ function clamp(value: unknown, def: number, min: number, max: number): number {
   return Math.min(Math.max(Math.floor(n), min), max)
 }
 
-async function assertProjectExists(database: DatabaseClient, projectId: string): Promise<void> {
+async function assertProjectExists(database: MarketingDatabase, projectId: string): Promise<void> {
   const row = await database.request<{ id: string } | null>('projects.get', { keys: { id: projectId } })
   if (!row) {
     throw new AppError(ERROR_CODES.NOT_FOUND, `Project 不存在: ${projectId}`, { projectId })

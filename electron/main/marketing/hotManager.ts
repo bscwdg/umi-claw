@@ -22,7 +22,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { MarketingDatabase } from './database'
 import { listAllRows, compareHeatRank } from './hotShared'
 
 // ── 常量（§六 / §七 Commit 11） ───────────────────────────────────────────────
@@ -140,7 +140,7 @@ export interface RadarView {
 }
 
 export interface HotManagerOptions {
-  database: DatabaseClient
+  database: MarketingDatabase
   /** resources/collector/index.mjs 绝对路径（dev/安装包路径解析在主进程 wiring 里做） */
   collectorScriptPath: string
   /** 运行 collector 的 node（便携 Node；与 db worker 同口径） */
@@ -224,7 +224,7 @@ export function classifyLifecycle(
 // ── Manager ──────────────────────────────────────────────────────────────────
 
 export class HotManager {
-  private readonly database: DatabaseClient
+  private readonly database: MarketingDatabase
   private readonly collectorScriptPath: string
   private readonly nodePath: string
   private readonly logger?: (message: string) => void

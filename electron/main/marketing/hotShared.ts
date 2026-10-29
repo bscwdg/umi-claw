@@ -4,7 +4,7 @@
 // 抽到这里只有一份真相，避免「5000 截断假设」与排序口径在四处拷贝里漂移（12 复审 6/8）。
 
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { MarketingDatabase } from './database'
 
 /** worker 单页硬上限（db-worker.mjs opList limit 上限） */
 export const DB_PAGE_SIZE = 5000
@@ -17,7 +17,7 @@ export const DB_MAX_PAGES = 100
  * 引用集漏判击穿 v1.11 例外（C2）、雷达漏行（A5）、评分漏候选。
  */
 export async function listAllRows<T>(
-  database: Pick<DatabaseClient, 'request'>,
+  database: Pick<MarketingDatabase, 'request'>,
   table: string,
   where?: Record<string, unknown>
 ): Promise<T[]> {

@@ -38,7 +38,7 @@ export interface PluginHostOptions {
   dataDir: string
   platform?: string
   /** 宿主路径（透传给 ctx.host.paths；缺省回落到 dataDir） */
-  paths?: { appPath: string; resourcesPath: string; isPackaged: boolean }
+  paths?: { appPath: string; resourcesPath: string; isPackaged: boolean; nodePath: string }
   /**
    * 宿主提供的服务工厂（PLAN-4.0 §4.2）。
    *
@@ -321,7 +321,8 @@ export class PluginHost {
         paths: this.opts.paths ?? {
           appPath: this.opts.dataDir,
           resourcesPath: this.opts.dataDir,
-          isPackaged: false
+          isPackaged: false,
+          nodePath: process.execPath
         }
       },
       logger: {

@@ -19,7 +19,8 @@
 // 预检在栅格化前由 recognizer 抛（stage='precheck'），最终防线在 07（按次解析）——两处同 payload，
 // 这里**原样透传**（不包装、不降级）；渲染端翻成人话引导去配置。
 
-import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { type IpcMainInvokeEvent } from 'electron'
+import { channelHandleEvent } from './channelRegistrar'
 import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
 import { forwardGatewayStream, MARKETING_STREAM_EVENTS, type GatewayStreamSink } from '../gatewayClient'
 import type { ScanRecognizer, RecognitionRun } from '../marketing/scanRecognizer'
@@ -62,8 +63,7 @@ function handle(
   channel: string,
   fn: (event: IpcMainInvokeEvent, ...args: any[]) => Promise<ScanIpcResult<unknown>>
 ): void {
-  ipcMain.removeHandler(channel)
-  ipcMain.handle(channel, (event, ...args) => fn(event, ...args))
+  channelHandleEvent(channel, fn)
 }
 
 export function registerScanIpc(scanRecognizer: ScanRecognizer, knowledgeManager: KnowledgeManager): void {

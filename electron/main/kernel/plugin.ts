@@ -38,6 +38,8 @@ export interface PluginHostInfo {
     appPath: string
     resourcesPath: string
     isPackaged: boolean
+    /** 便携 node（缺失时回退系统 node）；collector 与 db worker 用它跑脚本 */
+    nodePath: string
   }
 }
 

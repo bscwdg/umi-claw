@@ -12,7 +12,8 @@
 //
 // 失败统一信封：`{ ok: false, error: { code, message, details? } }`（与 ipc/marketing.ts 同构）
 
-import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { type IpcMainInvokeEvent } from 'electron'
+import { channelHandleEvent } from './channelRegistrar'
 import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
 import { forwardGatewayStream, MARKETING_STREAM_EVENTS, type GatewayStreamSink } from '../gatewayClient'
 import type { AdvisorAskInput, AdvisorManager, WatchCandidate } from '../marketing/advisorManager'
@@ -67,8 +68,7 @@ function handle(
   channel: string,
   fn: (event: IpcMainInvokeEvent, ...args: any[]) => Promise<AdvisorIpcResult<unknown>>
 ): void {
-  ipcMain.removeHandler(channel)
-  ipcMain.handle(channel, (event, ...args) => fn(event, ...args))
+  channelHandleEvent(channel, fn)
 }
 
 /** Context Pack → 面板摘要（纯映射，不动数据） */

@@ -24,7 +24,7 @@
 import { AppError, ERROR_CODES } from '../database/errors'
 import { extractJsonArray } from './jsonExtract'
 import { randomUUID } from 'node:crypto'
-import type { DatabaseClient } from '../database/database'
+import type { MarketingDatabase } from './database'
 import type { ContextEngine, Platform } from './contextEngine'
 import { renderContextPackText } from './contextEngine'
 import { PLATFORM_LABELS, renderPackRuleSection } from './platformRules'
@@ -95,7 +95,7 @@ export interface HotTodaySuggestion {
 }
 
 export interface HotScoreManagerOptions {
-  database: DatabaseClient
+  database: MarketingDatabase
   contextEngine: Pick<ContextEngine, 'buildContextPack'>
   gateway: Pick<GatewayClient, 'createChatStream'>
   logger?: (message: string) => void
@@ -291,7 +291,7 @@ function formatHeat(heat: number): string {
 // ── Manager ──────────────────────────────────────────────────────────────────
 
 export class HotScoreManager {
-  private readonly database: DatabaseClient
+  private readonly database: MarketingDatabase
   private readonly contextEngine: Pick<ContextEngine, 'buildContextPack'>
   private readonly gateway: Pick<GatewayClient, 'createChatStream'>
   private readonly logger?: (message: string) => void

@@ -43,6 +43,15 @@ const {
 const helloMod = await import(pathToFileURL(bundleEntry('plugins/hello/main.ts', 'hello-main.mjs')).href)
 const mergeDir = (base, name) => join(base, name)
 
+const marketingMod = await import(
+  pathToFileURL(
+    bundleEntry('plugins/marketing/main.ts', 'marketing-main.mjs', {
+      alias: ['electron=./test/.tmp/electron-stub.mjs'],
+      externals: ['mammoth', 'exceljs', 'docx', 'pdfjs-dist']
+    })
+  ).href
+)
+
 const workMod = await import(
   pathToFileURL(
     bundleEntry('plugins/work/main.ts', 'work-main.mjs', {
@@ -1633,6 +1642,113 @@ await r.check('P40', '导入健壮性：分页拉满、重跑靠 upsert 续传�
   }
 
   return '分页 / 续传 / 错误分类 / 缺表 / voice 过滤 全部正确'
+})
+// ── P41 marketing 插件：装配 Manager + 注册 marketing:* 通道，停用即摘除 ──────
+await r.check('P41', 'marketing 插件：默认关闭；启用后 marketing:* 通道可用，停用清零', async () => {
+  const ipc = createFakeIpc()
+  const calls = []
+  const dataDir = mkdtempSync(join(tmpdir(), 'umi-mkt-'))
+  const fakeDb = {
+    path: join(dataDir, 'plugins', 'marketing', 'data.db'),
+    async migrate() {},
+    async metaGet() {
+      return null
+    },
+    async metaSet() {
+      return { changes: 1 }
+    },
+    async request(method, params) {
+      calls.push({ method, params })
+      if (method === 'projects.list') return [{ id: 'p1', name: '示例项目', status: 'active' }]
+      if (method.endsWith('.list')) return []
+      if (method.endsWith('.get')) return null
+      if (method.endsWith('.create')) return params?.data ?? {}
+      return { changes: 1 }
+    },
+    async list() {
+      return []
+    },
+    async get() {
+      return null
+    },
+    async create() {
+      return {}
+    },
+    async update() {
+      return { changes: 1 }
+    },
+    async remove() {
+      return { deleted: true }
+    },
+    async backup() {
+      return { path: 'x' }
+    }
+  }
+  const stubGateway = {
+    getStatus: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
+    ensureReady: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
+    chat: async () => ({ text: '', model: null }),
+    stream: () => {
+      throw new Error('not used')
+    }
+  }
+  const services = {
+    db: () => fakeDb,
+    openclaw: () => stubGateway,
+    hostOps: () => ({
+      notify: () => undefined,
+      push: async () => ({ ok: true }),
+      listPushChannels: async () => [],
+      listPushTargets: async () => [],
+      locateOldDbs: () => [],
+      readOldDb: async () => ({})
+    }),
+    config: () => ({ get: () => undefined, set: () => undefined, all: () => ({}) })
+  }
+
+  const manifestForMkt = JSON.parse(
+    readFileSync(join(repoRoot, 'resources', 'plugins', 'marketing', 'plugin.json'), 'utf-8')
+  )
+  assertEq(manifestForMkt.defaultEnabled, false, '营销域默认关闭（PLAN 决策）')
+
+  const registry = new PluginRegistry({
+    hostServices: availableServices(services),
+    persistedEnabled: { marketing: true }
+  })
+  registry.register({
+    dir: join(repoRoot, 'plugins', 'marketing'),
+    source: 'resources/plugins/marketing/plugin.json',
+    manifest: manifestForMkt,
+    loadMain: async () => marketingMod.default
+  })
+  const host = makeHost(registry, ipc, {
+    services,
+    activationTimeoutMs: 20000,
+    paths: {
+      appPath: repoRoot,
+      resourcesPath: join(repoRoot, 'resources'),
+      isPackaged: false,
+      nodePath: process.execPath
+    }
+  })
+
+  try {
+    const status = await host.activate('marketing')
+    assertEq(status.state, 'activated', 'marketing 激活：' + JSON.stringify(status.error))
+    assert(status.channels.some((c) => c.startsWith('marketing:')), '注册了 marketing:* 通道')
+    assert(status.channels.length > 20, '通道数量应覆盖 5 组 IPC：' + status.channels.length)
+
+    const list = await ipc.invoke('marketing:project:list', {})
+    assertEq(list.ok, true, '通道返回 ok')
+    assertEq(list.data.length, 1, '经 Manager 查到 1 个项目')
+    assert(calls.some((c) => c.method === 'projects.list'), 'Manager 走到了注入的库')
+
+    await host.disposeAll()
+    assertEq(ipc.handlers.size, 0, '停用后 marketing:* 通道全部摘除')
+  } finally {
+    await host.disposeAll()
+  }
+  return `marketing 通道 ${'(见上)'} 条，停用清零`
 })
 const result = r.toJSON()
 const ok = printResult(result)
