@@ -33,6 +33,8 @@ const {
   PluginManifestError,
   discoverPlugins,
   createJsonStateStore,
+  createPluginConfigStore,
+  availableServices,
   pluginIpcChannel
 } = kernelMod
 
@@ -361,14 +363,28 @@ await r.check('P8', '激活超时：插件 activate 挂住 → failed（不拖�
 // ── P9 真 hello 插件（清单 + 入口） ─────────────────────────────────────────
 await r.check('P9', '真插件：resources/plugins/hello 清单可解析，入口激活后 ping 可用', async () => {
   const ipc = createFakeIpc()
-  const registry = new PluginRegistry({ persistedEnabled: { hello: true } })
+  const helloConfig = new Map()
+  const registry = new PluginRegistry({
+    persistedEnabled: { hello: true },
+    hostServices: ['host', 'config']
+  })
   registry.register({
     dir: join(repoRoot, 'resources', 'plugins', 'hello'),
     source: 'resources/plugins/hello/plugin.json',
     manifest: helloManifestRaw,
     loadMain: async () => helloMod.default
   })
-  const host = makeHost(registry, ipc)
+  const host = makeHost(registry, ipc, {
+    services: {
+      config: () => ({
+        get: (k, fallback) => (helloConfig.has(k) ? helloConfig.get(k) : fallback),
+        set: (k, v) => {
+          helloConfig.set(k, v)
+        },
+        all: () => Object.fromEntries(helloConfig)
+      })
+    }
+  })
   const status = await host.activate('hello')
 
   assertEq(status.state, 'activated', 'hello 激活')
@@ -672,6 +688,85 @@ await r.check('P20', '状态文件为非对象（数组/null/坏 JSON）时回�
     assertEq(JSON.stringify(loaded), '{}', `${content} 应回落 {}`)
   }
   return '四类脏状态都回落空表'
+})
+
+// ── P21~P23 服务注入（Phase 1 WP1）───────────────────────────────────────────
+await r.check('P21', '服务注入：只注入 inject 声明的服务，未声明的键不存在', async () => {
+  const ipc = createFakeIpc()
+  const shown = []
+  const values = {}
+  const factories = {
+    config: () => ({
+      get: (k, fallback) => (k in values ? values[k] : fallback),
+      set: (k, v) => {
+        values[k] = v
+      },
+      all: () => ({ ...values })
+    }),
+    notifications: () => ({ show: (n) => shown.push(n) })
+  }
+  const registry = new PluginRegistry({ hostServices: availableServices(factories) })
+  registry.register({
+    dir: '/fake/svc',
+    source: '<test>',
+    manifest: { ...manifest, id: 'svc', inject: ['host', 'config', 'notifications'] },
+    loadMain: async () => ({
+      activate(ctx) {
+        ctx.services.config.set('seen', 1)
+        ctx.services.notifications.show({ title: 't', body: 'b' })
+        ctx.registerIpc('keys', () => Object.keys(ctx.services).sort())
+      }
+    })
+  })
+  const host = makeHost(registry, ipc, { services: factories })
+  const status = await host.activate('svc')
+  assertEq(status.state, 'activated', '激活成功')
+
+  const keys = await ipc.invoke('plugin:svc:keys')
+  assertEq(keys.join(','), 'config,notifications', '只有声明的两个服务')
+  assertEq(values.seen, 1, 'config.set 生效')
+  assertEq(shown.length, 1, 'notifications.show 生效')
+  return '按 inject 精确注入'
+})
+
+await r.check('P22', '未声明 inject 的插件：ctx.services 为空（拿不到任何能力）', async () => {
+  const ipc = createFakeIpc()
+  const registry = new PluginRegistry({ hostServices: ['host', 'config'] })
+  registry.register({
+    dir: '/fake/nos',
+    source: '<test>',
+    manifest: { ...manifest, id: 'nos', inject: ['host'] },
+    loadMain: async () => ({
+      activate(ctx) {
+        ctx.registerIpc('keys', () => Object.keys(ctx.services))
+      }
+    })
+  })
+  const host = makeHost(registry, ipc, {
+    services: {
+      config: () => ({ get: () => undefined, set: () => undefined, all: () => ({}) })
+    }
+  })
+  await host.activate('nos')
+  const keys = await ipc.invoke('plugin:nos:keys')
+  assertEq(keys.length, 0, '没有任何服务')
+  return '未声明即无能力'
+})
+
+await r.check('P23', '插件配置落盘：set → flush → 重新打开仍能读到（按插件命名空间隔离）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'umi-plugin-config-'))
+  const file = join(dir, 'plugin-config.json')
+
+  const store = createPluginConfigStore(file)
+  store.serviceFor('a').set('k', 42)
+  store.serviceFor('b').set('k', 'other')
+  await store.flush()
+
+  const reopened = createPluginConfigStore(file)
+  assertEq(reopened.values('a').k, 42, 'a 的值')
+  assertEq(reopened.values('b').k, 'other', 'b 的值')
+  assertEq(JSON.stringify(reopened.values('c')), '{}', '未写过的插件是空对象')
+  return '命名空间隔离 + 原子落盘'
 })
 
 const result = r.toJSON()

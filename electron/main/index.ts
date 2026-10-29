@@ -27,13 +27,18 @@ import { shouldSpeakInApp } from './fish/voice/core/openclawTts'
 import { readFileSync, existsSync, readdirSync } from 'fs'
 import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process'
 
-// ── 4.0 插件内核（Phase 0）────────────────────────────────────────────────────
+// ── 4.0 插件内核（Phase 0/1）──────────────────────────────────────────────────
 import {
+  availableServices,
   createJsonStateStore,
+  createPluginConfigStore,
   discoverPlugins,
   PluginHost,
   PluginRegistry,
-  type PluginStatus
+  type NotificationsApi,
+  type OpenClawApi,
+  type PluginStatus,
+  type ServiceFactories
 } from './kernel'
 import { PLUGIN_MAIN_ENTRIES } from './kernel/plugins.main.generated'
 
@@ -505,6 +510,46 @@ function createWorkDatabase(): DatabaseClient {
 
 let pluginHost: PluginHost | null = null
 let pluginRegistry: PluginRegistry | null = null
+let pluginConfigStore: ReturnType<typeof createPluginConfigStore> | null = null
+
+// ── 服务适配器（Phase 1 WP1）：窄接口，不把 manager 递给插件 ─────────────────
+
+/** 系统通知：插件只能发标题 + 正文 */
+function createNotificationsService(): NotificationsApi {
+  return {
+    show({ title, body, silent }) {
+      try {
+        if (!Notification.isSupported()) return
+        new Notification({ title, body, silent: silent ?? false }).show()
+      } catch (e) {
+        console.warn('[plugin] 通知发送失败：', e)
+      }
+    }
+  }
+}
+
+/**
+ * OpenClaw 能力：包一层唯一的 GatewayClient（单例约束不变）。
+ * 插件拿不到 token、拿不到网关进程控制权，只能「问状态 / 聊天 / 流式」。
+ */
+function createOpenClawService(): OpenClawApi {
+  return {
+    status: () => getWorkGatewayClient().getStatus(),
+    ensureReady: () => getWorkGatewayClient().ensureReady(),
+    async chat(input) {
+      const res = await getWorkGatewayClient().chat({ ...input, stream: false })
+      return { text: res.text, model: res.model }
+    },
+    stream(input) {
+      const handle = getWorkGatewayClient().createChatStream({ ...input, stream: true })
+      return {
+        iterator: handle.iterator,
+        result: handle.result.then((r) => ({ text: r.text, chunks: r.chunks, aborted: r.aborted })),
+        cancel: () => handle.cancel()
+      }
+    }
+  }
+}
 
 function pluginStatuses(): PluginStatus[] {
   return pluginHost?.statuses() ?? []
@@ -521,7 +566,19 @@ async function initPlugins(): Promise<void> {
   try {
     const dataDir = configManager.getDataDir()
     const stateStore = createJsonStateStore(join(dataDir, 'plugins-state.json'))
-    const registry = new PluginRegistry({ persistedEnabled: await stateStore.load() })
+
+    // ── 服务层（Phase 1 WP1）：插件只能经 ctx.services 拿到这些窄接口 ──────────
+    pluginConfigStore = createPluginConfigStore(join(dataDir, 'plugin-config.json'))
+    const serviceFactories: ServiceFactories = {
+      config: (pluginId) => pluginConfigStore!.serviceFor(pluginId),
+      notifications: () => createNotificationsService(),
+      openclaw: () => createOpenClawService()
+    }
+
+    const registry = new PluginRegistry({
+      persistedEnabled: await stateStore.load(),
+      hostServices: availableServices(serviceFactories)
+    })
 
     const discovered = discoverPlugins({
       root: join(resourcesRoot(), 'plugins'),
@@ -574,6 +631,7 @@ async function initPlugins(): Promise<void> {
       ipc: ipcMain,
       hostVersion: app.getVersion(),
       dataDir,
+      services: serviceFactories,
       logger: (line) => console.log(line),
       onStatusChange: () => broadcastPluginStatus()
     })
@@ -2644,6 +2702,8 @@ app.on('before-quit', async () => {
   // 插件先优雅停用：移除 IPC / 清定时器，避免退出过程中还有插件回调在跑
   try {
     await pluginHost?.disposeAll()
+    // 插件配置的合并写可能还在 300ms 防抖里，退出前强制落盘
+    await pluginConfigStore?.flush()
   } catch (e) {
     console.error('[Main] 停用插件失败（继续退出）:', e)
   }

@@ -8,6 +8,7 @@
 
 import { pluginIpcChannel, type PluginContext, type PluginJobs, type PluginModule } from './plugin'
 import type { PluginRecord, PluginRegistry } from './registry'
+import type { PluginServiceBag, ServiceFactories } from './services'
 
 /** 宿主注入的 IPC 面（真实 electron.ipcMain 或测试假件） */
 export interface KernelIpc {
@@ -21,7 +22,7 @@ export interface PluginStatus {
   version: string
   state: PluginRecord['state']
   enabled: boolean
-  error?: { code: string; message: string }
+  error?: { code: string; stage?: string; message: string; field?: string }
   ipcMethods: string[]
   jobCount: number
   /** 清单贡献点（渲染端注册用） */
@@ -34,7 +35,14 @@ export interface PluginHostOptions {
   hostVersion: string
   dataDir: string
   platform?: string
-  /** 插件配置持久化（缺省仅内存） */
+  /**
+   * 宿主提供的服务工厂（PLAN-4.0 §4.2）。
+   *
+   * 只有这里注册的服务才可能被注入；每个插件的 `manifest.inject` 必须落在
+   * `availableServices(factories)` 里，否则激活时抛「服务未注入」。
+   */
+  services?: ServiceFactories
+  /** 插件配置持久化（缺省仅内存；config 服务工厂优先） */
   persistConfig?: (pluginId: string, values: Record<string, unknown>) => void | Promise<void>
   /** 激活超时，默认 5000ms */
   activationTimeoutMs?: number
@@ -43,6 +51,7 @@ export interface PluginHostOptions {
 }
 
 interface ActivePlugin {
+  pluginId: string
   module: PluginModule
   disposers: Array<{ label: string; run: () => void | Promise<void> }>
   timers: Set<ReturnType<typeof setTimeout>>
@@ -130,6 +139,7 @@ export class PluginHost {
     const id = record.manifest.id
 
     const active: ActivePlugin = {
+      pluginId: id,
       module: { activate: () => undefined },
       disposers: [],
       timers: new Set(),
@@ -262,6 +272,23 @@ export class PluginHost {
       count: () => active.timers.size
     }
 
+    // ── 服务注入：只注入 manifest.inject 里声明的，未声明的不存在 ──────────────
+    const configService =
+      this.opts.services?.config?.(id) ??
+      this.inMemoryConfig(active)
+    const services: PluginServiceBag = {}
+    for (const name of record.manifest.inject) {
+      if (name === 'host') continue
+      const value = this.resolveService(name, id)
+      if (value === undefined) {
+        const err = new Error(`插件 ${id} 声明的服务不可用：${name}`)
+        ;(err as { code?: string }).code = 'SERVICE_NOT_INJECTED'
+        throw err
+      }
+      ;(services as Record<string, unknown>)[name] = value
+    }
+    if (record.manifest.inject.includes('config')) services.config = configService
+
     return {
       id,
       version: record.manifest.version,
@@ -276,15 +303,8 @@ export class PluginHost {
         error: (m, meta) => this.log(record, `[error] ${m}${meta === undefined ? '' : ' ' + safeJson(meta)}`)
       },
       jobs,
-      config: {
-        get: <T,>(key: string, fallback?: T) =>
-          (key in active.config ? (active.config[key] as T) : fallback) as T | undefined,
-        set: (key, value) => {
-          active.config[key] = value
-          void this.opts.persistConfig?.(id, { ...active.config })
-        },
-        all: () => ({ ...active.config })
-      },
+      config: configService,
+      services,
       registerIpc: (method, handler) => {
         assertOpen(active, id)
         if (record.ipcMethods.has(method)) {
@@ -305,6 +325,39 @@ export class PluginHost {
       onDispose: (fn) => {
         active.disposers.push({ label: `onDispose(${id})`, run: fn })
       }
+    }
+  }
+
+  /** 服务解析：每次激活现取（工厂返回单例则由宿主保证） */
+  private resolveService(name: string, pluginId: string): unknown {
+    const factories = this.opts.services
+    if (!factories) return undefined
+    switch (name) {
+      case 'config':
+        return factories.config?.(pluginId)
+      case 'db':
+        return factories.db?.(pluginId)
+      case 'openclaw':
+        return factories.openclaw?.()
+      case 'notifications':
+        return factories.notifications?.()
+      case 'voice':
+        return factories.voice?.()
+      default:
+        return undefined
+    }
+  }
+
+  /** 未提供 config 服务工厂时的兜底：内存态（测试用） */
+  private inMemoryConfig(active: ActivePlugin) {
+    return {
+      get: <T,>(key: string, fallback?: T) =>
+        (key in active.config ? (active.config[key] as T) : fallback) as T | undefined,
+      set: (key: string, value: unknown) => {
+        active.config[key] = value
+        void this.opts.persistConfig?.(active.pluginId ?? '', { ...active.config })
+      },
+      all: () => ({ ...active.config })
     }
   }
 

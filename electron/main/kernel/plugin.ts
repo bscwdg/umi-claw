@@ -4,6 +4,7 @@
 // 由宿主 LIFO 清理（PLAN-4.0 §4.2 / §4.3）。这样停用不会留 IPC handler 或定时器。
 
 import type { PluginId } from './manifest'
+import type { PluginServiceBag } from './services'
 
 export interface PluginLogger {
   info(message: string, meta?: unknown): void
@@ -42,7 +43,10 @@ export interface PluginContext {
   readonly host: PluginHostInfo
   readonly logger: PluginLogger
   readonly jobs: PluginJobs
+  /** 插件配置（等价于 `services.config`，保留是为了早期插件不炸） */
   readonly config: PluginConfigApi
+  /** 按 manifest.inject 注入的宿主能力：没声明的不存在 */
+  readonly services: PluginServiceBag
   /** 注册 `plugin:<id>:<method>` 通道（停用自动 removeHandler） */
   registerIpc(method: string, handler: PluginIpcHandler): void
   /** 登记额外清理动作（与注册物一起 LIFO 执行；抛错不影响其它清理） */

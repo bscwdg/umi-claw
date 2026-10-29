@@ -38,3 +38,17 @@ export {
 } from './lifecycle'
 export { discoverPlugins, type DiscoveredPlugin, type DiscoverOptions } from './discovery'
 export { createJsonStateStore, createMemoryStateStore, type PluginStateStore } from './stateStore'
+export { createPluginConfigStore, type PluginConfigStore } from './pluginConfigStore'
+export {
+  availableServices,
+  type NotificationsApi,
+  type OpenClawApi,
+  type OpenClawChatInput,
+  type OpenClawStatus,
+  type OpenClawStreamHandle,
+  type PluginDbApi,
+  type PluginServiceBag,
+  type ServiceFactories,
+  type ServiceId,
+  type VoiceApi
+} from './services'

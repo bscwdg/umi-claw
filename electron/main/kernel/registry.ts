@@ -47,12 +47,14 @@ export interface PluginSource {
   loadMain: () => Promise<PluginModule>
 }
 
-/** 宿主能注入的服务（Phase 0 只有 host） */
+/** 默认可用服务（Phase 0/1 只有 host；宿主会用 availableServices() 传真实名单） */
 export const HOST_SERVICES = ['host'] as const
 
 export interface PluginRegistryOptions {
   /** 宿主提供的能力版本；默认取 HOST_CAPABILITIES */
   hostCapabilities?: readonly string[]
+  /** 宿主可注入的服务名（由 ServiceFactories 推导）；缺省只有 host */
+  hostServices?: readonly string[]
   /** 持久化的启停状态（缺省用清单的 defaultEnabled） */
   persistedEnabled?: Record<string, boolean>
 }
@@ -60,10 +62,12 @@ export interface PluginRegistryOptions {
 export class PluginRegistry {
   private readonly records = new Map<string, PluginRecord>()
   private readonly hostCapabilities: readonly string[]
+  private readonly hostServices: readonly string[]
   private readonly persistedEnabled: Record<string, boolean>
 
   constructor(opts: PluginRegistryOptions = {}) {
     this.hostCapabilities = opts.hostCapabilities ?? HOST_CAPABILITIES
+    this.hostServices = opts.hostServices ?? HOST_SERVICES
     this.persistedEnabled = { ...(opts.persistedEnabled ?? {}) }
   }
 
@@ -94,11 +98,11 @@ export class PluginRegistry {
         { pluginId: manifest.id, field: 'capabilities' }
       )
     }
-    const unknownServices = manifest.inject.filter((s) => !HOST_SERVICES.includes(s as 'host'))
+    const unknownServices = manifest.inject.filter((s) => !this.hostServices.includes(s))
     if (unknownServices.length) {
       throw new PluginManifestError(
         'MANIFEST_INVALID',
-        `插件 ${manifest.id} 声明了宿主不存在的服务：${unknownServices.join(', ')}（可用：${HOST_SERVICES.join(', ')}）`,
+        `插件 ${manifest.id} 声明了宿主不存在的服务：${unknownServices.join(', ')}（可用：${this.hostServices.join(', ')}）`,
         { pluginId: manifest.id, field: 'inject' }
       )
     }
