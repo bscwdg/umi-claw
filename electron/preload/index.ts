@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { TerminalRuntime } from '../../src/types/terminal'
 import type { ChannelStatus } from '../../src/types/channels'
+import type { PluginStatus } from '../main/kernel'
 import type {
   VoiceAudioPayload,
   VoiceCatalogFile,
@@ -382,6 +383,18 @@ const api = {
       refresh: () => ipcRenderer.invoke('marketing:hot:refresh'),
       score: (projectId: string, platform: string, options?: { force?: boolean }) =>
         ipcRenderer.invoke('marketing:hot:score', projectId, platform, options)
+    }
+  },
+
+  // 插件管理（Phase 0：列表 + 启停；插件自己的能力走 plugin:<id>:<method>）
+  plugins: {
+    list: () => call<PluginStatus[]>('plugin:list'),
+    setEnabled: (id: string, enabled: boolean) =>
+      call<PluginStatus[]>('plugin:setEnabled', { id, enabled }),
+    onChanged: (cb: (statuses: PluginStatus[]) => void) => {
+      const handler = (_e: unknown, statuses: PluginStatus[]): void => cb(statuses)
+      ipcRenderer.on('plugin:changed', handler)
+      return () => ipcRenderer.off('plugin:changed', handler)
     }
   },
 

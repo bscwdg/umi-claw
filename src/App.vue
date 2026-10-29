@@ -34,7 +34,7 @@
 
         <!-- 导航（分组：工作 / 控制台 / 营销 / OpenClaw / 系统） -->
         <nav class="nav">
-          <template v-for="group in navGroups" :key="group.title">
+          <template v-for="group in allNavGroups" :key="group.title">
             <div class="nav-group-label">{{ group.title }}</div>
             <router-link
               v-for="item in group.items"
@@ -100,10 +100,11 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useClawStore } from '@/stores/claw'
 import { useConfigStore } from '@/stores/config'
+import { pluginNavGroups } from '@/renderer/pluginUi'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 import ProjectSwitcher from '@/views/components/ProjectSwitcher.vue'
 import UserAgreementModal from '@/views/components/UserAgreementModal.vue'
@@ -174,6 +175,9 @@ const navGroups = [
     ]
   }
 ]
+
+// 插件导航组排在内核导航之后（manifest 的 order 决定组内顺序）
+const allNavGroups = computed(() => [...navGroups, ...pluginNavGroups.value])
 
 let cleanup: (() => void) | null = null
 let closeCleanup: (() => void) | null = null

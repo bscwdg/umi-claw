@@ -27,6 +27,16 @@ import { shouldSpeakInApp } from './fish/voice/core/openclawTts'
 import { readFileSync, existsSync, readdirSync } from 'fs'
 import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process'
 
+// ── 4.0 插件内核（Phase 0）────────────────────────────────────────────────────
+import {
+  createJsonStateStore,
+  discoverPlugins,
+  PluginHost,
+  PluginRegistry,
+  type PluginStatus
+} from './kernel'
+import { PLUGIN_MAIN_ENTRIES } from './kernel/plugins.main.generated'
+
 // ── 2.0 营销域 imports（合并自 release/2.0）────────────────────────────────────
 // 与 work 域同名的模块内标识符加 `Marketing*` / `*Lib` 别名区分：
 //   ContextEngine / KnowledgeManager 两域各有一套完全不同的实现，不能合并成一份。
@@ -486,6 +496,103 @@ function createWorkDatabase(): DatabaseClient {
     onSpawn: (info) => subprocessRegistry.register(info),
     logger: (message) => console.log(message)
   })
+}
+
+// ─── 4.0 插件宿主（Phase 0）─────────────────────────────────────────────────
+//
+// 只加载构建期登记过的插件（plugins.main.generated.ts），清单从 resources/plugins/<id>/plugin.json
+// 读；启停状态存 <dataDir>/plugins-state.json。插件失败只禁用它自己，宿主继续跑。
+
+let pluginHost: PluginHost | null = null
+let pluginRegistry: PluginRegistry | null = null
+
+function pluginStatuses(): PluginStatus[] {
+  return pluginHost?.statuses() ?? []
+}
+
+function broadcastPluginStatus(): void {
+  const statuses = pluginStatuses()
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send('plugin:changed', statuses)
+  }
+}
+
+async function initPlugins(): Promise<void> {
+  try {
+    const dataDir = configManager.getDataDir()
+    const stateStore = createJsonStateStore(join(dataDir, 'plugins-state.json'))
+    const registry = new PluginRegistry({ persistedEnabled: await stateStore.load() })
+
+    const discovered = discoverPlugins({
+      root: join(resourcesRoot(), 'plugins'),
+      entries: PLUGIN_MAIN_ENTRIES,
+      logger: (line) => console.log(line)
+    })
+
+    let registered = 0
+    for (const item of discovered) {
+      if (!item.manifest) continue
+      try {
+        registry.register({
+          dir: item.dir,
+          source: item.source,
+          manifest: item.manifest,
+          loadMain: item.loadMain
+        })
+        registered += 1
+      } catch (e) {
+        console.error(`[plugin:${item.id}] 注册失败：${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+
+    const host = new PluginHost({
+      registry,
+      ipc: ipcMain,
+      hostVersion: app.getVersion(),
+      dataDir,
+      logger: (line) => console.log(line),
+      onStatusChange: () => broadcastPluginStatus()
+    })
+
+    pluginRegistry = registry
+    pluginHost = host
+
+    // 宿主级插件管理通道（不是插件自己的能力通道）
+    ipcMain.removeHandler('plugin:list')
+    ipcMain.handle('plugin:list', () => ({ ok: true, data: pluginStatuses() }))
+
+    ipcMain.removeHandler('plugin:setEnabled')
+    ipcMain.handle('plugin:setEnabled', async (_e, payload: { id?: string; enabled?: boolean }) => {
+      const id = String(payload?.id ?? '')
+      const enabled = Boolean(payload?.enabled)
+      try {
+        if (!pluginHost || !pluginRegistry) throw new Error('插件宿主未初始化')
+        await pluginHost.setEnabled(id, enabled)
+        await stateStore.save(pluginRegistry.enabledSnapshot())
+        broadcastPluginStatus()
+        return { ok: true, data: pluginStatuses() }
+      } catch (e) {
+        return {
+          ok: false,
+          error: {
+            code: 'PLUGIN_OPERATION_FAILED',
+            message: e instanceof Error ? e.message : String(e)
+          }
+        }
+      }
+    })
+
+    await host.activateAll()
+    broadcastPluginStatus()
+
+    const activated = pluginStatuses().filter((s) => s.state === 'activated').length
+    console.log(
+      `[plugin] 就绪：登记 ${registered}/${Object.keys(PLUGIN_MAIN_ENTRIES).length}，激活 ${activated}`
+    )
+  } catch (e) {
+    // 插件子系统整体失败 → 宿主以「零插件模式」继续运行（PLAN-4.0 验收标准 1）
+    console.error('[plugin] 初始化失败（宿主继续运行，零插件模式）：', e)
+  }
 }
 
 /** resources/ 根（dev / 打包双路径，与 createWorkDatabase 同口径） */
@@ -2499,6 +2606,9 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
     else mainWindow?.show()
   })
+
+  // 插件宿主（Phase 0）：不 await，插件挂掉不能拖住宿主启动
+  void initPlugins()
 })
 
 app.on('window-all-closed', () => {
@@ -2507,6 +2617,12 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', async () => {
   ; (app as any).isQuiting = true
+  // 插件先优雅停用：移除 IPC / 清定时器，避免退出过程中还有插件回调在跑
+  try {
+    await pluginHost?.disposeAll()
+  } catch (e) {
+    console.error('[Main] 停用插件失败（继续退出）:', e)
+  }
   // 确保在退出前杀死所有子进程，防止孤儿进程
   killAllTerminalSessions()
   // 在途的 Advisor 流先中止：否则应用退出时上游可能还在生成（白烧 token）

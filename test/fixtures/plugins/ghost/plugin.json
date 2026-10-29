@@ -1,0 +1,8 @@
+{
+  "id": "ghost",
+  "name": "未登记插件",
+  "version": "1.0.0",
+  "capabilities": [],
+  "inject": [],
+  "defaultEnabled": false
+}
