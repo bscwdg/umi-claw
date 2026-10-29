@@ -27,6 +27,7 @@ export const VOICE_CHANNELS = {
   budgetGet: 'fish:voice:budget:get',
   budgetSet: 'fish:voice:budget:set',
   cacheClear: 'fish:voice:cache:clear',
+  cancel: 'fish:voice:cancel',
   clonePickSample: 'fish:voice:clone:pickSample',
   cloneValidate: 'fish:voice:clone:validate',
   cloneTrain: 'fish:voice:clone:train',
@@ -88,6 +89,12 @@ export function registerVoiceIpc(manager: VoiceManager, clone: VoiceCloneManager
     wrap(() => manager.updateSettings({ dailyCharLimit: limit }))
   )
   handle(VOICE_CHANNELS.cacheClear, () => wrap(() => manager.clearCache()))
+  handle(VOICE_CHANNELS.cancel, (jobId: string) =>
+    wrap(async () => {
+      await manager.cancel(String(jobId ?? ''))
+      return { cancelled: true }
+    })
+  )
   handle(VOICE_CHANNELS.clonePickSample, () =>
     wrap(async (): Promise<VoiceCloneSample | null> => {
       const result = await dialog.showOpenDialog({

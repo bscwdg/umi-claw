@@ -41,6 +41,7 @@ export interface VoiceManagerOptions {
   fetchImpl?: FetchLike
   now?: () => number
   logger?: (message: string) => void
+  onProgress?: (event: import('./types').VoiceProgressEvent) => void
 }
 
 function mergeUsage(
@@ -74,8 +75,10 @@ export class VoiceManager {
   private readonly cloneProvider: VolcengineCloneProvider
   private readonly now: () => number
   private readonly logger: (message: string) => void
+  private readonly onProgress: (event: import('./types').VoiceProgressEvent) => void
   private settingsCache: VoiceSettings | null = null
   private readonly inflight = new Map<string, Promise<VoiceSpeakResult>>()
+  private readonly controllers = new Map<string, AbortController>()
   private cloneGate:
     | ((speaker: string) => Promise<{ ok: boolean; message?: string }>)
     | null = null
@@ -91,6 +94,7 @@ export class VoiceManager {
     this.ttsProvider = new VolcengineTtsProvider(fetchImpl)
     this.cloneProvider = new VolcengineCloneProvider(fetchImpl)
     this.logger = options.logger ?? ((message) => console.log(message))
+    this.onProgress = options.onProgress ?? (() => undefined)
   }
 
   getCatalog(): VoiceCatalogFile {
@@ -116,6 +120,13 @@ export class VoiceManager {
     }
     this.settingsCache = normalizeVoiceSettings(parsed, this.catalog)
     return this.settingsCache
+  }
+
+  async cancel(jobId: string): Promise<void> {
+    const controller = this.controllers.get(jobId)
+    if (!controller) return
+    controller.abort(new Error('cancelled by user'))
+    this.controllers.delete(jobId)
   }
 
   async getSettings(): Promise<VoiceSettingsView> {
@@ -253,6 +264,9 @@ export class VoiceManager {
     const existing = bypassCache ? undefined : this.inflight.get(hash)
     if (existing) return existing
 
+    const controller = input.jobId ? new AbortController() : null
+    if (controller && input.jobId) this.controllers.set(input.jobId, controller)
+
     const task = this.generate({
       key,
       endpoint,
@@ -267,10 +281,13 @@ export class VoiceManager {
       sampleRate: settings.sampleRate,
       route,
       hash,
+      jobId: input.jobId,
+      signal: controller?.signal,
       dailyCharLimit: settings.dailyCharLimit,
       cacheLimitBytes: settings.cacheLimitMB * BYTES_PER_MB
     }).finally(() => {
       this.inflight.delete(hash)
+      if (input.jobId) this.controllers.delete(input.jobId)
     })
     this.inflight.set(hash, task)
     return task
@@ -290,6 +307,8 @@ export class VoiceManager {
     sampleRate: number
     route: VoiceRoute
     hash: string
+    jobId?: string
+    signal?: AbortSignal
     dailyCharLimit: number
     cacheLimitBytes: number
   }): Promise<VoiceSpeakResult> {
@@ -297,7 +316,9 @@ export class VoiceManager {
     try {
       const chunks: Buffer[] = []
       let usage: Record<string, unknown> | null = null
-      for (const segment of input.segments) {
+      for (let index = 0; index < input.segments.length; index += 1) {
+        const segment = input.segments[index]
+        this.onProgress({ jobId: input.jobId ?? '', index: index + 1, total: input.segments.length })
         const result = await this.ttsProvider.synthesize({
           endpoint: input.endpoint,
           apiKey: input.key,
@@ -308,6 +329,7 @@ export class VoiceManager {
           emotion: input.emotion,
           format: input.format,
           sampleRate: input.sampleRate,
+          signal: input.signal,
           returnUsage: input.route === 'preset'
         })
         chunks.push(result.audio)

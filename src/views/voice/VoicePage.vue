@@ -8,6 +8,9 @@
       <span class="state-pill" :class="{ ready: settings?.hasTtsKey }">
         {{ settings?.hasTtsKey ? '预设 TTS 已配置' : '预设 TTS 未配置' }}
       </span>
+      <button v-if="currentJobId" class="btn btn-sm" @click="cancelSpeak">
+        取消合成 {{ progressDone }}/{{ progressTotal }}
+      </button>
     </header>
 
     <nav class="tabs">
@@ -259,7 +262,7 @@
                 设为默认
               </button>
               <button
-                v-else-if="record.status === 'success'"
+                v-else-if="record.status === 'success' && !isCloneExpired(record)"
                 class="btn btn-sm btn-primary"
                 :disabled="busy"
                 @click="activateClone(record)"
@@ -447,6 +450,10 @@ const cloneForm = reactive({
 let currentAudio: HTMLAudioElement | null = null
 let objectUrl = ''
 let clonePollTimer: ReturnType<typeof setTimeout> | null = null
+const currentJobId = ref('')
+const progressDone = ref(0)
+const progressTotal = ref(0)
+let progressCleanup: (() => void) | null = null
 
 const voiceForm = reactive({
   defaultSpeaker: '',
@@ -491,12 +498,13 @@ async function refreshClones(): Promise<void> {
       (record) => record.speakerId === cloneWizardRecord.value?.speakerId
     )
     if (updated) cloneWizardRecord.value = updated
-    if (updated?.status === 'training' && cloneWizardOpen.value) {
-      clonePollTimer = setTimeout(() => {
-        clonePollTimer = null
-        void refreshClones().catch(() => undefined)
-      }, 2500)
-    }
+  }
+  const hasTraining = cloneRecords.value.some((record) => record.status === 'training')
+  if (hasTraining && !clonePollTimer) {
+    clonePollTimer = setTimeout(() => {
+      clonePollTimer = null
+      void refreshClones().catch(() => undefined)
+    }, 3000)
   }
 }
 
@@ -592,11 +600,16 @@ async function testKey(kind: VoiceKeyKind): Promise<void> {
 
 async function previewText(): Promise<void> {
   const text = activeTab.value === 'overview' ? quickText.value : previewInput.value
+  const jobId = crypto.randomUUID()
+  currentJobId.value = jobId
+  progressDone.value = 0
+  progressTotal.value = 0
   busy.value = true
   error.value = ''
   try {
     const result = await api.speak({
       text,
+      jobId,
       options: {
         speaker: voiceForm.defaultSpeaker || settings.value?.defaultSpeaker,
         speedRatio: voiceForm.speedRatio,
@@ -609,6 +622,7 @@ async function previewText(): Promise<void> {
   } catch (e) {
     showError(e)
   } finally {
+    currentJobId.value = ''
     busy.value = false
   }
 }
@@ -741,7 +755,11 @@ function languageLabel(language: number): string {
 function cloneExpiryText(record: VoiceCloneRecord): string {
   if (!record.expiresAt || record.activated) return '已转正'
   const days = Math.max(0, Math.ceil((record.expiresAt - Date.now()) / 86_400_000))
-  return days > 0 ? `${days} 天后未转正将自动删除` : '已到自动删除期限，请刷新状态'
+  return days > 0 ? `${days} 天后未转正将自动删除` : '已过 7 天保留期，请刷新状态后重新训练'
+}
+
+function isCloneExpired(record: VoiceCloneRecord): boolean {
+  return !record.activated && !!record.expiresAt && record.expiresAt < Date.now()
 }
 
 function formatBytes(bytes: number): string {
@@ -777,10 +795,15 @@ async function setCloneAsDefault(record: VoiceCloneRecord): Promise<void> {
 }
 
 async function previewClone(record: VoiceCloneRecord): Promise<void> {
+  const jobId = crypto.randomUUID()
+  currentJobId.value = jobId
+  progressDone.value = 0
+  progressTotal.value = 0
   busy.value = true
   try {
     const result = await api.speak({
       text: previewInput.value,
+      jobId,
       options: { speaker: record.speakerId }
     })
     await playAudio(result.audioId, result.mime)
@@ -789,7 +812,21 @@ async function previewClone(record: VoiceCloneRecord): Promise<void> {
   } catch (e) {
     showError(e)
   } finally {
+    currentJobId.value = ''
     busy.value = false
+  }
+}
+
+async function cancelSpeak(): Promise<void> {
+  if (!currentJobId.value) return
+  const jobId = currentJobId.value
+  try {
+    await api.cancel(jobId)
+    showNotice('已取消本次合成')
+  } catch (e) {
+    showError(e)
+  } finally {
+    currentJobId.value = ''
   }
 }
 
@@ -854,11 +891,18 @@ async function deleteClone(record: VoiceCloneRecord): Promise<void> {
 
 onMounted(() => {
   void load()
+  progressCleanup = api.onProgress((event) => {
+    if (event.jobId === currentJobId.value) {
+      progressDone.value = event.index
+      progressTotal.value = event.total
+    }
+  })
 })
 
 onBeforeUnmount(() => {
   releaseAudio()
   if (clonePollTimer) clearTimeout(clonePollTimer)
+  progressCleanup?.()
 })
 </script>
 

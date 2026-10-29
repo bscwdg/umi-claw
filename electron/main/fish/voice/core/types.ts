@@ -68,6 +68,14 @@ export interface VoiceSpeakOptions {
 export interface VoiceSpeakInput {
   text: string
   options?: VoiceSpeakOptions
+  /** 渲染端生成的任务 ID，用于取消；不传则不可取消。 */
+  jobId?: string
+}
+
+export interface VoiceProgressEvent {
+  jobId: string
+  index: number
+  total: number
 }
 
 export interface VoiceSpeakResult {

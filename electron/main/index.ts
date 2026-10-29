@@ -1556,6 +1556,7 @@ function setupLogForwarding(): void {
       // 但前端要能据此把「已停止」细化为「修复中」，避免用户以为卡死。
       const full = clawManager.getStatus()
       mainWindow.webContents.send('claw:statusChange', { running, port, maintenance: full.maintenance })
+      if (!running) void triggerVoiceAutoSpeak('OpenClaw 已停止')
     }
   }
 
@@ -1608,6 +1609,22 @@ if (app.isPackaged) {
 }
 
 // ─── App 生命周期 ──────────────────────────────────────────────────────────────
+
+async function triggerVoiceAutoSpeak(text: string): Promise<void> {
+  if (!voiceManager) return
+  try {
+    const settings = await voiceManager.getSettings()
+    if (settings.autoSpeak === 'off' || !settings.hasTtsKey) return
+    const result = await voiceManager.speak({ text })
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    mainWindow.webContents.send('fish:voice:auto-speak', {
+      audioId: result.audioId,
+      mime: result.mime
+    })
+  } catch (error) {
+    console.log(`[voice] 自动朗读跳过: ${(error as Error)?.message ?? String(error)}`)
+  }
+}
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.clawdesktop.app')
@@ -1720,7 +1737,12 @@ app.whenReady().then(() => {
       storage: voiceStorage,
       secrets: voiceSecretStore,
       cacheDir: join(configManager.getDataDir(), 'fish', 'audio'),
-      logger: (message) => console.log(message)
+      logger: (message) => console.log(message),
+      onProgress: (event) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('fish:voice:progress', event)
+        }
+      }
     })
     const voiceCloneManager = new VoiceCloneManager({
       storage: voiceStorage,
