@@ -203,6 +203,16 @@ const api = {
         voiceCall<VoiceSpeakResult>('fish:voice:speak', input),
       audio: (audioId: string) =>
         voiceCall<VoiceAudioPayload>('fish:voice:audio', audioId),
+      cancel: (jobId: string) =>
+        voiceCall<{ cancelled: boolean }>('fish:voice:cancel', jobId),
+      onProgress: (cb: (event: { jobId: string; index: number; total: number }) => void) => {
+        const handler = (
+          _event: unknown,
+          data: { jobId: string; index: number; total: number }
+        ) => cb(data)
+        ipcRenderer.on('fish:voice:progress', handler)
+        return () => ipcRenderer.off('fish:voice:progress', handler)
+      },
       budget: {
         get: (date?: string) => voiceCall<VoiceUsageDay>('fish:voice:budget:get', date),
         set: (limit: number) =>

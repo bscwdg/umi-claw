@@ -119,6 +119,9 @@ export class VoiceCloneManager {
       const record = await this.findRecord(speaker)
       if (!record) return { ok: false, message: '未知的克隆音色' }
       if (record.activated) return { ok: true }
+      if (record.expiresAt && record.expiresAt < this.now()) {
+        return { ok: false, message: '该克隆音色已过 7 天保留期，请重新训练' }
+      }
       return {
         ok: false,
         message: '该克隆音色首次正式合成将收取槽位费，请先在克隆向导中确认'
@@ -317,7 +320,6 @@ export class VoiceCloneManager {
       })
       this.samples.delete(input.token)
       const next = await this.applyRemoteStatus(speakerId, status)
-      if (next.status === 'training') this.schedulePoll(speakerId, this.pollIntervalMs, at)
       return next
     } catch (error) {
       // 请求超时也可能已被供应商受理；先查询一次，避免用户重复提交。
@@ -329,7 +331,6 @@ export class VoiceCloneManager {
         )
         if (status.status !== 0) {
           const next = await this.applyRemoteStatus(speakerId, status)
-          if (next.status === 'training') this.schedulePoll(speakerId, this.pollIntervalMs, at)
           return next
         }
       } catch {
@@ -430,11 +431,7 @@ export class VoiceCloneManager {
     const key = await this.secrets.get('clone')
     if (!key) throw new VoiceError(VOICE_ERROR_CODES.KEY_REQUIRED, '请先保存语音服务 Key')
     const status = await this.provider.getStatus(VOICE_ENDPOINTS.cloneStatus, key, speakerId)
-    const next = await this.applyRemoteStatus(speakerId, status)
-    if (next.status === 'training') {
-      this.schedulePoll(speakerId, this.pollIntervalMs, record.createdAt)
-    }
-    return next
+    return this.applyRemoteStatus(speakerId, status)
   }
 
   async activate(input: VoiceCloneActivateInput): Promise<VoiceSpeakResult> {
@@ -455,6 +452,12 @@ export class VoiceCloneManager {
     if (!record) throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '克隆音色不存在')
     if (record.status !== 'success' && record.status !== 'active') {
       throw new VoiceError(VOICE_ERROR_CODES.CLONE_FAILED, '音色尚未训练完成')
+    }
+    if (!record.activated && record.expiresAt && record.expiresAt < this.now()) {
+      throw new VoiceError(
+        VOICE_ERROR_CODES.CLONE_FAILED,
+        '该克隆音色已过 7 天保留期，供应商侧可能已删除，请重新训练'
+      )
     }
     if (record.activated) {
       return this.voiceManager.speak({

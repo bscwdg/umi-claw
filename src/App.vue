@@ -102,6 +102,7 @@ const navItems = [
 
 let cleanup: (() => void) | null = null
 let closeCleanup: (() => void) | null = null
+let autoSpeakCleanup: (() => void) | null = null
 
 // 关闭确认对话框状态
 const showCloseConfirm = ref(false)
@@ -124,11 +125,25 @@ onMounted(async () => {
     rememberCloseChoice.value = false
     showCloseConfirm.value = true
   })
+  autoSpeakCleanup = api.fish.voice.autoSpeak.on(async (event) => {
+    try {
+      const payload = await api.fish.voice.audio(event.audioId)
+      const url = URL.createObjectURL(
+        new Blob([new Uint8Array(payload.bytes)], { type: event.mime || payload.mime })
+      )
+      const audio = new Audio(url)
+      audio.onended = () => URL.revokeObjectURL(url)
+      await audio.play()
+    } catch {
+      // 自动朗读失败不能影响通知和主流程
+    }
+  })
 })
 
 onUnmounted(() => {
   cleanup?.()
   closeCleanup?.()
+  autoSpeakCleanup?.()
 })
 </script>
 

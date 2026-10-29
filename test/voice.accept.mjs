@@ -132,7 +132,7 @@ function makeManager({
 
 const recorder = new Recorder('voice')
 
-await recorder.check('V1', '默认设置、精选目录、Key 状态可用', async () => {
+await recorder.check('V1', '默认设置、全量目录、Key 状态可用', async () => {
   const manager = makeManager({ fetchImpl: async () => ttsResponse() })
   const settings = await manager.getSettings()
   const catalog = manager.getCatalog()
@@ -140,7 +140,8 @@ await recorder.check('V1', '默认设置、精选目录、Key 状态可用', asy
   assertEq(settings.autoSpeak, 'off', '自动朗读默认关')
   assertEq(settings.hasTtsKey, true, 'TTS Key 状态')
   assertEq(settings.hasCloneKey, true, '语音服务 Key 状态')
-  assertEq(catalog.voices.length, 10, '精选音色数量')
+  assert(catalog.voices.length >= 100, `音色目录不少于 100（实际 ${catalog.voices.length}）`)
+  assert(catalog.voices.some((voice) => voice.isDefault), '存在默认音色')
   assert(
     catalog.voices.every((voice) => voice.voiceType && voice.name),
     '精选音色字段完整'
