@@ -1,7 +1,7 @@
 // plugins/marketing/main.ts —— 营销域插件（Phase 3）
 //
 // 装配顺序：插件库 migrate → createMarketingRuntime → 注册 marketing:* / advisor / scan / content / hot 通道。
-// 默认**不启用**（PLAN 决策：营销域是可选重负载插件，默认关，用户在能力中心开启）。
+// 默认启用（承接 3.0/2.0 已有功能；用户可在能力中心关闭）。
 
 import type { PluginContext } from '../../electron/main/kernel'
 import { definePlugin } from '../../electron/main/kernel'
@@ -12,6 +12,11 @@ import { registerAdvisorIpc } from '../../electron/main/ipc/advisor'
 import { registerScanIpc } from '../../electron/main/ipc/scan'
 import { registerContentIpc } from '../../electron/main/ipc/content'
 import { registerHotIpc } from '../../electron/main/ipc/hot'
+import {
+  abortAllAdvisorStreams,
+  abortAllContentGenerations,
+  abortAllScanStreams
+} from '../../electron/main/ipc'
 import { join } from 'node:path'
 import { resolvePdfjsAssets } from '../../electron/main/work/parsers/pdfjsAssets'
 import { buildOpenClawGateway } from './gatewayAdapter'
@@ -19,9 +24,20 @@ import { importTableData, MARKETING_TABLES, HOST_APP_META_PREFIXES } from '../..
 
 let runtime: MarketingRuntime | null = null
 
-/** 宿主在过渡期读取（热点定时采集等）；装箱完成后可删除 */
-export function getMarketingRuntime(): MarketingRuntime | null {
-  return runtime
+/** 停用/清理时统一收尾：在途 collector、Advisor/扫描件/内容生成的 SSE 全部中止 */
+function stopBackgroundWork(marketing: MarketingRuntime): void {
+  const attempt = (label: string, fn: () => number): void => {
+    try {
+      const n = fn()
+      if (n > 0) console.log(`[marketing] 停用：已中止 ${n} 个${label}`)
+    } catch (e) {
+      console.warn(`[marketing] 停用中止${label}失败：`, (e as Error)?.message ?? e)
+    }
+  }
+  attempt('热点采集', () => marketing.hot.cancelActiveCollectors())
+  attempt('Advisor 流', () => abortAllAdvisorStreams())
+  attempt('扫描件识别', () => abortAllScanStreams())
+  attempt('内容生成', () => abortAllContentGenerations())
 }
 
 /**
@@ -131,11 +147,15 @@ export default definePlugin({
     ctx.logger.info(`营销域就绪（库 ${db.path}）`)
 
     return () => {
+      // 停用要把后台任务一起收掉：collector 最长 45s、SSE 还在烧 token，
+      // 而通道已摘除（用户连停止按钮都点不了）——必须先 abort 再让内核 dispose 库（审查 #5）。
+      stopBackgroundWork(marketing)
       runtime = null
       setChannelRegistrar(null)
     }
   },
   deactivate() {
+    if (runtime) stopBackgroundWork(runtime)
     runtime = null
     setChannelRegistrar(null)
   }

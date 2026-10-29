@@ -10,7 +10,7 @@
     "host.config.v1",
     "host.openclaw.v1"
   ],
-  "inject": ["host", "db", "config", "openclaw", "hostOps"],
+  "inject": ["host", "db", "config", "openclaw", "hostOps", "legacyDb"],
   "channels": ["marketing"],
   "activation": ["onStartup"],
   "contributes": {

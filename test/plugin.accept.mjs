@@ -412,6 +412,7 @@ await r.check('P9', '真插件：hello 清单可解析，入口激活后 ping / 
     }
   }
   const services = {
+    legacyDb: () => ({ list: async () => [] }),
     config: () => ({
       get: (k, fallback) => (helloConfig.has(k) ? helloConfig.get(k) : fallback),
       set: (k, v) => {
@@ -1367,6 +1368,7 @@ await r.check('P37', 'work 插件：激活后 work:* 通道可用，停用后全
     readOldDb: async () => ({})
   }
   const services = {
+    legacyDb: () => ({ list: async () => [] }),
     db: () => fakeDb,
     openclaw: () => gateway,
     hostOps: () => hostOps,
@@ -1413,6 +1415,7 @@ await r.check('P38', 'work 插件启停循环：停用摘通道，重新启用�
   })
   const ipc = createFakeIpc()
   const services = {
+    legacyDb: () => ({ list: async () => [] }),
     db: () => pluginDb.forPlugin({ id: 'work', dir: join(repoRoot, 'plugins', 'work') }),
     openclaw: () => ({
       getStatus: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
@@ -1422,6 +1425,7 @@ await r.check('P38', 'work 插件启停循环：停用摘通道，重新启用�
         throw new Error('not used')
       }
     }),
+    legacyDb: () => ({ list: async () => [] }),
     hostOps: () => ({
       notify: () => undefined,
       push: async () => ({ ok: true }),
@@ -1697,8 +1701,10 @@ await r.check('P41', 'marketing 插件：默认开启；启用后 marketing:* �
     }
   }
   const services = {
+    legacyDb: () => ({ list: async () => [] }),
     db: () => fakeDb,
     openclaw: () => stubGateway,
+    legacyDb: () => ({ list: async () => [] }),
     hostOps: () => ({
       notify: () => undefined,
       push: async () => ({ ok: true }),
@@ -1801,6 +1807,150 @@ await r.check('P42', '通用导入：marketing 表清单完整，按页拉满且
   assert(!written.some((w) => w.key === 'voice:v1:settings'), 'voice 配置未写入')
   assert(written.every((w) => w.method.endsWith('.upsert')), '全部走 upsert')
   return '清单/分页/排除 正确'
+})
+// ── P44 宿主不得再注册 marketing IPC（装箱回退防线）────────────────────────
+await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只发生在插件里', async () => {
+  const hostSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
+  const pluginSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
+  const fns = [
+    'registerMarketingIpc',
+    'registerAdvisorIpc',
+    'registerScanIpc',
+    'registerContentIpc',
+    'registerHotIpc'
+  ]
+  for (const fn of fns) {
+    const re = new RegExp(fn + '\\(')
+    assert(!re.test(hostSrc), `electron/main/index.ts 不应再调用 ${fn}`)
+    assert(re.test(pluginSrc), `plugins/marketing/main.ts 应调用 ${fn}`)
+  }
+  return '宿主零注册 / 插件全注册'
+})
+
+// ── P43 旧库导入走服务注入（防「清单忘了 inject」导致死代码）─────────────────
+await r.check('P43', '两个插件都在 inject 里声明 legacyDb，且激活后真的触发导入', async () => {
+  for (const id of ['work', 'marketing']) {
+    const manifest = JSON.parse(readFileSync(join(repoRoot, 'resources', 'plugins', id, 'plugin.json'), 'utf-8'))
+    assert(manifest.inject.includes('legacyDb'), `${id} 清单必须 inject legacyDb（否则导入是死代码）`)
+  }
+
+  const root = mkdtempSync(join(tmpdir(), 'umi-legacy-inject-'))
+  const ipc = createFakeIpc()
+  const upserts = []
+  const fakeDb = {
+    path: join(root, 'plugins', 'marketing', 'data.db'),
+    async migrate() {},
+    async metaGet() {
+      return null
+    },
+    async metaSet() {
+      return { changes: 1 }
+    },
+    async request(method, params) {
+      if (method.endsWith('.upsert')) upserts.push({ method, data: params?.data })
+      if (method === 'projects.list') return [{ id: 'p1', name: '旧项目' }]
+      if (method.endsWith('.list')) return []
+      return {}
+    },
+    async list() {
+      return []
+    },
+    async get() {
+      return null
+    },
+    async create() {
+      return {}
+    },
+    async update() {
+      return { changes: 1 }
+    },
+    async remove() {
+      return { deleted: true }
+    },
+    async backup() {
+      return { path: 'x' }
+    }
+  }
+  const services = {
+    legacyDb: () => ({ list: async () => [] }),
+    db: () => fakeDb,
+    openclaw: () => ({
+      getStatus: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
+      ensureReady: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
+      chat: async () => ({ text: '', model: null }),
+      stream: () => {
+        throw new Error('not used')
+      }
+    }),
+    legacyDb: () => ({ list: async () => [] }),
+    hostOps: () => ({
+      notify: () => undefined,
+      push: async () => ({ ok: true }),
+      listPushChannels: async () => [],
+      listPushTargets: async () => [],
+      locateOldDbs: () => [],
+      readOldDb: async () => ({})
+    }),
+    // 旧库只读：只给 projects 一行，app_meta 带 voice 前缀（应被排除）
+    legacyDb: () => ({
+      list: async (table) => {
+        if (table === 'projects') return [{ id: 'p1', name: '旧项目' }]
+        if (table === 'app_meta') {
+          return [
+            { key: 'marketing:lastProject', value: 'p1' },
+            { key: 'voice:v1:settings', value: '{"secret":1}' }
+          ]
+        }
+        return []
+      }
+    }),
+    config: () => ({ get: () => undefined, set: () => undefined, all: () => ({}) })
+  }
+
+  const manifestForMkt = JSON.parse(
+    readFileSync(join(repoRoot, 'resources', 'plugins', 'marketing', 'plugin.json'), 'utf-8')
+  )
+  const registry = new PluginRegistry({
+    hostServices: availableServices(services),
+    persistedEnabled: { marketing: true }
+  })
+  registry.register({
+    dir: join(repoRoot, 'plugins', 'marketing'),
+    source: 'resources/plugins/marketing/plugin.json',
+    manifest: manifestForMkt,
+    loadMain: async () => marketingMod.default
+  })
+  const host = makeHost(registry, ipc, {
+    services,
+    dataDir: root,
+    activationTimeoutMs: 20000,
+    paths: {
+      appPath: repoRoot,
+      resourcesPath: join(repoRoot, 'resources'),
+      isPackaged: false,
+      nodePath: process.execPath
+    }
+  })
+
+  try {
+    const status = await host.activate('marketing')
+    assertEq(status.state, 'activated', '激活：' + JSON.stringify(status.error))
+
+    // 导入是后台的：轮询等 .imported
+    const marker = join(root, 'plugins', 'marketing', '.imported')
+    for (let i = 0; i < 50 && !existsSync(marker); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    assert(existsSync(marker), '激活后应写 .imported（说明真的走了 legacyDb 服务）')
+    assert(
+      upserts.some((u) => u.data?.id === 'p1'),
+      '旧库 projects 被 upsert 进插件库'
+    )
+    assert(!upserts.some((u) => u.data?.key === 'voice:v1:settings'), 'voice 配置仍被排除')
+  } finally {
+    await host.disposeAll()
+  }
+  return '清单声明 + 服务注入 + 导入执行 全链路'
 })
 const result = r.toJSON()
 const ok = printResult(result)

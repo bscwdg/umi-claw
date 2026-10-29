@@ -282,6 +282,10 @@ function createWorkGatewayClient(): GatewayClient {
           field: 'projectId'
         })
       }
+      // 营销域未启用时不该悄悄建库：resolver 只在插件启用时工作（对抗 C2）
+      if (!pluginRegistry?.isEnabled('marketing')) {
+        throw new AppError(ERROR_CODES.OPENCLAW_NOT_READY, '营销域插件未启用：无法派生 Project 会话键')
+      }
       if (!pluginDbService) {
         throw new AppError(ERROR_CODES.OPENCLAW_NOT_READY, '插件库服务尚未初始化（应在 app.whenReady 之后取用）')
       }
@@ -543,6 +547,13 @@ async function initPlugins(): Promise<void> {
       ipc: ipcMain,
       hostVersion: app.getVersion(),
       dataDir,
+      // 宿主路径必须显式传：插件据此解析 collector / pdfjs / 便携 node（缺省回落只适合测试）
+      paths: {
+        appPath: app.getAppPath(),
+        resourcesPath: process.resourcesPath,
+        isPackaged: app.isPackaged,
+        nodePath: configManager.getNodePath()
+      },
       services: serviceFactories,
       // work 激活要 spawn 便携 node + 建库/迁移，5s 在慢机上会误判超时（审查 P1-4）
       activationTimeoutMs: 20000,
@@ -603,7 +614,8 @@ async function assertConsent(): Promise<void> {
   const granted = (value: string | null): boolean => value === 'granted'
 
   try {
-    if (pluginDbService) {
+    // 只有 work 插件启用时才读插件库：否则会为了读一个开关把库建出来（审查 #4）
+    if (pluginDbService && pluginRegistry?.isEnabled('work')) {
       const db = pluginDbService.forPlugin({ id: 'work', dir: join(resourcesRoot(), 'plugins', 'work') })
       if (granted(await db.metaGet('wizard_consent'))) return
     }
@@ -626,8 +638,10 @@ async function assertConsent(): Promise<void> {
  * 构造廉价（不 spawn），第一次 list 才起 worker；营销旧库是 11 表 schema，
  * 所以必须带 schemaId，否则 worker 会按 work 的 8 表白名单校验。
  */
-function openLegacyDatabase(fileName: string, schemaId: 'marketing'): DatabaseClient {
+function openLegacyDatabase(fileName: string, schemaId: 'marketing'): DatabaseClient | null {
   const dataDir = configManager.getDataDir()
+  // 旧库不存在就不要打开（DatabaseClient 首次 list 会把库建出来，等于给老用户凭空造一个空库）
+  if (!existsSync(join(dataDir, fileName))) return null
   const isDev = !app.isPackaged
   const resRoot = isDev ? join(app.getAppPath(), 'resources') : join(process.resourcesPath, 'resources')
   return new DatabaseClient({

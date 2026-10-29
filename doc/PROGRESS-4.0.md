@@ -266,3 +266,29 @@
 
 **验收**：plugin **48/48**；全量 19 套 **355/355**；双 typecheck 0 错；build 通过。
 下一步：Phase 3 审查 + 对抗（子代理），按报告修复后收口，再进 Phase 4。
+
+### 2026-10-30 · Phase 3 审查/对抗修复（R23–R28）
+
+两路子代理结论：对抗 9/16（2 阻塞）、审查 12 条（2×P0、4×P1）。逐条修复：
+
+| 编号 | 问题 | 修复 |
+|---|---|---|
+| R23 [P0] | 两个插件清单 `inject` 漏了 `legacyDb` → `ctx.services.legacyDb` 恒 undefined，**旧库导入从未执行**（P39/P41 直调模块，全绿是假象） | 两清单补 `legacyDb`；新增 P43：真激活 + 真服务注入，断言 `.imported` 出现、projects 被 upsert、voice 被排除 |
+| R24 [P0] | 生产 `new PluginHost` **没传 paths** → 插件算出 `<dataDir>/collector/index.mjs`、pdfjs 根不存在、node 是 electron.exe（热点/PDF 从 Phase 2 起全废） | 生产补齐 `paths`（appPath/resourcesPath/isPackaged/nodePath） |
+| R25 [P1] | 旧库用可写客户端打开：不存在会**新建** umi-claw.db 并迁移；空库也写 `.imported` | `openLegacyDatabase` 加 `existsSync` 守卫：不存在直接返回 null（插件跳过导入、不写标记） |
+| R26 [P1] | 停用 marketing 不中止在途 collector / Advisor / 扫描 / 内容生成（通道已摘，用户连停止都点不了） | 新增 `stopBackgroundWork()`：cleanup 与 deactivate 都依次 abort 四类任务 |
+| R27 [P1] | 宿主 resolver/consent 直读插件库，停用态也会把库建出来 | resolver 加 `isEnabled('marketing')` 闸门；`assertConsent` 只在 work 启用时读插件库，否则回落宿主 work.db |
+| R28 [P1/P2] | 控制台无条件渲染营销卡片与按钮，停用后跳空白路由 + no-handler；顶栏插槽 key 用下标；P41 假服务缺 legacyDb | Dashboard 按 `plugins.list()` 的 marketing 状态隐藏并跳过 `load()`；插槽 key 改组件名；测试夹具补 `legacyDb` |
+
+**新增验收**：P43（清单声明 + 服务注入 + 导入执行全链路）、P44（宿主零注册 / 插件全注册 marketing 5 组 IPC，防装箱回退）。
+
+**验收**：plugin **50/50**；全量 19 套 **357/357**；双 typecheck 0 错；build 通过。
+
+**仍待处理（记录，Phase 4）**：
+- 插件 UI 有 121 处直接 `window.api`（P32 只扫 renderer.ts 入口）——权限收窄与 `host.invoke` 迁移；
+- `marketing:gateway:*` 仍由宿主无条件注册（属 marketing 命名空间）；
+- 热点 `powerMonitor.resume` 即时补采能力随宿主定时器移除，需 `ctx.jobs.onResume` 或激活时先 tick 一次；
+- DailyHot base 配置键从 `config.hot.dailyhotBaseUrl` 改为插件配置 `dailyhotBase`，旧值无迁移；
+- `multimodalConfigured` 未注入，扫描件识别少了栅格化前预检；
+- 兼容垫片（src/stores/marketing.ts、useProjectSwitcher）待 Dashboard 改插槽后删除；
+- marketing 知识库原文仍写全局 `<dataDir>/projects/<id>`。

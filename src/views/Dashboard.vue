@@ -64,7 +64,7 @@
     </div>
 
     <!-- 2.0 营销卡（Commit 01 占位，数据接入见 Commit 03/04） -->
-    <div class="marketing-grid">
+    <div v-if="marketingReady" class="marketing-grid">
       <div class="card marketing-card">
         <div class="marketing-head">
           <span class="marketing-icon">🏪</span>
@@ -207,6 +207,11 @@ const router = useRouter()
 const clawStore = useClawStore()
 const configStore = useConfigStore()
 const marketing = useMarketingStore()
+/**
+ * 营销区是否可用：营销是插件，停用/激活失败时它的路由与通道都不存在。
+ * 控制台是宿主页面，必须按插件状态隐藏，否则会跳到空白路由并打 no-handler（审查 #6）。
+ */
+const marketingReady = ref(false)
 const switcher = useProjectSwitcher()
 const api = window.api
 const shell = window.api.shell
@@ -314,8 +319,15 @@ function formatDate(ts: number) {
 }
 
 // Commit 03：当前商家卡片读真实数据（侧边栏切换器挂载时也会 load，这里只补空数据兜底）
-onMounted(() => {
-  if (!marketing.projects.length) marketing.load()
+onMounted(async () => {
+  try {
+    const statuses = await window.api.plugins.list()
+    const mkt = statuses.find((s) => s.id === 'marketing')
+    marketingReady.value = Boolean(mkt && mkt.enabled && mkt.state === 'activated')
+  } catch {
+    marketingReady.value = false
+  }
+  if (marketingReady.value && !marketing.projects.length) marketing.load()
 })
 
 // 加载技能数量：与「技能管理」页同源，统计便携式 skills 目录下扫描到的技能总数

@@ -30,7 +30,10 @@
         </div>
 
         <!-- 顶栏插件插槽：营销域的「当前商家」切换器随插件启停（Phase 3 装箱） -->
-        <template v-for="(slotComp, slotIndex) in pluginSlots.topbar ?? []" :key="'topbar-' + slotIndex">
+        <template
+          v-for="(slotComp, slotIndex) in pluginSlots.topbar ?? []"
+          :key="'topbar-' + (slotComp?.name || slotComp?.__name || slotIndex)"
+        >
           <component :is="slotComp" />
         </template>
 
