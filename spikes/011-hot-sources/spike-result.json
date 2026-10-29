@@ -1,0 +1,974 @@
+{
+  "summary": {
+    "startedAt": "2026-09-18T19:08:10.290Z",
+    "finishedAt": "2026-09-18T19:09:21.723Z",
+    "timeoutMs": 8000,
+    "basesTried": [
+      "https://api-hot.imsyy.top",
+      "https://dailyhot.hkg1.zeabur.app",
+      "https://hot.ilsmw.com",
+      "https://dailyhot-api.vercel.app",
+      "https://api-hot.efefee.cn",
+      "https://api.codelife.cc"
+    ],
+    "primaryBase": null,
+    "routes": [
+      {
+        "key": "douyin",
+        "label": "抖音热点",
+        "ok": false,
+        "count": 0,
+        "hasTitle": false,
+        "hasHeat": false,
+        "hasUrl": false
+      },
+      {
+        "key": "weibo",
+        "label": "微博热搜",
+        "ok": false,
+        "count": 0,
+        "hasTitle": false,
+        "hasHeat": false,
+        "hasUrl": false
+      },
+      {
+        "key": "bilibili",
+        "label": "B站热门",
+        "ok": false,
+        "count": 0,
+        "hasTitle": false,
+        "hasHeat": false,
+        "hasUrl": false
+      },
+      {
+        "key": "zhihu",
+        "label": "知乎热榜",
+        "ok": false,
+        "count": 0,
+        "hasTitle": false,
+        "hasHeat": false,
+        "hasUrl": false
+      },
+      {
+        "key": "toutiao",
+        "label": "头条热榜",
+        "ok": false,
+        "count": 0,
+        "hasTitle": false,
+        "hasHeat": false,
+        "hasUrl": false
+      },
+      {
+        "key": "baidu",
+        "label": "百度热搜",
+        "ok": false,
+        "count": 0,
+        "hasTitle": false,
+        "hasHeat": false,
+        "hasUrl": false
+      },
+      {
+        "key": "kuaishou",
+        "label": "快手热榜",
+        "ok": false,
+        "count": 0,
+        "hasTitle": false,
+        "hasHeat": false,
+        "hasUrl": false
+      },
+      {
+        "key": "xiaohongshu",
+        "label": "小红书（预期无）",
+        "ok": false,
+        "count": 0,
+        "hasTitle": false,
+        "hasHeat": false,
+        "hasUrl": false
+      }
+    ],
+    "xiaohongshu": false,
+    "dailyHotApiUpstreamHasXiaohongshu": false,
+    "direct": {
+      "toutiao": {
+        "label": "头条热榜",
+        "reliable": true,
+        "flaky": false,
+        "count": 50,
+        "sample": {
+          "title": "博主：战争正在逼近日本",
+          "hot": "36734670",
+          "url": "https://www.toutiao.com/trending/7686886503816891958/?category_name=topic_innerflow&event_type=hot_board&log_pb=%7B%22category_name%22%3A%22topic_innerflow%22%2C%22cluster_type%22%3A%2213%22%2C%22enter_from%22%3A%22click_category%22%2C%22entrance_hotspot%22%3A%22outside%22%2C%22event_type%22%3A%22hot_board%22%2C%22hot_board_cluster_id%22%3A%227686886503816891958%22%2C%22hot_board_impr_id%22%3A%2220260919030917C8542C61B17CB2CACDAE%22%2C%22jump_page%22%3A%22hot_board_page%22%2C%22location%22%3A%22news_hot_card%22%2C%22page_location%22%3A%22hot_board_page%22%2C%22source%22%3A%22trending_tab%22%2C%22style_id%22%3A%2240132%22%2C%22title%22%3A%22%E5%8D%9A%E4%B8%BB%EF%BC%9A%E6%88%98%E4%BA%89%E6%AD%A3%E5%9C%A8%E9%80%BC%E8%BF%91%E6%97%A5%E6%9C%AC%22%7D&rank=&style_id=40132&topic_id=7686886503816891958"
+        }
+      },
+      "bilibili": {
+        "label": "B站热门视频",
+        "reliable": true,
+        "flaky": false,
+        "count": 20,
+        "sample": {
+          "title": "1s~1h冰冻螺蛳粉挑战",
+          "hot": 1850799,
+          "url": "https://b23.tv/BV1ZbY26yECF"
+        }
+      },
+      "douyin": {
+        "label": "抖音热点（验频控）",
+        "reliable": false,
+        "flaky": false,
+        "count": 0,
+        "sample": null
+      },
+      "zhihu": {
+        "label": "知乎热榜（预期 401）",
+        "reliable": false,
+        "flaky": false,
+        "count": 0,
+        "sample": null
+      },
+      "weibo": {
+        "label": "微博热搜（预期 403）",
+        "reliable": false,
+        "flaky": false,
+        "count": 0,
+        "sample": null
+      }
+    }
+  },
+  "aggregateBases": [
+    {
+      "base": "https://api-hot.imsyy.top",
+      "reachable": false,
+      "routes": [
+        {
+          "route": "douyin",
+          "label": "抖音热点",
+          "url": "https://api-hot.imsyy.top/douyin",
+          "httpStatus": null,
+          "ms": 110,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "weibo",
+          "label": "微博热搜",
+          "url": "https://api-hot.imsyy.top/weibo",
+          "httpStatus": null,
+          "ms": 40,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "bilibili",
+          "label": "B站热门",
+          "url": "https://api-hot.imsyy.top/bilibili",
+          "httpStatus": null,
+          "ms": 39,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "zhihu",
+          "label": "知乎热榜",
+          "url": "https://api-hot.imsyy.top/zhihu",
+          "httpStatus": null,
+          "ms": 39,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "toutiao",
+          "label": "头条热榜",
+          "url": "https://api-hot.imsyy.top/toutiao",
+          "httpStatus": null,
+          "ms": 39,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "baidu",
+          "label": "百度热搜",
+          "url": "https://api-hot.imsyy.top/baidu",
+          "httpStatus": null,
+          "ms": 41,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "kuaishou",
+          "label": "快手热榜",
+          "url": "https://api-hot.imsyy.top/kuaishou",
+          "httpStatus": null,
+          "ms": 39,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "xiaohongshu",
+          "label": "小红书（预期无）",
+          "url": "https://api-hot.imsyy.top/xiaohongshu",
+          "httpStatus": null,
+          "ms": 38,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        }
+      ]
+    },
+    {
+      "base": "https://dailyhot.hkg1.zeabur.app",
+      "reachable": false,
+      "routes": [
+        {
+          "route": "douyin",
+          "label": "抖音热点",
+          "url": "https://dailyhot.hkg1.zeabur.app/douyin",
+          "httpStatus": 404,
+          "ms": 391,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "{\"code\": \"HOSTNAME_NOT_FOUND\", \"message\": \"Not Found\"}"
+        },
+        {
+          "route": "weibo",
+          "label": "微博热搜",
+          "url": "https://dailyhot.hkg1.zeabur.app/weibo",
+          "httpStatus": 404,
+          "ms": 383,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "{\"code\": \"HOSTNAME_NOT_FOUND\", \"message\": \"Not Found\"}"
+        },
+        {
+          "route": "bilibili",
+          "label": "B站热门",
+          "url": "https://dailyhot.hkg1.zeabur.app/bilibili",
+          "httpStatus": 404,
+          "ms": 125,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "{\"code\": \"HOSTNAME_NOT_FOUND\", \"message\": \"Not Found\"}"
+        },
+        {
+          "route": "zhihu",
+          "label": "知乎热榜",
+          "url": "https://dailyhot.hkg1.zeabur.app/zhihu",
+          "httpStatus": 404,
+          "ms": 122,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "{\"code\": \"HOSTNAME_NOT_FOUND\", \"message\": \"Not Found\"}"
+        },
+        {
+          "route": "toutiao",
+          "label": "头条热榜",
+          "url": "https://dailyhot.hkg1.zeabur.app/toutiao",
+          "httpStatus": 404,
+          "ms": 125,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "{\"code\": \"HOSTNAME_NOT_FOUND\", \"message\": \"Not Found\"}"
+        },
+        {
+          "route": "baidu",
+          "label": "百度热搜",
+          "url": "https://dailyhot.hkg1.zeabur.app/baidu",
+          "httpStatus": 404,
+          "ms": 121,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "{\"code\": \"HOSTNAME_NOT_FOUND\", \"message\": \"Not Found\"}"
+        },
+        {
+          "route": "kuaishou",
+          "label": "快手热榜",
+          "url": "https://dailyhot.hkg1.zeabur.app/kuaishou",
+          "httpStatus": 404,
+          "ms": 123,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "{\"code\": \"HOSTNAME_NOT_FOUND\", \"message\": \"Not Found\"}"
+        },
+        {
+          "route": "xiaohongshu",
+          "label": "小红书（预期无）",
+          "url": "https://dailyhot.hkg1.zeabur.app/xiaohongshu",
+          "httpStatus": 404,
+          "ms": 122,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "{\"code\": \"HOSTNAME_NOT_FOUND\", \"message\": \"Not Found\"}"
+        }
+      ]
+    },
+    {
+      "base": "https://hot.ilsmw.com",
+      "reachable": false,
+      "routes": [
+        {
+          "route": "douyin",
+          "label": "抖音热点",
+          "url": "https://hot.ilsmw.com/douyin",
+          "httpStatus": null,
+          "ms": 39,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "weibo",
+          "label": "微博热搜",
+          "url": "https://hot.ilsmw.com/weibo",
+          "httpStatus": null,
+          "ms": 36,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "bilibili",
+          "label": "B站热门",
+          "url": "https://hot.ilsmw.com/bilibili",
+          "httpStatus": null,
+          "ms": 40,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "zhihu",
+          "label": "知乎热榜",
+          "url": "https://hot.ilsmw.com/zhihu",
+          "httpStatus": null,
+          "ms": 41,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "toutiao",
+          "label": "头条热榜",
+          "url": "https://hot.ilsmw.com/toutiao",
+          "httpStatus": null,
+          "ms": 40,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "baidu",
+          "label": "百度热搜",
+          "url": "https://hot.ilsmw.com/baidu",
+          "httpStatus": null,
+          "ms": 42,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "kuaishou",
+          "label": "快手热榜",
+          "url": "https://hot.ilsmw.com/kuaishou",
+          "httpStatus": null,
+          "ms": 42,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "xiaohongshu",
+          "label": "小红书（预期无）",
+          "url": "https://hot.ilsmw.com/xiaohongshu",
+          "httpStatus": null,
+          "ms": 41,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        }
+      ]
+    },
+    {
+      "base": "https://dailyhot-api.vercel.app",
+      "reachable": false,
+      "routes": [
+        {
+          "route": "douyin",
+          "label": "抖音热点",
+          "url": "https://dailyhot-api.vercel.app/douyin",
+          "httpStatus": null,
+          "ms": 8013,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "timeout>8000ms"
+        },
+        {
+          "route": "weibo",
+          "label": "微博热搜",
+          "url": "https://dailyhot-api.vercel.app/weibo",
+          "httpStatus": null,
+          "ms": 8002,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "timeout>8000ms"
+        },
+        {
+          "route": "bilibili",
+          "label": "B站热门",
+          "url": "https://dailyhot-api.vercel.app/bilibili",
+          "httpStatus": null,
+          "ms": 8014,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "timeout>8000ms"
+        },
+        {
+          "route": "zhihu",
+          "label": "知乎热榜",
+          "url": "https://dailyhot-api.vercel.app/zhihu",
+          "httpStatus": null,
+          "ms": 8004,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "timeout>8000ms"
+        },
+        {
+          "route": "toutiao",
+          "label": "头条热榜",
+          "url": "https://dailyhot-api.vercel.app/toutiao",
+          "httpStatus": null,
+          "ms": 8005,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "timeout>8000ms"
+        },
+        {
+          "route": "baidu",
+          "label": "百度热搜",
+          "url": "https://dailyhot-api.vercel.app/baidu",
+          "httpStatus": null,
+          "ms": 8011,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "timeout>8000ms"
+        },
+        {
+          "route": "kuaishou",
+          "label": "快手热榜",
+          "url": "https://dailyhot-api.vercel.app/kuaishou",
+          "httpStatus": null,
+          "ms": 8014,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "timeout>8000ms"
+        },
+        {
+          "route": "xiaohongshu",
+          "label": "小红书（预期无）",
+          "url": "https://dailyhot-api.vercel.app/xiaohongshu",
+          "httpStatus": null,
+          "ms": 8002,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "timeout>8000ms"
+        }
+      ]
+    },
+    {
+      "base": "https://api-hot.efefee.cn",
+      "reachable": false,
+      "routes": [
+        {
+          "route": "douyin",
+          "label": "抖音热点",
+          "url": "https://api-hot.efefee.cn/douyin",
+          "httpStatus": null,
+          "ms": 40,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "weibo",
+          "label": "微博热搜",
+          "url": "https://api-hot.efefee.cn/weibo",
+          "httpStatus": null,
+          "ms": 42,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "bilibili",
+          "label": "B站热门",
+          "url": "https://api-hot.efefee.cn/bilibili",
+          "httpStatus": null,
+          "ms": 41,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "zhihu",
+          "label": "知乎热榜",
+          "url": "https://api-hot.efefee.cn/zhihu",
+          "httpStatus": null,
+          "ms": 38,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "toutiao",
+          "label": "头条热榜",
+          "url": "https://api-hot.efefee.cn/toutiao",
+          "httpStatus": null,
+          "ms": 40,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "baidu",
+          "label": "百度热搜",
+          "url": "https://api-hot.efefee.cn/baidu",
+          "httpStatus": null,
+          "ms": 42,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "kuaishou",
+          "label": "快手热榜",
+          "url": "https://api-hot.efefee.cn/kuaishou",
+          "httpStatus": null,
+          "ms": 39,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        },
+        {
+          "route": "xiaohongshu",
+          "label": "小红书（预期无）",
+          "url": "https://api-hot.efefee.cn/xiaohongshu",
+          "httpStatus": null,
+          "ms": 43,
+          "ok": false,
+          "shape": null,
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "fetch failed"
+        }
+      ]
+    },
+    {
+      "base": "https://api.codelife.cc",
+      "reachable": false,
+      "routes": [
+        {
+          "route": "douyin",
+          "label": "抖音热点",
+          "url": "https://api.codelife.cc/douyin",
+          "httpStatus": 200,
+          "ms": 239,
+          "ok": false,
+          "shape": {
+            "code": 200,
+            "name": null,
+            "dataIsArray": false
+          },
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "请求成功"
+        },
+        {
+          "route": "weibo",
+          "label": "微博热搜",
+          "url": "https://api.codelife.cc/weibo",
+          "httpStatus": 200,
+          "ms": 123,
+          "ok": false,
+          "shape": {
+            "code": 200,
+            "name": null,
+            "dataIsArray": false
+          },
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "请求成功"
+        },
+        {
+          "route": "bilibili",
+          "label": "B站热门",
+          "url": "https://api.codelife.cc/bilibili",
+          "httpStatus": 200,
+          "ms": 128,
+          "ok": false,
+          "shape": {
+            "code": 200,
+            "name": null,
+            "dataIsArray": false
+          },
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "请求成功"
+        },
+        {
+          "route": "zhihu",
+          "label": "知乎热榜",
+          "url": "https://api.codelife.cc/zhihu",
+          "httpStatus": 200,
+          "ms": 126,
+          "ok": false,
+          "shape": {
+            "code": 200,
+            "name": null,
+            "dataIsArray": false
+          },
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "请求成功"
+        },
+        {
+          "route": "toutiao",
+          "label": "头条热榜",
+          "url": "https://api.codelife.cc/toutiao",
+          "httpStatus": 200,
+          "ms": 101,
+          "ok": false,
+          "shape": {
+            "code": 200,
+            "name": null,
+            "dataIsArray": false
+          },
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "请求成功"
+        },
+        {
+          "route": "baidu",
+          "label": "百度热搜",
+          "url": "https://api.codelife.cc/baidu",
+          "httpStatus": 200,
+          "ms": 124,
+          "ok": false,
+          "shape": {
+            "code": 200,
+            "name": null,
+            "dataIsArray": false
+          },
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "请求成功"
+        },
+        {
+          "route": "kuaishou",
+          "label": "快手热榜",
+          "url": "https://api.codelife.cc/kuaishou",
+          "httpStatus": 200,
+          "ms": 108,
+          "ok": false,
+          "shape": {
+            "code": 200,
+            "name": null,
+            "dataIsArray": false
+          },
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "请求成功"
+        },
+        {
+          "route": "xiaohongshu",
+          "label": "小红书（预期无）",
+          "url": "https://api.codelife.cc/xiaohongshu",
+          "httpStatus": 200,
+          "ms": 116,
+          "ok": false,
+          "shape": {
+            "code": 200,
+            "name": null,
+            "dataIsArray": false
+          },
+          "count": 0,
+          "fields": null,
+          "sample": null,
+          "error": "请求成功"
+        }
+      ]
+    }
+  ],
+  "direct": [
+    {
+      "route": "toutiao",
+      "label": "头条热榜",
+      "tries": [
+        {
+          "httpStatus": 200,
+          "ms": 92,
+          "count": 50,
+          "sample": {
+            "title": "博主：战争正在逼近日本",
+            "hot": "36734670",
+            "url": "https://www.toutiao.com/trending/7686886503816891958/?category_name=topic_innerflow&event_type=hot_board&log_pb=%7B%22category_name%22%3A%22topic_innerflow%22%2C%22cluster_type%22%3A%2213%22%2C%22enter_from%22%3A%22click_category%22%2C%22entrance_hotspot%22%3A%22outside%22%2C%22event_type%22%3A%22hot_board%22%2C%22hot_board_cluster_id%22%3A%227686886503816891958%22%2C%22hot_board_impr_id%22%3A%2220260919030917C8542C61B17CB2CACDAE%22%2C%22jump_page%22%3A%22hot_board_page%22%2C%22location%22%3A%22news_hot_card%22%2C%22page_location%22%3A%22hot_board_page%22%2C%22source%22%3A%22trending_tab%22%2C%22style_id%22%3A%2240132%22%2C%22title%22%3A%22%E5%8D%9A%E4%B8%BB%EF%BC%9A%E6%88%98%E4%BA%89%E6%AD%A3%E5%9C%A8%E9%80%BC%E8%BF%91%E6%97%A5%E6%9C%AC%22%7D&rank=&style_id=40132&topic_id=7686886503816891958"
+          },
+          "error": null
+        },
+        {
+          "httpStatus": 200,
+          "ms": 154,
+          "count": 50,
+          "sample": {
+            "title": "博主：战争正在逼近日本",
+            "hot": "36734670",
+            "url": "https://www.toutiao.com/trending/7686886503816891958/?category_name=topic_innerflow&event_type=hot_board&log_pb=%7B%22category_name%22%3A%22topic_innerflow%22%2C%22cluster_type%22%3A%2213%22%2C%22enter_from%22%3A%22click_category%22%2C%22entrance_hotspot%22%3A%22outside%22%2C%22event_type%22%3A%22hot_board%22%2C%22hot_board_cluster_id%22%3A%227686886503816891958%22%2C%22hot_board_impr_id%22%3A%222026091903091864A63F2CEB5C3170F1B2%22%2C%22jump_page%22%3A%22hot_board_page%22%2C%22location%22%3A%22news_hot_card%22%2C%22page_location%22%3A%22hot_board_page%22%2C%22source%22%3A%22trending_tab%22%2C%22style_id%22%3A%2240132%22%2C%22title%22%3A%22%E5%8D%9A%E4%B8%BB%EF%BC%9A%E6%88%98%E4%BA%89%E6%AD%A3%E5%9C%A8%E9%80%BC%E8%BF%91%E6%97%A5%E6%9C%AC%22%7D&rank=&style_id=40132&topic_id=7686886503816891958"
+          },
+          "error": null
+        }
+      ],
+      "reliable": true,
+      "flaky": false,
+      "count": 50,
+      "sample": {
+        "title": "博主：战争正在逼近日本",
+        "hot": "36734670",
+        "url": "https://www.toutiao.com/trending/7686886503816891958/?category_name=topic_innerflow&event_type=hot_board&log_pb=%7B%22category_name%22%3A%22topic_innerflow%22%2C%22cluster_type%22%3A%2213%22%2C%22enter_from%22%3A%22click_category%22%2C%22entrance_hotspot%22%3A%22outside%22%2C%22event_type%22%3A%22hot_board%22%2C%22hot_board_cluster_id%22%3A%227686886503816891958%22%2C%22hot_board_impr_id%22%3A%2220260919030917C8542C61B17CB2CACDAE%22%2C%22jump_page%22%3A%22hot_board_page%22%2C%22location%22%3A%22news_hot_card%22%2C%22page_location%22%3A%22hot_board_page%22%2C%22source%22%3A%22trending_tab%22%2C%22style_id%22%3A%2240132%22%2C%22title%22%3A%22%E5%8D%9A%E4%B8%BB%EF%BC%9A%E6%88%98%E4%BA%89%E6%AD%A3%E5%9C%A8%E9%80%BC%E8%BF%91%E6%97%A5%E6%9C%AC%22%7D&rank=&style_id=40132&topic_id=7686886503816891958"
+      }
+    },
+    {
+      "route": "bilibili",
+      "label": "B站热门视频",
+      "tries": [
+        {
+          "httpStatus": 200,
+          "ms": 97,
+          "count": 20,
+          "sample": {
+            "title": "1s~1h冰冻螺蛳粉挑战",
+            "hot": 1850799,
+            "url": "https://b23.tv/BV1ZbY26yECF"
+          },
+          "error": null
+        },
+        {
+          "httpStatus": 200,
+          "ms": 69,
+          "count": 20,
+          "sample": {
+            "title": "1s~1h冰冻螺蛳粉挑战",
+            "hot": 1850799,
+            "url": "https://b23.tv/BV1ZbY26yECF"
+          },
+          "error": null
+        }
+      ],
+      "reliable": true,
+      "flaky": false,
+      "count": 20,
+      "sample": {
+        "title": "1s~1h冰冻螺蛳粉挑战",
+        "hot": 1850799,
+        "url": "https://b23.tv/BV1ZbY26yECF"
+      }
+    },
+    {
+      "route": "douyin",
+      "label": "抖音热点（验频控）",
+      "tries": [
+        {
+          "httpStatus": 200,
+          "ms": 186,
+          "count": 0,
+          "sample": null,
+          "error": "non-json"
+        },
+        {
+          "httpStatus": 200,
+          "ms": 100,
+          "count": 0,
+          "sample": null,
+          "error": "non-json"
+        },
+        {
+          "httpStatus": 200,
+          "ms": 94,
+          "count": 0,
+          "sample": null,
+          "error": "non-json"
+        }
+      ],
+      "reliable": false,
+      "flaky": false,
+      "count": 0,
+      "sample": null
+    },
+    {
+      "route": "zhihu",
+      "label": "知乎热榜（预期 401）",
+      "tries": [
+        {
+          "httpStatus": 401,
+          "ms": 83,
+          "count": 0,
+          "sample": {
+            "title": null
+          },
+          "error": "[object Object]"
+        }
+      ],
+      "reliable": false,
+      "flaky": false,
+      "count": 0,
+      "sample": null
+    },
+    {
+      "route": "weibo",
+      "label": "微博热搜（预期 403）",
+      "tries": [
+        {
+          "httpStatus": 403,
+          "ms": 391,
+          "count": 0,
+          "sample": {
+            "title": null
+          },
+          "error": "Forbidden"
+        }
+      ],
+      "reliable": false,
+      "flaky": false,
+      "count": 0,
+      "sample": null
+    }
+  ]
+}

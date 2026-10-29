@@ -1,5 +1,6 @@
 import { VOICE_ERROR_CODES, VoiceError } from '../core/errors'
 import type { VoiceAudioFormat } from '../core/types'
+import { emotionInstruction } from '../core/emotionOptions'
 
 export interface VolcengineTtsRequest {
   endpoint: string
@@ -7,6 +8,16 @@ export interface VolcengineTtsRequest {
   resourceId: string
   text: string
   speaker: string
+  /** 合成路由：预设音色走 plan 接口，克隆音色走 ICL 资源。 */
+  route?: 'preset' | 'cloned'
+  /**
+   * 复刻音色的 model。官方枚举只有两个：
+   *   seed-tts-2.0-standard（标准版）
+   *   seed-tts-2.0-expressive（表现力增强版）
+   * 仅当 speaker 为复刻音色时应传；传了之后官方注明不支持 context_texts。
+   * 预设音色必须不传。
+   */
+  cloneModel?: 'seed-tts-2.0-standard' | 'seed-tts-2.0-expressive'
   speedRatio: number
   emotion?: string
   format: VoiceAudioFormat
@@ -77,17 +88,44 @@ export class VolcengineTtsProvider {
   async synthesize(request: VolcengineTtsRequest): Promise<VolcengineTtsResult> {
     const timeoutMs = request.timeoutMs ?? 60_000
     const { signal, cleanup } = makeTimeoutSignal(timeoutMs, request.signal)
-    const body = {
+    // v3 单向流接口的 req_params/audio_params 里没有 emotion 字段（核对官方文档 2026-10）。
+    // 官方 v3 控制情绪的方式是 req_params.context_texts：一句自然语言语音指令。
+    // 旧实现把 emotion 塞进 audio_params，用户填了也不会生效（字段被服务端忽略）。
+    // 官方《HTTP Chunked/SSE 单向流-V3》的路径（已逐条对齐）：
+    //   req_params.text / speaker / model
+    //   req_params.audio_params.format / sample_rate / speech_rate / loudness_rate
+    //   req_params.audio_params.emotion / emotion_scale
+    //   req_params.additions.context_texts（additions 必须是 JSON 序列化后的字符串）
+    const isCloned = request.route === 'cloned'
+    // 预设音色：emotion 与 context_texts 都可用（仅部分多情感音色支持 emotion）。
+    // 复刻音色：官方注明「指定 model 后不支持 context_texts」，且不支持 emotion。
+    const speechInstruction = isCloned
+      ? null
+      : emotionInstruction(request.emotion, false)
+    const additions = speechInstruction
+      ? JSON.stringify({ context_texts: [speechInstruction] })
+      : undefined
+    // 语速/音量：官方在 audio_params 下，取值 [-50,100]，100=2.0 倍、-50=0.5 倍。
+    const speechRate = Math.round(Math.min(100, Math.max(-50, (request.speedRatio - 1) * 100)))
+    const audioParams: Record<string, unknown> = {
+      format: request.format,
+      sample_rate: request.sampleRate,
+      speech_rate: speechRate
+    }
+    if (!isCloned && request.emotion) {
+      // emotion 是官方枚举值（happy/sad/angry…），位于 audio_params 下。
+      audioParams.emotion = request.emotion
+    }
+    const body: Record<string, unknown> = {
       req_params: {
         text: request.text,
         speaker: request.speaker,
-        audio_params: {
-          format: request.format,
-          sample_rate: request.sampleRate,
-          speed_ratio: request.speedRatio,
-          loudness_ratio: 1,
-          ...(request.emotion ? { emotion: request.emotion } : {})
-        }
+        // model 仅复刻音色需要，且必须是官方两个枚举之一（写错会报 45000001 InvalidModel）。
+        ...(isCloned
+          ? { model: request.cloneModel ?? 'seed-tts-2.0-standard' }
+          : {}),
+        ...(additions ? { additions } : {}),
+        audio_params: audioParams
       }
     }
     const headers: Record<string, string> = {

@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { VOICE_ERROR_CODES, VoiceError } from '../core/errors'
+import { defaultDemoText, normalizeCloneLanguage } from '../core/cloneLanguage'
 
 type FetchLike = typeof fetch
 
@@ -11,6 +12,12 @@ export interface CloneTrainRequest {
   format: string
   text?: string
   language: number
+  /** 试听文本；官方要求与 language 同语种，否则合成失败。缺省按语种取内置短句。 */
+  demoText?: string
+  /** 样本噪声较大时建议开启；官方 1.0 默认 true、2.0 默认 false。 */
+  enableAudioDenoise?: boolean
+  /** 关闭音量归一化；关闭后合成音量更贴近样本，相似度更高。 */
+  disableVolumeNormalization?: boolean
 }
 
 export interface CloneDemoInfo {
@@ -25,6 +32,8 @@ export interface CloneProviderStatus {
   modelTypes: number[]
   demos: CloneDemoInfo[]
   availableTrainingTimes: number | null
+  /** 响应头 X-Tt-Logid，报障定位用；只进脱敏诊断日志，不进页面。 */
+  logId: string | null
 }
 
 function providerError(code: number, message: string, status?: number): VoiceError {
@@ -53,7 +62,11 @@ export class VolcengineCloneProvider {
     }
   }
 
-  private parseStatus(parsed: Record<string, unknown>, fallbackMessage = ''): CloneProviderStatus {
+  private parseStatus(
+    parsed: Record<string, unknown>,
+    fallbackMessage = '',
+    logId: string | null = null
+  ): CloneProviderStatus {
     const status = Number(parsed.status ?? 0)
     const speakerStatus = Array.isArray(parsed.speaker_status) ? parsed.speaker_status : []
     const demos: CloneDemoInfo[] = []
@@ -76,7 +89,8 @@ export class VolcengineCloneProvider {
       availableTrainingTimes:
         parsed.available_training_times === undefined
           ? null
-          : Number(parsed.available_training_times)
+          : Number(parsed.available_training_times),
+      logId
     }
   }
 
@@ -85,7 +99,12 @@ export class VolcengineCloneProvider {
     apiKey: string,
     body: unknown,
     timeoutMs: number
-  ): Promise<{ response: Response; parsed: Record<string, unknown>; text: string }> {
+  ): Promise<{
+    response: Response
+    parsed: Record<string, unknown>
+    text: string
+    logId: string | null
+  }> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
@@ -100,7 +119,9 @@ export class VolcengineCloneProvider {
         signal: controller.signal
       })
       const text = await response.text().catch(() => '')
-      return { response, parsed: this.parseBody(text), text }
+      // 官方建议保存 X-Tt-Logid 便于定位问题；只在内部传递与脱敏日志使用。
+      const logId = response.headers.get('x-tt-logid')
+      return { response, parsed: this.parseBody(text), text, logId }
     } catch (error) {
       if (controller.signal.aborted) {
         throw new VoiceError(VOICE_ERROR_CODES.TIMEOUT, '声音复刻请求超时')
@@ -115,7 +136,8 @@ export class VolcengineCloneProvider {
   }
 
   async train(request: CloneTrainRequest): Promise<CloneProviderStatus> {
-    const { response, parsed, text } = await this.post(
+    const language = normalizeCloneLanguage(request.language)
+    const { response, parsed, text, logId } = await this.post(
       request.endpoint,
       request.apiKey,
       {
@@ -126,13 +148,16 @@ export class VolcengineCloneProvider {
           data: request.audioBase64
         },
         ...(request.text ? { text: request.text } : {}),
-        language: request.language,
+        language,
+        // 官方《声音复刻API-V3》（当前版）extra_params 只列这三个字段：
+        //   demo_text / enable_audio_denoise / disable_volume_normalization
+        // 旧实现里的 voice_clone_enable_mss、enable_crop_by_asr、
+        // voice_clone_denoise_model_id 已不在文档内，继续发送可能被忽略或报参数错，故移除。
         extra_params: {
-          demo_text: '你好，我是你的语音助手。',
-          enable_audio_denoise: false,
-          voice_clone_enable_mss: false,
-          enable_crop_by_asr: true,
-          voice_clone_denoise_model_id: ''
+          demo_text: request.demoText?.trim() || defaultDemoText(language),
+          enable_audio_denoise: request.enableAudioDenoise === true,
+          // 关闭音量归一化后，合成音量更贴近样本，与 prompt 相似度更高。
+          disable_volume_normalization: request.disableVolumeNormalization === true
         }
       },
       60_000
@@ -141,7 +166,7 @@ export class VolcengineCloneProvider {
     if (!response.ok || (code !== 0 && code !== 200)) {
       throw providerError(code || response.status, String(parsed.message ?? text), response.status)
     }
-    return this.parseStatus(parsed)
+    return this.parseStatus(parsed, '', logId)
   }
 
   async getStatus(
@@ -149,7 +174,7 @@ export class VolcengineCloneProvider {
     apiKey: string,
     customSpeakerId: string
   ): Promise<CloneProviderStatus> {
-    const { response, parsed, text } = await this.post(
+    const { response, parsed, text, logId } = await this.post(
       endpoint,
       apiKey,
       {
@@ -162,7 +187,7 @@ export class VolcengineCloneProvider {
     if (!response.ok || (code !== 0 && code !== 200 && code !== 45001107)) {
       throw providerError(code || response.status, String(parsed.message ?? text), response.status)
     }
-    return this.parseStatus(parsed)
+    return this.parseStatus(parsed, '', logId)
   }
 
   async testAuth(endpoint: string, apiKey: string): Promise<{ message: string }> {

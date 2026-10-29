@@ -7,6 +7,7 @@ import type {
   VoiceCatalogFile,
   VoiceCloneActivateInput,
   VoiceCloneRecord,
+  VoiceReconcileItem,
   VoiceCloneSample,
   VoiceCloneTrainInput,
   VoiceCloneValidation,
@@ -16,17 +17,29 @@ import type {
   VoiceSpeakInput,
   VoiceSpeakResult,
   VoiceTestResult,
-  VoiceUsageDay
+  VoiceUsageDay,
+  VoiceOpenClawStatus,
+  VoiceOpenClawTestResult
 } from '../main/fish/voice/core/types'
 console.log('✅ preload loaded')
-async function voiceCall<T>(channel: string, ...args: unknown[]): Promise<T> {
-  const res = (await ipcRenderer.invoke(channel, ...args)) as {
-    ok?: boolean
-    data?: T
-    error?: { message?: string }
+
+// ── work 域信封解包：IPC 返回 {ok,data} / {ok,error} ────────────────────────
+// 失败抛带 code/details 的错误，渲染端按 err.code 分支（不读 message）。
+class WorkError extends Error {
+  code: string
+  details?: unknown
+  constructor(code: string, message: string, details?: unknown) {
+    super(message)
+    this.name = 'WorkError'
+    this.code = code
+    this.details = details
   }
-  if (res?.ok) return res.data as T
-  throw new Error(res?.error?.message || '语音服务不可用')
+}
+
+async function call<T = unknown>(channel: string, ...args: unknown[]): Promise<T> {
+  const res = await ipcRenderer.invoke(channel, ...args)
+  if (res && res.ok) return res.data as T
+  throw new WorkError(res?.error?.code ?? 'UNKNOWN', res?.error?.message ?? `IPC ${channel} 失败`, res?.error?.details)
 }
 
 // 完整类型化的 API
@@ -36,16 +49,13 @@ const api = {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),
     close: () => ipcRenderer.invoke('window:close'),
-    // 关闭确认：接收主进程发来的关闭请求
     onCloseRequest: (cb: () => void) => {
       const handler = () => cb()
       ipcRenderer.on('window:close-request', handler)
       return () => ipcRenderer.off('window:close-request', handler)
     },
-    // 关闭确认：回传用户选择（tray=最小化到托盘，exit=退出）
     resolveClose: (action: 'tray' | 'exit', remember?: boolean) =>
       ipcRenderer.invoke('window:close-resolve', { action, remember }),
-    // 关闭确认：用户取消
     cancelClose: () => ipcRenderer.invoke('window:close-cancel')
   },
 
@@ -56,7 +66,6 @@ const api = {
     restart: () => ipcRenderer.invoke('claw:restart'),
     status: () => ipcRenderer.invoke('claw:status'),
     openWeb: () => ipcRenderer.invoke('claw:openWeb'),
-    // 事件监听
     onLog: (cb: (data: { line: string; type: string; time: number }) => void) => {
       const handler = (_: unknown, data: any) => cb(data)
       ipcRenderer.on('claw:log', handler)
@@ -67,8 +76,7 @@ const api = {
       ipcRenderer.on('claw:statusChange', handler)
       return () => ipcRenderer.off('claw:statusChange', handler)
     },
-    // 获取token
-    getToken: () => ipcRenderer.invoke('claw:get-token'),
+    getToken: () => ipcRenderer.invoke('claw:get-token')
   },
 
   // 配置
@@ -113,13 +121,14 @@ const api = {
     install: (id: string) => ipcRenderer.invoke('skills:install', id),
     uninstall: (id: string) => ipcRenderer.invoke('skills:uninstall', id),
     getInstalledSkills: () => ipcRenderer.invoke('skills:getInstalledSkills'),
-    toggleSkillStatus: (id: string, enabled: boolean) => ipcRenderer.invoke('skills:toggleSkillStatus', id, enabled),
+    toggleSkillStatus: (id: string, enabled: boolean) =>
+      ipcRenderer.invoke('skills:toggleSkillStatus', id, enabled),
     removeSkill: (id: string) => ipcRenderer.invoke('skills:removeSkill', id),
     importSkillZip: () => ipcRenderer.invoke('skills:importSkillZip'),
     probeRemote: () => ipcRenderer.invoke('skills:probeRemote'),
     installSkills: (ids: string[]) => ipcRenderer.invoke('skills:installSkills', ids),
     applyUpdates: (ids: string[]) => ipcRenderer.invoke('skills:applyUpdates', ids),
-    getPendingUpdates: () => ipcRenderer.invoke('skills:getPendingUpdates'),
+    getPendingUpdates: () => ipcRenderer.invoke('skills:getPendingUpdates')
   },
 
   // 工具
@@ -135,6 +144,7 @@ const api = {
   dialog: {
     showMessage: (options: any) => ipcRenderer.invoke('dialog:showMessage', options)
   },
+
   // 渠道
   channels: {
     isPluginInstalled: (pluginId: string) =>
@@ -143,6 +153,7 @@ const api = {
       ipcRenderer.invoke('channels:installPlugin', pluginPkg),
     getStatuses: (): Promise<ChannelStatus[]> => ipcRenderer.invoke('channels:getStatuses')
   },
+
   // 终端
   terminal: {
     runCommand: (args: string[], runtime?: TerminalRuntime) =>
@@ -150,12 +161,11 @@ const api = {
     startPty: (args: string[], cols: number, rows: number, runtime?: TerminalRuntime) =>
       ipcRenderer.invoke('term:pty-start', args, cols, rows, runtime),
     inputPty: (sid: string, data: string) => ipcRenderer.invoke('term:pty-input', sid, data),
-    resizePty: (sid: string, cols: number, rows: number) => ipcRenderer.invoke('term:pty-resize', sid, cols, rows),
+    resizePty: (sid: string, cols: number, rows: number) =>
+      ipcRenderer.invoke('term:pty-resize', sid, cols, rows),
     stopPty: (sid: string) => ipcRenderer.invoke('term:pty-stop', sid),
-    // 监听主进程推过来的终端流数据
     onPtyChunk: (callback: any) => ipcRenderer.on('term:pty-chunk', (_, data) => callback(data)),
     onPtyExit: (callback: any) => ipcRenderer.on('term:pty-exit', (_, data) => callback(data)),
-    // 组件卸载时移除监听，防止内存泄漏
     removeListeners: () => {
       ipcRenderer.removeAllListeners('term:pty-chunk')
       ipcRenderer.removeAllListeners('term:pty-exit')
@@ -163,6 +173,220 @@ const api = {
   },
 
   // Obsidian 知识库
+  marketing: {
+    system: {
+      dbStatus: (options?: { initialize?: boolean }) =>
+        ipcRenderer.invoke('marketing:system:dbStatus', options),
+      ping: () => ipcRenderer.invoke('marketing:system:ping'),
+      metaGet: (key: string) => ipcRenderer.invoke('marketing:system:metaGet', key),
+      metaSet: (key: string, value: string | null) =>
+        ipcRenderer.invoke('marketing:system:metaSet', key, value)
+    },
+    project: {
+      list: () => ipcRenderer.invoke('marketing:project:list'),
+      get: (projectId: string) => ipcRenderer.invoke('marketing:project:get', projectId),
+      create: (input: { name: string; industry?: string | null; description?: string | null }) =>
+        ipcRenderer.invoke('marketing:project:create', input),
+      update: (
+        projectId: string,
+        patch: { name?: string; industry?: string | null; description?: string | null }
+      ) => ipcRenderer.invoke('marketing:project:update', projectId, patch),
+      delete: (projectId: string) => ipcRenderer.invoke('marketing:project:delete', projectId)
+    },
+    context: {
+      getCurrentProject: () => ipcRenderer.invoke('marketing:context:getCurrentProject'),
+      setCurrentProject: (projectId: string | null) =>
+        ipcRenderer.invoke('marketing:context:setCurrentProject', projectId)
+    },
+    // Commit 04：Business 与 Project 1:1（无 list/create）；Watchlist 只做手工增删（**不采集**）
+    business: {
+      get: (projectId: string) => ipcRenderer.invoke('marketing:business:get', projectId),
+      upsert: (projectId: string, data: Record<string, string | null>) =>
+        ipcRenderer.invoke('marketing:business:upsert', projectId, data),
+      delete: (projectId: string) => ipcRenderer.invoke('marketing:business:delete', projectId)
+    },
+    watchlist: {
+      list: (projectId: string) => ipcRenderer.invoke('marketing:watchlist:list', projectId),
+      add: (projectId: string, keyword: string, type?: string | null) =>
+        ipcRenderer.invoke('marketing:watchlist:add', projectId, keyword, type),
+      remove: (projectId: string, keyword: string) =>
+        ipcRenderer.invoke('marketing:watchlist:remove', projectId, keyword),
+      setEnabled: (projectId: string, keyword: string, enabled: boolean) =>
+        ipcRenderer.invoke('marketing:watchlist:setEnabled', projectId, keyword, enabled)
+    },
+    // Commit 05a：知识库（导入时本地解析一次 → 文本入库、原文留 data/projects/<id>/）
+    knowledge: {
+      list: (projectId: string, options?: { limit?: number }) =>
+        ipcRenderer.invoke('marketing:knowledge:list', projectId, options),
+      get: (projectId: string, id: string) =>
+        ipcRenderer.invoke('marketing:knowledge:get', projectId, id),
+      create: (projectId: string, data: { title: string; type: string; content: string }) =>
+        ipcRenderer.invoke('marketing:knowledge:create', projectId, data),
+      update: (projectId: string, id: string, patch: { title?: string; content?: string }) =>
+        ipcRenderer.invoke('marketing:knowledge:update', projectId, id, patch),
+      delete: (projectId: string, id: string) =>
+        ipcRenderer.invoke('marketing:knowledge:delete', projectId, id),
+      search: (projectId: string, query: string, limit?: number) =>
+        ipcRenderer.invoke('marketing:knowledge:search', projectId, query, limit),
+      import: (
+        projectId: string,
+        input: { type: string; title?: string; text?: string; url?: string; filePath?: string }
+      ) => ipcRenderer.invoke('marketing:knowledge:import', projectId, input),
+      // 本地文件选择器（dialog 在主进程）；用户取消 → data.filePath = null，不是错误
+      pickFile: (): Promise<{ ok: true; data: { filePath: string | null } } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:knowledge:pickFile'),
+      // Commit 05b：扫描件/资料图 AI 识别兑底（**用户显式触发**；结果人工确认后才入库）。
+      // 流式增量沿用 07 的事件名（marketing:gateway:chunk / done / error，streamId=taskId），
+      // 复用 advisor 下面的 onChunk/onDone/onError 订阅（全局事件、按 streamId 归并，不另订一套）
+      recognize: (
+        projectId: string,
+        input: { filePath: string; type?: string }
+      ): Promise<{
+        ok: true
+        data: {
+          taskId: string
+          projectId: string
+          kind: 'pdf' | 'image'
+          suggestedTitle: string
+          images: Array<{ page: number; width: number; height: number; bytes: number; downscaled: boolean }>
+        }
+      } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:knowledge:recognize', projectId, input),
+      // 停止识别；幂等（任务已结束时返回 aborted:false，不报错）。
+      // 两路定位（05b 外部复审）：有 taskId 按 taskId；栅格化窗口里还没有 taskId 时按 projectId
+      // 中止该商家在途任务（主进程 recognizer 的注册表覆盖整个生命周期）。
+      abortRecognize: (taskId?: string | null, projectId?: string | null) =>
+        ipcRenderer.invoke('marketing:knowledge:recognize:abort', taskId ?? null, projectId ?? null),
+      // 人工确认后入库（硬规则 10：确认弹窗的「确认入库」是唯一写入路径）
+      commitRecognized: (
+        projectId: string,
+        input: { filePath: string; type: string; title?: string | null; content: string }
+      ): Promise<{
+        ok: true
+        data: Record<string, unknown>
+      } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:knowledge:commitRecognized', projectId, input)
+    },
+    // Commit 07：Gateway 只读面（硬规则 13：token 与 HTTP 调用只留主进程，渲染端只拿快照）
+    // status      = 只读就绪快照（零 token；只发 GET /health + GET /v1/models）
+    // ensureReady = 探活 → 按需自动拉起（复用 clawManager）→ 就绪轮询 → 同一快照
+    gateway: {
+      status: (): Promise<{
+        ok: true
+        data: {
+          ready: boolean
+          port: number
+          baseUrl: string
+          endpointsEnabled: boolean
+          lastError: { code: string; message: string; details?: unknown } | null
+        }
+      } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:gateway:status'),
+      ensureReady: (): Promise<{
+        ok: true
+        data: {
+          ready: boolean
+          port: number
+          baseUrl: string
+          endpointsEnabled: boolean
+          lastError: { code: string; message: string; details?: unknown } | null
+        }
+      } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:gateway:ensureReady')
+    },
+    // Commit 08：AI Advisor（grounded 问答 + 扩词候选）
+    // 流式增量走 07 定死的事件名（marketing:gateway:chunk / done / error，payload 带 streamId），
+    // 面板按 streamId 归并自己的流；abort 会真断上游（07 已验证）。
+    // 05b 的扫描件识别增量也走这三个事件（streamId=taskId），订阅只订一次。
+    advisor: {
+      ask: (input: { projectId: string; question: string; platform?: string | null; model?: string | null }) =>
+        ipcRenderer.invoke('marketing:advisor:ask', input),
+      // 停止生成；幂等（流已结束时返回 aborted:false，不报错）
+      abort: (streamId: string) => ipcRenderer.invoke('marketing:advisor:abort', streamId),
+      watchCandidates: (projectId: string, options?: { count?: number }) =>
+        ipcRenderer.invoke('marketing:advisor:watchCandidates', projectId, options),
+      onChunk: (cb: (payload: { streamId: string; index: number; delta: string }) => void) => {
+        const handler = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('marketing:gateway:chunk', handler)
+        return () => ipcRenderer.off('marketing:gateway:chunk', handler)
+      },
+      onDone: (
+        cb: (payload: {
+          streamId: string
+          chunks: number
+          text: string | null
+          aborted: boolean
+          /** shooting_script：版本 JSON 的可读渲染文本（其它流为 null） */
+          deliverable?: string | null
+        }) => void
+      ) => {
+        const handler = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('marketing:gateway:done', handler)
+        return () => ipcRenderer.off('marketing:gateway:done', handler)
+      },
+      onError: (cb: (payload: { streamId: string; error: { code: string; message: string; details?: unknown } }) => void) => {
+        const handler = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('marketing:gateway:error', handler)
+        return () => ipcRenderer.off('marketing:gateway:error', handler)
+      }
+    },
+    // Commit 09：Content Center（一次生成 3 版供选 → 编辑 → 版本 → 人工审核/发布标记）。
+    // 流式增量同样走 07 事件名（streamId=`<genTaskId>-<角度key>`），订阅复用 advisor 的
+    // onChunk/onDone/onError（全局事件按 streamId 归并，三路不串台）。
+    content: {
+      list: (projectId: string, options?: { status?: string | null; platform?: string | null; limit?: number }) =>
+        ipcRenderer.invoke('marketing:content:list', projectId, options),
+      get: (projectId: string, id: string) => ipcRenderer.invoke('marketing:content:get', projectId, id),
+      create: (
+        projectId: string,
+        data: { contentType?: string; title?: string | null; platform?: string | null; topic?: string | null; content?: string | null; sourceTopicId?: string | null }
+      ) => ipcRenderer.invoke('marketing:content:create', projectId, data),
+      update: (
+        projectId: string,
+        id: string,
+        patch: {
+          title?: string | null
+          platform?: string | null
+          topic?: string | null
+          content?: string | null
+          status?: string
+          published_at?: number | null
+          effect_note?: string | null
+        }
+      ) => ipcRenderer.invoke('marketing:content:update', projectId, id, patch),
+      // §五 扩面：delete（幂等；版本随 FK 级联清）
+      delete: (projectId: string, id: string) => ipcRenderer.invoke('marketing:content:delete', projectId, id),
+      // 一次生成 3 版供选（三路并行流式；硬规则 10：产出一律人工采纳，永不自动发）
+      generate: (
+        projectId: string,
+        spec: { contentId?: string | null; contentType?: string; businessLine?: string | null; platform: string; topic?: string | null; title?: string | null; customer?: string | null; sourceTopicId?: string | null; query?: string | null }
+      ) => ipcRenderer.invoke('marketing:content:generate', projectId, spec),
+      // 停止生成：两路定位（同 05b 口径）；幂等
+      abortGenerate: (genTaskId?: string | null, projectId?: string | null) =>
+        ipcRenderer.invoke('marketing:content:generate:abort', genTaskId ?? null, projectId ?? null),
+      saveVersion: (
+        projectId: string,
+        id: string,
+        input: { content: string; source?: string; prompt?: string | null },
+        options?: { activate?: boolean }
+      ) => ipcRenderer.invoke('marketing:content:saveVersion', projectId, id, input, options),
+      // §五 扩面：版本清单（历史面板）
+      versions: (projectId: string, id: string) => ipcRenderer.invoke('marketing:content:versions', projectId, id)
+    },
+    // Commit 11：热点雷达。list 打开页看时间差决定是否立即采集（force 强制）；
+    // Commit 12：score 懒评分（按批续评，force=手动重新分析）。
+    hot: {
+      list: (projectId: string, options?: { platform?: string | null; force?: boolean; skipCollect?: boolean; windowHours?: number }) =>
+        ipcRenderer.invoke('marketing:hot:list', projectId, options),
+      get: (topicId: string) => ipcRenderer.invoke('marketing:hot:get', topicId),
+      refresh: () => ipcRenderer.invoke('marketing:hot:refresh'),
+      score: (projectId: string, platform: string, options?: { force?: boolean }) =>
+        ipcRenderer.invoke('marketing:hot:score', projectId, platform, options)
+    }
+  },
+
+  // Obsidian 知识库
+
   obsidian: {
     getConfig: () => ipcRenderer.invoke('obsidian:getConfig'),
     saveConfig: (cfg: any) => ipcRenderer.invoke('obsidian:saveConfig', cfg),
@@ -181,30 +405,204 @@ const api = {
     }
   },
 
-  // ── 鱼语音（PLAN-VOICE.md）──
+  // ── work 域（3.0，PLAN-3.0.md §14）────────────────────────────────────────
+  // 硬规则 3：渲染端不持有 GATEWAY_TOKEN、不直连网关；一律 IPC → Manager → Gateway。
+  work: {
+    // 流式增量：统一 work:stream:{chunk,done,error}，按 runId 归并（B2）。
+    // 渲染端用 composable 订阅并过滤自己的 runId。
+    stream: {
+      onChunk: (cb: (e: { runId: string; index: number; delta: string }) => void) => {
+        const h = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('work:stream:chunk', h)
+        return () => ipcRenderer.off('work:stream:chunk', h)
+      },
+      onDone: (
+        cb: (e: { runId: string; chunks: number; text: string | null; aborted: boolean }) => void
+      ) => {
+        const h = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('work:stream:done', h)
+        return () => ipcRenderer.off('work:stream:done', h)
+      },
+      onError: (cb: (e: { runId: string; error: any }) => void) => {
+        const h = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('work:stream:error', h)
+        return () => ipcRenderer.off('work:stream:error', h)
+      },
+      removeAll: () => {
+        ipcRenderer.removeAllListeners('work:stream:chunk')
+        ipcRenderer.removeAllListeners('work:stream:done')
+        ipcRenderer.removeAllListeners('work:stream:error')
+      }
+    },
+
+    gateway: {
+      status: () => call('work:gateway:status'),
+      ensureReady: () => call('work:gateway:ensureReady')
+    },
+
+    profile: {
+      get: () => call('work:profile:get'),
+      update: (input) => call('work:profile:update', input)
+    },
+
+    matters: {
+      list: (params?) => call('work:matters:list', params ?? {}),
+      create: (input) => call('work:matters:create', input),
+      update: (id: string, patch) => call('work:matters:update', id, patch),
+      delete: (id: string) => call('work:matters:delete', id),
+      suggestMatter: (recordText: string) => call('work:matters:suggestMatter', recordText)
+    },
+
+    todos: {
+      list: (params?) => call('work:todos:list', params ?? {}),
+      create: (input) => call('work:todos:create', input),
+      update: (id: string, patch) => call('work:todos:update', id, patch),
+      delete: (id: string) => call('work:todos:delete', id),
+      complete: (id: string) => call('work:todos:complete', id),
+      uncomplete: (id: string) => call('work:todos:uncomplete', id),
+      confirm: (id: string) => call('work:todos:confirm', id),
+      ignore: (id: string) => call('work:todos:ignore', id),
+      confirmBatch: (ids: string[]) => call('work:todos:confirmBatch', ids),
+      ignoreBatch: (ids: string[]) => call('work:todos:ignoreBatch', ids)
+    },
+
+    records: {
+      list: (params?) => call('work:records:list', params ?? {}),
+      get: (id: string) => call('work:records:get', id),
+      create: (input) => call('work:records:create', input),
+      update: (id: string, patch) => call('work:records:update', id, patch),
+      delete: (id: string) => call('work:records:delete', id),
+      confirm: (id: string, patch?) => call('work:records:confirm', id, patch ?? {}),
+      ignore: (id: string) => call('work:records:ignore', id),
+      restore: (id: string) => call('work:records:restore', id),
+      confirmBatch: (ids: string[]) => call('work:records:confirmBatch', ids),
+      ignoreBatch: (ids: string[]) => call('work:records:ignoreBatch', ids),
+      listFiltered: (params?) => call('work:records:listFiltered', params ?? {}),
+      proposeCandidate: (input) => call('work:records:proposeCandidate', input)
+    },
+
+    context: {
+      snapshot: (request: { scope: string; id?: string }) =>
+        call('work:context:snapshot', request)
+    },
+
+    today: {
+      get: (date?: string) => call('work:today:get', date)
+    },
+
+    router: {
+      route: (input: string) => call('work:router:route', input)
+    },
+
+    reports: {
+      list: (params?) => call('work:reports:list', params ?? {}),
+      get: (id: string) => call('work:reports:get', id),
+      aggregate: (params: { type: 'daily' | 'weekly'; period?: string }) =>
+        call('work:reports:aggregate', params),
+      generate: (params: { type: 'daily' | 'weekly'; period?: string }) =>
+        call('work:reports:generate', params),
+      abortGenerate: (runId: string) => call('work:reports:abortGenerate', runId),
+      saveDraft: (id: string, content: string) => call('work:reports:saveDraft', id, content),
+      confirm: (id: string) => call('work:reports:confirm', id),
+      regenerate: (id: string) => call('work:reports:regenerate', id),
+      versions: (id: string) => call('work:reports:versions', id)
+    },
+
+    qa: {
+      ask: (params: { question: string; conversationKey?: string }) =>
+        call('work:qa:ask', params),
+      abortAsk: (runId: string) => call('work:qa:abortAsk', runId)
+    },
+
+    tools: {
+      list: () => call('work:tools:list'),
+      run: (params: { toolId: string; text: string; conversationKey?: string; instruction?: string }) =>
+        call('work:tools:run', params),
+      abortRun: (runId: string) => call('work:tools:abortRun', runId)
+    },
+
+    knowledge: {
+      list: (params?: { status?: string; limit?: number }) =>
+        call('work:knowledge:list', params ?? {}),
+      get: (id: string) => call('work:knowledge:get', id),
+      create: (input) => call('work:knowledge:create', input),
+      update: (id: string, patch) => call('work:knowledge:update', id, patch),
+      delete: (id: string) => call('work:knowledge:delete', id),
+      search: (query: string, limit?: number) => call('work:knowledge:search', query, limit),
+      import: (input) => call('work:knowledge:import', input),
+      pickFile: (expectedType?: string) => call('work:knowledge:pickFile', expectedType)
+    },
+
+    wizard: {
+      status: () => call('work:wizard:status'),
+      grantConsent: () => call('work:wizard:grantConsent'),
+      revokeConsent: () => call('work:wizard:revokeConsent'),
+      ensureConsent: () => call('work:wizard:ensureConsent'),
+      complete: () => call('work:wizard:complete'),
+      decide: (decision: string) => call('work:wizard:decide', decision),
+      readMapping: () => call('work:wizard:readMapping')
+    },
+
+    reminder: {
+      isEnabled: (id: 'morning' | 'report') => call('work:reminder:isEnabled', id),
+      setEnabled: (id: 'morning' | 'report', enabled: boolean) =>
+        call('work:reminder:setEnabled', id, enabled),
+      getTimes: () => call('work:reminder:getTimes'),
+      setTime: (id: 'morning' | 'report', hour: number, minute: number) =>
+        call('work:reminder:setTime', id, hour, minute),
+      getPushConfig: () => call('work:reminder:getPushConfig'),
+      setPushConfig: (patch: {
+        enabled?: boolean
+        channel?: 'feishu' | 'wecom' | 'openclaw-weixin' | 'dingtalk' | null
+        fallbackChannel?: 'feishu' | 'wecom' | 'openclaw-weixin' | 'dingtalk' | null
+        target?: string | null
+        fallbackTarget?: string | null
+      }) => call('work:reminder:setPushConfig', patch),
+      availablePushChannels: () => call('work:reminder:availablePushChannels'),
+      availablePushTargets: (channel: 'feishu' | 'wecom' | 'openclaw-weixin' | 'dingtalk') =>
+        call('work:reminder:availablePushTargets', channel),
+      testPush: () => call('work:reminder:testPush'),
+      getPushStatus: () => call('work:reminder:getPushStatus'),
+      check: () => call('work:reminder:check')
+    },
+
+    // v0.18：桥接 OpenClaw 总结当天工作（runToday 一律按手动计，不占自动预算）
+    openclawSummary: {
+      isAutoEnabled: () => call('work:openclaw-summary:isAutoEnabled'),
+      setAutoEnabled: (enabled: boolean) => call('work:openclaw-summary:setAutoEnabled', enabled),
+      runToday: () => call('work:openclaw-summary:runToday'),
+      getStatus: () => call('work:openclaw-summary:getStatus')
+    }
+  },
+
+  // ── 鱼语音（PLAN-VOICE.md）────────────────────────────────────────────────
   fish: {
     voice: {
       settings: {
-        get: () => voiceCall<VoiceSettingsView>('fish:voice:settings:get'),
+        get: () => call<VoiceSettingsView>('fish:voice:settings:get'),
         set: (patch: Partial<VoiceSettings>) =>
-          voiceCall<VoiceSettingsView>('fish:voice:settings:set', patch)
+          call<VoiceSettingsView>('fish:voice:settings:set', patch)
       },
       key: {
         set: (kind: VoiceKeyKind, value: string) =>
-          voiceCall<VoiceSettingsView>('fish:voice:key:set', kind, value),
+          call<VoiceSettingsView>('fish:voice:key:set', kind, value),
         clear: (kind: VoiceKeyKind) =>
-          voiceCall<VoiceSettingsView>('fish:voice:key:clear', kind)
+          call<VoiceSettingsView>('fish:voice:key:clear', kind)
       },
       catalog: {
-        get: () => voiceCall<VoiceCatalogFile>('fish:voice:catalog:get')
+        get: () => call<VoiceCatalogFile>('fish:voice:catalog:get')
       },
-      test: (kind: VoiceKeyKind) => voiceCall<VoiceTestResult>('fish:voice:test', kind),
+      test: (kind: VoiceKeyKind) => call<VoiceTestResult>('fish:voice:test', kind),
+      openclaw: {
+        status: () => call<VoiceOpenClawStatus>('fish:voice:openclaw:status'),
+        test: () => call<VoiceOpenClawTestResult>('fish:voice:openclaw:test')
+      },
       speak: (input: VoiceSpeakInput) =>
-        voiceCall<VoiceSpeakResult>('fish:voice:speak', input),
+        call<VoiceSpeakResult>('fish:voice:speak', input),
       audio: (audioId: string) =>
-        voiceCall<VoiceAudioPayload>('fish:voice:audio', audioId),
+        call<VoiceAudioPayload>('fish:voice:audio', audioId),
       cancel: (jobId: string) =>
-        voiceCall<{ cancelled: boolean }>('fish:voice:cancel', jobId),
+        call<{ cancelled: boolean }>('fish:voice:cancel', jobId),
       onProgress: (cb: (event: { jobId: string; index: number; total: number }) => void) => {
         const handler = (
           _event: unknown,
@@ -214,31 +612,32 @@ const api = {
         return () => ipcRenderer.off('fish:voice:progress', handler)
       },
       budget: {
-        get: (date?: string) => voiceCall<VoiceUsageDay>('fish:voice:budget:get', date),
+        get: (date?: string) => call<VoiceUsageDay>('fish:voice:budget:get', date),
         set: (limit: number) =>
-          voiceCall<VoiceSettingsView>('fish:voice:budget:set', limit)
+          call<VoiceSettingsView>('fish:voice:budget:set', limit)
       },
       cache: {
-        clear: () => voiceCall<{ freedBytes: number }>('fish:voice:cache:clear')
+        clear: () => call<{ freedBytes: number }>('fish:voice:cache:clear')
       },
       clone: {
-        pickSample: () => voiceCall<VoiceCloneSample | null>('fish:voice:clone:pickSample'),
+        pickSample: () => call<VoiceCloneSample | null>('fish:voice:clone:pickSample'),
         validate: (token: string) =>
-          voiceCall<VoiceCloneValidation>('fish:voice:clone:validate', token),
+          call<VoiceCloneValidation>('fish:voice:clone:validate', token),
         train: (input: VoiceCloneTrainInput) =>
-          voiceCall<VoiceCloneRecord>('fish:voice:clone:train', input),
+          call<VoiceCloneRecord>('fish:voice:clone:train', input),
         status: (speakerId: string) =>
-          voiceCall<VoiceCloneRecord>('fish:voice:clone:status', speakerId),
-        list: () => voiceCall<VoiceCloneRecord[]>('fish:voice:clone:list'),
+          call<VoiceCloneRecord>('fish:voice:clone:status', speakerId),
+        list: () => call<VoiceCloneRecord[]>('fish:voice:clone:list'),
         remove: (speakerId: string) =>
-          voiceCall<{ removed: true; remoteDelete: 'unsupported' }>(
+          call<{ removed: true; remoteDelete: 'unsupported' }>(
             'fish:voice:clone:remove',
             speakerId
           ),
         activate: (input: VoiceCloneActivateInput) =>
-          voiceCall<VoiceSpeakResult>('fish:voice:clone:activate', input),
+          call<VoiceSpeakResult>('fish:voice:clone:activate', input),
         demoAudio: (speakerId: string, modelType: number) =>
-          voiceCall<VoiceAudioPayload>('fish:voice:clone:demoAudio', speakerId, modelType)
+          call<VoiceAudioPayload>('fish:voice:clone:demoAudio', speakerId, modelType),
+        reconcile: () => call<VoiceReconcileItem[]>('fish:voice:clone:reconcile')
       },
       autoSpeak: {
         on: (cb: (event: { audioId: string; mime: string }) => void) => {
@@ -251,6 +650,8 @@ const api = {
   }
 }
 
+export type Api = typeof api
+
 if (process.contextIsolated) {
   try {
     contextBridge.exposeInMainWorld('electron', electronAPI)
@@ -259,10 +660,8 @@ if (process.contextIsolated) {
     console.error(error)
   }
 } else {
-  // @ts-ignore
+  // @ts-ignore non-contextIsolation fallback
   window.electron = electronAPI
   // @ts-ignore
   window.api = api
 }
-
-export type Api = typeof api

@@ -12,8 +12,38 @@
     "build:linux": "npm run build && electron-builder --linux",
     "build:all": "npm run build && electron-builder -mwl",
     "typecheck": "tsc --noEmit",
+    "typecheck:node": "tsc -p tsconfig.node.json --noEmit --composite false",
+    "typecheck:web": "tsc -p tsconfig.web.json --noEmit --composite false",
+    "accept:db": "node test/db-worker.accept.mjs",
+    "accept:gateway": "node test/gateway.accept.mjs",
+    "accept:node-runtime": "node test/node-runtime.accept.mjs",
+    "accept:maintenance": "node test/claw-maintenance.accept.mjs",
+    "accept:work": "node test/work.accept.mjs",
+    "accept:record": "node test/record.accept.mjs",
+    "accept:context:work": "node test/context.work.accept.mjs",
+    "accept:context:marketing": "node test/context.marketing.accept.mjs",
+    "accept:today": "node test/today.accept.mjs",
+    "accept:report": "node test/report.accept.mjs",
+    "accept:openclaw-summary": "node test/openclaw-summary.accept.mjs",
+    "accept:qatool": "node test/qatool.accept.mjs",
+    "accept:knowledge:work": "node test/knowledge.work.accept.mjs",
+    "accept:knowledge:marketing": "node test/knowledge.marketing.accept.mjs",
+    "accept:project": "node test/project.accept.mjs",
+    "accept:business": "node test/business.accept.mjs",
+    "accept:advisor": "node test/advisor.accept.mjs",
+    "accept:scan": "node test/scan.accept.mjs",
+    "accept:content": "node test/content.accept.mjs",
+    "accept:shooting": "node test/shooting.accept.mjs",
+    "accept:hot": "node test/hot.accept.mjs",
+    "accept:hotscore": "node test/hotscore.accept.mjs",
+    "accept:platform": "node test/platform.accept.mjs",
+    "accept:wizard": "node test/wizard.accept.mjs",
     "accept:voice": "node test/voice.accept.mjs",
-    "accept:config-writer": "esbuild electron/main/openClawConfigWriter.ts --bundle --platform=node --format=esm --target=node20 --outfile=test/.tmp/openclaw-config-writer.mjs && node --test test/openclaw-config-writer.accept.mjs"
+    "accept:ui": "node test/ui.accept.mjs",
+    "e2e:day": "node test/one-day.e2e.mjs",
+    "smoke": "node test/packaged.smoke.mjs",
+    "accept:config-writer": "esbuild electron/main/openClawConfigWriter.ts --bundle --platform=node --format=esm --target=node20 --outfile=test/.tmp/openclaw-config-writer.mjs && node --test test/openclaw-config-writer.accept.mjs",
+    "accept": "node scripts/run-all-accept.mjs"
   },
   "dependencies": {
     "@vueuse/core": "^10.9.0",
@@ -22,6 +52,9 @@
     "@xterm/xterm": "^6.0.0",
     "adm-zip": "^0.5.17",
     "docx": "^9.7.1",
+    "exceljs": "^4.4.0",
+    "mammoth": "^1.12.3",
+    "pdfjs-dist": "^3.11.174",
     "pinia": "^2.1.7",
     "vue": "^3.4.21",
     "vue-router": "^4.3.0"
@@ -64,7 +97,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },

@@ -29,12 +29,23 @@
           {{ clawStore.running ? 'OpenClaw 运行中' : 'OpenClaw 已停止' }}
         </div>
 
-        <!-- 导航 -->
+        <!-- 当前商家（2.0 营销域；无 Project 概念的工作域用户会看到空态，Phase 2 装箱时改为插件插槽） -->
+        <ProjectSwitcher />
+
+        <!-- 导航（分组：工作 / 控制台 / 营销 / OpenClaw / 系统） -->
         <nav class="nav">
-          <router-link v-for="item in navItems" :key="item.to" :to="item.to" class="nav-item">
-            <span class="nav-icon">{{ item.icon }}</span>
-            <span class="nav-label">{{ item.label }}</span>
-          </router-link>
+          <template v-for="group in navGroups" :key="group.title">
+            <div class="nav-group-label">{{ group.title }}</div>
+            <router-link
+              v-for="item in group.items"
+              :key="item.to"
+              :to="item.to"
+              class="nav-item"
+            >
+              <span class="nav-icon">{{ item.icon }}</span>
+              <span class="nav-label">{{ item.label }}</span>
+            </router-link>
+          </template>
         </nav>
 
         <!-- 底部信息 -->
@@ -55,6 +66,18 @@
         </router-view>
       </main>
     </div>
+
+    <!-- 用户协议弹窗（全局唯一实例）：首启为阻断模式，设置页打开为复核模式 -->
+    <UserAgreementModal
+      v-model:visible="agreementVisible"
+      :blocking="agreementBlocking"
+      :agreed="consentGranted"
+      :agreed-at="consentAt"
+      @agreed="onAgreementAgreed"
+    />
+
+    <!-- 冷启动向导（弹窗形态；走完或逐步跳过才关，只出现一次） -->
+    <WizardModal v-model:visible="wizardVisible" @done="onWizardDone" />
 
     <!-- 关闭窗口确认 -->
     <ConfirmDialog
@@ -78,26 +101,78 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useClawStore } from '@/stores/claw'
 import { useConfigStore } from '@/stores/config'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
+import ProjectSwitcher from '@/views/components/ProjectSwitcher.vue'
+import UserAgreementModal from '@/views/components/UserAgreementModal.vue'
+import WizardModal from '@/views/components/WizardModal.vue'
+import { wizardVisible } from '@/composables/useWizardGate'
+import {
+  agreementVisible,
+  agreementBlocking,
+  consentGranted,
+  consentAt,
+  openAgreementBlocking,
+  syncConsent
+} from '@/composables/useAgreementGate'
 
 const api = window.api
+const router = useRouter()
 const clawStore = useClawStore()
 const configStore = useConfigStore()
 const version = ref('')
 
-const navItems = [
-  { to: '/dashboard', icon: '🏠', label: '控制台' },
-  { to: '/config',    icon: '⚙️', label: '模型配置' },
-  { to: '/voice', icon: '🔊', label: '语音设置' },
-  { to: '/skills',    icon: '🧩', label: '技能管理' },
-  { to: '/logs',      icon: '📋', label: '运行日志' },
-  { to: '/setup',     icon: '🔧', label: '环境初始化' },
-  { to: '/channelsPage',     icon: '📩', label: '渠道接入' },
-  { to: '/terminal',     icon: '💻', label: 'OpenClaw终端' },
-  { to: '/obsidian',     icon: '📚', label: '知识库' },
-  { to: '/about',     icon: 'ℹ️', label: '关于' }
+// 分组导航：work 组来自 3.0，营销组来自 2.0；`/dashboard` 标签已拍板为「控制台」，
+// `/skills` 标签已拍板为「能力中心」（2026-10-30）。
+const navGroups = [
+  {
+    title: '工作',
+    items: [
+      { to: '/work/today', icon: '☀️', label: '新的一天' },
+      { to: '/work/records', icon: '🗂', label: '工作记录' },
+      { to: '/work/qa', icon: '💬', label: '工作问答' },
+      { to: '/work/reports', icon: '📊', label: '报告' },
+      { to: '/work/tools', icon: '🧰', label: '工具箱' },
+      { to: '/work/knowledge', icon: '📚', label: '工作知识库' },
+      { to: '/work/context', icon: '🔍', label: 'AI的世界' },
+      { to: '/work/settings', icon: '⚙️', label: '工作设置' }
+    ]
+  },
+  {
+    title: '控制台',
+    items: [{ to: '/dashboard', icon: '🏠', label: '控制台' }]
+  },
+  {
+    title: '营销',
+    items: [
+      { to: '/marketing/business', icon: '🏪', label: '商家大脑' },
+      { to: '/marketing/knowledge', icon: '📚', label: '知识库' },
+      { to: '/marketing/advisor', icon: '💬', label: 'AI 顾问（AI Advisor）' },
+      { to: '/marketing/content', icon: '✍️', label: '内容中心（Content Center）' },
+      { to: '/marketing/hot', icon: '🔥', label: '热点雷达' }
+    ]
+  },
+  {
+    title: 'OpenClaw',
+    items: [
+      { to: '/config', icon: '⚙️', label: '模型配置' },
+      { to: '/voice', icon: '🔊', label: '语音设置' },
+      { to: '/skills', icon: '🧩', label: '能力中心' },
+      { to: '/channelsPage', icon: '📩', label: '渠道接入' },
+      { to: '/terminal', icon: '💻', label: 'OpenClaw终端' },
+      { to: '/obsidian', icon: '📚', label: '知识库' },
+      { to: '/setup', icon: '🔧', label: '环境初始化' }
+    ]
+  },
+  {
+    title: '系统',
+    items: [
+      { to: '/logs', icon: '📋', label: '运行日志' },
+      { to: '/about', icon: 'ℹ️', label: '关于' }
+    ]
+  }
 ]
 
 let cleanup: (() => void) | null = null
@@ -108,6 +183,9 @@ let autoSpeakCleanup: (() => void) | null = null
 const showCloseConfirm = ref(false)
 const rememberCloseChoice = ref(false)
 
+// 首启用户协议（阻断式）—— 状态在 useAgreementGate 里共享（设置页也读同一份）
+const agreementBusy = ref(false)
+
 function onCloseConfirmExit() {
   api.window.resolveClose('exit', rememberCloseChoice.value)
 }
@@ -117,6 +195,9 @@ function onCloseConfirmTray() {
 }
 
 onMounted(async () => {
+  // §八 Day1：首启先过用户协议（阻断式，只出现一次）。
+  // 不 await：弹窗在状态回来后自己弹，绝不阻塞应用启动（硬规则 17）。
+  void ensureFirstRunWizard()
   await Promise.all([configStore.load(), clawStore.fetchStatus()])
   version.value = await api.app.getVersion()
   cleanup = clawStore.setupListeners()
@@ -145,6 +226,54 @@ onUnmounted(() => {
   closeCleanup?.()
   autoSpeakCleanup?.()
 })
+
+/**
+ * 首启流程（北 2026-09-24 定）：
+ * 1. 未同意用户协议 → 弹**阻断式**弹窗，必须同意才能用应用（只出现一次）
+ * 2. 已同意但向导未完成 → 进向导补齐其余可选步骤
+ *
+ * 硬规则 17：读取失败不阻断启动（按已同意处理，绝不把用户锁在门外）。
+ */
+async function ensureFirstRunWizard(): Promise<void> {
+  try {
+    const status = await api.work.wizard.status()
+    syncConsent(status.consent, status.consentAt ?? null)
+    if (!status.consent) {
+      // 阻断：不同意就不能用
+      openAgreementBlocking()
+      return
+    }
+    if (!status.completed) {
+      // 向导改为弹窗（北 2026-09-24）：不再跳路由，只开弹窗
+      wizardVisible.value = true
+    }
+  } catch {
+    // 读取失败不阻断：按原流程进控制台
+  }
+}
+
+/** 向导弹窗关闭（完成态）：进「今日」 */
+function onWizardDone(): void {
+  router.push('/work/today')
+}
+
+/** 同意用户协议：落库 → 关弹窗 → 继续首启向导（如未完成） */
+async function onAgreementAgreed(): Promise<void> {
+  if (agreementBusy.value) return
+  agreementBusy.value = true
+  try {
+    const res = await api.work.wizard.grantConsent()
+    syncConsent(true, res?.consentAt ?? Date.now())
+    agreementVisible.value = false
+    // 同意后继续走完向导其余步骤（弹窗，不跳路由）
+    const status = await api.work.wizard.status()
+    if (!status.completed) wizardVisible.value = true
+  } catch {
+    // 保存失败：弹窗保持打开，用户可重试
+  } finally {
+    agreementBusy.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -199,6 +328,8 @@ onUnmounted(() => {
   padding: 16px 12px;
   gap: 16px;
   flex-shrink: 0;
+  /* 让内部 .nav 自己滚，状态胶囊与底部按钮固定可见 */
+  overflow: hidden;
 }
 .status-pill {
   display: flex;
@@ -235,7 +366,23 @@ onUnmounted(() => {
 }
 
 /* Nav */
-.nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+/* 导航项多于一屏时必须可滚动：父级 .app-body 是 overflow:hidden，
+   缺 overflow-y 会被直接裁掉（无滚动条）。min-height:0 是 flex 子项能收缩出
+   滚动区的前提（默认 min-height:auto 会撑破容器）。 */
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* 滚动条不挤压内容，避免导航文字在出现滚动条时换行 */
+  scrollbar-gutter: stable;
+}
+.nav-group-label {
+  font-size: 11px; color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.06em; padding: 10px 12px 4px;
+}
 .nav-item {
   display: flex;
   align-items: center;

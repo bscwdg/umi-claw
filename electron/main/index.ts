@@ -8,9 +8,12 @@ import {
   Menu,
   nativeImage,
   protocol,
+  Notification,
+  // marketing 域（2.0）：热点定时器在系统唤醒后补检
+  powerMonitor,
   safeStorage
 } from 'electron'
-import { join, parse, dirname } from 'path'
+import { join, parse, dirname, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { ClawManager, decideRollback } from './clawManager'
 import { ConfigManager } from './configManager'
@@ -18,19 +21,94 @@ import { SkillSyncService } from './skillSyncService'
 import { DownloadManager, type DownloadProgress } from './downloadManager'
 import { ChannelManager } from './channelManager'
 import { ObsidianManager } from './obsidian/obsidianManager'
-import { EMBEDDING_PRESETS } from './modelConfig'
-import { openClawPaths, buildOpenClawEnv, GATEWAY_TOKEN } from './openClawPaths'
-import { readFileSync, existsSync } from 'fs'
-import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
+import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
+import { openClawPaths, buildOpenClawEnv, toPosix, GATEWAY_TOKEN } from './openClawPaths'
+import { shouldSpeakInApp } from './fish/voice/core/openclawTts'
+import { readFileSync, existsSync, readdirSync } from 'fs'
+import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process'
+
+// ── 2.0 营销域 imports（合并自 release/2.0）────────────────────────────────────
+// 与 work 域同名的模块内标识符加 `Marketing*` / `*Lib` 别名区分：
+//   ContextEngine / KnowledgeManager 两域各有一套完全不同的实现，不能合并成一份。
+// 其余（DatabaseClient / Voice* / ipc / gatewayClient / AppError / fs）两域同源，只在下方
+// work 域 import 块里出现一次，避免重复声明。
+import {
+  registerMarketingIpc,
+  registerAdvisorIpc,
+  registerScanIpc,
+  registerContentIpc,
+  registerHotIpc,
+  abortAllAdvisorStreams,
+  abortAllScanStreams,
+  abortAllContentGenerations,
+  abortHotCollectors
+} from './ipc'
+import { createProjectManager, type ProjectManager } from './marketing/projectManager'
+import {
+  createBusinessManager,
+  createWatchlistManager,
+  type BusinessManager,
+  type WatchlistManager
+} from './marketing/businessManager'
+import {
+  createKnowledgeManager as createMarketingKnowledgeManagerLib,
+  type KnowledgeManager as MarketingKnowledgeManager
+} from './marketing/knowledgeManager'
+import {
+  createContextEngine as createMarketingContextEngineLib,
+  type ContextEngine as MarketingContextEngine
+} from './marketing/contextEngine'
+import { createAdvisorManager, type AdvisorManager } from './marketing/advisorManager'
+import { createScanRecognizer, type ScanRecognizer } from './marketing/scanRecognizer'
+import { createContentManager, type ContentManager } from './marketing/contentManager'
+import { createHotManager, type HotManager } from './marketing/hotManager'
+import { createHotScoreManager, type HotScoreManager } from './marketing/hotScoreManager'
 import type { TerminalRuntime } from '../../src/types/terminal'
+import {
+  createGatewayClient,
+  detectMultimodalCapability,
+  GATEWAY_MODEL_DEFAULT,
+  type GatewayClient,
+  type GatewayModels,
+  type GatewayStarterResult
+} from './gatewayClient'
+import { registerGatewayIpc, registerWorkIpc } from './ipc'
 import {
   VoiceSecretStore,
   VoiceCloneManager,
   type VoiceManager,
-  createJsonVoiceStorage,
+  createDatabaseVoiceStorage,
   createVoiceManager,
   registerVoiceIpc
 } from './fish/voice'
+import { AppError, ERROR_CODES } from './database/errors'
+import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
+import { subprocessRegistry } from './subprocessRegistry'
+import { createProfileManager, type ProfileManager } from './work/profileManager'
+import { createMatterManager, type MatterManager } from './work/matterManager'
+import { createTodoManager, dateOf, type TodoManager } from './work/todoManager'
+import { createRecordManager, type RecordManager } from './work/recordManager'
+import {
+  createContextEngine,
+  type ContextEngine,
+  type SnapshotScope
+} from './work/contextEngine'
+import { createContextManager, type ContextManager } from './work/contextManager'
+import { createRouterManager, type RouterManager } from './work/routerManager'
+import { createTodayManager, type TodayManager } from './work/todayManager'
+import { createReportManager, type ReportManager } from './work/reportManager'
+import { createQaManager, type QaManager } from './work/qaManager'
+import { createToolManager, type ToolManager } from './work/toolManager'
+import { createKnowledgeManager, type KnowledgeManager } from './work/knowledgeManager'
+import { createWizardManager, type WizardManager } from './work/wizardManager'
+import { createReminderManager, type ReminderManager } from './work/reminderManager'
+import {
+  createOpenClawSummaryManager,
+  type OpenClawSummaryManager
+} from './work/openclawSummaryManager'
+// pdfjs 资产解析：两域的 parsers/pdfjsAssets.ts 逐字节相同（合并时已 diff 确认），
+// 统一用 work 这一份实现，避免同名 import 重复声明；marketing 的调用点语义不变。
+import { resolvePdfjsAssets } from './work/parsers/pdfjsAssets'
 
 // 类型定义
 interface TerminalSession {
@@ -46,7 +124,101 @@ let downloadManager: DownloadManager
 let channelManager: ChannelManager
 let obsidianManager: ObsidianManager
 let skillSyncService: SkillSyncService
+// ── work 域（release/3.0）─────────────────────────────────────────────────────
+/** Gateway Client 单例（Commit 01）：主进程唯一发 Gateway HTTP 请求的地方（硬规则 3） */
+let workGatewayClient: GatewayClient | null = null
+/** DB Worker 客户端单例（Commit 02 起被各 Manager 消费；硬规则 2：全局单例） */
+let workDatabase: DatabaseClient | null = null
+let workProfileManager: ProfileManager | null = null
+let workMatterManager: MatterManager | null = null
+let workTodoManager: TodoManager | null = null
+let workRecordManager: RecordManager | null = null
+let workContextEngine: ContextEngine | null = null
+let workContextManager: ContextManager | null = null
+let workRouterManager: RouterManager | null = null
+let workTodayManager: TodayManager | null = null
+let workReportManager: ReportManager | null = null
+let workQaManager: QaManager | null = null
+let workToolManager: ToolManager | null = null
+let workKnowledgeManager: KnowledgeManager | null = null
+let workWizardManager: WizardManager | null = null
+let workReminderManager: ReminderManager | null = null
+let workOpenClawSummaryManager: OpenClawSummaryManager | null = null
+/** 语音管理器（合并后只有一份；初始化绑 workDatabase，见 app.whenReady 的 voice 段） */
 let voiceManager: VoiceManager | null = null
+
+// ── marketing 域（release/2.0）────────────────────────────────────────────────
+// marketing DB Worker 客户端（Commit 02）。构造是廉价的：惰性初始化，
+// 应用启动不建库、不拉 Worker，首次 marketing IPC 才 spawn。
+let marketingDatabase: DatabaseClient | null = null
+// marketing Project 层（Commit 03）：只依赖 DatabaseClient + dataDir，构造零 IO 副作用。
+let marketingProjectManager: ProjectManager | null = null
+// marketing Business / Watchlist 层（Commit 04）：只依赖 DatabaseClient，构造零 IO 副作用。
+let marketingBusinessManager: BusinessManager | null = null
+let marketingWatchlistManager: WatchlistManager | null = null
+// marketing Knowledge 层（Commit 05a）：依赖 DatabaseClient + dataDir + pdfjs 资产路径，构造零 IO 副作用。
+let marketingKnowledgeManager: MarketingKnowledgeManager | null = null
+// marketing Context Engine（Commit 06）：纯组装层，依赖四个 Manager（硬规则 9：全部显式 projectId）。
+// 07（Gateway Client）/ 08（Advisor）/ 09（Content Center）是它的消费者；
+// 它的产出是主进程内部数据结构，§五 没有渲染端通道，故此处不注册 IPC。
+let marketingContextEngine: MarketingContextEngine | null = null
+// marketing Gateway Client（Commit 07）：**合并后不再单独持有实例**。
+// 全应用只有一个 GatewayClient（work 域创建）；营销域经 getMarketingGatewayClient() 拿到同一个对象，
+// 「按 Project 派生 conversation_key」由这个 client 注入的 conversationKeyResolver 承担（硬规则 13）。
+// marketing AI Advisor（Commit 08）：只依赖 06 引擎 + 07 客户端 + 04 Watchlist，构造零 IO 副作用。
+let marketingAdvisorManager: AdvisorManager | null = null
+// marketing 扫描件/图片 AI 识别兑底（Commit 05b）：只依赖 07 客户端 + pdfjs 资产，构造零 IO 副作用；
+// 确认入库的写库动作在 knowledgeManager（05a 联动），识别本身不碰库（硬规则 10）。
+let marketingScanRecognizer: ScanRecognizer | null = null
+// marketing Content Center（Commit 09）：06 引擎 + 07 客户端 + DatabaseClient，构造零 IO 副作用。
+let marketingContentManager: ContentManager | null = null
+// marketing 热点雷达（Commit 11）：collector 短命子进程 + DB Worker，构造零 IO 副作用。
+let marketingHotManager: HotManager | null = null
+let marketingHotScoreManager: HotScoreManager | null = null
+// 热点后台 tick 定时器（退出时清掉，避免 before-quit 清理途中又起一轮 collector）
+let hotTickTimer: ReturnType<typeof setInterval> | null = null
+
+/**
+ * 取 Context Engine 单例（Commit 06）。
+ *
+ * 存在的意义：07/08/09 在主进程里取引擎的统一入口（它们此刻尚未落地，所以这里没有调用点）。
+ * §五 没有 context pack 的渲染端通道，所以**不要**在 IPC 层暴露它——
+ * 引用端一律走这里，避免各自去 `createContextEngine` 造第二个实例（账本/日志会分家）。
+ */
+export function getMarketingContextEngine(): MarketingContextEngine {
+  if (!marketingContextEngine) {
+    throw new Error('Context Engine 尚未初始化（应在 app.whenReady 之后取用）')
+  }
+  return marketingContextEngine
+}
+
+/**
+ * 取 Gateway Client 单例（Commit 07 → 合并后指向 work 域的唯一实例）。
+ *
+ * 08（Advisor）/ 09（Content Center）/ 05b（扫描件识别）是它的消费者：
+ * 调 `createChatStream()` 拿 SSE 增量，再交给 `forwardGatewayStream(webContents, streamId, handle)`
+ * 推给渲染进程。**不要**在别处 `new GatewayClient(...)`——token 与超时参数必须来自同一处配置。
+ */
+export function getMarketingGatewayClient(): GatewayClient {
+  if (!workGatewayClient) {
+    throw new Error('Gateway Client 尚未初始化（应在 app.whenReady 之后取用）')
+  }
+  return workGatewayClient
+}
+
+/**
+ * 取 AI Advisor 单例（Commit 08）。
+ *
+ * 主进程里的唯一入口：面板经 `marketing:advisor:*` IPC 调到它（渲染端拿不到 Manager 本身）。
+ * 09（Content Center）会复用同一个 Context Engine 与 Gateway Client，但**不复用 Advisor**
+ * （生成走 content 面，两者的 prompt 与产物形态不同）。
+ */
+export function getMarketingAdvisorManager(): AdvisorManager {
+  if (!marketingAdvisorManager) {
+    throw new Error('AI Advisor 尚未初始化（应在 app.whenReady 之后取用）')
+  }
+  return marketingAdvisorManager
+}
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -74,6 +246,189 @@ function getOpenClawRuntimeConfig() {
     env,
     targetConfigDir
   }
+}
+
+// ─── Gateway Client wiring（Commit 01） ───────────────────────────────────────
+
+/** PID 是否存活：EPERM（进程在但无权发信号）也视为存活 */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (e: any) {
+    return e?.code === 'EPERM'
+  }
+}
+
+/**
+ * 读 OpenClaw 实际监听端口（配置端口被占时 OpenClaw 自动退让，实测 3213→3214）。
+ *
+ * 锁文件由 OpenClaw 写在 <configDir>/tmp/openclaw/gateway.<hash>.lock，内容含
+ * pid/port/stateDir/startTime。这里只认 hash 段无点的实例锁（排除 gateway.state.lock）、
+ * stateDir 必须对应当前 dataDir（防跨数据目录误读）、PID 必须仍存活（防残留旧锁），
+ * 多份锁取 startTime 最新。任何异常返回 undefined（读锁失败不影响配置端口探活）。
+ */
+function readActualGatewayPort(): number | undefined {
+  try {
+    const dataDir = configManager.getDataDir()
+    const configDir = openClawPaths.configDir(dataDir)
+    const lockDir = join(configDir, 'tmp', 'openclaw')
+    if (!existsSync(lockDir)) return undefined
+    const expectedStateDir = toPosix(configDir)
+    const locks = readdirSync(lockDir)
+      // 负向先行排除 gateway.state.lock（`state` 本身能匹配 [^.]+，不显式排除会漏进来）
+      .filter((file) => /^gateway\.(?!state\.lock$)[^.]+\.lock$/.test(file))
+      .map((file) => {
+        try {
+          return JSON.parse(readFileSync(join(lockDir, file), 'utf8')) as Record<string, unknown>
+        } catch {
+          return null
+        }
+      })
+      .filter((lock): lock is Record<string, unknown> => Boolean(lock))
+      .filter((lock) => Number(lock.pid) > 0 && Number(lock.port) > 0)
+      .filter((lock) => !lock.stateDir || toPosix(String(lock.stateDir)) === expectedStateDir)
+      .filter((lock) => isProcessAlive(Number(lock.pid)))
+      .sort((a, b) => Number(b.startTime ?? 0) - Number(a.startTime ?? 0))
+    return locks.length ? Number(locks[0].port) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 解析当前配置下的 Gateway 模型选择。**每次调用都重读配置**（不做启动快照）：
+ * 全新安装时客户端先于 Setup 构造（providers 为空），用户在 Setup 里选了支持图片的模型后
+ * 只走渲染端 reload（主进程不重启）；启动快照会让 `multimodal` 一直停在 null，
+ * 含图请求会被明确拒掉，直到用户完全重启 App。运行中切 provider / 换模型同理。
+ */
+function resolveGatewayModels(): Partial<GatewayModels> {
+  const config = configManager.getConfig()
+  const activeProvider = (config.providers || []).find((p) => p.id === config.activeProvider) ?? null
+  const preset = activeProvider ? OFFICIAL_MODEL_PRESETS[activeProvider.configName] : null
+  const presetModel = Array.isArray(preset?.models)
+    ? preset.models.find((m: any) => m?.id === activeProvider?.model) ?? null
+    : null
+  return {
+    text: GATEWAY_MODEL_DEFAULT,
+    multimodal: detectMultimodalCapability(presetModel) ? GATEWAY_MODEL_DEFAULT : null
+  }
+}
+
+/**
+ * 构造 Gateway Client（Commit 01）：探活 / 自动拉起 / 就绪轮询 / SSE 的**唯一**实现。
+ *
+ * 依赖注入（不 import electron 的模块才好测）：
+ *   - `baseUrl` / `port`：来自 `configManager.getConfig().port`（实测只绑 127.0.0.1）
+ *   - `token`：`openClawPaths.GATEWAY_TOKEN`（**硬规则 3：只留在主进程**）
+ *   - `models`：`text` = `openclaw`；`multimodal` 仅当当前 provider 声明了图片输入能力
+ *   - `starter`：**复用 clawManager 的启停**（不另起炉灶）；已在跑就不重复 start
+ *   - `conversationKeyResolver`：合并后唯一 client 同时服务两个域——
+ *     work 域调用方按 §6.4 显式给完整键（`conv:work:qa` / `conv:work:tool:{id}` /
+ *     `conv:work:report:{type}:{period}`），**不会**走到 resolver；
+ *     2.0 营销域只给 `projectId` 时，resolver 去 projects 表取该 Project 的 `conversation_key`
+ *     （沿用 release/2.0 createMarketingGatewayClient 的原逻辑），取不到就抛错。
+ * 本函数零 IO 副作用；真正的 HTTP 请求发生在 probe / ensureReady / chat。
+ */
+function createWorkGatewayClient(): GatewayClient {
+  const config = configManager.getConfig()
+  const port = Number(config.port) > 0 ? Number(config.port) : 3213
+
+  const starter = async (): Promise<GatewayStarterResult> => {
+    const status = clawManager.getStatus()
+    if (status.running) {
+      // 进程已在跑（可能还在冷启动）：不要重复 start，直接交给就绪轮询
+      return { started: false, reason: 'already-running' }
+    }
+    if (envUpdateInFlight) {
+      // 更新在途（npm 安装 / update repair / doctor 迁移 / 探针）：
+      // 不能在这窗口拉起网关抢状态库；交给就绪轮询，更新结束会自行重启。
+      return { started: false, reason: 'already-running' }
+    }
+    // 硬性闸门（北 2026-09-24）：未同意用户协议不得拉起 OpenClaw
+    try {
+      await workWizardManager?.ensureConsent()
+    } catch (e) {
+      throw new AppError(
+        ERROR_CODES.OPENCLAW_NOT_READY,
+        (e as Error)?.message ?? '请先同意用户协议，再启动 OpenClaw',
+        { reason: 'consent-required' }
+      )
+    }
+    const result = await clawManager.start()
+    if (!result.success) {
+      throw new AppError(
+        ERROR_CODES.OPENCLAW_NOT_READY,
+        `自动拉起 OpenClaw 失败：${result.error || '未知错误'}`,
+        { reason: 'start-failed' }
+      )
+    }
+    // 拉起成功≠就绪：clawManager.start() 返回时进程往往还在冷启动（实测首次非流式 80.3s），
+    // 所以这里只回「我拉过了」，就绪判定交给客户端的轮询
+    return { started: true, reason: 'started' }
+  }
+
+  const client = createGatewayClient({
+    baseUrl: `http://127.0.0.1:${port}`,
+    port,
+    token: GATEWAY_TOKEN,
+    // 模型选择**按次解析**（不做启动快照）：Setup 完成 / 换 provider 后无需重启主进程即生效
+    modelsResolver: resolveGatewayModels,
+    starter,
+    // 就绪预算 10 分钟是为慢冷启动留的，但进程已经退出时不该继续空转：
+    // 拉起后进程消失 → ensureReady 立即失败。维护模式（doctor 迁移 / 自愈重启）
+    // 期间进程句柄为空是预期状态，不能据此判死，所以一并放行。
+    isGatewayProcessAlive: () =>
+      clawManager.getStatus().running || clawManager.isMaintenanceActive(),
+    // ── marketing 域借道（合并点）：只给 projectId 时按 Project 的 conversation_key 派生会话键 ──
+    // work 域调用方始终传完整 `conv:` 键，永远不会走到这里（见 gatewayClient.resolveConversationUser）。
+    conversationKeyResolver: async (projectId?: string) => {
+      if (!projectId) {
+        throw new AppError(
+          ERROR_CODES.VALIDATION_ERROR,
+          '缺少 projectId：营销域会话键必须由 Project 派生',
+          { field: 'projectId' }
+        )
+      }
+      if (!marketingProjectManager) {
+        throw new AppError(
+          ERROR_CODES.OPENCLAW_NOT_READY,
+          'marketing Project 管理器尚未初始化（应在 app.whenReady 之后取用）'
+        )
+      }
+      // getProject 找不到时自身抛 NOT_FOUND（不返回 null），这里只兜 conversation_key 为空
+      const project = await marketingProjectManager.getProject(projectId)
+      const conversationKey = project?.conversation_key
+      if (!conversationKey) {
+        throw new AppError(
+          ERROR_CODES.VALIDATION_ERROR,
+          `Project ${projectId} 缺少 conversation_key（会话隔离键无法拼装）`,
+          { field: 'conversationKey' }
+        )
+      }
+      return conversationKey
+    },
+    actualPortResolver: () => readActualGatewayPort(),
+    logger: (message: string) => console.log(message)
+  })
+  console.log(
+    `[gateway] Gateway Client 就绪：${client.baseUrl}（model=${GATEWAY_MODEL_DEFAULT}，多模态=${resolveGatewayModels().multimodal ?? '未配置'}，每请求重读配置）`
+  )
+  return client
+}
+
+/**
+ * 取 Gateway Client 单例（Commit 01）。
+ *
+ * 后续 Commit 的消费者（qa / tools / reports）调 `createChatStream()` 拿 SSE 增量，
+ * 再交给 `forwardGatewayStream(webContents, runId, handle)` 推给渲染进程。
+ * **不要**在别处 `new GatewayClient(...)`——token 与超时参数必须来自同一处配置。
+ */
+export function getWorkGatewayClient(): GatewayClient {
+  if (!workGatewayClient) {
+    throw new Error('Gateway Client 尚未初始化（应在 app.whenReady 之后取用）')
+  }
+  return workGatewayClient
 }
 
 /**
@@ -105,6 +460,523 @@ function resolveTerminalRuntime(runtime?: TerminalRuntime): { entryJs: string; e
       npm_config_registry: registry,
       npm_config_cache: join(dataDir, 'config', '.npm-cache')
     }
+  }
+}
+
+/**
+ * 构造 DB Worker 客户端（Commit 02）：把 Electron 专属的路径解析（dev / 安装包 resources、
+ * 便携 Node、数据目录）注入 database.ts，后者保持纯 Node 可测。
+ * 惰性：构造时不建库、不 spawn（首次 work 域调用才拉 Worker）。
+ */
+function createWorkDatabase(): DatabaseClient {
+  const dataDir = configManager.getDataDir()
+  const isDev = !app.isPackaged
+  const resRoot = isDev
+    ? join(app.getAppPath(), 'resources')
+    : join(process.resourcesPath, 'resources')
+  return new DatabaseClient({
+    // 3.0 用自己的库文件：2.0 的 umi-claw.db 与之同目录同名且 user_version 也=1，
+    // 沿用会让迁移被跳过、3.0 的表建不出来（见 WORK_DB_FILENAME 注释）
+    dbPath: join(dataDir, WORK_DB_FILENAME),
+    backupDir: join(dataDir, 'backup'),
+    workerScriptPath: join(resRoot, 'database', 'db-worker.mjs'),
+    nodePath: configManager.getNodePath(),
+    subprocessName: 'work-db-worker',
+    // 启动即注册（子进程注册表）：_stopRuntimeProcesses / 退出清理先优雅停
+    onSpawn: (info) => subprocessRegistry.register(info),
+    logger: (message) => console.log(message)
+  })
+}
+
+/** resources/ 根（dev / 打包双路径，与 createWorkDatabase 同口径） */
+function resourcesRoot(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'resources')
+    : join(app.getAppPath(), 'resources')
+}
+
+/**
+ * 定位旧版本库（硬规则 17：只读检测，不写旧库）。
+ *
+ * 版本隔离：1.0 = %APPDATA%/umi-claw/data；2.0 = %APPDATA%/<2.0 dir>/data；
+ * 便携态旧库在各自安装目录的 data/。这里只判断 db 文件是否存在，不打开。
+ */
+function locateLegacyDbs(currentDataDir: string): import('./work/wizardManager').OldDbInfo[] {
+  const out: import('./work/wizardManager').OldDbInfo[] = []
+
+  const candidates: Array<{ version: '1.0' | '2.0'; dir: string }> = []
+  // 1.0 固定 appData 名
+  const appDataDir = app.getPath('appData')
+  candidates.push({ version: '1.0', dir: join(appDataDir, 'umi-claw', 'data') })
+
+  // 2.0：与 3.0 **同目录同名**（%APPDATA%/UmiClaw/data/umi-claw.db）。
+  // 3.0 已改用 work.db，所以同目录下的 umi-claw.db 就是 2.0 的库——
+  // 必须作为候选暴露给向导，否则用户旧数据永远不可见（硬规则 17）。
+  candidates.push({ version: '2.0', dir: currentDataDir })
+
+  // 便携/同机共存：当前 dataDir 的同级或上级可能有旧版本（同目录隔离名不同）
+  // 这里保守地只查 %APPDATA% 下的已知目录，避免任意扫描用户磁盘（最小出站面）
+  for (const dirName of ['UmiClaw2', 'umi-claw-2']) {
+    candidates.push({ version: '2.0', dir: join(appDataDir, dirName, 'data') })
+  }
+
+  for (const c of candidates) {
+    const dbPath = join(c.dir, 'umi-claw.db')
+    // 跳过当前库自身（3.0 现用 work.db，正常不会命中；防的是历史配置指回旧名）
+    if (dbPath === join(currentDataDir, 'work.db')) continue
+    if (existsSync(dbPath)) {
+      out.push({ version: c.version, dbPath, present: true })
+    }
+  }
+  return out
+}
+
+/**
+ * 调用便携 Node 跑 read-old-db.mjs（只读），返回映射字段。
+ * 失败（退出码非0）一律抛错，绝不静默当成功（硬规则 17）。
+ */
+function readLegacyDb(
+  info: import('./work/wizardManager').OldDbInfo
+): Promise<import('./work/wizardManager').OldDbMapping> {
+  return new Promise((resolve, reject) => {
+    const nodePath = configManager.getNodePath()
+    const script = join(resourcesRoot(), 'database', 'read-old-db.mjs')
+    execFile(
+      nodePath,
+      [script, '--dbPath', info.dbPath, '--version', info.version],
+      { timeout: 15_000, maxBuffer: 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) {
+          reject(
+            new AppError(ERROR_CODES.FILE_PARSE_ERROR, `旧库只读映射失败: ${stderr || err.message}`, {
+              reason: 'legacy-read-failed'
+            })
+          )
+          return
+        }
+        try {
+          const parsed = JSON.parse(String(stdout)) as {
+            mapping: Record<string, unknown>
+            displayOnlyCount: number
+          }
+          resolve({
+            callName: asString(parsed.mapping.callName),
+            position: asString(parsed.mapping.position),
+            department: asString(parsed.mapping.department),
+            company: asString(parsed.mapping.company),
+            tone: asString(parsed.mapping.tone),
+            displayOnlyCount: Number(parsed.displayOnlyCount ?? 0)
+          })
+        } catch (e) {
+          reject(new AppError(ERROR_CODES.DB_ERROR, `旧库映射输出损坏: ${(e as Error).message}`))
+        }
+      }
+    )
+  })
+}
+
+function asString(v: unknown): string | undefined {
+  return typeof v === 'string' && v.trim() ? v : undefined
+}
+
+/**
+ * 发本地通知（硬规则 22：只有三类——早上汇总 / 日报草稿 / **待办到点提醒**，无其他通知）。
+ * id 仅用于日志与将来的点击跳转，通知内容全在 payload 里。
+ */
+function showReminderNotification(
+  id: string,
+  payload: import('./work/reminderManager').ReminderPayload
+): void {
+  // 本机通知现在是**必达主通道**（待办到点提醒不看外发配置），所以这里必须**不抛**：
+  // 抛出去会被 reminderManager 的逐条兜底当成「未消费」→ 每 30s 重试一次，
+  // 结果是永远弹不出来还一直刷日志。不可用就记日志放过（提醒照样消费）。
+  try {
+    if (!Notification.isSupported()) {
+      console.log(`[reminder] 本机通知不可用（isSupported=false），跳过 ${id}: ${payload.title}`)
+      return
+    }
+    const n = new Notification({ title: payload.title, body: payload.body })
+    // 点击 morning → 打开/聚焦「新的一天」页；具体路由由渲染端处理，这里只展示
+    void id
+    n.show()
+    void triggerVoiceAutoSpeak(`${payload.title}。${payload.body}`, id)
+  } catch (e) {
+    console.log(`[reminder] 本机通知失败（不影响提醒消费）: ${(e as Error)?.message}`)
+  }
+}
+
+/**
+ * 哪些提醒算「被标记的事件」：待办到点提醒是用户逐条设的，算；
+ * 早上汇总与日报草稿是固定例行通知，不算。
+ */
+function isTaggedEventId(id: string): boolean {
+  return id === 'todo'
+}
+
+/**
+ * 应用内自动朗读（2.0 的调用点只有一个入参，3.0 用 eventId 区分「被标记事件」）。
+ *
+ * 合并约定：`eventId` **可选**——2.0 的 `triggerVoiceAutoSpeak('OpenClaw 已停止')`
+ * 直接复用本函数；不给 eventId 视为「非标记事件」（沿用 2.0 的 autoSpeak !== 'off' 语义）。
+ */
+async function triggerVoiceAutoSpeak(text: string, eventId?: string): Promise<void> {
+  if (!voiceManager) return
+  // 应用内短提示只在「三类固定通知」范围内朗读；eventId 决定它算不算被标记的事件。
+  // 2.0 调用点不传 eventId：按旧行为只受 autoSpeak 开关约束（不做 tagged 过滤）。
+  const taggedEligible = eventId ? isTaggedEventId(eventId) : undefined
+  try {
+    const settings = await voiceManager.getSettings()
+    if (!settings.hasTtsKey) return
+    if (taggedEligible === undefined) {
+      if (settings.autoSpeak === 'off') return
+    } else if (!shouldSpeakInApp({ mode: settings.autoSpeak, taggedEligible })) {
+      return
+    }
+    const result = await voiceManager.speak({ text })
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    mainWindow.webContents.send('fish:voice:auto-speak', {
+      audioId: result.audioId,
+      mime: result.mime
+    })
+  } catch (error) {
+    console.log(`[voice] 自动朗读跳过: ${(error as Error)?.message ?? String(error)}`)
+  }
+}
+
+/**
+ * 外发短提示（**方案 A**）：spawn OpenClaw 渠道 CLI 发一条消息。
+ *
+ * - 只发 payload.title + payload.body（构造上不可能带日报正文）
+ * - 走与 gateway 启动同一套便携环境（buildOpenClawEnv），不另造一套路径
+ * - 失败返回 { ok:false }，不抛——本地通知已送达，外发尽力而为
+ */
+function pushReminderMessage(
+  dest: { channel: string; target: string },
+  payload: import('./work/reminderManager').ReminderPayload
+): Promise<import('./work/reminderManager').PushResult> {
+  return new Promise((resolve) => {
+    const dataDir = configManager.getDataDir()
+    const nodePath = configManager.getNodePath()
+    const clawJsPath = openClawPaths.clawJs(dataDir)
+    if (!existsSync(nodePath) || !existsSync(clawJsPath)) {
+      resolve({ ok: false, message: '未找到 OpenClaw 运行时' })
+      return
+    }
+    const env = buildOpenClawEnv(dataDir, nodePath, { OPENCLAW_DISABLE_BONJOUR: '1' })
+    const text = `${payload.title}\n${payload.body}`
+    execFile(
+      nodePath,
+      [clawJsPath, 'message', 'send', '--channel', dest.channel, '--target', dest.target, '--message', text],
+      { cwd: openClawPaths.installDir(dataDir), env, windowsHide: true, timeout: 60_000, maxBuffer: 4 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) {
+          const detail = (stderr || stdout || err.message || '').toString().trim().slice(0, 300)
+          resolve({ ok: false, message: detail || '外发命令失败' })
+          return
+        }
+        resolve({ ok: true })
+      }
+    )
+  })
+}
+
+/**
+ * 列出可推送渠道及其配置状态（供外发下拉）。
+ *
+ * 「已配置」的判定依据：
+ * - feishu / wecom：app.json 里 `channels.<key>` 必填凭证已填齐（与渠道页同口径）
+ * - openclaw-weixin：插件已装 **且** 已有登录账号（走终端登录，不存 app.json）
+ * - dingtalk：OpenClaw 无实现，永远 supported=false（仅用于提示）
+ */
+async function listPushChannelOptions(): Promise<
+  import('./work/reminderManager').PushChannelOption[]
+> {
+  const appCfg = configManager.getConfig()
+  const uiChannels = (appCfg.channels ?? {}) as Record<string, Record<string, unknown> | undefined>
+  const filled = (key: string, fields: string[]): boolean => {
+    const cfg = uiChannels[key]
+    if (!cfg) return false
+    return fields.every((f) => String(cfg[f] ?? '').trim() !== '')
+  }
+
+  // 微信：插件 + 登录账号双条件
+  let weixinReady = false
+  try {
+    const accountsFile = join(configManager.getDataDir(), 'config', '.openclaw', 'openclaw-weixin', 'accounts.json')
+    if (existsSync(accountsFile)) {
+      const list = JSON.parse(readFileSync(accountsFile, 'utf-8')) as unknown
+      weixinReady = Array.isArray(list) && list.length > 0
+    }
+  } catch {
+    weixinReady = false
+  }
+
+  return [
+    { channel: 'feishu', label: '飞书', configured: filled('feishu', ['appId', 'appSecret']), supported: true },
+    { channel: 'wecom', label: '企业微信', configured: filled('wecom', ['corpId', 'agentId', 'secret']), supported: true },
+    { channel: 'openclaw-weixin', label: '微信', configured: weixinReady, supported: true },
+    { channel: 'dingtalk', label: '钉钉', configured: filled('dingtalk', ['appKey', 'appSecret']), supported: false }
+  ]
+}
+
+/**
+ * 列出某渠道下 OpenClaw **已经知道**的推送目标（用户不需手填）。
+ *
+ * 来源：OpenClaw 的 agent 库 `conversations` 表——它记住「谁跟它说过话」，
+ * 每条含 `channel` / `delivery_target` / `kind`。取最近若干条，新→旧。
+ *
+ * 用便携 node 子进程读（同 clawManager 先例）：Electron 30 内置 node 未必启用 `node:sqlite`。
+ * 只读打开，绝不写入。
+ */
+async function listPushTargetOptions(
+  channel: string
+): Promise<import('./work/reminderManager').PushTargetOption[]> {
+  const dataDir = configManager.getDataDir()
+  const nodePath = configManager.getNodePath()
+  if (!existsSync(nodePath)) return []
+
+  // agent 库路径：config/.openclaw/agents/<agentId>/agent/openclaw-agent.sqlite
+  const agentsDir = join(dataDir, 'config', '.openclaw', 'agents')
+  if (!existsSync(agentsDir)) return []
+  const dbPaths: string[] = []
+  try {
+    for (const agentId of readdirSync(agentsDir)) {
+      const p = join(agentsDir, agentId, 'agent', 'openclaw-agent.sqlite')
+      if (existsSync(p)) dbPaths.push(toPosix(p))
+    }
+  } catch {
+    return []
+  }
+  if (!dbPaths.length) return []
+
+  const script = [
+    'const { DatabaseSync } = require("node:sqlite");',
+    'const out = [];',
+    'for (const dbPath of process.argv.slice(1)) {',
+    '  try {',
+    '    const db = new DatabaseSync(dbPath, { readOnly: true });',
+    '    const rows = db.prepare("SELECT channel, delivery_target, kind, label, updated_at FROM conversations WHERE channel = ? ORDER BY updated_at DESC LIMIT 20").all(process.env.UCLawChannel);',
+    '    for (const r of rows) out.push(r);',
+    '    db.close();',
+    '  } catch (e) {}',
+    '}',
+    'process.stdout.write(JSON.stringify(out));'
+  ].join('\n')
+
+  return new Promise((resolve) => {
+    execFile(
+      nodePath,
+      ['-e', script, ...dbPaths],
+      {
+        windowsHide: true,
+        timeout: 15_000,
+        maxBuffer: 4 * 1024 * 1024,
+        env: { ...process.env, UCLawChannel: channel }
+      },
+      (err, stdout) => {
+        if (err) {
+          console.log(`[push] 读取目标失败: ${err.message}`)
+          resolve([])
+          return
+        }
+        try {
+          const raw = JSON.parse(String(stdout || '[]')) as Array<Record<string, unknown>>
+          // 去重（同一目标可能出现在多个 agent 库），保留最新
+          const seen = new Set<string>()
+          const out: import('./work/reminderManager').PushTargetOption[] = []
+          for (const r of raw) {
+            const target = String(r.delivery_target ?? '').trim()
+            if (!target || seen.has(target)) continue
+            seen.add(target)
+            const kind = r.kind === 'group' ? 'group' : 'direct'
+            const label = typeof r.label === 'string' && r.label.trim() ? r.label.trim() : ''
+            out.push({
+              target,
+              label: label || (kind === 'group' ? '群聊' : '私聊'),
+              kind,
+              updatedAt: Number(r.updated_at ?? 0)
+            })
+          }
+          resolve(out)
+        } catch {
+          resolve([])
+        }
+      }
+    )
+  })
+}
+
+/**
+ * 取 work 域各 Manager 单例（Commit 02）。
+ *
+ * 全部共用同一个 DatabaseClient 单例（硬规则 2：DB Worker 全局单例）。
+ * 消费者是 IPC 层（ipc/work.ts）；渲染端拿不到 Manager 本身。
+ */
+function initWorkManagers(): {
+  profile: ProfileManager
+  matters: MatterManager
+  todos: TodoManager
+  records: RecordManager
+  context: ContextManager
+  today: TodayManager
+  router: RouterManager
+  reports: ReportManager
+  qa: QaManager
+  tools: ToolManager
+  knowledge: KnowledgeManager
+  wizard: WizardManager
+  reminder: ReminderManager
+  openclawSummary: OpenClawSummaryManager
+} {
+  if (!workDatabase) throw new Error('DB 客户端尚未初始化')
+  workProfileManager = workProfileManager ?? createProfileManager({ database: workDatabase })
+  workMatterManager = workMatterManager ?? createMatterManager({ database: workDatabase })
+  workTodoManager = workTodoManager ?? createTodoManager({ database: workDatabase })
+  workRecordManager = workRecordManager ?? createRecordManager({ database: workDatabase })
+  // ContextEngine 读同一个 DB 单例；latest Pack 用 scope='latest' 当场组
+  workContextEngine =
+    workContextEngine ??
+    createContextEngine({ database: workDatabase, logger: (m) => console.log(m) })
+  const engine = workContextEngine
+  workContextManager =
+    workContextManager ??
+    createContextManager({
+      database: workDatabase,
+      buildLatestPack: () => engine.buildPack('latest' as SnapshotScope, {})
+    })
+  // today / router（Commit 05）
+  workTodayManager =
+    workTodayManager ?? createTodayManager({ database: workDatabase })
+  workRouterManager = workRouterManager ?? createRouterManager()
+  // reports（Commit 06）：注入同一个 ContextEngine + Gateway Client
+  if (!workReportManager) {
+    if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
+    workReportManager = createReportManager({
+      database: workDatabase,
+      contextEngine: engine,
+      gateway: workGatewayClient,
+      logger: (m) => console.log(m)
+    })
+  }
+  // qa（Commit 07）
+  if (!workQaManager) {
+    if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
+    workQaManager = createQaManager({
+      database: workDatabase,
+      contextEngine: engine,
+      gateway: workGatewayClient,
+      logger: (m) => console.log(m)
+    })
+  }
+  // tools（Commit 07）：薄边界，复用 records/todos
+  if (!workToolManager) {
+    if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
+    workToolManager = createToolManager({
+      records: workRecordManager!,
+      todos: workTodoManager!,
+      gateway: workGatewayClient,
+      logger: (m) => console.log(m)
+    })
+  }
+  // knowledge（Commit 08）：解析 pdfjs 资产 + dataDir
+  if (!workKnowledgeManager) {
+    const pdfjsAssets = resolvePdfjsAssets({
+      isPackaged: app.isPackaged,
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath
+    })
+    workKnowledgeManager = createKnowledgeManager({
+      database: workDatabase,
+      dataDir: configManager.getDataDir(),
+      pdfjsAssets,
+      logger: (m) => console.log(m)
+    })
+  }
+  // openclaw-summary（v0.18）：桥接 OpenClaw 总结当天工作 → 候选。
+  // 必须先于 ReminderManager 创建：提醒循环要在「日报时刻 - 30 分钟」调它的 runScheduled
+  workOpenClawSummaryManager =
+    workOpenClawSummaryManager ??
+    (() => {
+      if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
+      return createOpenClawSummaryManager({
+        database: workDatabase,
+        records: workRecordManager!,
+        gateway: workGatewayClient,
+        logger: (m) => console.log(m)
+      })
+    })()
+  // wizard / reminder（Commit 09）
+  workWizardManager =
+    workWizardManager ??
+    createWizardManager({
+      database: workDatabase,
+      locateOldDbs: () => locateLegacyDbs(configManager.getDataDir()),
+      readOldDb: (info) => readLegacyDb(info),
+      logger: (m) => console.log(m)
+    })
+  workReminderManager =
+    workReminderManager ??
+    createReminderManager({
+      database: workDatabase,
+      notifier: (id, payload) => showReminderNotification(id, payload),
+      getMorningSummary: async () => {
+        const todos = await workTodoManager!.list({ state: 'confirmed' })
+        const today = dateOf(Date.now())
+        const relevant = todos.filter((t) => t.due_date === null || String(t.due_date) <= today)
+        return { count: relevant.length, titles: relevant.map((t) => t.title) }
+      },
+      // 方案 A（v0.9 拍板）：按配置外发**短提示**（不含正文），正文仍需人工确认
+      pusher: async (_id, payload, dest) => pushReminderMessage(dest, payload),
+      // 外发下拉只展示已配置的渠道（北：没配置肯定不能推）
+      listPushChannels: () => listPushChannelOptions(),
+      // 目标由 OpenClaw 自己给出（北：不需要填，openclaw 自己知道）
+      listPushTargets: (channel) => listPushTargetOptions(channel),
+      // v2：待办到点提醒——到点查询与提醒后回标（口径见 reminderManager 注释）
+      listDueTodoReminders: async () =>
+        (await workTodoManager!.listDueReminders()).map((t) => ({
+          id: t.id,
+          title: t.title,
+          dueDate: t.due_date,
+          dueAt: t.due_at
+        })),
+      markTodoReminded: (id, ts) => workTodoManager!.markReminded(id, ts),
+      // 本地闭环（硬规则 22 重评估后拍板）：到点**先自动生成日报草稿**，再发通知。
+      // 仍**不自动外发正文**——草稿进「报告」页等人工确认（硬规则 5）。
+      generateDailyDraft: async () => {
+        const rm = workReportManager
+        if (!rm) return { status: 'error', message: '报告模块未就绪' }
+        try {
+          const handle = await rm.generate({ type: 'daily' })
+          // 等流结束：草稿正文落 reports.content 后再发通知，避免「通知说好了但点进去是空的」
+          const result = await handle.stream.result
+          if (result.aborted) return { status: 'error', message: '生成已中止' }
+          return { status: 'generated', reportId: handle.reportId }
+        } catch (e) {
+          const err = e as { details?: { reason?: string }; message?: string }
+          if (err?.details?.reason === 'no-records') return { status: 'empty' }
+          return { status: 'error', message: err?.message ?? '未知错误' }
+        }
+      },
+      // v0.18：日报时刻前 30 分钟桥接 OpenClaw 总结当天工作（结果落候选，
+      // 留出确认窗口——未确认候选不进事实层，硬规则 4）。provider 永不抛错。
+      summarizeDaily: () => workOpenClawSummaryManager!.runScheduled(),
+      logger: (m) => console.log(m)
+    })
+  return {
+    profile: workProfileManager,
+    matters: workMatterManager,
+    todos: workTodoManager,
+    records: workRecordManager,
+    context: workContextManager,
+    today: workTodayManager,
+    router: workRouterManager,
+    reports: workReportManager,
+    qa: workQaManager,
+    tools: workToolManager,
+    knowledge: workKnowledgeManager,
+    wizard: workWizardManager,
+    reminder: workReminderManager,
+    openclawSummary: workOpenClawSummaryManager
   }
 }
 
@@ -368,7 +1240,13 @@ function createTray(): void {
           if (running) {
             await clawManager.stop()
           } else {
-            await clawManager.start()
+            // 硬性闸门：未同意用户协议不得启动（与 IPC 同口径）
+            try {
+              await workWizardManager?.ensureConsent()
+              await clawManager.start()
+            } catch (e) {
+              console.error('[Tray] 启动被拒:', (e as Error)?.message)
+            }
           }
         }
       },
@@ -395,25 +1273,232 @@ function createTray(): void {
   clawManager.on('statusChange', (running: boolean) => updateMenu(running))
 }
 
-// ─── IPC 处理器 ───────────────────────────────────────────────────────────────
+// ─── marketing DB Worker wiring（Electron 相关路径解析集中在这里） ───────────────
 
 /**
- * 就绪探针（本分支无 GatewayClient）：GET /health 返回 200 即就绪。
- * 端口按当前配置；带 Bearer 网关令牌，任何失败均视为未就绪。
+ * 构造 DB Worker 客户端：把 Electron 专属的路径解析（dev / 安装包 resources、
+ * 便携 Node、数据目录）注入 database.ts，后者保持纯 Node 可测。
  */
-async function probeGatewayHealth(): Promise<boolean> {
-  const cfgPort = Number(configManager.getConfig().port)
-  const port = cfgPort > 0 ? cfgPort : 3213
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/health`, {
-      method: 'GET',
-      headers: { Accept: 'application/json', Authorization: `Bearer ${GATEWAY_TOKEN}` }
-    })
-    return res.ok
-  } catch {
-    return false
+function createMarketingDatabase(): DatabaseClient {
+  const dataDir = configManager.getDataDir()
+  const isDev = !app.isPackaged
+  const resRoot = isDev
+    ? join(app.getAppPath(), 'resources')
+    : join(process.resourcesPath, 'resources')
+  return new DatabaseClient({
+    dbPath: join(dataDir, 'umi-claw.db'),
+    backupDir: join(dataDir, 'backup'),
+    workerScriptPath: join(resRoot, 'database', 'db-worker.mjs'),
+    nodePath: configManager.getNodePath(),
+    subprocessName: 'marketing-db-worker',
+    // 启动即注册（§四 子进程注册表）：_stopRuntimeProcesses / 退出清理先优雅停
+    onSpawn: (info) => subprocessRegistry.register(info),
+    logger: (message) => console.log(message)
+  })
+}
+
+/**
+ * 构造 Project 管理器（Commit 03）：dataDir 决定 `data/projects/<id>/` 的落点，
+ * 与 DB Worker 共用同一个 DatabaseClient 单例（硬规则 8）。
+ */
+function createMarketingProjectManager(database: DatabaseClient): ProjectManager {
+  return createProjectManager({
+    database,
+    dataDir: configManager.getDataDir(),
+    logger: (message) => console.log(message)
+  })
+}
+
+/**
+ * 构造 Business / Watchlist 管理器（Commit 04）。
+ * 只依赖 DatabaseClient（硬规则 8：唯一数据通道）；Watchlist 是本地的「关注点记录」，
+ * **不联网、不采集**（采集只属于 Commit 11 的 collector adapter）。
+ */
+function createMarketingBusinessManagers(database: DatabaseClient): {
+  businessManager: BusinessManager
+  watchlistManager: WatchlistManager
+} {
+  const logger = (message: string) => console.log(message)
+  return {
+    businessManager: createBusinessManager({ database, logger }),
+    watchlistManager: createWatchlistManager({ database, logger })
   }
 }
+
+/**
+ * 构造 Knowledge 管理器（Commit 05a）：知识库导入需要三个 Electron 侧事实——
+ * dataDir（原文落 `data/projects/<id>/`）、pdfjs 运行时资产路径、以及默认的 url 抓取器。
+ * 路径解析沿用 `createMarketingDatabase()` / obsidianManager.getScriptPath() 的 dev/打包双路径口径，
+ * 避免出现「dev 能抽中文、安装包里抽不出」这种只在打包态暴露的错位。
+ */
+function createMarketingKnowledgeManager(database: DatabaseClient): MarketingKnowledgeManager {
+  const isDev = !app.isPackaged
+  const pdfjsAssets = resolvePdfjsAssets({
+    isPackaged: !isDev,
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath
+  })
+  const manager = createMarketingKnowledgeManagerLib({
+    database,
+    dataDir: configManager.getDataDir(),
+    pdfjsAssets,
+    logger: (message: string) => console.log(message)
+  })
+  console.log(`[knowledge] pdfjs 资产目录: ${pdfjsAssets.root}`)
+  return manager
+}
+
+// ─── marketing Context Engine wiring（Commit 06） ──────────────────────────────
+
+/**
+ * 构造 Context Engine（Commit 06）：把 Business + Knowledge + Watchlist + Platform
+ * 组装成 §六 的 Context Pack，并在本地预算内决定「全量注入 or LIKE 裁剪」。
+ *
+ * 依赖注入四个 Manager（而不是直接拿 DatabaseClient）：引擎只走既有管理层，
+ * 因此 project 不存在时拿到的就是 `NOT_FOUND`、便携 Node 缺失时拿到的就是 `SETUP_REQUIRED`，
+ * 错误码不需要在引擎里二次翻译（§五 要求渲染端按 code 分支）。
+ * 本函数零 IO 副作用；真正的数据库触碰发生在第一次 buildContextPack。
+ */
+function createMarketingContextEngine(
+  projectManager: ProjectManager,
+  businessManager: BusinessManager,
+  knowledgeManager: MarketingKnowledgeManager,
+  watchlistManager: WatchlistManager
+): MarketingContextEngine {
+  const engine = createMarketingContextEngineLib({
+    projectManager,
+    businessManager,
+    knowledgeManager,
+    watchlistManager,
+    logger: (message: string) => console.log(message)
+  })
+  console.log('[context] Context Engine 就绪（§六：预算内全量打包 / 超预算 LIKE 裁剪）')
+  return engine
+}
+
+// ─── marketing Gateway 复用（合并点，原 Commit 07 的独立 client 已删除） ──────────
+//
+// release/2.0 的 `createMarketingGatewayClient(projectManager)` 与配套的
+// `marketingGatewayClient` 单例**已删除**：全应用只保留 `createWorkGatewayClient()` 一个
+// GatewayClient 实例（硬规则 3/13：token 与出站 HTTP 只在一处）。营销域需要的
+// 「按 Project 取 conversation_key」改为注入到该实例的 `conversationKeyResolver`（见上），
+// 因此 08 Advisor / 09 Content / 05b 扫描件 / 12 热点评分仍经 `getMarketingGatewayClient()`
+// 拿到同一个对象，行为与 2.0 一致。
+//
+// 同名的 `resolveGatewayModels` / `readActualGatewayPort` / `isProcessAlive` 也只保留
+// work 域那一份（签名完全一致，marketing 的引用自动指向它），不再重复定义。
+
+// ─── marketing Advisor wiring（Commit 08） ─────────────────────────────────────
+
+/**
+ * 构造 AI Advisor（Commit 08）：06 的 Context Engine（唯一上下文来源）+ 07 的 Gateway Client
+ * （唯一出站通道；token 在它手里）+ 04 的 Watchlist（扩词候选要去重既有词）。
+ *
+ * 三者都是**注入**而不是自己 new：Advisor 不持有 token、不直连 HTTP、不自己读配置（硬规则 13/8）。
+ * 本函数零 IO 副作用；真正的读库/HTTP 发生在 ask / suggestWatchlist。
+ */
+function createMarketingAdvisorManager(): AdvisorManager {
+  const advisor = createAdvisorManager({
+    contextEngine: getMarketingContextEngine(),
+    gateway: getMarketingGatewayClient(),
+    watchlistManager: marketingWatchlistManager!,
+    logger: (message: string) => console.log(message)
+  })
+  console.log('[advisor] AI Advisor 就绪（Context Pack + SSE 流式 + 停止生成 + 事实护栏）')
+  return advisor
+}
+
+// ─── marketing 扫描件识别 wiring（Commit 05b） ────────────────────────────────────
+
+/**
+ * 构造扫描件/图片 AI 识别器（Commit 05b）：注入 07 的 Gateway Client（唯一出站通道，
+ * multimodal 按次解析也在它手里）+ 05a 已解析好的 pdfjs 运行时资产（与文字层抽取同一套
+ * dev/打包双路径，不会出现「dev 能取图、包里取不到」）。
+ * 本函数零 IO 副作用；取图/HTTP 发生在第一次 recognize。不碰库：确认入库走 knowledgeManager。
+ */
+function createMarketingScanRecognizer(): ScanRecognizer {
+  const pdfjsAssets = resolvePdfjsAssets({
+    isPackaged: app.isPackaged,
+    appPath: app.getAppPath(),
+    resourcesPath: process.resourcesPath
+  })
+  const recognizer = createScanRecognizer({
+    gateway: getMarketingGatewayClient(),
+    pdfjsAssets,
+    // 多模态预检（栅格化之前的廉价判定）：复用 07 的按次解析，Setup 后换模型即时生效；
+    // 最终防线仍在 07（selectGatewayModel），预检只是不让用户白等几秒 PDF 解码
+    multimodalConfigured: () => Boolean(resolveGatewayModels().multimodal),
+    logger: (message: string) => console.log(message)
+  })
+  console.log('[scan] 扫描件识别就绪（扫描 PDF 逐页 + 资料图；显式触发、人工确认后入库）')
+  return recognizer
+}
+
+// ─── marketing Content Center wiring（Commit 09） ──────────────────────────────
+
+/**
+ * 构造 Content Center 管理器（Commit 09）：06 引擎（Context Pack）+ 07 客户端（唯一出站）
+ * + DatabaseClient（硬规则 8）。生成一次 3 路并行流式；版本落库在各自流 resolve 前完成；
+ * 不自动发布（硬规则 10）。零 IO 副作用；生成请求发生在 generate()。
+ */
+function createMarketingContentManager(): ContentManager {
+  const manager = createContentManager({
+    database: marketingDatabase!,
+    contextEngine: getMarketingContextEngine(),
+    gateway: getMarketingGatewayClient(),
+    logger: (message: string) => console.log(message)
+  })
+  console.log('[content] Content Center 就绪（一次 3 版供选 + 版本 prompt 快照 + 人工审核发布标记）')
+  return manager
+}
+
+// ─── marketing 热点雷达 wiring（Commit 11） ───────────────────────────────────
+
+/**
+ * 构造热点管理器：collector 路径沿用 obsidianManager.getScriptPath 的 dev/安装包
+ * 双路径口径（dev=app.getAppPath()/resources；安装包=process.resourcesPath/resources，
+ * extraResources 整目录复制 resources/，打包配置零改动）；node 用便携 Node。
+ * base URL 每次采集按次从配置读（v1.22 modelsResolver 同精神：改配置无需重启）。
+ */
+function createMarketingHotManager(): HotManager {
+  const isDev = !app.isPackaged
+  const resourcesRoot = isDev ? join(app.getAppPath(), 'resources') : join(process.resourcesPath, 'resources')
+  const collectorScriptPath = join(resourcesRoot, 'collector', 'index.mjs')
+  const manager = createHotManager({
+    database: marketingDatabase!,
+    collectorScriptPath,
+    nodePath: configManager.getNodePath(),
+    logger: (message: string) => console.log(message),
+    getDailyhotBase: () => {
+      const hot = (configManager.getConfig() as { hot?: { dailyhotBaseUrl?: string | null } }).hot
+      const v = hot?.dailyhotBaseUrl
+      return typeof v === 'string' && v.trim() ? v.trim() : null
+    }
+  })
+  console.log('[hot] 热点雷达就绪（时间差定时 + 唤醒补检 + 打开即刷；collector=' + collectorScriptPath + '）')
+  return manager
+}
+
+// ─── marketing 热点 AI 评分 wiring（Commit 12） ────────────────────────────────
+
+/**
+ * 构造热点评分器（Commit 12）：注入 02 DB（project_hot_topics 缓存）+ 06 Context Engine
+ * （评分唯一事实来源）+ 07 Gateway（唯一出站）。懒评分、24h TTL、每批 ≤30；
+ * 采集与评分分离——网关不可用时热点榜本身（11）照常工作。零 IO 副作用，调用 scoreBatch 才花钱。
+ */
+function createMarketingHotScoreManager(): HotScoreManager {
+  const scoreManager = createHotScoreManager({
+    database: marketingDatabase!,
+    contextEngine: getMarketingContextEngine(),
+    gateway: getMarketingGatewayClient(),
+    logger: (message) => console.log(message)
+  })
+  console.log('[hot-score] 热点 AI 评分就绪（Project × 平台懒评分，24h TTL，每批 ≤30）')
+  return scoreManager
+}
+
+// ─── IPC 处理器 ───────────────────────────────────────────────────────────────
+
 function registerIpcHandlers(): void {
   // 窗口控制
   ipcMain.handle('window:minimize', () => mainWindow?.minimize())
@@ -445,10 +1530,30 @@ function registerIpcHandlers(): void {
   })
 
   // OpenClaw 进程管理
+  // 硬性闸门（北 2026-09-24）：启动前必须已同意用户协议，否则拒绝并让前端弹回协议弹窗。
+  const ensureConsentGate = async (): Promise<{ ok: true } | { ok: false; result: unknown }> => {
+    try {
+      await workWizardManager?.ensureConsent()
+      return { ok: true }
+    } catch (e) {
+      return {
+        ok: false,
+        result: {
+          success: false,
+          reason: 'consent-required',
+          error: (e as Error)?.message ?? '请先同意用户协议'
+        }
+      }
+    }
+  }
+
   ipcMain.handle('claw:start', async () => {
     if (envUpdateInFlight) {
       return { success: false, error: UPDATE_IN_PROGRESS_ERROR }
     }
+    // 硬性闸门（3.0 安全改动，必须保留）：未同意用户协议不得启动
+    const gate = await ensureConsentGate()
+    if (!gate.ok) return gate.result
     return clawManager.start()
   })
   ipcMain.handle('claw:stop', async () => {
@@ -458,6 +1563,9 @@ function registerIpcHandlers(): void {
     if (envUpdateInFlight) {
       return { success: false, error: UPDATE_IN_PROGRESS_ERROR }
     }
+    // 硬性闸门（3.0 安全改动，必须保留）：未同意用户协议不得启动
+    const gate = await ensureConsentGate()
+    if (!gate.ok) return gate.result
     await clawManager.stop()
     return clawManager.start()
   })
@@ -587,7 +1695,12 @@ function registerIpcHandlers(): void {
 
       // 真判据：用新版本实际启动一次，看它能不能真的起来。
       // 探针无持久化副作用 —— 网关遇到旧 schema 是「拒绝启动」而非自己去迁移。
-      const probe = await clawManager.probeStartup(() => probeGatewayHealth())
+      const probe = await clawManager.probeStartup(() =>
+        // 单一 client（work 域创建，marketing 同源）——这里只借它探存活
+        getWorkGatewayClient()
+          .getStatus()
+          .then((s) => s.ready)
+      )
 
       // 回滚是单向的（_restoreOpenClawSnapshot 会先删掉新版本的 node_modules），
       // 滚错就没有再滚回来的机会 —— 判据必须偏保守，详见 decideRollback 的注释。
@@ -1062,6 +2175,32 @@ function registerIpcHandlers(): void {
   // 检索测试：失败时抛出，由渲染进程统一捕获展示
   ipcMain.handle('obsidian:testSearch', async (_e, arg) => obsidianManager.testSearch(arg))
 
+  // ── marketing（Commit 02：system 面；Commit 03：project / context 面；Commit 04：business / watchlist 面；
+  //               Commit 05a：knowledge 面） ──
+  registerMarketingIpc(
+    marketingDatabase!,
+    marketingProjectManager!,
+    marketingBusinessManager!,
+    marketingWatchlistManager!,
+    marketingKnowledgeManager!
+  )
+
+  // ── marketing gateway（Commit 07：只读快照 + 探活/自动拉起/就绪轮询） ──
+  // 合并约定：**不在这里注册**。registerGatewayIpc 只调用一次（见 app.whenReady），
+  // ipc/index.ts 内的一次注册已同时覆盖 work:gateway:* 与 marketing:gateway:* 四条通道；
+  // 分两次注册会因 removeHandler 静默覆盖而只活一个域。
+
+  // ── marketing advisor（Commit 08：grounded 问答 + 停止生成 + 扩词候选） ──
+  registerAdvisorIpc(marketingAdvisorManager!)
+
+  // ── marketing 扫描件识别（Commit 05b：显式触发 + 人工确认后入库；流式增量走 07 事件名） ──
+  registerScanIpc(marketingScanRecognizer!, marketingKnowledgeManager!)
+
+  // ── marketing Content Center（Commit 09：生成/编辑/版本/审核；流式增量走 07 事件名） ──
+  registerContentIpc(marketingContentManager!)
+
+  // ── marketing 热点雷达（Commit 11：list/get/refresh；score 归 12） ──
+  registerHotIpc(marketingHotManager!, marketingHotScoreManager!)
 }
 
 // ─── 推送日志到渲染进程 ────────────────────────────────────────────────────────
@@ -1082,6 +2221,7 @@ function setupLogForwarding(): void {
       // 但前端要能据此把「已停止」细化为「修复中」，避免用户以为卡死。
       const full = clawManager.getStatus()
       mainWindow.webContents.send('claw:statusChange', { running, port, maintenance: full.maintenance })
+      // 2.0 营销域：网关停止时播一句提示（eventId 可省，见 triggerVoiceAutoSpeak 签名）
       if (!running) void triggerVoiceAutoSpeak('OpenClaw 已停止')
     }
   }
@@ -1136,21 +2276,8 @@ if (app.isPackaged) {
 
 // ─── App 生命周期 ──────────────────────────────────────────────────────────────
 
-async function triggerVoiceAutoSpeak(text: string): Promise<void> {
-  if (!voiceManager) return
-  try {
-    const settings = await voiceManager.getSettings()
-    if (settings.autoSpeak === 'off' || !settings.hasTtsKey) return
-    const result = await voiceManager.speak({ text })
-    if (!mainWindow || mainWindow.isDestroyed()) return
-    mainWindow.webContents.send('fish:voice:auto-speak', {
-      audioId: result.audioId,
-      mime: result.mime
-    })
-  } catch (error) {
-    console.log(`[voice] 自动朗读跳过: ${(error as Error)?.message ?? String(error)}`)
-  }
-}
+// 注（合并点）：2.0 在这里还有一份单参 triggerVoiceAutoSpeak，已删除；
+// 统一用上面那份（eventId 可选，兼容 2.0 的单参调用）。
 
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.clawdesktop.app')
@@ -1172,8 +2299,13 @@ app.whenReady().then(() => {
     urlPath = urlPath.split('?')[0].split('#')[0]
 
     // 精准拼出磁盘绝对路径（此时大家都统一在 dist-electron 目录下）
-    const outDir = join(__dirname, '..')
-    const filePath = join(outDir, urlPath)
+    // resolve 规范化并做边界检查：URL 里的字面反斜杠不被浏览器当分隔符折叠，
+    // 但 Windows 下 path 会解析它——不检查即可用 app://x/..\..\.. 逃出目录读任意文件
+    const outDir = resolve(join(__dirname, '..'))
+    const filePath = resolve(outDir, urlPath)
+    if (filePath !== outDir && !filePath.startsWith(outDir + sep)) {
+      return new Response('Forbidden', { status: 403 })
+    }
 
     try {
       // 1. 同步读取文件二进制数据
@@ -1205,13 +2337,49 @@ app.whenReady().then(() => {
 
   configManager = new ConfigManager()
   skillSyncService = new SkillSyncService(configManager)
-  clawManager = new ClawManager(configManager, app.isPackaged ? join(process.resourcesPath, 'resources') : join(app.getAppPath(), 'resources'))
+  clawManager = new ClawManager(configManager, resourcesRoot())
+
+  // ── work 域：Gateway 单例 + DB Worker + Manager（Commit 01/02）──
+  // 合并约定：全应用只有 workGatewayClient 这一个 GatewayClient 实例，marketing 域复用它
+  // （getMarketingGatewayClient() 返回同一对象），所以必须先于 marketing 各 Manager 构造。
+  workGatewayClient = createWorkGatewayClient()
+  workDatabase = createWorkDatabase()
+  const workManagers = initWorkManagers()
+
   downloadManager = new DownloadManager(configManager)
   channelManager =
     new ChannelManager(
       configManager
     )
   obsidianManager = new ObsidianManager(configManager)
+  // marketing DB Worker 客户端（惰性：构造时不建库、不 spawn）
+  marketingDatabase = createMarketingDatabase()
+  // marketing Project 管理器（无 IO 副作用；首次 IPC 才触碰文件系统/数据库）
+  marketingProjectManager = createMarketingProjectManager(marketingDatabase)
+  // marketing Business / Watchlist 管理器（无 IO 副作用；同样惰性）
+  const businessManagers = createMarketingBusinessManagers(marketingDatabase)
+  marketingBusinessManager = businessManagers.businessManager
+  marketingWatchlistManager = businessManagers.watchlistManager
+  // marketing Knowledge 管理器（无 IO 副作用；pdfjs 资产路径此刻只做字符串拼接）
+  marketingKnowledgeManager = createMarketingKnowledgeManager(marketingDatabase)
+  // marketing Context Engine（Commit 06）：同样无 IO 副作用，首次 buildContextPack 才读库
+  marketingContextEngine = createMarketingContextEngine(
+    marketingProjectManager!,
+    marketingBusinessManager!,
+    marketingKnowledgeManager!,
+    marketingWatchlistManager!
+  )
+  // marketing AI Advisor（Commit 08）：用上面两个单例拼装（注入式，零 IO 副作用）
+  // 注：marketing 不再自建 Gateway Client（Commit 07 的独立实例已并入 work 域唯一实例）。
+  marketingAdvisorManager = createMarketingAdvisorManager()
+  // marketing 扫描件识别（Commit 05b）：同样注入式零副作用；pdfjs 资产路径与 05a 双路径同口径
+  marketingScanRecognizer = createMarketingScanRecognizer()
+  // marketing Content Center（Commit 09）：注入 06/07/DB 三个单例（硬规则 8/13）
+  marketingContentManager = createMarketingContentManager()
+  // marketing 热点雷达（Commit 11）：零 IO 副作用，首次 tick/打开页面才拉 collector
+  marketingHotManager = createMarketingHotManager()
+  // marketing 热点 AI 评分（Commit 12）：懒评分，打开雷达按批评，零 IO 副作用
+  marketingHotScoreManager = createMarketingHotScoreManager()
   // 注入 Obsidian MCP 配置生成器：_syncOpenClawConfig 写回 openclaw.json 时调用
   configManager.setObsidianMcpInjector(() => obsidianManager.buildMcpServerConfig())
 
@@ -1222,20 +2390,37 @@ app.whenReady().then(() => {
     }
   })
 
-  // ── 鱼语音：1.0 无数据库，走 userData/fish/voice.json（失败只降级）──
+  // 注（合并点）：work 域的 Gateway / DB / Manager 已在上方、marketing 装配之前构造。
+  // 2.0 原本在这里用 marketingDatabase 再初始化一遍 voice 的整段代码**已删除**：
+  // voice 只保留下面 ours 那一段（绑 workDatabase），否则 fish:voice:* 二次注册会启动即崩。
+
+  registerIpcHandlers()
+  // ── work.gateway（Commit 01：只读快照 + 探活/自动拉起/就绪轮询）──
+  // 只注册两条通道；业务流（qa/tools/reports 的 SSE 增量）归各自 Commit
+  registerGatewayIpc(workGatewayClient)
+  // ── work.profile / work.matters / work.todos（Commit 02）──
+  registerWorkIpc(workManagers)
+  // ── 鱼语音：预设 TTS + 克隆音色共用 /voice 配置与音频缓存 ──
+  // 语音是增强能力：初始化失败只降级，绝不阻断主流程启动。
   try {
+    if (!workDatabase) throw new Error('workDatabase 尚未初始化')
     const voiceSecretStore = new VoiceSecretStore(
       join(configManager.getDataDir(), 'voice', 'key.bin'),
       safeStorage
     )
-    const voiceStorage = createJsonVoiceStorage(
-      join(configManager.getDataDir(), 'fish', 'voice.json')
-    )
+    const voiceStorage = createDatabaseVoiceStorage(workDatabase)
     voiceManager = createVoiceManager({
       storage: voiceStorage,
       secrets: voiceSecretStore,
       cacheDir: join(configManager.getDataDir(), 'fish', 'audio'),
+      bridgeScriptPath: app.isPackaged
+        ? join(process.resourcesPath, 'resources', 'voice', 'volc-tts.mjs')
+        : join(app.getAppPath(), 'resources', 'voice', 'volc-tts.mjs'),
       logger: (message) => console.log(message),
+      onSettingsChanged: () => {
+        // tts 块写入 openclaw.json；环境变量部分由网关下次启动生效。
+        void configManager.syncOpenClawConfig().catch(() => undefined)
+      },
       onProgress: (event) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('fish:voice:progress', event)
@@ -1250,6 +2435,21 @@ app.whenReady().then(() => {
       logger: (message) => console.log(message)
     })
     registerVoiceIpc(voiceManager, voiceCloneManager)
+    // 硬规则 25：对话内语音走 OpenClaw 的 tts 块与 /tts 命令族。
+    // openclaw.json 只写非密字段；apiKey 由网关启动时以环境变量注入。
+    // 块内已被 if 判空，但闭包逃逸出作用域后 TS 不再收窄，故先取局部引用。
+    const activeVoice = voiceManager
+    configManager.setOpenClawTtsInjector(() => activeVoice.buildOpenClawTtsConfigSync())
+    clawManager.setVoiceTtsEnvProvider(() => activeVoice.buildOpenClawTtsEnv())
+    // 设置一变就把 tts 块同步进 openclaw.json（密钥走环境变量，需下次启动网关生效）。
+    void configManager.syncOpenClawConfig().catch(() => undefined)
+    // 训练是异步的：启动时把上次没跑完的训练接回后台轮询，
+    // 否则页面关掉后任务会永远停在「训练中」。
+    void voiceCloneManager
+      .resumeTrainingPolls()
+      .catch((error) => {
+        console.log(`[voice] 恢复克隆轮询失败: ${(error as Error)?.message ?? String(error)}`)
+      })
   } catch (error) {
     voiceManager = null
     console.log(
@@ -1258,21 +2458,38 @@ app.whenReady().then(() => {
       }`
     )
   }
-
-  registerIpcHandlers()
+  // ── 两个固定本地通知的轻量定时检查（硬规则22；不是调度系统）──
+  workManagers.reminder.start()
   createWindow()
   createTray()
   setupLogForwarding()
+
+  // ── 热点雷达后台调度（Commit 11，§六 v1.7 拍板） ──
+  // 每分钟 tick，但「是否采集」由 hotManager 按 app_meta.hot_last_fetch_at 时间差判断
+  // （≥60min 才跑）；不用 setInterval 直接计时，睡眠唤醒后靠 powerMonitor resume 补检。
+  const hotTick = (): void => {
+    marketingHotManager
+      ?.tickDue()
+      .then((s) => {
+        if (s) console.log('[hot] 定时采集完成：total=' + s.topicsTotal + ' +' + s.inserted)
+      })
+      .catch((e) => console.warn('[hot] 定时采集失败:', (e as Error)?.message || e))
+  }
+  hotTickTimer = setInterval(hotTick, 60 * 1000)
+  powerMonitor.on('resume', hotTick)
 
   // 启动时同步开机自启项，保证与配置一致
   const startupConfig = configManager.getConfig()
   applyLoginItemSettings(startupConfig.launchOnBoot)
 
-  // 自动启动服务：应用启动时自动运行 OpenClaw
+  // 自动启动服务：应用启动时自动运行 OpenClaw（同样受用户协议闸门约束）
   if (startupConfig.autoStart) {
-    clawManager.start().catch((err) => {
-      console.error('[Main] 自动启动 OpenClaw 失败:', err)
-    })
+    workWizardManager
+      ?.ensureConsent()
+      .then(() => clawManager.start())
+      .catch((err) => {
+        console.error('[Main] 自动启动 OpenClaw 失败:', err)
+      })
   }
 
   app.on('activate', () => {
@@ -1289,6 +2506,48 @@ app.on('before-quit', async () => {
   ; (app as any).isQuiting = true
   // 确保在退出前杀死所有子进程，防止孤儿进程
   killAllTerminalSessions()
+  // 在途的 Advisor 流先中止：否则应用退出时上游可能还在生成（白烧 token）
+  try {
+    const aborted = abortAllAdvisorStreams()
+    if (aborted > 0) console.log(`[Main] 已中止 ${aborted} 条在途 Advisor 流`)
+  } catch (e) {
+    console.error('[Main] 中止 Advisor 流失败:', e)
+  }
+  // 在途的扫描件识别同理（05b 四路中止的第四路：停止按钮/切商家/卸载在渲染端，退出在这）
+  try {
+    const aborted = abortAllScanStreams()
+    if (aborted > 0) console.log(`[Main] 已中止 ${aborted} 条在途扫描件识别`)
+  } catch (e) {
+    console.error('[Main] 中止扫描件识别失败:', e)
+  }
+  // 在途的内容生成（09 四路中止之退出路；规格同 08/05b）
+  try {
+    const aborted = abortAllContentGenerations()
+    if (aborted > 0) console.log(`[Main] 已中止 ${aborted} 个在途内容生成任务`)
+  } catch (e) {
+    console.error('[Main] 中止内容生成失败:', e)
+  }
+  // 在途的热点 collector（11：短命子进程，退出时别留下孤儿）
+  try {
+    if (hotTickTimer) {
+      clearInterval(hotTickTimer)
+      hotTickTimer = null
+    }
+    const killed = abortHotCollectors()
+    if (killed > 0) console.log('[Main] 已停止在途热点采集进程')
+  } catch (e) {
+    console.error('[Main] 停止热点采集失败:', e)
+  }
+  // 注册表内的常驻子进程（marketing DB Worker）先优雅停：
+  // wal_checkpoint(TRUNCATE) → close → exit(0)，避免留下 -wal/-shm 残骸
+  try {
+    const stops = await subprocessRegistry.stopAll(3000)
+    for (const s of stops) {
+      if (!s.ok) console.warn(`[Main] 优雅停止 ${s.name}(pid=${s.pid}) 未成功: ${s.error}`)
+    }
+  } catch (e) {
+    console.error('[Main] 停止注册表子进程失败:', e)
+  }
   await clawManager.stop()
 })
 

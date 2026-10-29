@@ -25,8 +25,14 @@
       </button>
     </nav>
 
-    <div v-if="error" class="notice notice-error">{{ error }}</div>
-    <div v-else-if="notice" class="notice">{{ notice }}</div>
+    <div v-if="error" class="notice notice-error">
+      <span>{{ error }}</span>
+      <button class="notice-close" type="button" @click="showError('')">×</button>
+    </div>
+    <div v-else-if="notice" class="notice">
+      <span>{{ notice }}</span>
+      <button class="notice-close" type="button" @click="dismissNotice">×</button>
+    </div>
 
     <section v-if="activeTab === 'overview'" class="tab-panel">
       <div class="stats-grid">
@@ -144,13 +150,56 @@
       </article>
 
       <article class="card">
-        <h2>固定接口</h2>
-        <dl class="endpoint-list">
-          <div><dt>预设 TTS</dt><dd>{{ settings?.ttsEndpoint }}</dd></div>
-          <div><dt>克隆音色合成</dt><dd>{{ settings?.cloneEndpoint }}</dd></div>
-          <div><dt>预设 Resource</dt><dd>{{ settings?.ttsResourceId }}</dd></div>
-          <div><dt>克隆 Resource</dt><dd>{{ settings?.cloneResourceId }}</dd></div>
-        </dl>
+        <div class="section-head">
+          <div>
+            <h2>接口与模型（高级）</h2>
+            <p>升级模型只改 Resource 即可，不必等发版；接口域名固定为火山官方，避免 Key 被发到别处。</p>
+          </div>
+          <button class="btn btn-sm" :disabled="busy" @click="resetAdvanced">恢复默认</button>
+        </div>
+
+        <div class="advanced-form">
+          <div class="form-group">
+            <label class="form-label">预设 TTS 接口</label>
+            <input v-model="advancedForm.ttsEndpoint" class="form-input" :placeholder="VOICE_DEFAULTS.ttsEndpoint" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">预设 Resource</label>
+            <input v-model="advancedForm.ttsResourceId" class="form-input" list="presetResourceList" :placeholder="VOICE_DEFAULTS.ttsResourceId" />
+            <datalist id="presetResourceList">
+              <option v-for="opt in VOICE_RESOURCE_SUGGESTIONS.preset" :key="opt" :value="opt" />
+            </datalist>
+          </div>
+          <div class="form-group">
+            <label class="form-label">克隆音色合成接口</label>
+            <input v-model="advancedForm.cloneEndpoint" class="form-input" :placeholder="VOICE_DEFAULTS.cloneEndpoint" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">克隆 Resource</label>
+            <input v-model="advancedForm.cloneResourceId" class="form-input" list="cloneResourceList" :placeholder="VOICE_DEFAULTS.cloneResourceId" />
+            <datalist id="cloneResourceList">
+              <option v-for="opt in VOICE_RESOURCE_SUGGESTIONS.cloned" :key="opt" :value="opt" />
+            </datalist>
+          </div>
+          <div class="form-group">
+            <label class="form-label">克隆训练接口（voice_clone）</label>
+            <input v-model="advancedForm.cloneTrainEndpoint" class="form-input" :placeholder="VOICE_DEFAULTS.cloneTrainEndpoint" />
+            <p class="field-hint">上传样本、训练音色。只需 X-Api-Key，不带 Resource。</p>
+          </div>
+          <div class="form-group">
+            <label class="form-label">克隆状态查询接口（get_voice）</label>
+            <input v-model="advancedForm.cloneStatusEndpoint" class="form-input" :placeholder="VOICE_DEFAULTS.cloneStatusEndpoint" />
+            <p class="field-hint">轮询训练进度、取试听地址。只需 X-Api-Key。</p>
+          </div>
+        </div>
+
+        <p class="field-hint">
+          接口只接受 https + openspeech.bytedance.com 的 /api/v3/ 路径；Resource 是计费与效果版本，切换后试听与合成立即生效。
+          改动会与「音色」页的保存互不影响。
+        </p>
+        <div class="actions">
+          <button class="btn btn-primary" :disabled="busy || !advancedDirty" @click="saveAdvanced">保存接口与模型</button>
+        </div>
       </article>
     </section>
 
@@ -170,15 +219,23 @@
           <div class="form-group">
             <label class="form-label">音色</label>
             <select v-model="voiceForm.defaultSpeaker" class="form-input">
+              <!-- 当前值不在任何分组里（如已删除的克隆音色）：保留回显，避免下拉显示空白 -->
               <option
-                v-if="voiceForm.defaultSpeaker && !(catalog?.voices ?? []).some(v => v.voiceType === voiceForm.defaultSpeaker)"
+                v-if="voiceForm.defaultSpeaker && !selectableSpeakers.includes(voiceForm.defaultSpeaker)"
                 :value="voiceForm.defaultSpeaker"
               >
-                克隆音色 · {{ cloneRecords.find(r => r.speakerId === voiceForm.defaultSpeaker)?.displayName || voiceForm.defaultSpeaker }}
+                （不可用）{{ voiceForm.defaultSpeaker }}
               </option>
-              <option v-for="voice in catalog?.voices ?? []" :key="voice.voiceType" :value="voice.voiceType">
-                {{ voice.name }} · {{ voice.scene }}
-              </option>
+              <optgroup v-if="activatedClones.length" label="克隆音色">
+                <option v-for="clone in activatedClones" :key="clone.speakerId" :value="clone.speakerId">
+                  {{ clone.displayName }} · 克隆
+                </option>
+              </optgroup>
+              <optgroup label="预设音色">
+                <option v-for="voice in catalog?.voices ?? []" :key="voice.voiceType" :value="voice.voiceType">
+                  {{ voice.name }} · {{ voice.scene }}
+                </option>
+              </optgroup>
             </select>
             <p class="field-hint">{{ selectedVoice?.languageSummary }}</p>
           </div>
@@ -188,7 +245,24 @@
           </div>
           <div class="form-group">
             <label class="form-label">情绪（可选）</label>
-            <input v-model="voiceForm.emotion" class="form-input" maxlength="64" placeholder="留空使用音色默认情绪" />
+            <select
+              v-model="voiceForm.emotion"
+              class="form-input"
+              :disabled="!isPresetSelected"
+            >
+              <option value="">不指定（用音色默认）</option>
+              <optgroup v-for="group in EMOTION_GROUPS" :key="group.label" :label="group.label">
+                <option v-for="item in group.options" :key="item.value" :value="item.value">
+                  {{ item.label }}（{{ item.value }}）
+                </option>
+              </optgroup>
+            </select>
+            <p class="field-hint" v-if="!isPresetSelected">
+              克隆音色不支持情绪，只使用你提供的样本自身音色（官方限制）。
+            </p>
+            <p class="field-hint" v-else>
+              官方取值分中/英文两组，仅部分音色支持且范围不同；以语音指令方式下发。
+            </p>
           </div>
           <div class="form-group">
             <label class="form-label">自动朗读</label>
@@ -197,6 +271,51 @@
               <option value="tagged">仅标记事件</option>
               <option value="always">所有短提示</option>
             </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">对话内语音（OpenClaw）</label>
+            <select v-model="voiceForm.conversationTts" class="form-input">
+              <option value="off">关闭</option>
+              <option value="tagged">仅在回复里带语音标记时</option>
+              <option value="inbound">只在你发语音时回语音</option>
+              <option value="always">每条回复都发语音</option>
+            </select>
+            <p class="field-hint">
+              走 OpenClaw 自带的语音通道；改完需重启网关生效（密钥只走环境变量，不写进配置文件）。
+            </p>
+          </div>
+          <div class="form-group">
+            <label class="form-label">对话内语音通道</label>
+            <select v-model="voiceForm.conversationChannel" class="form-input">
+              <option value="auto">自动（有语音控制台 Key 优先标准接口）</option>
+              <option value="bridge">本地桥接（Agent Plan Key）</option>
+              <option value="volcengine">标准接口（语音控制台 Key）</option>
+            </select>
+            <p class="field-hint">{{ openclawStatusText }}</p>
+            <div class="actions">
+              <button class="btn btn-sm" :disabled="busy" @click="testOpenClaw">
+                测试通道
+              </button>
+              <button class="btn btn-sm" :disabled="busy" @click="restartOpenClaw">
+                重启网关
+              </button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">复刻模型（仅克隆音色）</label>
+            <select
+              v-model="voiceForm.cloneModel"
+              class="form-input"
+              :disabled="!isCloneSelected"
+            >
+              <option value="seed-tts-2.0-standard">标准版 seed-tts-2.0-standard</option>
+              <option value="seed-tts-2.0-expressive">表现力增强版 seed-tts-2.0-expressive</option>
+            </select>
+            <p class="field-hint" v-if="isCloneSelected">
+              官方只有这两个枚举。选定后不再支持语音指令（context_texts），情感风格由你训练时提供的样本音频决定；
+              表现力增强版更适合需要情绪起伏的场景。
+            </p>
+            <p class="field-hint" v-else>只有选中克隆音色时才可设置（预设音色不传 model）。</p>
           </div>
         </div>
 
@@ -216,9 +335,18 @@
             <h2>克隆音色</h2>
             <p>样本与 Key 只在主进程处理；删除只清理本地记录，不承诺删除供应商侧音色。</p>
           </div>
-          <button class="btn btn-primary" :disabled="busy || !settings?.hasCloneKey" @click="openCloneWizard">
-            新建克隆音色
-          </button>
+          <div class="head-actions">
+            <button
+              class="btn"
+              :disabled="busy || !settings?.hasCloneKey || reconcileBusy"
+              @click="reconcileClones"
+            >
+              {{ reconcileBusy ? '核对中…' : '核对远端' }}
+            </button>
+            <button class="btn btn-primary" :disabled="busy || !settings?.hasCloneKey" @click="openCloneWizard">
+              新建克隆音色
+            </button>
+          </div>
         </div>
 
         <div v-if="cloneRecords.length" class="clone-list">
@@ -235,6 +363,13 @@
                 {{ record.activated ? '已转正，可正常朗读' : cloneExpiryText(record) }}
               </span>
               <span v-if="record.lastError" class="clone-error">{{ record.lastError }}</span>
+              <span
+                v-if="reconcileOf(record)"
+                class="clone-reconcile"
+                :class="reconcileOf(record)!.verdict"
+              >
+                远端核对：{{ reconcileOf(record)!.message }}
+              </span>
             </div>
             <div class="clone-actions">
               <button
@@ -343,20 +478,35 @@
             <div class="form-group">
               <label class="form-label">样本语种</label>
               <select v-model.number="cloneForm.language" class="form-input">
-                <option :value="0">中文</option>
-                <option :value="1">英文</option>
-                <option :value="2">日语</option>
-                <option :value="3">西班牙语</option>
-                <option :value="4">印尼语</option>
-                <option :value="5">葡萄牙语</option>
-                <option :value="6">德语</option>
-                <option :value="7">法语</option>
-                <option :value="8">韩语</option>
+                <option v-for="lang in VOICE_CLONE_LANGUAGES" :key="lang.value" :value="lang.value">
+                  {{ lang.label }}
+                </option>
               </select>
             </div>
             <div class="form-group form-span">
               <label class="form-label">样本对应文字（可选，越准确越稳）</label>
               <textarea v-model="cloneForm.text" class="form-input text-area" maxlength="2000" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">试听文本（4–300 字，需与语种一致）</label>
+              <input v-model="cloneForm.demoText" class="form-input" maxlength="300" :placeholder="defaultDemoTextPlaceholder" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">音频降噪</label>
+              <select v-model="cloneForm.enableAudioDenoise" class="form-input">
+                <option :value="false">关闭（样本干净时推荐）</option>
+                <option :value="true">开启（样本有底噪时推荐）</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">音量归一化</label>
+              <select v-model="cloneForm.disableVolumeNormalization" class="form-input">
+                <option :value="false">开启（默认，多音色音量统一）</option>
+                <option :value="true">关闭（更贴近样本音量，相似度更高）</option>
+              </select>
+              <p class="field-hint">
+                关闭后合成音量随你的样本走，适合在意音色相似度的场景；日常播报建议保持开启。
+              </p>
             </div>
           </div>
 
@@ -405,13 +555,36 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import type {
   VoiceCatalogFile,
   VoiceCatalogVoice,
+  VoiceReconcileItem,
   VoiceCloneRecord,
   VoiceCloneSample,
   VoiceCloneValidation,
   VoiceKeyKind,
   VoiceSettingsView,
-  VoiceUsageDay
+  VoiceUsageDay,
+  VoiceOpenClawStatus
 } from '../../../electron/main/fish/voice/core/types'
+import {
+  VOICE_ENDPOINTS,
+  VOICE_RESOURCES,
+  VOICE_RESOURCE_SUGGESTIONS
+} from '../../../electron/main/fish/voice/core/settings'
+import {
+  VOICE_CLONE_LANGUAGES,
+  defaultDemoText
+} from '../../../electron/main/fish/voice/core/cloneLanguage'
+import {
+  EMOTION_GROUPS
+} from '../../../electron/main/fish/voice/core/emotionOptions'
+
+const VOICE_DEFAULTS = {
+  ttsEndpoint: VOICE_ENDPOINTS.presetTts,
+  ttsResourceId: VOICE_RESOURCES.preset,
+  cloneEndpoint: VOICE_ENDPOINTS.clonedTts,
+  cloneResourceId: VOICE_RESOURCES.cloned,
+  cloneTrainEndpoint: VOICE_ENDPOINTS.cloneTrain,
+  cloneStatusEndpoint: VOICE_ENDPOINTS.cloneStatus
+} as const
 
 type TabId = 'overview' | 'keys' | 'voices' | 'budget'
 
@@ -427,7 +600,14 @@ const activeTab = ref<TabId>('overview')
 const settings = ref<VoiceSettingsView | null>(null)
 const catalog = ref<VoiceCatalogFile | null>(null)
 const budget = ref<VoiceUsageDay | null>(null)
+const openclawStatus = ref<VoiceOpenClawStatus | null>(null)
 const cloneRecords = ref<VoiceCloneRecord[]>([])
+/** 最近一次远端对账结果，按 speakerId 索引。 */
+const reconcileItems = ref<VoiceReconcileItem[]>([])
+const reconcileBusy = ref(false)
+function reconcileOf(record: VoiceCloneRecord): VoiceReconcileItem | undefined {
+  return reconcileItems.value.find((item) => item.speakerId === record.speakerId)
+}
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
@@ -445,11 +625,16 @@ const cloneForm = reactive({
   displayName: '',
   language: 0,
   text: '',
+  demoText: '',
+  enableAudioDenoise: false,
+  disableVolumeNormalization: false,
   consent: false
 })
 let currentAudio: HTMLAudioElement | null = null
 let objectUrl = ''
 let clonePollTimer: ReturnType<typeof setTimeout> | null = null
+// 状态提示自动消失；错误提示不自动消失（错误通常需要用户看完再处理）。
+let noticeTimer: ReturnType<typeof setTimeout> | null = null
 const currentJobId = ref('')
 const progressDone = ref(0)
 const progressTotal = ref(0)
@@ -459,22 +644,93 @@ const voiceForm = reactive({
   defaultSpeaker: '',
   speedRatio: 1,
   emotion: '',
-  autoSpeak: 'off' as 'off' | 'tagged' | 'always'
+  autoSpeak: 'off' as 'off' | 'tagged' | 'always',
+  conversationTts: 'off' as 'off' | 'always' | 'inbound' | 'tagged',
+  conversationChannel: 'auto' as 'auto' | 'bridge' | 'volcengine',
+  cloneModel: 'seed-tts-2.0-standard' as 'seed-tts-2.0-standard' | 'seed-tts-2.0-expressive'
 })
+
+/** 接口/模型高级配置的编辑态：与 settings 分开，取消不脏数据。 */
+const advancedForm = reactive({
+  ttsEndpoint: '',
+  ttsResourceId: '',
+  cloneEndpoint: '',
+  cloneResourceId: '',
+  cloneTrainEndpoint: '',
+  cloneStatusEndpoint: ''
+})
+const advancedDirty = computed(() => {
+  const s = settings.value
+  if (!s) return false
+  return (
+    advancedForm.ttsEndpoint.trim() !== s.ttsEndpoint ||
+    advancedForm.ttsResourceId.trim() !== s.ttsResourceId ||
+    advancedForm.cloneEndpoint.trim() !== s.cloneEndpoint ||
+    advancedForm.cloneResourceId.trim() !== s.cloneResourceId ||
+    advancedForm.cloneTrainEndpoint.trim() !== s.cloneTrainEndpoint ||
+    advancedForm.cloneStatusEndpoint.trim() !== s.cloneStatusEndpoint
+  )
+})
+
+const defaultDemoTextPlaceholder = computed(() => defaultDemoText(cloneForm.language))
+
+/** 已转正的克隆音色：只有转正后才能被选为默认（转正收槽位费，需用户明确确认）。 */
+const activatedClones = computed(() =>
+  cloneRecords.value.filter((record) => record.activated)
+)
+
+/** 下拉里所有可选项，用于判断当前默认值是否已失效。 */
+/** 当前默认音色是否为预设音色：只有预设（豆包 2.0 音色）支持情绪指令。 */
+const isPresetSelected = computed(() => {
+  const id = voiceForm.defaultSpeaker || settings.value?.defaultSpeaker
+  return (catalog.value?.voices ?? []).some((voice) => voice.voiceType === id)
+})
+
+const selectableSpeakers = computed(() => [
+  ...(catalog.value?.voices ?? []).map((voice) => voice.voiceType),
+  ...activatedClones.value.map((clone) => clone.speakerId)
+])
 
 const selectedVoice = computed<VoiceCatalogVoice | undefined>(() => {
   const id = voiceForm.defaultSpeaker || settings.value?.defaultSpeaker
   return catalog.value?.voices.find((voice) => voice.voiceType === id)
 })
 
+/** 清掉提示与其计时器（切换消息、卸载、手动关闭都要走这里）。 */
+function clearNoticeTimer(): void {
+  if (noticeTimer) {
+    clearTimeout(noticeTimer)
+    noticeTimer = null
+  }
+}
+
 function showError(e: unknown): void {
+  clearNoticeTimer()
   notice.value = ''
   error.value = e instanceof Error ? e.message : String(e)
 }
 
+/**
+ * 显示一条状态提示，并在一段时间后自动消失。
+ *
+ * 旧实现只赋值不回收，于是「已命中本地缓存」这类一次性的成功提示会一直挂在
+ * 页面上，连点若干次试听后还留着最后一条，用户无法判断当前是否还在进行。
+ */
+const NOTICE_AUTO_HIDE_MS = 4000
 function showNotice(message: string): void {
+  clearNoticeTimer()
   error.value = ''
   notice.value = message
+  noticeTimer = setTimeout(() => {
+    noticeTimer = null
+    notice.value = ''
+  }, NOTICE_AUTO_HIDE_MS)
+}
+
+/** 手动关闭提示（模板上的「×」按钮用）。 */
+function dismissNotice(): void {
+  clearNoticeTimer()
+  notice.value = ''
 }
 
 async function refreshSettings(): Promise<void> {
@@ -484,11 +740,76 @@ async function refreshSettings(): Promise<void> {
   voiceForm.speedRatio = next.speedRatio
   voiceForm.emotion = next.emotion
   voiceForm.autoSpeak = next.autoSpeak
+  voiceForm.conversationTts = next.conversationTts
+  voiceForm.cloneModel = next.cloneModel
   budgetLimit.value = next.dailyCharLimit
+  syncAdvancedForm(next)
+}
+
+const openclawStatusText = computed(() => {
+  const s = openclawStatus.value
+  if (!s) return '正在检测对话内语音通道…'
+  if (s.effective === 'bridge') return `当前生效：本地桥接 · ${s.reason}`
+  if (s.effective === 'volcengine') return `当前生效：OpenClaw 标准接口 · ${s.reason}`
+  return `当前不可用：${s.reason}`
+})
+
+async function refreshOpenClawStatus(): Promise<void> {
+  try {
+    openclawStatus.value = await api.openclaw.status()
+  } catch {
+    openclawStatus.value = null
+  }
+}
+
+async function testOpenClaw(): Promise<void> {
+  busy.value = true
+  try {
+    const result = await api.openclaw.test()
+    if (result.audio) await playAudio(result.audio.audioId, result.audio.mime)
+    showNotice(`${result.message}（通道：${result.channel ?? '无'}）`)
+  } catch (e) {
+    showError(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function restartOpenClaw(): Promise<void> {
+  if (!window.confirm('重启 OpenClaw 网关？当前对话会短暂中断。')) return
+  busy.value = true
+  try {
+    await window.api.claw.restart()
+    showNotice('网关已重启；对话内语音配置已生效')
+    await refreshOpenClawStatus()
+  } catch (e) {
+    showError(e)
+  } finally {
+    busy.value = false
+  }
 }
 
 async function refreshBudget(): Promise<void> {
   budget.value = await api.budget.get()
+}
+
+/** 逐条核对本地记录与远端实际状态（只调 get_voice，不需要 AK/SK）。 */
+async function reconcileClones(): Promise<void> {
+  reconcileBusy.value = true
+  error.value = ''
+  try {
+    reconcileItems.value = await api.clone.reconcile()
+    const changed = reconcileItems.value.filter((i) => i.verdict !== 'remote-ok').length
+    showNotice(
+      changed
+        ? `核对完成：${changed} 条与远端不一致，详见列表`
+        : '核对完成：本地记录与远端全部一致'
+    )
+  } catch (e) {
+    showError(e)
+  } finally {
+    reconcileBusy.value = false
+  }
 }
 
 async function refreshClones(): Promise<void> {
@@ -526,7 +847,12 @@ async function load(): Promise<void> {
     voiceForm.speedRatio = nextSettings.speedRatio
     voiceForm.emotion = nextSettings.emotion
     voiceForm.autoSpeak = nextSettings.autoSpeak
+    voiceForm.conversationTts = nextSettings.conversationTts
+    voiceForm.conversationChannel = nextSettings.conversationChannel
+    voiceForm.cloneModel = nextSettings.cloneModel
     budgetLimit.value = nextSettings.dailyCharLimit
+    syncAdvancedForm(nextSettings)
+    void refreshOpenClawStatus()
   } catch (e) {
     showError(e)
   } finally {
@@ -634,14 +960,62 @@ async function saveVoiceSettings(): Promise<void> {
       defaultSpeaker: voiceForm.defaultSpeaker,
       speedRatio: voiceForm.speedRatio,
       emotion: voiceForm.emotion,
-      autoSpeak: voiceForm.autoSpeak
+      autoSpeak: voiceForm.autoSpeak,
+      conversationTts: voiceForm.conversationTts,
+      conversationChannel: voiceForm.conversationChannel,
+      cloneModel: voiceForm.cloneModel
     })
-    showNotice('语音设置已保存')
+    await refreshOpenClawStatus()
+    showNotice(
+      voiceForm.conversationTts === 'off'
+        ? '语音设置已保存'
+        : '已保存；对话内语音需重启网关生效'
+    )
   } catch (e) {
     showError(e)
   } finally {
     busy.value = false
   }
+}
+
+function syncAdvancedForm(from: VoiceSettingsView): void {
+  advancedForm.ttsEndpoint = from.ttsEndpoint
+  advancedForm.ttsResourceId = from.ttsResourceId
+  advancedForm.cloneEndpoint = from.cloneEndpoint
+  advancedForm.cloneResourceId = from.cloneResourceId
+  advancedForm.cloneTrainEndpoint = from.cloneTrainEndpoint
+  advancedForm.cloneStatusEndpoint = from.cloneStatusEndpoint
+}
+
+async function saveAdvanced(): Promise<void> {
+  busy.value = true
+  error.value = ''
+  try {
+    settings.value = await api.settings.set({
+      ttsEndpoint: advancedForm.ttsEndpoint.trim(),
+      ttsResourceId: advancedForm.ttsResourceId.trim(),
+      cloneEndpoint: advancedForm.cloneEndpoint.trim(),
+      cloneResourceId: advancedForm.cloneResourceId.trim(),
+      cloneTrainEndpoint: advancedForm.cloneTrainEndpoint.trim(),
+      cloneStatusEndpoint: advancedForm.cloneStatusEndpoint.trim()
+    })
+    syncAdvancedForm(settings.value)
+    showNotice('接口与模型已更新，后续合成立即生效')
+  } catch (e) {
+    showError(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function resetAdvanced(): Promise<void> {
+  advancedForm.ttsEndpoint = VOICE_DEFAULTS.ttsEndpoint
+  advancedForm.ttsResourceId = VOICE_DEFAULTS.ttsResourceId
+  advancedForm.cloneEndpoint = VOICE_DEFAULTS.cloneEndpoint
+  advancedForm.cloneResourceId = VOICE_DEFAULTS.cloneResourceId
+  advancedForm.cloneTrainEndpoint = VOICE_DEFAULTS.cloneTrainEndpoint
+  advancedForm.cloneStatusEndpoint = VOICE_DEFAULTS.cloneStatusEndpoint
+  await saveAdvanced()
 }
 
 async function saveBudget(): Promise<void> {
@@ -676,6 +1050,9 @@ function openCloneWizard(): void {
   cloneForm.displayName = ''
   cloneForm.language = 0
   cloneForm.text = ''
+  cloneForm.demoText = ''
+  cloneForm.enableAudioDenoise = false
+  cloneForm.disableVolumeNormalization = false
   cloneForm.consent = false
   error.value = ''
   notice.value = ''
@@ -715,7 +1092,10 @@ async function startCloneTraining(): Promise<void> {
       consent: cloneForm.consent,
       displayName: cloneForm.displayName.trim(),
       text: cloneForm.text.trim() || undefined,
-      language: cloneForm.language
+      language: cloneForm.language,
+      demoText: cloneForm.demoText.trim() || undefined,
+      enableAudioDenoise: cloneForm.enableAudioDenoise,
+      disableVolumeNormalization: cloneForm.disableVolumeNormalization
     })
     cloneWizardRecord.value = record
     await refreshClones()
@@ -902,6 +1282,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   releaseAudio()
   if (clonePollTimer) clearTimeout(clonePollTimer)
+  clearNoticeTimer()
   progressCleanup?.()
 })
 </script>
@@ -1004,10 +1385,33 @@ onBeforeUnmount(() => {
 }
 
 .notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 10px 14px;
   border-radius: 8px;
   background: rgba(78, 158, 255, 0.12);
   color: #8ec5ff;
+}
+
+.notice-close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.65;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.notice-close:hover {
+  opacity: 1;
 }
 
 .notice-error {
@@ -1038,8 +1442,7 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.04);
 }
 
-.route-grid code,
-.endpoint-list dd {
+.route-grid code {
   overflow-wrap: anywhere;
 }
 
@@ -1062,25 +1465,17 @@ onBeforeUnmount(() => {
   min-width: 220px;
 }
 
-.endpoint-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 12px 0 0;
-}
-
-.endpoint-list > div {
+/* 接口与模型高级区：固定两列。三项自适应会把输入框压得太窄，长 URL 读不全。 */
+.advanced-form {
   display: grid;
-  grid-template-columns: 160px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
 }
 
-.endpoint-list dt {
-  color: var(--text-muted, #7d8590);
-}
-
-.endpoint-list dd {
-  margin: 0;
+.advanced-form .form-input {
+  width: 100%;
+  min-width: 0;
 }
 
 .voice-form {
@@ -1172,6 +1567,33 @@ onBeforeUnmount(() => {
 .clone-error {
   color: #ff8d8d;
   font-size: 13px;
+}
+
+/* 对账结论：按判定结果着色，一眼看出哪条和远端不一致 */
+.clone-reconcile {
+  font-size: 13px;
+  color: var(--text-muted, #7d8590);
+}
+
+.clone-reconcile.remote-ok {
+  color: #5ee29a;
+}
+
+.clone-reconcile.remote-missing,
+.clone-reconcile.remote-failed {
+  color: #ff8d8d;
+}
+
+.clone-reconcile.remote-changed {
+  color: #ffd479;
+}
+
+/* 卡片标题右侧的动作组 */
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
 }
 
 .clone-actions {
@@ -1303,11 +1725,6 @@ onBeforeUnmount(() => {
     min-width: 0;
   }
 
-  .endpoint-list > div {
-    grid-template-columns: 1fr;
-    gap: 2px;
-  }
-
   .clone-row {
     align-items: flex-start;
     flex-direction: column;
@@ -1319,6 +1736,11 @@ onBeforeUnmount(() => {
 
   .clone-form {
     grid-template-columns: 1fr;
+  }
+
+  /* 窄屏回落单列，避免两列输入框被压到读不全 URL */
+  .advanced-form {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

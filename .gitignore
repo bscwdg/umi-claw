@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-electron/
 release/
+release2/
 out/
 .DS_Store
 *.log
@@ -12,7 +13,7 @@ config
 /.vscode
 /electron-builder-cache
 /.dev-user-data
-# 便携数据目录与本地临时测试产物，不入库
+# 便携数据目录不入库
 /data/
 # 验收**产物**不入库（各套件的结果 JSON + esbuild 临时 bundle）。
 # ⚠️ 这里曾经写的是 /test/ ——整个验收目录被忽略：已跟踪的文件改动照常提交，

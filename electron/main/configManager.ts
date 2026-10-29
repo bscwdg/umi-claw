@@ -218,9 +218,20 @@ export class ConfigManager {
   private modelPresets: ModelPresetService
   /** Obsidian MCP 注入器：返回 mcp.servers.obsidian 配置，未启用返回 null */
   private obsidianMcpInjector: (() => Record<string, unknown> | null) | null = null
+  /** OpenClaw 对话内语音（tts 块）注入器：返回待写入的 tts 配置，未启用返回 null */
+  private openClawTtsInjector: (() => Record<string, unknown> | null | undefined) | null = null
 
   setObsidianMcpInjector(fn: (() => Record<string, unknown> | null) | null): void {
     this.obsidianMcpInjector = fn
+  }
+
+  /**
+   * 注入 OpenClaw 	ts 配置块（硬规则 25：语音能力走底座自带通道）。
+   * 注入的是非密字段（auto / provider / resourceId / speakerVoice）；
+   * **apiKey 故意不进来**——它只存在于 safeStorage，由网关启动时以环境变量注入。
+   */
+  setOpenClawTtsInjector(fn: (() => Record<string, unknown> | null | undefined) | null): void {
+    this.openClawTtsInjector = fn
   }
 
   constructor() {
@@ -980,6 +991,23 @@ private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string; kind
       token: GATEWAY_TOKEN
     }
 
+    // ----- Gateway HTTP 端点开关（Commit 01：默认化 + 老用户迁移）-----
+    // 实测：`gateway.http.endpoints.chatCompletions.enabled` 是 OpenAI 兼容面
+    // （`GET /v1/models` / `POST /v1/chat/completions`）的总开关，默认 **false**
+    // （关闭时 `/v1/models` → 404），且 `reloadKind = hot`（改完无需重启网关）。
+    // 3.0 的 AI 调用链全部依赖它，所以由应用自己在这里写默认值——
+    // 这正是配置生成与同步的唯一入口，新装与老用户（原本没有 http 段）同一条路径覆盖。
+    // 幂等：只写这一个叶子键；`gateway` 段其余字段（含用户自加的）一律保留。
+    existingConfig.gateway.http = existingConfig.gateway.http || {}
+    existingConfig.gateway.http.endpoints = existingConfig.gateway.http.endpoints || {}
+    const existingChatCompletions = existingConfig.gateway.http.endpoints.chatCompletions
+    existingConfig.gateway.http.endpoints.chatCompletions = {
+      ...(existingChatCompletions && typeof existingChatCompletions === 'object'
+        ? existingChatCompletions
+        : {}),
+      enabled: true
+    }
+
     existingConfig.models = existingConfig.models || {}
     existingConfig.models.mode = "merge"
     existingConfig.models.providers = existingConfig.models.providers || {}
@@ -1226,6 +1254,8 @@ private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string; kind
 
     // 注入 Obsidian MCP server 配置（由 ObsidianManager 提供）
     this._injectObsidianMcp(existingConfig)
+    // 注入对话内语音 tts 块（由语音设置提供）
+    this._injectOpenClawTts(existingConfig)
 
     if (!parsedExisting) {
       // 全新安装、文件尚不存在：state 库可能还没初始化，官方 CLI 在空环境无法 patch 建库，
@@ -1284,6 +1314,51 @@ private _injectObsidianMcp(existingConfig: any): void {
   //（timeout 等），整删会把它们一起抹掉。
   if (existingConfig.mcp.servers && Object.keys(existingConfig.mcp.servers).length === 0) {
     delete existingConfig.mcp.servers
+  }
+}
+
+/**
+ * 注入 OpenClaw 	ts 配置块。
+ *
+ * 未启用（conversationTts=off）或没有 tts Key 时**移除已有 tts 块**：
+ * 「关掉」必须是能力整体下线，而不是留一份配好的配置等用户再点 /tts on。
+ */
+private _injectOpenClawTts(existingConfig: any): void {
+  if (!this.openClawTtsInjector) return
+  const ttsCfg = this.openClawTtsInjector()
+  // 三态：undefined = 状态未知（启动早期快照尚未加载）→ 原样不动；
+  // null = 明确关闭 → 只移除本应用管理的 provider，保留 personas/其他 provider；
+  // 对象 = 合并写入（不整段替换）。
+  if (ttsCfg === undefined) return
+  const existing =
+    existingConfig.tts && typeof existingConfig.tts === 'object' && !Array.isArray(existingConfig.tts)
+      ? existingConfig.tts
+      : {}
+  const providers =
+    existing.providers && typeof existing.providers === 'object' && !Array.isArray(existing.providers)
+      ? { ...existing.providers }
+      : {}
+
+  if (!ttsCfg) {
+    delete providers.volcengine
+    delete providers['tts-local-cli']
+    const next = { ...existing, auto: 'off' }
+    if (Object.keys(providers).length) next.providers = providers
+    else delete next.providers
+    if (Object.keys(next).length) existingConfig.tts = next
+    else delete existingConfig.tts
+    return
+  }
+
+  // 本应用只管理自己写入的 provider；其他 provider / personas / fallback 原样保留。
+  delete providers.volcengine
+  delete providers['tts-local-cli']
+  Object.assign(providers, ttsCfg.providers ?? {})
+  existingConfig.tts = {
+    ...existing,
+    auto: ttsCfg.auto,
+    provider: ttsCfg.provider,
+    providers
   }
 }
 
