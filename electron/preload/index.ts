@@ -2,6 +2,22 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { TerminalRuntime } from '../../src/types/terminal'
 import type { ChannelStatus } from '../../src/types/channels'
+import type {
+  VoiceAudioPayload,
+  VoiceCatalogFile,
+  VoiceCloneActivateInput,
+  VoiceCloneRecord,
+  VoiceCloneSample,
+  VoiceCloneTrainInput,
+  VoiceCloneValidation,
+  VoiceKeyKind,
+  VoiceSettings,
+  VoiceSettingsView,
+  VoiceSpeakInput,
+  VoiceSpeakResult,
+  VoiceTestResult,
+  VoiceUsageDay
+} from '../main/fish/voice/core/types'
 console.log('✅ preload loaded')
 
 // ── work 域信封解包：IPC 返回 {ok,data} / {ok,error} ────────────────────────
@@ -339,6 +355,75 @@ const api = {
       setAutoEnabled: (enabled: boolean) => call('work:openclaw-summary:setAutoEnabled', enabled),
       runToday: () => call('work:openclaw-summary:runToday'),
       getStatus: () => call('work:openclaw-summary:getStatus')
+    }
+  },
+
+  // ── 鱼语音（PLAN-VOICE.md）────────────────────────────────────────────────
+  fish: {
+    voice: {
+      settings: {
+        get: () => call<VoiceSettingsView>('fish:voice:settings:get'),
+        set: (patch: Partial<VoiceSettings>) =>
+          call<VoiceSettingsView>('fish:voice:settings:set', patch)
+      },
+      key: {
+        set: (kind: VoiceKeyKind, value: string) =>
+          call<VoiceSettingsView>('fish:voice:key:set', kind, value),
+        clear: (kind: VoiceKeyKind) =>
+          call<VoiceSettingsView>('fish:voice:key:clear', kind)
+      },
+      catalog: {
+        get: () => call<VoiceCatalogFile>('fish:voice:catalog:get')
+      },
+      test: (kind: VoiceKeyKind) => call<VoiceTestResult>('fish:voice:test', kind),
+      speak: (input: VoiceSpeakInput) =>
+        call<VoiceSpeakResult>('fish:voice:speak', input),
+      audio: (audioId: string) =>
+        call<VoiceAudioPayload>('fish:voice:audio', audioId),
+      cancel: (jobId: string) =>
+        call<{ cancelled: boolean }>('fish:voice:cancel', jobId),
+      onProgress: (cb: (event: { jobId: string; index: number; total: number }) => void) => {
+        const handler = (
+          _event: unknown,
+          data: { jobId: string; index: number; total: number }
+        ) => cb(data)
+        ipcRenderer.on('fish:voice:progress', handler)
+        return () => ipcRenderer.off('fish:voice:progress', handler)
+      },
+      budget: {
+        get: (date?: string) => call<VoiceUsageDay>('fish:voice:budget:get', date),
+        set: (limit: number) =>
+          call<VoiceSettingsView>('fish:voice:budget:set', limit)
+      },
+      cache: {
+        clear: () => call<{ freedBytes: number }>('fish:voice:cache:clear')
+      },
+      clone: {
+        pickSample: () => call<VoiceCloneSample | null>('fish:voice:clone:pickSample'),
+        validate: (token: string) =>
+          call<VoiceCloneValidation>('fish:voice:clone:validate', token),
+        train: (input: VoiceCloneTrainInput) =>
+          call<VoiceCloneRecord>('fish:voice:clone:train', input),
+        status: (speakerId: string) =>
+          call<VoiceCloneRecord>('fish:voice:clone:status', speakerId),
+        list: () => call<VoiceCloneRecord[]>('fish:voice:clone:list'),
+        remove: (speakerId: string) =>
+          call<{ removed: true; remoteDelete: 'unsupported' }>(
+            'fish:voice:clone:remove',
+            speakerId
+          ),
+        activate: (input: VoiceCloneActivateInput) =>
+          call<VoiceSpeakResult>('fish:voice:clone:activate', input),
+        demoAudio: (speakerId: string, modelType: number) =>
+          call<VoiceAudioPayload>('fish:voice:clone:demoAudio', speakerId, modelType)
+      },
+      autoSpeak: {
+        on: (cb: (event: { audioId: string; mime: string }) => void) => {
+          const handler = (_event: unknown, data: { audioId: string; mime: string }) => cb(data)
+          ipcRenderer.on('fish:voice:auto-speak', handler)
+          return () => ipcRenderer.off('fish:voice:auto-speak', handler)
+        }
+      }
     }
   }
 }

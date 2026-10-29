@@ -29,6 +29,7 @@ const ACCEPT = [
   ['qatool', 'test/qatool.accept.mjs'],
   ['knowledge', 'test/knowledge.accept.mjs'],
   ['wizard', 'test/wizard.accept.mjs'],
+  ['voice', 'test/voice.accept.mjs'],
   ['ui', 'test/ui.accept.mjs']
 ]
 // 全部单模块绿后

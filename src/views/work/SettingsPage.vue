@@ -2,6 +2,7 @@
   <div class="settings-page">
     <header class="s-header">
       <h1>⚙️ 工作设置</h1>
+      <button class="btn btn-sm" @click="router.push('/voice')">语音设置</button>
     </header>
 
     <!-- 完整度引导 -->

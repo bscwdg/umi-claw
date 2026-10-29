@@ -8,7 +8,8 @@ import {
   Menu,
   nativeImage,
   protocol,
-  Notification
+  Notification,
+  safeStorage
 } from 'electron'
 import { join, parse, dirname, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -32,6 +33,14 @@ import {
   type GatewayStarterResult
 } from './gatewayClient'
 import { registerGatewayIpc, registerWorkIpc } from './ipc'
+import {
+  VoiceSecretStore,
+  VoiceCloneManager,
+  type VoiceManager,
+  createDatabaseVoiceStorage,
+  createVoiceManager,
+  registerVoiceIpc
+} from './fish/voice'
 import { AppError, ERROR_CODES } from './database/errors'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
@@ -92,6 +101,7 @@ let workKnowledgeManager: KnowledgeManager | null = null
 let workWizardManager: WizardManager | null = null
 let workReminderManager: ReminderManager | null = null
 let workOpenClawSummaryManager: OpenClawSummaryManager | null = null
+let voiceManager: VoiceManager | null = null
 
 // 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
 const activeTerminalSessions = new Map<string, TerminalSession>()
@@ -441,8 +451,25 @@ function showReminderNotification(
     // 点击 morning → 打开/聚焦「新的一天」页；具体路由由渲染端处理，这里只展示
     void id
     n.show()
+    void triggerVoiceAutoSpeak(`${payload.title}。${payload.body}`)
   } catch (e) {
     console.log(`[reminder] 本机通知失败（不影响提醒消费）: ${(e as Error)?.message}`)
+  }
+}
+
+async function triggerVoiceAutoSpeak(text: string): Promise<void> {
+  if (!voiceManager) return
+  try {
+    const settings = await voiceManager.getSettings()
+    if (settings.autoSpeak === 'off' || !settings.hasTtsKey) return
+    const result = await voiceManager.speak({ text })
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    mainWindow.webContents.send('fish:voice:auto-speak', {
+      audioId: result.audioId,
+      mime: result.mime
+    })
+  } catch (error) {
+    console.log(`[voice] 自动朗读跳过: ${(error as Error)?.message ?? String(error)}`)
   }
 }
 
@@ -1911,6 +1938,42 @@ app.whenReady().then(() => {
   registerGatewayIpc(workGatewayClient)
   // ── work.profile / work.matters / work.todos（Commit 02）──
   registerWorkIpc(workManagers)
+  // ── 鱼语音：预设 TTS + 克隆音色共用 /voice 配置与音频缓存 ──
+  // 语音是增强能力：初始化失败只降级，绝不阻断主流程启动。
+  try {
+    if (!workDatabase) throw new Error('workDatabase 尚未初始化')
+    const voiceSecretStore = new VoiceSecretStore(
+      join(configManager.getDataDir(), 'voice', 'key.bin'),
+      safeStorage
+    )
+    const voiceStorage = createDatabaseVoiceStorage(workDatabase)
+    voiceManager = createVoiceManager({
+      storage: voiceStorage,
+      secrets: voiceSecretStore,
+      cacheDir: join(configManager.getDataDir(), 'fish', 'audio'),
+      logger: (message) => console.log(message),
+      onProgress: (event) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('fish:voice:progress', event)
+        }
+      }
+    })
+    const voiceCloneManager = new VoiceCloneManager({
+      storage: voiceStorage,
+      secrets: voiceSecretStore,
+      voicesDir: join(configManager.getDataDir(), 'fish', 'voices'),
+      voiceManager,
+      logger: (message) => console.log(message)
+    })
+    registerVoiceIpc(voiceManager, voiceCloneManager)
+  } catch (error) {
+    voiceManager = null
+    console.log(
+      `[voice] 初始化失败，语音功能降级（不影响主流程）: ${
+        (error as Error)?.message ?? String(error)
+      }`
+    )
+  }
   // ── 两个固定本地通知的轻量定时检查（硬规则22；不是调度系统）──
   workManagers.reminder.start()
   createWindow()

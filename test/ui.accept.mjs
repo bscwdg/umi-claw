@@ -773,6 +773,73 @@ try {
 
     return '手动按钮立刻出结果 · 失败态点名可重试 · 开关落库且防抖 ✓'
   })
+
+  // ── U16 语音页 ──
+  await r.check('U16', '语音页挂载：设置 / 精选音色 / 预算 / 克隆列表四路加载', async () => {
+    const res = await mount('src/views/voice/VoicePage.vue', 'ui-voice', {
+      'fish:voice:settings:get': {
+        provider: 'volcengine',
+        ttsEndpoint: 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional',
+        ttsResourceId: 'seed-tts-2.0',
+        cloneEndpoint: 'https://openspeech.bytedance.com/api/v3/tts/unidirectional',
+        cloneResourceId: 'seed-icl-2.0',
+        defaultSpeaker: 'zh_female_vv_uranus_bigtts',
+        speedRatio: 1,
+        emotion: '',
+        format: 'mp3',
+        sampleRate: 24000,
+        autoSpeak: 'off',
+        dailyCharLimit: 0,
+        cacheLimitMB: 500,
+        cloneMode: 'postpaid',
+        cloneSpeakerId: '',
+        hasTtsKey: true,
+        hasCloneKey: false,
+        ttsKeyTail: '****1234',
+        cloneKeyTail: null,
+        encryptionAvailable: true
+      },
+      'fish:voice:catalog:get': {
+        version: '1',
+        updatedAt: '2026-10-28',
+        provider: 'volcengine',
+        model: 'seed-tts-2.0',
+        endpoint: '/api/v3/plan/tts/unidirectional',
+        source: { title: '在线音色列表', url: 'https://example.invalid' },
+        selectionPolicy: [],
+        voices: [
+          {
+            order: 1,
+            name: 'Vivi 2.0',
+            voiceType: 'zh_female_vv_uranus_bigtts',
+            scene: '通用场景',
+            gender: 'female',
+            languageSummary: '中文',
+            capabilities: ['指令遵循'],
+            isDefault: true
+          }
+        ]
+      },
+      'fish:voice:budget:get': {
+        date: '2026-10-29',
+        chars: 12,
+        requests: 1,
+        failures: 0,
+        usageTokens: 12
+      },
+      'fish:voice:clone:list': []
+    })
+    const called = calls().map((c) => c.channel)
+    assert(called.includes('fish:voice:settings:get'), '应调语音设置')
+    assert(called.includes('fish:voice:catalog:get'), '应调精选音色')
+    assert(called.includes('fish:voice:budget:get'), '应调预算')
+    assert(called.includes('fish:voice:clone:list'), '应调克隆列表')
+    assert(res.html.includes('语音设置'), '渲染页面标题')
+    assert(res.html.includes('Vivi 2.0'), '渲染精选音色')
+    assert(res.html.includes('预设 TTS 已配置'), '渲染 Key 状态')
+    assert(res.html.includes('12 / 1'), '渲染今日用量')
+    return '语音页四路加载与概览渲染 ✓'
+  })
 } catch (e) {
   console.error('UI 验收脚本自身异常:', e)
 }
