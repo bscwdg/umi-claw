@@ -20,7 +20,7 @@
 // 设计约束：本模块**不 import electron**，依赖注入，可在纯 Node 下测试。
 
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { WorkDatabase } from './database'
 import { dateOf, normalizeDate } from './todoManager'
 
 /** 记录来源（§2.2 收敛枚举） */
@@ -176,14 +176,14 @@ export interface BatchResult {
 }
 
 export interface RecordManagerOptions {
-  database: DatabaseClient
+  database: WorkDatabase
   logger?: (message: string) => void
   newId?: () => string
   now?: () => number
 }
 
 export class RecordManager {
-  private readonly database: DatabaseClient
+  private readonly database: WorkDatabase
   private readonly logger?: (message: string) => void
   private readonly newId: () => string
   private readonly now: () => number

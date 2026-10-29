@@ -332,7 +332,8 @@ export class PluginHost {
         }
         const channel = pluginIpcChannel(id, method)
         this.ipc.removeHandler(channel)
-        this.ipc.handle(channel, (event, payload) => handler(payload, event))
+        // 第三个参数是原始参数数组：work/marketing 的通道有 (id, patch) 这种多参形态
+        this.ipc.handle(channel, (event, ...args) => handler(args[0], event, args))
         record.ipcMethods.add(method)
         active.disposers.push({
           label: `ipc ${channel}`,
@@ -363,7 +364,8 @@ export class PluginHost {
         }
         this.owners().set(channel, id)
         this.ipc.removeHandler(channel)
-        this.ipc.handle(channel, (event, payload) => handler(payload, event))
+        // 第三个参数是原始参数数组：work/marketing 的通道有 (id, patch) 这种多参形态
+        this.ipc.handle(channel, (event, ...args) => handler(args[0], event, args))
         record.channels.add(channel)
         active.disposers.push({
           label: `channel ${channel}`,

@@ -24,7 +24,7 @@
 
 import { createHash } from 'crypto'
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { WorkDatabase } from './database'
 import type { GatewayClient } from '../gatewayClient'
 import type { RecordManager } from './recordManager'
 import { dateOf } from './todoManager'
@@ -98,7 +98,7 @@ interface DayState {
 }
 
 export interface OpenClawSummaryManagerOptions {
-  database: DatabaseClient
+  database: WorkDatabase
   records: RecordManager
   gateway: GatewayClient
   newId?: () => string
@@ -207,7 +207,7 @@ function buildSummaryPrompt(date: string): string {
 }
 
 export class OpenClawSummaryManager {
-  private readonly database: DatabaseClient
+  private readonly database: WorkDatabase
   private readonly records: RecordManager
   private readonly gateway: GatewayClient
   private readonly newId: () => string

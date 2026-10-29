@@ -10,7 +10,7 @@
 // 设计约束：本模块**不 import electron**，依赖注入，可在纯 Node 下测试。
 
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { WorkDatabase } from './database'
 
 /** 事项状态（§2.3：只有 active / archived，没有更多态） */
 export const MATTER_STATUS_ACTIVE = 'active'
@@ -72,7 +72,7 @@ export interface SuggestMatterResult {
 }
 
 export interface MatterManagerOptions {
-  database: DatabaseClient
+  database: WorkDatabase
   logger?: (message: string) => void
   /** id 生成器（默认 randomUUID；注入让验收可断言） */
   newId?: () => string
@@ -81,7 +81,7 @@ export interface MatterManagerOptions {
 }
 
 export class MatterManager {
-  private readonly database: DatabaseClient
+  private readonly database: WorkDatabase
   private readonly logger?: (message: string) => void
   private readonly newId: () => string
   private readonly now: () => number

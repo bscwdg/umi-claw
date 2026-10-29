@@ -9,7 +9,7 @@
 // 本模块不 import electron；DB / ContextEngine / GatewayClient 注入，纯 Node 可测。
 
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { WorkDatabase } from './database'
 import { type ContextEngine, type ContextPack, type SnapshotScope, renderContextPackText } from './contextEngine'
 import { toView } from './contextManager'
 import type { GatewayClient, GatewayStreamHandle } from '../gatewayClient'
@@ -30,7 +30,7 @@ export interface QaRunHandle {
 }
 
 export interface QaManagerOptions {
-  database: DatabaseClient
+  database: WorkDatabase
   contextEngine: ContextEngine
   gateway: GatewayClient
   newId?: () => string
@@ -39,7 +39,7 @@ export interface QaManagerOptions {
 }
 
 export class QaManager {
-  private readonly database: DatabaseClient
+  private readonly database: WorkDatabase
   private readonly contextEngine: ContextEngine
   private readonly gateway: GatewayClient
   private readonly newId: () => string

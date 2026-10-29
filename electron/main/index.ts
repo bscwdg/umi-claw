@@ -100,28 +100,8 @@ import {
 import { AppError, ERROR_CODES } from './database/errors'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
-import { createProfileManager, type ProfileManager } from './work/profileManager'
-import { createMatterManager, type MatterManager } from './work/matterManager'
-import { createTodoManager, dateOf, type TodoManager } from './work/todoManager'
-import { createRecordManager, type RecordManager } from './work/recordManager'
-import {
-  createContextEngine,
-  type ContextEngine,
-  type SnapshotScope
-} from './work/contextEngine'
-import { createContextManager, type ContextManager } from './work/contextManager'
-import { createRouterManager, type RouterManager } from './work/routerManager'
-import { createTodayManager, type TodayManager } from './work/todayManager'
-import { createReportManager, type ReportManager } from './work/reportManager'
-import { createQaManager, type QaManager } from './work/qaManager'
-import { createToolManager, type ToolManager } from './work/toolManager'
-import { createKnowledgeManager, type KnowledgeManager } from './work/knowledgeManager'
-import { createWizardManager, type WizardManager } from './work/wizardManager'
-import { createReminderManager, type ReminderManager } from './work/reminderManager'
-import {
-  createOpenClawSummaryManager,
-  type OpenClawSummaryManager
-} from './work/openclawSummaryManager'
+import type { WizardManager } from './work/wizardManager'
+import { createWorkRuntime, type WorkRuntime } from './work/runtime'
 // pdfjs 资产解析：两域的 parsers/pdfjsAssets.ts 逐字节相同（合并时已 diff 确认），
 // 统一用 work 这一份实现，避免同名 import 重复声明；marketing 的调用点语义不变。
 import { resolvePdfjsAssets } from './work/parsers/pdfjsAssets'
@@ -145,21 +125,7 @@ let skillSyncService: SkillSyncService
 let workGatewayClient: GatewayClient | null = null
 /** DB Worker 客户端单例（Commit 02 起被各 Manager 消费；硬规则 2：全局单例） */
 let workDatabase: DatabaseClient | null = null
-let workProfileManager: ProfileManager | null = null
-let workMatterManager: MatterManager | null = null
-let workTodoManager: TodoManager | null = null
-let workRecordManager: RecordManager | null = null
-let workContextEngine: ContextEngine | null = null
-let workContextManager: ContextManager | null = null
-let workRouterManager: RouterManager | null = null
-let workTodayManager: TodayManager | null = null
-let workReportManager: ReportManager | null = null
-let workQaManager: QaManager | null = null
-let workToolManager: ToolManager | null = null
-let workKnowledgeManager: KnowledgeManager | null = null
 let workWizardManager: WizardManager | null = null
-let workReminderManager: ReminderManager | null = null
-let workOpenClawSummaryManager: OpenClawSummaryManager | null = null
 /** 语音管理器（合并后只有一份；初始化绑 workDatabase，见 app.whenReady 的 voice 段） */
 let voiceManager: VoiceManager | null = null
 
@@ -1011,172 +977,31 @@ async function listPushTargetOptions(
  * 全部共用同一个 DatabaseClient 单例（硬规则 2：DB Worker 全局单例）。
  * 消费者是 IPC 层（ipc/work.ts）；渲染端拿不到 Manager 本身。
  */
-function initWorkManagers(): {
-  profile: ProfileManager
-  matters: MatterManager
-  todos: TodoManager
-  records: RecordManager
-  context: ContextManager
-  today: TodayManager
-  router: RouterManager
-  reports: ReportManager
-  qa: QaManager
-  tools: ToolManager
-  knowledge: KnowledgeManager
-  wizard: WizardManager
-  reminder: ReminderManager
-  openclawSummary: OpenClawSummaryManager
-} {
+function initWorkManagers(): WorkRuntime {
   if (!workDatabase) throw new Error('DB 客户端尚未初始化')
-  workProfileManager = workProfileManager ?? createProfileManager({ database: workDatabase })
-  workMatterManager = workMatterManager ?? createMatterManager({ database: workDatabase })
-  workTodoManager = workTodoManager ?? createTodoManager({ database: workDatabase })
-  workRecordManager = workRecordManager ?? createRecordManager({ database: workDatabase })
-  // ContextEngine 读同一个 DB 单例；latest Pack 用 scope='latest' 当场组
-  workContextEngine =
-    workContextEngine ??
-    createContextEngine({ database: workDatabase, logger: (m) => console.log(m) })
-  const engine = workContextEngine
-  workContextManager =
-    workContextManager ??
-    createContextManager({
-      database: workDatabase,
-      buildLatestPack: () => engine.buildPack('latest' as SnapshotScope, {})
-    })
-  // today / router（Commit 05）
-  workTodayManager =
-    workTodayManager ?? createTodayManager({ database: workDatabase })
-  workRouterManager = workRouterManager ?? createRouterManager()
-  // reports（Commit 06）：注入同一个 ContextEngine + Gateway Client
-  if (!workReportManager) {
-    if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
-    workReportManager = createReportManager({
-      database: workDatabase,
-      contextEngine: engine,
-      gateway: workGatewayClient,
-      logger: (m) => console.log(m)
-    })
-  }
-  // qa（Commit 07）
-  if (!workQaManager) {
-    if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
-    workQaManager = createQaManager({
-      database: workDatabase,
-      contextEngine: engine,
-      gateway: workGatewayClient,
-      logger: (m) => console.log(m)
-    })
-  }
-  // tools（Commit 07）：薄边界，复用 records/todos
-  if (!workToolManager) {
-    if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
-    workToolManager = createToolManager({
-      records: workRecordManager!,
-      todos: workTodoManager!,
-      gateway: workGatewayClient,
-      logger: (m) => console.log(m)
-    })
-  }
-  // knowledge（Commit 08）：解析 pdfjs 资产 + dataDir
-  if (!workKnowledgeManager) {
-    const pdfjsAssets = resolvePdfjsAssets({
+  if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
+
+  const runtime = createWorkRuntime({
+    database: workDatabase,
+    gateway: workGatewayClient,
+    dataDir: configManager.getDataDir(),
+    pdfjsAssets: resolvePdfjsAssets({
       isPackaged: app.isPackaged,
       appPath: app.getAppPath(),
       resourcesPath: process.resourcesPath
-    })
-    workKnowledgeManager = createKnowledgeManager({
-      database: workDatabase,
-      dataDir: configManager.getDataDir(),
-      pdfjsAssets,
-      logger: (m) => console.log(m)
-    })
-  }
-  // openclaw-summary（v0.18）：桥接 OpenClaw 总结当天工作 → 候选。
-  // 必须先于 ReminderManager 创建：提醒循环要在「日报时刻 - 30 分钟」调它的 runScheduled
-  workOpenClawSummaryManager =
-    workOpenClawSummaryManager ??
-    (() => {
-      if (!workGatewayClient) throw new Error('Gateway Client 尚未初始化')
-      return createOpenClawSummaryManager({
-        database: workDatabase,
-        records: workRecordManager!,
-        gateway: workGatewayClient,
-        logger: (m) => console.log(m)
-      })
-    })()
-  // wizard / reminder（Commit 09）
-  workWizardManager =
-    workWizardManager ??
-    createWizardManager({
-      database: workDatabase,
-      locateOldDbs: () => locateLegacyDbs(configManager.getDataDir()),
-      readOldDb: (info) => readLegacyDb(info),
-      logger: (m) => console.log(m)
-    })
-  workReminderManager =
-    workReminderManager ??
-    createReminderManager({
-      database: workDatabase,
-      notifier: (id, payload) => showReminderNotification(id, payload),
-      getMorningSummary: async () => {
-        const todos = await workTodoManager!.list({ state: 'confirmed' })
-        const today = dateOf(Date.now())
-        const relevant = todos.filter((t) => t.due_date === null || String(t.due_date) <= today)
-        return { count: relevant.length, titles: relevant.map((t) => t.title) }
-      },
-      // 方案 A（v0.9 拍板）：按配置外发**短提示**（不含正文），正文仍需人工确认
-      pusher: async (_id, payload, dest) => pushReminderMessage(dest, payload),
-      // 外发下拉只展示已配置的渠道（北：没配置肯定不能推）
-      listPushChannels: () => listPushChannelOptions(),
-      // 目标由 OpenClaw 自己给出（北：不需要填，openclaw 自己知道）
-      listPushTargets: (channel) => listPushTargetOptions(channel),
-      // v2：待办到点提醒——到点查询与提醒后回标（口径见 reminderManager 注释）
-      listDueTodoReminders: async () =>
-        (await workTodoManager!.listDueReminders()).map((t) => ({
-          id: t.id,
-          title: t.title,
-          dueDate: t.due_date,
-          dueAt: t.due_at
-        })),
-      markTodoReminded: (id, ts) => workTodoManager!.markReminded(id, ts),
-      // 本地闭环（硬规则 22 重评估后拍板）：到点**先自动生成日报草稿**，再发通知。
-      // 仍**不自动外发正文**——草稿进「报告」页等人工确认（硬规则 5）。
-      generateDailyDraft: async () => {
-        const rm = workReportManager
-        if (!rm) return { status: 'error', message: '报告模块未就绪' }
-        try {
-          const handle = await rm.generate({ type: 'daily' })
-          // 等流结束：草稿正文落 reports.content 后再发通知，避免「通知说好了但点进去是空的」
-          const result = await handle.stream.result
-          if (result.aborted) return { status: 'error', message: '生成已中止' }
-          return { status: 'generated', reportId: handle.reportId }
-        } catch (e) {
-          const err = e as { details?: { reason?: string }; message?: string }
-          if (err?.details?.reason === 'no-records') return { status: 'empty' }
-          return { status: 'error', message: err?.message ?? '未知错误' }
-        }
-      },
-      // v0.18：日报时刻前 30 分钟桥接 OpenClaw 总结当天工作（结果落候选，
-      // 留出确认窗口——未确认候选不进事实层，硬规则 4）。provider 永不抛错。
-      summarizeDaily: () => workOpenClawSummaryManager!.runScheduled(),
-      logger: (m) => console.log(m)
-    })
-  return {
-    profile: workProfileManager,
-    matters: workMatterManager,
-    todos: workTodoManager,
-    records: workRecordManager,
-    context: workContextManager,
-    today: workTodayManager,
-    router: workRouterManager,
-    reports: workReportManager,
-    qa: workQaManager,
-    tools: workToolManager,
-    knowledge: workKnowledgeManager,
-    wizard: workWizardManager,
-    reminder: workReminderManager,
-    openclawSummary: workOpenClawSummaryManager
-  }
+    }),
+    logger: (m) => console.log(m),
+    notifier: (id, payload) => showReminderNotification(id, payload),
+    pusher: (_id, payload, dest) => pushReminderMessage(dest, payload),
+    listPushChannels: () => listPushChannelOptions(),
+    listPushTargets: (channel) => listPushTargetOptions(channel),
+    locateOldDbs: () => locateLegacyDbs(configManager.getDataDir()),
+    readOldDb: (info) => readLegacyDb(info)
+  })
+
+  // 只有向导单例还被宿主引用（autoStart 的协议闸门）；其余 Manager 已由运行时持有。
+  workWizardManager = runtime.wizard
+  return runtime
 }
 
 /**

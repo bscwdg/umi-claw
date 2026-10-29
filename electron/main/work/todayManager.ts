@@ -1,3 +1,4 @@
+import type { WorkDatabase } from './database'
 // work/todayManager.ts —— 「今日」页聚合（PLAN-3.0.md §5.1 / §14 today）
 //
 // `get(date?)` 一次拉齐今日页所需，避免渲染端串多个 IPC：
@@ -77,13 +78,13 @@ export interface TodayView {
 }
 
 export interface TodayManagerOptions {
-  database: import('../database/database').DatabaseClient
+  database: WorkDatabase
   /** 注入当前时间（问候/18:30 判定/默认今天） */
   now?: () => number
 }
 
 export class TodayManager {
-  private readonly database: import('../database/database').DatabaseClient
+  private readonly database: WorkDatabase
   private readonly now: () => number
 
   constructor(options: TodayManagerOptions) {

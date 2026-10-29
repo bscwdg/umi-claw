@@ -10,7 +10,7 @@
 // 本模块不 import electron；DB / ContextEngine / GatewayClient 全注入，纯 Node 可测。
 
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { WorkDatabase } from './database'
 import {
   type ContextEngine,
   type ContextPack,
@@ -77,7 +77,7 @@ export interface GenerateParams {
 }
 
 export interface ReportManagerOptions {
-  database: DatabaseClient
+  database: WorkDatabase
   contextEngine: ContextEngine
   gateway: GatewayClient
   newId?: () => string
@@ -86,7 +86,7 @@ export interface ReportManagerOptions {
 }
 
 export class ReportManager {
-  private readonly database: DatabaseClient
+  private readonly database: WorkDatabase
   private readonly contextEngine: ContextEngine
   private readonly gateway: GatewayClient
   private readonly newId: () => string

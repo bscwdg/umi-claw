@@ -17,7 +17,7 @@ import { randomUUID } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { WorkDatabase } from './database'
 import {
   FILE_TYPE_EXTENSIONS,
   LEGACY_OFFICE_EXTENSIONS,
@@ -101,7 +101,7 @@ export interface ListKnowledgeParams {
 }
 
 export interface KnowledgeManagerOptions {
-  database: DatabaseClient
+  database: WorkDatabase
   /** 原件落点根目录（data）；本 manager 写 data/knowledge/ */
   dataDir: string
   pdfjsAssets: PdfjsAssets
@@ -112,7 +112,7 @@ export interface KnowledgeManagerOptions {
 }
 
 export class KnowledgeManager {
-  private readonly database: DatabaseClient
+  private readonly database: WorkDatabase
   private readonly knowledgeDir: string
   private readonly pdfjsAssets: PdfjsAssets
   private readonly htmlFetcher: HtmlFetcher

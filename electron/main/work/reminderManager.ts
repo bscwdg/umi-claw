@@ -20,7 +20,7 @@
 // 时间/开关读取通过注入函数。纯 Node 用假 notifier 断言。
 
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { WorkDatabase } from './database'
 
 /** 两个固定通知 id */
 export const REMINDERS = {
@@ -231,7 +231,7 @@ export interface PushTestResult {
 }
 
 export interface ReminderManagerOptions {
-  database: DatabaseClient
+  database: WorkDatabase
   notifier: Notifier
   getMorningSummary: MorningSummaryProvider
   /** 可选：到点自动生成今日日报草稿（不提供则只发提醒） */
@@ -253,7 +253,7 @@ export interface ReminderManagerOptions {
 }
 
 export class ReminderManager {
-  private readonly database: DatabaseClient
+  private readonly database: WorkDatabase
   private readonly notifier: Notifier
   private readonly getMorningSummary: MorningSummaryProvider
   private readonly generateDailyDraft?: DailyDraftProvider

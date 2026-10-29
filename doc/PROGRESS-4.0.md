@@ -127,3 +127,19 @@
 - 宿主能力表补 `host.db.v1` / `host.openclaw.v1` / `host.notifications.v1`（work 插件清单要用）。
 
 **验收**：plugin **42/42**（新增 P36）；全量 19 套 **349/349**；双 typecheck 0 错；build 通过。
+
+### 2026-10-30 · Phase 2 拆解（work 装配与宿主解耦）
+
+- 新增 `electron/main/work/database.ts`：`WorkDatabase` 最小依赖面（`request` + `metaGet/metaSet`）。
+  17 个 Manager 的 options 从 `DatabaseClient` 类改为该接口 —— 装箱后可以直接注入插件库适配器，Manager 一行不用改。
+- 新增 `electron/main/work/runtime.ts`：`createWorkRuntime(deps)` 把原来 `main/index.ts` 里 150 行的
+  `initWorkManagers` 抽成纯工厂；宿主副作用（通知 / 外发 / 旧库定位 / pdfjs 路径）改为注入。
+  Manager 构造顺序（openclawSummary 先于 reminder、reports 先于 reminder）保持原样并有注释。
+- `main/index.ts` 改为调用工厂，只保留 `workWizardManager`（autoStart 协议闸门还要用）；
+  删掉 14 个不再被宿主引用的 work 全局。
+- `ipc/work.ts` 增 `setWorkIpcRegistrar()`：默认落到 ipcMain，插件激活时由 `ctx.registerChannelIpc` 接管，
+  这样停用插件能把 `work:*` 通道一起摘掉。
+- 内核通道 handler 增加「原始参数数组」第三参：work 的 `(id, patch)` 多参通道不必改签名。
+
+**验收**：全量 19 套 **349/349**；双 typecheck 0 错；build 通过。
+下一步：`plugins/work/main` 用 `ctx.services.db` + `ctx.services.openclaw` 调 `createWorkRuntime`，并把 main 从「内联装配」切到「激活插件」。

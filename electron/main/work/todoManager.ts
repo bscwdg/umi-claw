@@ -20,7 +20,7 @@
 // 注意：本模块直接写 `activity_log` 表（联动规则是 DB 级事实，不依赖 Commit 03 的 RecordManager）。
 
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { WorkDatabase } from './database'
 
 /** 待办来源（决定初始状态） */
 export const TODO_SOURCES = ['manual', 'extracted', 'routine'] as const
@@ -132,14 +132,14 @@ export interface BatchResult {
 }
 
 export interface TodoManagerOptions {
-  database: DatabaseClient
+  database: WorkDatabase
   logger?: (message: string) => void
   newId?: () => string
   now?: () => number
 }
 
 export class TodoManager {
-  private readonly database: DatabaseClient
+  private readonly database: WorkDatabase
   private readonly logger?: (message: string) => void
   private readonly newId: () => string
   private readonly now: () => number

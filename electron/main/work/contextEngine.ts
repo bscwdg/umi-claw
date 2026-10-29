@@ -24,7 +24,7 @@
 // 因此纯 Node 可 bundle 测试。
 
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { WorkDatabase } from './database'
 import { dateOf, normalizeDate } from './todoManager'
 
 // ── 常量（§六） ───────────────────────────────────────────────────────────────
@@ -222,7 +222,7 @@ export interface BuildPackOptions {
 }
 
 export interface ContextEngineOptions {
-  database: DatabaseClient
+  database: WorkDatabase
   logger?: (message: string) => void
   defaultContextWindowTokens?: number
   /** 当前时间（毫秒）；不传用 Date.now()。与其它 Manager 同一注入约定，便于确定性验收 */
@@ -255,7 +255,7 @@ export function summarizeProfile(row: Record<string, unknown> | null): ProfileSu
 // ── 引擎 ──────────────────────────────────────────────────────────────────────
 
 export class ContextEngine {
-  private readonly database: DatabaseClient
+  private readonly database: WorkDatabase
   private readonly logger?: (message: string) => void
   private readonly defaultContextWindowTokens: number
   private readonly now: () => number

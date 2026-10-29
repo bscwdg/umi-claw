@@ -178,10 +178,38 @@ async function wrap<T>(fn: () => Promise<T>): Promise<WorkIpcResult<T>> {
   }
 }
 
+/**
+ * IPC 注册器（Phase 2 装箱用）：默认落到 electron 的 ipcMain；
+ * 插件激活时由 `ctx.registerChannelIpc` 接管，这样停用插件能把通道一起摘掉。
+ */
+export interface WorkIpcRegistrar {
+  handle(channel: string, fn: (...args: any[]) => Promise<WorkIpcResult<unknown>>): void
+  handleEvent(
+    channel: string,
+    fn: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => Promise<WorkIpcResult<unknown>>
+  ): void
+}
+
+const defaultRegistrar: WorkIpcRegistrar = {
+  handle(channel, fn) {
+    ipcMain.removeHandler(channel)
+    ipcMain.handle(channel, (_e, ...args) => fn(...args))
+  },
+  handleEvent(channel, fn) {
+    ipcMain.removeHandler(channel)
+    ipcMain.handle(channel, (event, ...args) => fn(event, ...args))
+  }
+}
+
+let activeRegistrar: WorkIpcRegistrar | null = null
+
+/** 注入注册器（传 null 恢复默认 ipcMain） */
+export function setWorkIpcRegistrar(registrar: WorkIpcRegistrar | null): void {
+  activeRegistrar = registrar
+}
+
 function handle(channel: string, fn: (...args: any[]) => Promise<WorkIpcResult<unknown>>): void {
-  // 防御性：重复注册会抛 "Attempted to register a second handler"，先移除
-  ipcMain.removeHandler(channel)
-  ipcMain.handle(channel, (_e, ...args) => fn(...args))
+  ;(activeRegistrar ?? defaultRegistrar).handle(channel, fn)
 }
 
 /** 需要 IpcMainInvokeEvent（拿 sender 转发 SSE）的 handle */
@@ -189,8 +217,7 @@ function handleEvent(
   channel: string,
   fn: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => Promise<WorkIpcResult<unknown>>
 ): void {
-  ipcMain.removeHandler(channel)
-  ipcMain.handle(channel, (event, ...args) => fn(event, ...args))
+  ;(activeRegistrar ?? defaultRegistrar).handleEvent(channel, fn)
 }
 
 export interface WorkIpcDeps {

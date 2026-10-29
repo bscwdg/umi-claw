@@ -14,7 +14,7 @@
 // 本模块不 import electron；依赖注入（DatabaseClient / ContextEngine），纯 Node 可测。
 
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { WorkDatabase } from './database'
 import {
   type ContextPack,
   type SnapshotScope,
@@ -61,14 +61,14 @@ export interface SnapshotRequest {
 }
 
 export interface ContextManagerOptions {
-  database: DatabaseClient
+  database: WorkDatabase
   /** latest scope 用它当场组 Pack；由主进程注入同一个 ContextEngine 单例 */
   buildLatestPack: () => Promise<ContextPack>
   logger?: (message: string) => void
 }
 
 export class ContextManager {
-  private readonly database: DatabaseClient
+  private readonly database: WorkDatabase
   private readonly buildLatestPack: () => Promise<ContextPack>
 
   constructor(options: ContextManagerOptions) {

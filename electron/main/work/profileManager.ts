@@ -10,7 +10,7 @@
 // 因此可在纯 Node 下被 esbuild bundle 后直接测试。
 
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { WorkDatabase } from './database'
 
 /** 单行画像的固定主键 */
 export const PROFILE_ROW_ID = 'default'
@@ -90,12 +90,12 @@ const CAMEL_TO_SNAKE: Record<keyof UpdateProfileInput, (typeof PROFILE_UPDATABLE
 
 export interface ProfileManagerOptions {
   /** DB Worker 客户端（唯一数据访问通道，硬规则 2） */
-  database: DatabaseClient
+  database: WorkDatabase
   logger?: (message: string) => void
 }
 
 export class ProfileManager {
-  private readonly database: DatabaseClient
+  private readonly database: WorkDatabase
   private readonly logger?: (message: string) => void
 
   constructor(options: ProfileManagerOptions) {

@@ -12,7 +12,7 @@
 // 本模块不 import electron；DB 注入，oldDbLocator/reader 注入，纯 Node 可测。
 
 import { AppError, ERROR_CODES } from '../database/errors'
-import type { DatabaseClient } from '../database/database'
+import type { WorkDatabase } from './database'
 
 // ── app_meta 键（本模块唯一读写这些键；app_meta 无 worker 白名单）──
 const META = {
@@ -72,7 +72,7 @@ export type OldDbLocator = () => OldDbInfo[]
 export type OldDbReader = (info: OldDbInfo) => Promise<OldDbMapping>
 
 export interface WizardManagerOptions {
-  database: DatabaseClient
+  database: WorkDatabase
   locateOldDbs?: OldDbLocator
   readOldDb?: OldDbReader
   now?: () => number
@@ -80,7 +80,7 @@ export interface WizardManagerOptions {
 }
 
 export class WizardManager {
-  private readonly database: DatabaseClient
+  private readonly database: WorkDatabase
   private readonly locateOldDbs: OldDbLocator
   private readonly readOldDb?: OldDbReader
   private readonly now: () => number
