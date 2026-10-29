@@ -9,7 +9,7 @@
 | 验证项 | 结果 |
 | --- | --- |
 | `tsc -p tsconfig.web.json` | **0 错误** |
-| `tsc -p tsconfig.node.json` | 1 个**既有**错误（`fish/voice/core/manager.ts:27` 未使用的 `OpenClawTtsChannelSetting`；该文件在两分支字节相同，不是本次合并引入） |
+| `tsc -p tsconfig.node.json` | **0 错误**（合并后发现 1 条既有告警 `fish/voice/core/manager.ts` 未使用类型导入，两分支同源，已单独提交清理：`1764ba2`） |
 | `accept:db`（db-worker + db-client） | **38/38 通过** |
 | `accept:gateway` | **29/29 通过** |
 | `accept:work` | **20/20 通过** |
@@ -76,4 +76,19 @@
 2. `test/gateway.accept.mjs` 的 G10b 未移植。
 3. `README.md` 待并集；`package-lock.json` 待重生成。
 4. 2.0 存量用户的语音数据：按 2026-10-30 拍板**直接删除、不做迁移**；voice 存储改绑 `work.db`。需要在发布说明里写清楚。
-5. `tsc` 那个既有错误（`fish/voice/core/manager.ts:27` 未使用类型导入）留待顺手清理。
+5. ~~`tsc` 那个既有错误~~ → 已清理（`1764ba2`）。
+
+## 六、提交
+
+| 提交 | 内容 |
+| --- | --- |
+| `f66196f` | `merge(4.0): 合并 release/2.0 营销域到 3.0 基线`（115 文件 / +29577 −71） |
+| `1764ba2` | `fix(voice): 移除未使用的 OpenClawTtsChannelSetting 类型导入`（让 `typecheck:node` 归零） |
+
+分支：`tmp/merge-2.0`（worktree `D:\work2026\files\claw-merge`）。合并后 `main/index.ts` 2562 行、0 冲突标记、`registerGatewayIpc` 调用 1 次、voice 初始化 1 处、顶层声明无重复。
+
+### 结构性约束（留给后续的人）
+
+- **构造顺序**：work 域的 `createWorkGatewayClient()` / `createWorkDatabase()` / `initWorkManagers()` 必须先于营销各 Manager（营销工厂经 `getMarketingGatewayClient()` 取同一实例）。把 work 装配往后挪会立刻抛「尚未初始化」，而 TypeScript 拦不住。
+- **`registerIpcHandlers()` 里的营销注册用的是非空断言**（`marketingDatabase!`），依赖 whenReady 的构造顺序；若将来把营销装配移出 whenReady，会变成运行时 undefined。
+- **两域 `parsers/pdfjsAssets.ts` 目前逐字节相同**才共用一个 import；今后只改一份会让两域共用同一实现。
