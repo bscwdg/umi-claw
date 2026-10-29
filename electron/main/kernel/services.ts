@@ -12,7 +12,7 @@ import type { PluginConfigApi } from './plugin'
 export type ServiceId = 'host' | 'config' | 'db' | 'openclaw' | 'notifications' | 'voice'
 
 /** 真实服务名（不含 host）；availableServices 与解析共用这一份 */
-export const SERVICE_NAMES = ['config', 'db', 'openclaw', 'notifications', 'voice', 'hostOps'] as const
+export const SERVICE_NAMES = ['config', 'db', 'openclaw', 'notifications', 'voice', 'hostOps', 'legacyDb'] as const
 export type ServiceName = (typeof SERVICE_NAMES)[number]
 
 /** 工厂入参：插件身份与目录（db 用它定位 migrations） */
@@ -110,6 +110,15 @@ export interface VoiceApi {
  * work 装箱时遇到的三类宿主能力：系统通知、渠道外发（spawn OpenClaw CLI）、旧库只读定位。
  * 它们都需要 electron / openclaw 环境，插件侧自己实现不了，所以由宿主以窄方法暴露。
  */
+
+/**
+ * 旧库只读入口（Phase 2/3 数据迁移）：插件 activate 时把自己的旧库数据搬进插件库。
+ * 宿主只暴露「按域读旧库」，写与迁移策略归插件。
+ */
+export interface LegacyDbApi {
+  list<T = unknown>(table: string, params?: { limit?: number; offset?: number }): Promise<T>
+}
+
 export interface HostOpsApi {
   notify(id: string, payload: { title: string; body: string }): void
   push(
@@ -131,6 +140,7 @@ export interface PluginServiceBag {
   notifications?: NotificationsApi
   voice?: VoiceApi
   hostOps?: HostOpsApi
+  legacyDb?: LegacyDbApi
 }
 
 /** 宿主实际提供的服务名（由 ServiceFactories 的键推导，避免两处写死） */
@@ -141,6 +151,7 @@ export interface ServiceFactories {
   notifications?: (info: ServiceInfo) => NotificationsApi
   voice?: (info: ServiceInfo) => VoiceApi
   hostOps?: (info: ServiceInfo) => HostOpsApi
+  legacyDb?: (info: ServiceInfo) => LegacyDbApi
 }
 
 /** 服务名清单：注册期校验与实际解析用**同一份**（审查 R12） */

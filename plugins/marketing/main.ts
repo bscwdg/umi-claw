@@ -12,8 +12,10 @@ import { registerAdvisorIpc } from '../../electron/main/ipc/advisor'
 import { registerScanIpc } from '../../electron/main/ipc/scan'
 import { registerContentIpc } from '../../electron/main/ipc/content'
 import { registerHotIpc } from '../../electron/main/ipc/hot'
+import { join } from 'node:path'
 import { resolvePdfjsAssets } from '../../electron/main/work/parsers/pdfjsAssets'
 import { buildOpenClawGateway } from './gatewayAdapter'
+import { importTableData, MARKETING_TABLES, HOST_APP_META_PREFIXES } from '../../electron/main/pluginDataImport'
 
 let runtime: MarketingRuntime | null = null
 
@@ -67,6 +69,19 @@ export default definePlugin({
       getDailyhotBase: () => ctx.services.config?.get('dailyhotBase') ?? null,
       logger: (m) => ctx.logger.info(m)
     })
+
+    // 旧库数据一次性导入（只读 umi-claw.db → 插件库）：后台跑，失败不写标记
+    const legacy = ctx.services.legacyDb
+    if (legacy) {
+      void importTableData({
+        source: { request: (method, params) => legacy.list(method.split('.')[0], params) },
+        target: db,
+        pluginDataDir: join(ctx.host.dataDir, 'plugins', 'marketing'),
+        tables: MARKETING_TABLES,
+        skipKeyPrefixes: HOST_APP_META_PREFIXES,
+        logger: (line) => ctx.logger.info(line)
+      }).catch((e) => ctx.logger.warn('旧库数据导入失败（下次启动重试）', e))
+    }
 
     // 所有 marketing:* 通道走同一注册器：停用插件时由内核统一摘除
     setChannelRegistrar({

@@ -43,7 +43,6 @@ import {
 } from './kernel'
 import { PLUGIN_MAIN_ENTRIES } from './kernel/plugins.main.generated'
 import { createPluginDbService } from './services/pluginDb'
-import { importWorkDataIfNeeded } from './work/migrate'
 
 // ── 2.0 营销域 imports（合并自 release/2.0）────────────────────────────────────
 // 与 work 域同名的模块内标识符加 `Marketing*` / `*Lib` 别名区分：
@@ -561,6 +560,15 @@ async function initPlugins(): Promise<void> {
       // 宿主 work.db 只剩 voice 的 app_meta（见 whenReady 的语音段）。
       db: (info) => pluginDbService!.forPlugin(info),
       hostOps: () => createHostOpsService(),
+      // 旧库只读：work → work.db，marketing → umi-claw.db；插件 activate 时自行决定怎么搬
+      legacyDb: (info) => {
+        const client = info.id === 'marketing' ? marketingDatabase : workDatabase
+        if (!client) throw new Error(`旧库尚未初始化：${info.id}`)
+        return {
+          list: (table, params) =>
+            client.request(`${table}.list`, (params ?? {}) as Record<string, unknown>)
+        }
+      },
       notifications: () => createNotificationsService(),
       openclaw: () => createOpenClawService()
     }
@@ -656,25 +664,6 @@ async function initPlugins(): Promise<void> {
       }
     })
 
-    // work 数据一次性导入（只读旧库 work.db → plugins/work/data.db，D2）
-    // 后台执行：可能上万行，不能在建窗口之前卡住启动（审查 P1-4）；
-    // 只对启用中的插件执行（P2-6）；失败不写标记，下次启动重试（P1-5）。
-    if (workDatabase && pluginDbService && registry.isEnabled('work')) {
-      const source = workDatabase
-      const target = pluginDbService.forPlugin({ id: 'work', dir: join(resourcesRoot(), 'plugins', 'work') })
-      void importWorkDataIfNeeded({
-        source,
-        target,
-        pluginDataDir: join(dataDir, 'plugins', 'work'),
-        logger: (line) => console.log(line)
-      })
-        .then((result) => {
-          if (result.imported) console.log('[work] 旧库数据已导入插件库：', JSON.stringify(result.counts))
-        })
-        .catch((e) => {
-          console.error('[work] 数据导入失败（下次启动重试）:', e)
-        })
-    }
 
     await host.activateAll()
     broadcastPluginStatus()

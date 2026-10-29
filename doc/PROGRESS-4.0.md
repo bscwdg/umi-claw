@@ -234,3 +234,17 @@
 **验收**：plugin **47/47**（+P41：默认关闭、激活后 marketing:* 通道可用且经 Manager 查库、停用清零）；全量 19 套 **354/354**；双 typecheck 0 错；build 通过。
 
 下一步：marketing UI 装箱（6 页 + `stores/marketing.ts` 跟插件走）+ 宿主切换 + `umi-claw.db` 一次性导入。
+
+### 2026-10-30 · Phase 3 第二步：数据导入归插件 + 新服务 legacyDb
+
+- 通用导入抽到 `electron/main/pluginDataImport.ts`：表清单参数化（`WORK_TABLES` 8 表 / `MARKETING_TABLES` 11 表）、
+  分页 5000、upsert 续传、错误分类、`app_meta` 前缀排除；`work/migrate.ts` 退化为薄封装（导出面不变，P39/P40 未改）。
+- 新服务 `legacyDb`：宿主只暴露「按域读旧库」（work→work.db，marketing→umi-claw.db），**写与迁移策略归插件**。
+- 旧库导入从宿主 `initPlugins` 移到各插件 `activate`：后台跑、失败不写标记、日志走 `ctx.logger`。
+  → 插件停用时不导入（不再是「停用也建库」），宿主也不再关心域数据。
+- marketing 插件 activate 时已按 11 表清单导入。
+- 验收 P42：marketing 表清单 11 张（projects 优先、app_meta 最后）、分页 2 页拉满、voice 前缀被排除、全部 upsert。
+
+**验收**：plugin **48/48**（+P42）；全量 19 套 **355/355**；双 typecheck 0 错；build 通过。
+
+下一步：marketing 宿主切换 + UI/store 装箱（必须同一批做——宿主 IPC 撤掉而 UI 还指向插件路由会白屏）。

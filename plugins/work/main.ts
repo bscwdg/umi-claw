@@ -10,7 +10,9 @@ import { definePlugin, type PluginContext } from '../../electron/main/kernel'
 import { createWorkRuntime, type WorkRuntime } from '../../electron/main/work/runtime'
 import { registerWorkIpc, setWorkIpcRegistrar, type WorkIpcDeps } from '../../electron/main/ipc/work'
 import { resolvePdfjsAssets } from '../../electron/main/work/parsers/pdfjsAssets'
+import { importWorkDataIfNeeded } from '../../electron/main/work/migrate'
 import type { GatewayClient } from '../../electron/main/gatewayClient'
+import { join } from 'node:path'
 
 let runtime: WorkRuntime | null = null
 
@@ -107,6 +109,17 @@ export default definePlugin({
       throw e
     }
     runtime = work
+
+    // 旧库数据一次性导入（只读宿主 work.db → 插件库）：后台跑，失败不写标记、下次启动重试
+    const legacy = ctx.services.legacyDb
+    if (legacy) {
+      void importWorkDataIfNeeded({
+        source: { request: (method, params) => legacy.list(method.split('.')[0], params) },
+        target: db,
+        pluginDataDir: join(ctx.host.dataDir, 'plugins', 'work'),
+        logger: (line) => ctx.logger.info(line)
+      }).catch((e) => ctx.logger.warn('旧库数据导入失败（下次启动重试）', e))
+    }
 
     // 提醒循环属于域行为：随插件启停（30s 检查、到点通知/外发、日报草稿）
     work.reminder.start()

@@ -660,6 +660,10 @@ const dbClientMod = await import(
 const schemasMod = await import(
   pathToFileURL(bundleEntry('electron/main/database/schemas.ts', 'work-schemas.mjs')).href
 )
+const genericImportMod = await import(
+  pathToFileURL(bundleEntry('electron/main/pluginDataImport.ts', 'plugin-import.mjs')).href
+)
+
 const migrateMod = await import(
   pathToFileURL(bundleEntry('electron/main/work/migrate.ts', 'work-migrate.mjs')).href
 )
@@ -1749,6 +1753,52 @@ await r.check('P41', 'marketing 插件：默认关闭；启用后 marketing:* �
     await host.disposeAll()
   }
   return `marketing 通道 ${'(见上)'} 条，停用清零`
+})
+// ── P42 通用导入：marketing 11 表清单 + 分页 + voice 前缀排除 ─────────────────
+await r.check('P42', '通用导入：marketing 表清单完整，按页拉满且排除宿主 voice 配置', async () => {
+  const { importTableData, MARKETING_TABLES, HOST_APP_META_PREFIXES } = genericImportMod
+  assertEq(MARKETING_TABLES.length, 11, 'marketing 11 表')
+  assertEq(MARKETING_TABLES[0], 'projects', '先导 projects（外键根）')
+  assertEq(MARKETING_TABLES[MARKETING_TABLES.length - 1], 'app_meta', 'app_meta 最后')
+
+  const dir = mkdtempSync(join(tmpdir(), 'umi-mkt-import-'))
+  const rowsByTable = {
+    projects: [{ id: 'p1', name: 'A' }, { id: 'p2', name: 'B' }, { id: 'p3', name: 'C' }],
+    app_meta: [
+      { key: 'marketing:lastProject', value: 'p1' },
+      { key: 'voice:v1:settings', value: '{"secret":1}' }
+    ]
+  }
+  const source = {
+    async request(method, params = {}) {
+      const table = method.split('.')[0]
+      const rows = rowsByTable[table] ?? []
+      const offset = Number(params.offset ?? 0)
+      const limit = Number(params.limit ?? 5000)
+      return rows.slice(offset, offset + limit)
+    }
+  }
+  const written = []
+  const target = {
+    async request(method, params) {
+      written.push({ method, key: params.data?.key ?? params.data?.id })
+      return {}
+    }
+  }
+  const res = await importTableData({
+    source,
+    target,
+    pluginDataDir: dir,
+    tables: MARKETING_TABLES,
+    skipKeyPrefixes: HOST_APP_META_PREFIXES,
+    pageSize: 2
+  })
+  assertEq(res.counts.projects, 3, 'projects 3 行（分页 2+1）')
+  assertEq(res.pages.projects, 2, '分 2 页拉取')
+  assertEq(res.counts.app_meta, 1, 'app_meta 只导入 1 条（voice 被排除）')
+  assert(!written.some((w) => w.key === 'voice:v1:settings'), 'voice 配置未写入')
+  assert(written.every((w) => w.method.endsWith('.upsert')), '全部走 upsert')
+  return '清单/分页/排除 正确'
 })
 const result = r.toJSON()
 const ok = printResult(result)
