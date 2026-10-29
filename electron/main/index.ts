@@ -21,6 +21,7 @@ import { ChannelManager } from './channelManager'
 import { ObsidianManager } from './obsidian/obsidianManager'
 import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv, toPosix, GATEWAY_TOKEN } from './openClawPaths'
+import { shouldSpeakInApp } from './fish/voice/core/openclawTts'
 import { readFileSync, existsSync, readdirSync } from 'fs'
 import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process'
 import type { TerminalRuntime } from '../../src/types/terminal'
@@ -451,17 +452,28 @@ function showReminderNotification(
     // 点击 morning → 打开/聚焦「新的一天」页；具体路由由渲染端处理，这里只展示
     void id
     n.show()
-    void triggerVoiceAutoSpeak(`${payload.title}。${payload.body}`)
+    void triggerVoiceAutoSpeak(`${payload.title}。${payload.body}`, id)
   } catch (e) {
     console.log(`[reminder] 本机通知失败（不影响提醒消费）: ${(e as Error)?.message}`)
   }
 }
 
-async function triggerVoiceAutoSpeak(text: string): Promise<void> {
+/**
+ * 哪些提醒算「被标记的事件」：待办到点提醒是用户逐条设的，算；
+ * 早上汇总与日报草稿是固定例行通知，不算。
+ */
+function isTaggedEventId(id: string): boolean {
+  return id === 'todo'
+}
+
+async function triggerVoiceAutoSpeak(text: string, eventId: string): Promise<void> {
   if (!voiceManager) return
+  // 应用内短提示只在「三类固定通知」范围内朗读；eventId 决定它算不算被标记的事件。
+  const taggedEligible = isTaggedEventId(eventId)
   try {
     const settings = await voiceManager.getSettings()
-    if (settings.autoSpeak === 'off' || !settings.hasTtsKey) return
+    if (!settings.hasTtsKey) return
+    if (!shouldSpeakInApp({ mode: settings.autoSpeak, taggedEligible })) return
     const result = await voiceManager.speak({ text })
     if (!mainWindow || mainWindow.isDestroyed()) return
     mainWindow.webContents.send('fish:voice:auto-speak', {
@@ -1952,6 +1964,10 @@ app.whenReady().then(() => {
       secrets: voiceSecretStore,
       cacheDir: join(configManager.getDataDir(), 'fish', 'audio'),
       logger: (message) => console.log(message),
+      onSettingsChanged: () => {
+        // tts 块写入 openclaw.json；环境变量部分由网关下次启动生效。
+        void configManager.syncOpenClawConfig().catch(() => undefined)
+      },
       onProgress: (event) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('fish:voice:progress', event)
@@ -1966,6 +1982,21 @@ app.whenReady().then(() => {
       logger: (message) => console.log(message)
     })
     registerVoiceIpc(voiceManager, voiceCloneManager)
+    // 硬规则 25：对话内语音走 OpenClaw 的 tts 块与 /tts 命令族。
+    // openclaw.json 只写非密字段；apiKey 由网关启动时以环境变量注入。
+    // 块内已被 if 判空，但闭包逃逸出作用域后 TS 不再收窄，故先取局部引用。
+    const activeVoice = voiceManager
+    configManager.setOpenClawTtsInjector(() => activeVoice.buildOpenClawTtsConfigSync())
+    clawManager.setVoiceTtsEnvProvider(() => activeVoice.buildOpenClawTtsEnv())
+    // 设置一变就把 tts 块同步进 openclaw.json（密钥走环境变量，需下次启动网关生效）。
+    void configManager.syncOpenClawConfig().catch(() => undefined)
+    // 训练是异步的：启动时把上次没跑完的训练接回后台轮询，
+    // 否则页面关掉后任务会永远停在「训练中」。
+    void voiceCloneManager
+      .resumeTrainingPolls()
+      .catch((error) => {
+        console.log(`[voice] 恢复克隆轮询失败: ${(error as Error)?.message ?? String(error)}`)
+      })
   } catch (error) {
     voiceManager = null
     console.log(

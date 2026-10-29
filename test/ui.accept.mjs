@@ -21,6 +21,8 @@
 //
 // 用法：node test/ui.accept.mjs（npm run accept:ui）
 
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Recorder, assert, assertEq, printResult, writeJson, __dirname, repoRoot } from './_lib.mjs'
 import {
@@ -844,7 +846,25 @@ try {
   console.error('UI 验收脚本自身异常:', e)
 }
 
+// 语音播放依赖 blob: URL（主进程回传字节 → createObjectURL → <audio>）。
+// 只写 default-src 'self' 会让 CSP 拦截 blob:，浏览器报
+// “Failed to load because no supported source was found”，极易被误判成音频损坏
+// 或 TTS 故障。这条用例锁住「media-src 必须放行 blob:」。
+await r.check('U17', 'CSP 放行 blob:（否则语音播不出来）', async () => {
+  const html = readFileSync(join(repoRoot, 'src/renderer/index.html'), 'utf-8')
+  const line = html.split(/\r?\n/).find((l) => l.includes('Content-Security-Policy'))
+  assert(line, 'index.html 必须有 CSP')
+  const m = line.match(/content="([^"]+)"/)
+  assert(m, 'CSP 必须可解析')
+  const csp = m[1]
+  assert(/media-src[^;]*blob:/.test(csp), 'media-src 必须放行 blob:')
+  assert(/img-src[^;]*blob:/.test(csp), 'img-src 必须放行 blob:')
+  assert(!/script-src[^;]*blob:/.test(csp), 'script-src 不得放宽（安全底线）')
+  return 'CSP 已放行媒体 blob:，且未放宽脚本来源'
+})
+
 const result = r.toJSON({})
+
 const ok = printResult(result)
 writeJson(__dirname + '/accept-result-ui.json', result)
 console.log('')

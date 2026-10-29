@@ -7,7 +7,7 @@
 //   - 用 @vue/server-renderer 渲染，捕获渲染期 Vue 警告（能抓到模板/引用类真 bug）
 
 import { mkdirSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'node:fs'
-import { join, basename } from 'node:path'
+import { join, basename, dirname, resolve as resolvePath } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { parse as parseSfc, compileScript, compileTemplate } from '@vue/compiler-sfc'
@@ -261,6 +261,14 @@ export function compileVuePage(
 
   // 把 script 的 default 导出改名，挂上 render，再作为 default 导出
   let code = script.content.replace(/export\s+default\s+/, 'const __component = ')
+  // 编译产物写到 test/.tmp 下，页面里的相对导入（如 '../../../electron/main/...'）
+  // 会按 tmpDir 解析成错误路径。统一按**原文件所在目录**解析成绝对路径。
+  // （纯类型导入会被 esbuild 擦除，所以以前只有 type-only import 的页面从没暴露这个问题。）
+  const sourceDir = dirname(abs)
+  code = code.replace(
+    /((?:from|import)\s*\(?\s*)(['"])(\.\.?\/[^'"]*)\2/g,
+    (_m, lead, quote, spec) => `${lead}${quote}${posix(resolvePath(sourceDir, spec))}${quote}`
+  )
   // 子组件（.vue）默认换桩；realComponents 列出的改写为真组件产物（与本文件同在 tmpDir）
   code = code.replace(
     /from\s+(['"])@\/views\/components\/([^'"]+\.vue)\1/g,

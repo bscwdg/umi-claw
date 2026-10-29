@@ -7,6 +7,7 @@ import type {
   VoiceCatalogFile,
   VoiceCloneActivateInput,
   VoiceCloneRecord,
+  VoiceReconcileItem,
   VoiceCloneSample,
   VoiceCloneTrainInput,
   VoiceCloneValidation,
@@ -415,7 +416,8 @@ const api = {
         activate: (input: VoiceCloneActivateInput) =>
           call<VoiceSpeakResult>('fish:voice:clone:activate', input),
         demoAudio: (speakerId: string, modelType: number) =>
-          call<VoiceAudioPayload>('fish:voice:clone:demoAudio', speakerId, modelType)
+          call<VoiceAudioPayload>('fish:voice:clone:demoAudio', speakerId, modelType),
+        reconcile: () => call<VoiceReconcileItem[]>('fish:voice:clone:reconcile')
       },
       autoSpeak: {
         on: (cb: (event: { audioId: string; mime: string }) => void) => {

@@ -147,7 +147,7 @@ export interface VoiceProvider {
 | 预设音色 | `/api/v3/plan/tts/unidirectional` | Agent Plan Key | `seed-tts-2.0` |
 | 克隆音色 | `/api/v3/tts/unidirectional` | 语音服务 Key | `seed-icl-2.0` |
 
-`speak` 根据 speaker 是否属于内置精选目录，自动选择对应接口和 Key；UI 不暴露 endpoint 选择给普通用户。
+`speak` 根据 speaker 是否属于内置精选目录，自动选对应接口和 Key；普通使用只需选音色，接口与 Resource 收在「接口与模型（高级）」里，默认可不碰。
 
 ### 5.2 训练请求
 
@@ -192,13 +192,14 @@ export interface VoiceProvider {
 ### 5.4 状态与轮询
 
 - 训练是异步的：提交后返回 `status=1`，轮询 `get_voice`
-- 轮询：2s 起，指数退避到 10s，最长 10 分钟；页面可关闭，后台任务继续
+- 轮询：2s 起，指数退避到 10s，最长 10 分钟；页面可关闭，后台任务继续（
+  `VoiceCloneManager.startPolling/resumeTrainingPolls`，启动时自动接管未完成训练）
 - `status`：0 未找到 / 1 训练中 / 2 成功 / 3 失败 / 4 可用
 - 只有 `2` 或 `4` 可合成；`3` 展示失败原因与重试
 - 响应里的 `speaker_status[]` 可能包含多个模型版本；按 `model_type` 分别保存 `demo_audio`
 - `demo_audio` 只有 1 小时有效：拿到就下载到 `<dataDir>/fish/voices/<id>/demo-<modelType>.<真实扩展名>`
 - `model_type`：1 ICL V1、2 DiT 标准、3 DiT 还原、4 ICL V2、5 ICL V3；它是响应字段，不是训练入参
-- v1 用 `seed-icl-2.0` 合成，优先保留 `model_type=4/5` 的试听音频；不要在 UI 承诺服务端一定返回哪个模型版本
+- 试听下载**不按 `model_type` 白名单过滤**：服务端给几个就存几个。写死 4/5 会让切到 1.0 资源（返回 1/2/3）的用户一个试听都拿不到
 - 每次提交后以响应 `available_training_times` 为准；UI 不在本地推算或承诺失败返还次数
 
 ### 5.5 计费与坑（必须写进 UI）
@@ -248,7 +249,7 @@ export interface VoiceProvider {
 | Tab | 内容 |
 | --- | --- |
 | 概览 | 服务状态、Key 状态（只显示 `hasKey`）、今日字符/请求、最近错误、快捷试听 |
-| 供应商与密钥 | TTS Key、语音服务 Key、固定 endpoint/resource（只读展示）、分别测试连接、清除密钥 |
+| 供应商与密钥 | TTS Key、语音服务 Key、接口与模型高级区（endpoint/resource 可配、带恢复默认）、分别测试连接、清除密钥 |
 | 音色 | 预设音色下拉（仅内置 2.0 全量音色（450 条），不拉取全量 325 音色）+ 试听 + 设为默认；克隆音色列表（状态/试听/启用/删除） |
 | 预算与缓存 | 每日字符上限、已用、缓存大小/清理、超预算提醒开关 |
 
@@ -261,10 +262,10 @@ export interface VoiceProvider {
 | `provider` | `volcengine` | 预留其他供应商 |
 | `ttsKey` | 空 | Agent Plan Key，safeStorage |
 | `cloneKey` | 空 | 语音控制台 Key，safeStorage |
-| `ttsEndpoint` | plan 地址 | 固定值，只读；不支持普通用户修改 |
-| `ttsResourceId` | `seed-tts-2.0` | 固定值，只读 |
-| `cloneEndpoint` | `/api/v3/tts/unidirectional` | 固定值，只读 |
-| `cloneResourceId` | `seed-icl-2.0` | 固定值，只读 |
+| `ttsEndpoint` | plan 地址 | 仅接受 `https://openspeech.bytedance.com` 下的 `/api/v3/` 路径 |
+| `ttsResourceId` | `seed-tts-2.0` | 可改，用于模型升级（如未来 3.0）；格式 1–64 位字母数字及 `._-` |
+| `cloneEndpoint` | `/api/v3/tts/unidirectional` | 仅接受 `https://openspeech.bytedance.com` 下的 `/api/v3/` 路径 |
+| `cloneResourceId` | `seed-icl-2.0` | 可改，用于模型升级/降级（`seed-icl-1.0` 等）；格式同上 |
 | `defaultSpeaker` | `zh_female_vv_uranus_bigtts` | 必须是内置精选目录中的预设音色 |
 | `speedRatio` | `1.0` | 0.2–3 |
 | `emotion` | 空 | 预设音色可用 |
@@ -499,5 +500,11 @@ Content-Type: application/json
 
 - 3.0 已落地：`/voice` 路由与导航、两把 Key、safeStorage、精选音色下拉、预算、缓存、预设 TTS、克隆训练/轮询/试听/转正/本地删除。
 - 受信任短提醒已接本地自动朗读；默认关闭，音频由主进程生成后交渲染端播放。
-- `accept:voice` 覆盖 8 组契约：目录、双路由、缓存、长文本 PCM→WAV、预算、Key 闸门、克隆重试/转正/删除。
+- `accept:voice` 覆盖 12 组契约：目录、双路由、缓存、长文本 PCM→WAV、预算、Key 闸门、克隆重试/转正/删除、接口与模型白名单、语种与 demo_text、后台轮询与启动恢复、1.0 资源试听。
+- **适配升级改造（本次）**：
+  - endpoint/resource 从「固定只读」改为受控可配：只接受 `https://openspeech.bytedance.com` + `/api/v3/`，Resource 只做格式校验，因此未来 3.0 模型可直接在界面切换，无需发版。
+  - 主进程接管克隆训练后台轮询（`startPolling`/`resumeTrainingPolls`），页面关闭或应用重启都不再停在「训练中」。
+  - 语种从 0–8 放开到官方全量 21 个取值；`demo_text` 按语种取默认句（不同语种传中文会导致官方侧合成失败），并支持自定义与降噪开关。
+  - 试听下载不再写死 `model_type=4/5`，切到 1.0 资源也能拿到 demo。
+  - 克隆侧捕获 `X-Tt-Logid` 进脱敏诊断日志。
 - 待办：飞书原生语音条的音频转码/上传、2.0 与 1.0 分支移植、真实 Key 手工联调和三份安装包冒烟。
