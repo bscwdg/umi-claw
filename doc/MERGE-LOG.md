@@ -1,8 +1,8 @@
 # MERGE-LOG：4.0 基线合并执行记录（3.0 ← 2.0）
 
-> 执行：2026-10-30 ｜ worktree `D:\work2026\files\claw-merge`（分支 `tmp/merge-2.0`，ours = `release/3.0`）
+> 执行：2026-10-30 ｜ 分支 `release/4.0`（合并来自 worktree `D:\work2026\files\claw-merge` 的 `tmp/merge-2.0`）
 > 依据：`doc/MERGE-INVENTORY.md`（27 文件 / 168 冲突块的归类与仲裁）
-> 状态：**代码合并完成，work 域全绿；marketing 域代码已并入、数据层待接（见 §五）**
+> 状态：**合并完成；`schemaId` 数据层接线完成；两域验收 291 项全绿；`npm run build` 通过**
 
 ## 一、验证结果
 
@@ -71,8 +71,7 @@
 
 ## 五、未完成 / 已知缺口（按优先级）
 
-1. **marketing 数据层（阻塞营销域可用）**：`DatabaseClient` 的 schema 与 migration 是**客户端侧**的（`database/schema.ts` + `migration.ts`，只有 work 8 表）。换 worker 只解决了白名单，迁移仍按 work schema 跑 → 营销库里没有 `projects` 表，报 `no such table: projects`。
-   修法：给 `DatabaseClient` 加 `schemaId: 'work' | 'marketing'`，按 id 选 `schema/migration` 模块，`assertSchemaShape()` 按 schema 断言；营销 schema/migration 直接从 `release/2.0` 取对应文件。预计 0.5–1 人天，之后营销 11 个验收套件才可能转绿。
+1. ~~**marketing 数据层（阻塞营销域可用）**~~ → **已完成**（提交 `55fdaae`）：新增 `database/schemas.ts` 注册表 + `marketingSchema.ts` / `marketingMigration.ts`（从 `release/2.0` 原样取，11 表、user_version 独立），`DatabaseClient` 增加 `schemaId: 'work' | 'marketing'`，按库选 tables / pendingSteps / targetUserVersion，`assertSchemaShape()` 按 schema 断言；营销 client 指向 `db-worker-marketing.mjs` + `umi-claw.db`。营销 11 个验收套件随之转绿。
 2. `test/gateway.accept.mjs` 的 G10b 未移植。
 3. `README.md` 待并集；`package-lock.json` 待重生成。
 4. 2.0 存量用户的语音数据：按 2026-10-30 拍板**直接删除、不做迁移**；voice 存储改绑 `work.db`。需要在发布说明里写清楚。
@@ -82,13 +81,24 @@
 
 | 提交 | 内容 |
 | --- | --- |
-| `f66196f` | `merge(4.0): 合并 release/2.0 营销域到 3.0 基线`（115 文件 / +29577 −71） |
-| `1764ba2` | `fix(voice): 移除未使用的 OpenClawTtsChannelSetting 类型导入`（让 `typecheck:node` 归零） |
-
-分支：`tmp/merge-2.0`（worktree `D:\work2026\files\claw-merge`）。合并后 `main/index.ts` 2562 行、0 冲突标记、`registerGatewayIpc` 调用 1 次、voice 初始化 1 处、顶层声明无重复。
+| `b7e076a` | `docs(4.0): PLAN v1.1 + 合并清单与日志` |
+| `1d9bff4` | `merge(4.0): 以合并基线替换 1.0 壳（3.0+2.0）` |
+| `55fdaae` | `feat(4.0): 多 schema 数据层（schemaId）+ 两域流事件名并存，营销域验收全绿` |
 
 ### 结构性约束（留给后续的人）
 
 - **构造顺序**：work 域的 `createWorkGatewayClient()` / `createWorkDatabase()` / `initWorkManagers()` 必须先于营销各 Manager（营销工厂经 `getMarketingGatewayClient()` 取同一实例）。把 work 装配往后挪会立刻抛「尚未初始化」，而 TypeScript 拦不住。
 - **`registerIpcHandlers()` 里的营销注册用的是非空断言**（`marketingDatabase!`），依赖 whenReady 的构造顺序；若将来把营销装配移出 whenReady，会变成运行时 undefined。
 - **两域 `parsers/pdfjsAssets.ts` 目前逐字节相同**才共用一个 import；今后只改一份会让两域共用同一实现。
+- **两套流事件名并存**：`work:stream:*`（work 域）与 `marketing:gateway:*`（营销域），由 `forwardGatewayStream` 第 4 个参数选择，默认 work。统一改名要同时动两域的 store 与验收。
+- **两个 DB worker**：`db-worker.mjs`（work 8 表）与 `db-worker-marketing.mjs`（营销 11 表）。新增表/列时必须改对应那一个，否则 `assertSchemaShape` 会在启动时直接报缺表。
+
+## 七、最终验证（2026-10-30）
+
+| 项 | 结果 |
+| --- | --- |
+| `typecheck:node` / `typecheck:web` | 0 错误 |
+| `npm run build` | 通过（renderer 产物含 HotCenter / ContentCenter / KnowledgeBase 等营销页） |
+| 验收套件 | 17 套 / **291 项全绿**：db 38、gateway 29、work 20、ui 17、context.work 12、knowledge.work 10、context.marketing 22、knowledge.marketing 23、project 18、business 16、content 12、advisor 10、hot 16、hotscore 14、scan 18、platform 7、shooting 9 |
+
+尚未跑：`accept:node-runtime` / `accept:maintenance` / `accept:config-writer` / `accept:wizard` / `accept:record` / `accept:today` / `accept:report` / `accept:openclaw-summary` / `accept:qatool` / `one-day.e2e` / `packaged smoke`（依赖真实 OpenClaw 环境或打包态），留到 Phase 4 打包冒烟一起跑。

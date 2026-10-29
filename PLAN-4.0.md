@@ -322,7 +322,12 @@ umi-claw/                       # 保持单个 package.json（延续 1.0/2.0/3.0
 
 ## 十一、迁移路径
 
-### Phase 0.5：基线合并（v1.1 新增，3–5 人天）
+### Phase 0.5：基线合并（v1.1 新增，3–5 人天）｜✅ 已完成（2026-10-30）
+
+**结果**：`release/4.0` 已并入 3.0+2.0 合并基线（`1d9bff4`），并补齐多 schema 数据层（`55fdaae`）。
+`typecheck` node/web 均 0 错；`npm run build` 通过；17 套验收 **291 项全绿**（db 38 / gateway 29 / work 20 / ui 17 / context.work 12 / knowledge.work 10 / context.marketing 22 / knowledge.marketing 23 / project 18 / business 16 / content 12 / advisor 10 / hot 16 / hotscore 14 / scan 18 / platform 7 / shooting 9）。详见 `doc/MERGE-LOG.md`。
+
+原始计划（保留作记录）：
 
 目标：`merged/4.0-base` = 3.0 + 2.0，单体可跑、可发布。
 
