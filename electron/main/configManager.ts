@@ -1327,13 +1327,38 @@ private _injectOpenClawTts(existingConfig: any): void {
   if (!this.openClawTtsInjector) return
   const ttsCfg = this.openClawTtsInjector()
   // 三态：undefined = 状态未知（启动早期快照尚未加载）→ 原样不动；
-  // null = 明确关闭 → 删除整段；对象 = 写入。
-  // 用 undefined 表达「不知道」，避免首次同步把用户在用的 tts 段误删。
+  // null = 明确关闭 → 只移除本应用管理的 provider，保留 personas/其他 provider；
+  // 对象 = 合并写入（不整段替换）。
   if (ttsCfg === undefined) return
-  if (ttsCfg) {
-    existingConfig.tts = ttsCfg
-  } else if (existingConfig.tts) {
-    delete existingConfig.tts
+  const existing =
+    existingConfig.tts && typeof existingConfig.tts === 'object' && !Array.isArray(existingConfig.tts)
+      ? existingConfig.tts
+      : {}
+  const providers =
+    existing.providers && typeof existing.providers === 'object' && !Array.isArray(existing.providers)
+      ? { ...existing.providers }
+      : {}
+
+  if (!ttsCfg) {
+    delete providers.volcengine
+    delete providers['tts-local-cli']
+    const next = { ...existing, auto: 'off' }
+    if (Object.keys(providers).length) next.providers = providers
+    else delete next.providers
+    if (Object.keys(next).length) existingConfig.tts = next
+    else delete existingConfig.tts
+    return
+  }
+
+  // 本应用只管理自己写入的 provider；其他 provider / personas / fallback 原样保留。
+  delete providers.volcengine
+  delete providers['tts-local-cli']
+  Object.assign(providers, ttsCfg.providers ?? {})
+  existingConfig.tts = {
+    ...existing,
+    auto: ttsCfg.auto,
+    provider: ttsCfg.provider,
+    providers
   }
 }
 

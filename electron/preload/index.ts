@@ -17,7 +17,9 @@ import type {
   VoiceSpeakInput,
   VoiceSpeakResult,
   VoiceTestResult,
-  VoiceUsageDay
+  VoiceUsageDay,
+  VoiceOpenClawStatus,
+  VoiceOpenClawTestResult
 } from '../main/fish/voice/core/types'
 console.log('✅ preload loaded')
 
@@ -377,6 +379,10 @@ const api = {
         get: () => call<VoiceCatalogFile>('fish:voice:catalog:get')
       },
       test: (kind: VoiceKeyKind) => call<VoiceTestResult>('fish:voice:test', kind),
+      openclaw: {
+        status: () => call<VoiceOpenClawStatus>('fish:voice:openclaw:status'),
+        test: () => call<VoiceOpenClawTestResult>('fish:voice:openclaw:test')
+      },
       speak: (input: VoiceSpeakInput) =>
         call<VoiceSpeakResult>('fish:voice:speak', input),
       audio: (audioId: string) =>

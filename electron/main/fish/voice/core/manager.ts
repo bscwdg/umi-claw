@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 import { VOICE_ERROR_CODES, VoiceError } from './errors'
 import { wrapPcmAsWav } from './audio'
 import { VoiceAudioCache, voiceCacheKey, voiceAudioId } from './cache'
@@ -21,7 +22,11 @@ import type {
   VoiceSpeakInput,
   VoiceSpeakResult,
   VoiceTestResult,
-  VoiceUsageDay
+  VoiceUsageDay,
+  OpenClawTtsChannel,
+  OpenClawTtsChannelSetting,
+  VoiceOpenClawStatus,
+  VoiceOpenClawTestResult
 } from './types'
 import type { VoiceSecretStore } from '../secretStore'
 import { VolcengineCloneProvider } from '../providers/volcengineClone'
@@ -46,6 +51,8 @@ export interface VoiceManagerOptions {
   onProgress?: (event: import('./types').VoiceProgressEvent) => void
   /** 设置/密钥变更后回调（主进程用它把 tts 块同步进 openclaw.json）。 */
   onSettingsChanged?: () => void
+  /** bridge 模式下 volc-tts.mjs 的绝对路径。 */
+  bridgeScriptPath?: string
 }
 
 function mergeUsage(
@@ -80,6 +87,8 @@ export class VoiceManager {
   private readonly now: () => number
   private readonly logger: (message: string) => void
   private readonly onProgress: (event: import('./types').VoiceProgressEvent) => void
+  private readonly bridgeScriptPath: string | undefined
+  private readonly fetchImpl: FetchLike
   private settingsCache: VoiceSettings | null = null
   /**
    * 同步快照：openclaw.json 的注入器是**同步**回调（配置写入路径不能 await），
@@ -106,11 +115,13 @@ export class VoiceManager {
     this.now = options.now ?? (() => Date.now())
     this.budget = new VoiceBudget(this.storage, this.now)
     const fetchImpl = options.fetchImpl ?? fetch
+    this.fetchImpl = fetchImpl
     this.ttsProvider = new VolcengineTtsProvider(fetchImpl)
     this.cloneProvider = new VolcengineCloneProvider(fetchImpl)
     this.logger = options.logger ?? ((message) => console.log(message))
     this.onProgress = options.onProgress ?? (() => undefined)
     this.onSettingsChanged = options.onSettingsChanged ?? (() => undefined)
+    this.bridgeScriptPath = options.bridgeScriptPath
   }
 
   getCatalog(): VoiceCatalogFile {
@@ -203,39 +214,172 @@ export class VoiceManager {
     }
   }
 
+  private resolveConversationChannel(snap: {
+    settings: VoiceSettings
+    hasTtsKey: boolean
+    hasCloneKey: boolean
+  }): { channel: OpenClawTtsChannel | null; reason: string } {
+    const settings = snap.settings
+    if (settings.conversationTts === 'off') {
+      return { channel: null, reason: '对话内语音已关闭' }
+    }
+    const preset = isPresetVoice(settings.defaultSpeaker)
+    const setting = settings.conversationChannel
+
+    if (setting === 'bridge') {
+      if (!preset) return { channel: null, reason: '克隆音色只能走标准接口，不能走本地桥接' }
+      if (!snap.hasTtsKey) return { channel: null, reason: '未配置 Agent Plan TTS Key' }
+      if (!this.bridgeScriptPath) return { channel: null, reason: '内置桥接脚本路径缺失' }
+      return { channel: 'bridge', reason: '本地桥接（Agent Plan Key → Plan 接口）' }
+    }
+
+    if (setting === 'volcengine') {
+      if (!snap.hasCloneKey) return { channel: null, reason: '未配置语音控制台 Key' }
+      return { channel: 'volcengine', reason: 'OpenClaw 标准接口（语音控制台 Key）' }
+    }
+
+    // auto：有语音控制台 Key 时优先官方标准接口；否则预设音色才允许走 bridge。
+    if (snap.hasCloneKey) {
+      return { channel: 'volcengine', reason: '自动选择：标准接口（已配置语音控制台 Key）' }
+    }
+    if (preset && snap.hasTtsKey && this.bridgeScriptPath) {
+      return { channel: 'bridge', reason: '自动选择：本地桥接（仅有 Agent Plan Key）' }
+    }
+    return { channel: null, reason: '没有可用 Key：需要 Agent Plan Key 或语音控制台 Key' }
+  }
+
   buildOpenClawTtsConfigSync(): Record<string, unknown> | null | undefined {
     const snap = this.openClawTtsSnapshot
     // 快照还没加载：状态未知，调用方必须原样不动（不能当成「关闭」去删配置）。
     if (!snap) return undefined
-    if (snap.settings.conversationTts === 'off') return null
-    // 预设音色要 TTS Key，克隆音色要语音服务 Key——两条产品线，不能互相顶替。
-    const speaker = snap.settings.defaultSpeaker
-    const hasKey = isPresetVoice(speaker) ? snap.hasTtsKey : snap.hasCloneKey
-    if (!hasKey) return null
-    return buildOpenClawTtsBlock({
-      conversationTts: snap.settings.conversationTts,
-      resourceId: this.resolveResourceFor(snap.settings.defaultSpeaker),
-      speakerVoice: snap.settings.defaultSpeaker
-    }) as unknown as Record<string, unknown>
+    const resolved = this.resolveConversationChannel(snap)
+    if (!resolved.channel) return null
+    try {
+      return buildOpenClawTtsBlock({
+        conversationTts: snap.settings.conversationTts,
+        channel: resolved.channel,
+        resourceId: this.resolveResourceFor(snap.settings.defaultSpeaker),
+        speakerVoice: snap.settings.defaultSpeaker,
+        bridgeScriptPath: this.bridgeScriptPath
+      }) as unknown as Record<string, unknown>
+    } catch {
+      return null
+    }
   }
 
   /** 供网关启动时注入的 TTS 环境变量（密钥只在这里出现）。 */
   async buildOpenClawTtsEnv(): Promise<Record<string, string>> {
-    // 单一实现在 openclawTts.ts；这里只管取当前设置与密钥。
     const settings = await this.loadSettings()
-    const speaker = settings.defaultSpeaker
-    const preset = isPresetVoice(speaker)
-    // 预设走 Agent Plan Key，克隆走语音服务 Key：两者不是同一把，不能混用。
-    const key = await this.secrets.get(preset ? 'tts' : 'clone')
-    await this.refreshOpenClawTtsSnapshot(settings)
+    const status = await this.secrets.status()
+    const resolved = this.resolveConversationChannel({
+      settings,
+      hasTtsKey: status.tts.hasKey,
+      hasCloneKey: status.clone.hasKey
+    })
+    if (!resolved.channel) return {}
+    const key = await this.secrets.get(resolved.channel === 'bridge' ? 'tts' : 'clone')
     return buildOpenClawTtsEnv(
       {
         conversationTts: settings.conversationTts,
-        resourceId: this.resolveResourceFor(speaker),
-        speakerVoice: speaker
+        channel: resolved.channel,
+        resourceId: this.resolveResourceFor(settings.defaultSpeaker),
+        speakerVoice: settings.defaultSpeaker,
+        bridgeScriptPath: this.bridgeScriptPath
       },
       key
     )
+  }
+
+  async getOpenClawStatus(): Promise<VoiceOpenClawStatus> {
+    const settings = await this.loadSettings()
+    const status = await this.secrets.status()
+    const resolved = this.resolveConversationChannel({
+      settings,
+      hasTtsKey: status.tts.hasKey,
+      hasCloneKey: status.clone.hasKey
+    })
+    return {
+      setting: settings.conversationChannel,
+      effective: resolved.channel,
+      reason: resolved.reason
+    }
+  }
+
+  /**
+   * 自检当前对话内语音通道：bridge 走一次真实 Plan 合成；volcengine 只做一次标准接口鉴权探测。
+   * 不实际发消息，避免测试消息打扰用户。
+   */
+  async testOpenClawChannel(): Promise<VoiceOpenClawTestResult> {
+    const settings = await this.loadSettings()
+    const status = await this.secrets.status()
+    const resolved = this.resolveConversationChannel({
+      settings,
+      hasTtsKey: status.tts.hasKey,
+      hasCloneKey: status.clone.hasKey
+    })
+    if (!resolved.channel) {
+      return { ok: false, channel: null, message: resolved.reason }
+    }
+    if (resolved.channel === 'bridge') {
+      try {
+        const audio = await this.speak({
+          text: '你好，我是大肥鱼。',
+          options: { speaker: settings.defaultSpeaker }
+        })
+        return {
+          ok: true,
+          channel: 'bridge',
+          message: '本地桥接可用：Plan 接口合成成功',
+          audio
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          channel: 'bridge',
+          message: error instanceof Error ? error.message : '本地桥接合成失败'
+        }
+      }
+    }
+    const key = await this.secrets.get('clone')
+    if (!key) {
+      return { ok: false, channel: 'volcengine', message: '未配置语音控制台 Key' }
+    }
+    try {
+      const response = await this.fetchImpl(settings.cloneEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Api-Key': key,
+          'X-Api-Resource-Id': this.resolveResourceFor(settings.defaultSpeaker),
+          'X-Api-Request-Id': randomUUID()
+        },
+        body: JSON.stringify({
+          req_params: {
+            text: '你好',
+            speaker: settings.defaultSpeaker,
+            audio_params: { format: 'mp3', sample_rate: 24000 }
+          }
+        })
+      })
+      if (!response.ok) {
+        return {
+          ok: false,
+          channel: 'volcengine',
+          message: `标准接口鉴权失败：HTTP ${response.status}`
+        }
+      }
+      return {
+        ok: true,
+        channel: 'volcengine',
+        message: '标准接口鉴权通过：语音控制台 Key 可用'
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        channel: 'volcengine',
+        message: error instanceof Error ? error.message : '标准接口探测失败'
+      }
+    }
   }
 
   async getSettings(): Promise<VoiceSettingsView> {

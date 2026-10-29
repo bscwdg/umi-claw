@@ -22,6 +22,8 @@ export const VOICE_CHANNELS = {
   keyClear: 'fish:voice:key:clear',
   catalogGet: 'fish:voice:catalog:get',
   test: 'fish:voice:test',
+  openclawStatus: 'fish:voice:openclaw:status',
+  openclawTest: 'fish:voice:openclaw:test',
   speak: 'fish:voice:speak',
   audio: 'fish:voice:audio',
   budgetGet: 'fish:voice:budget:get',
@@ -77,6 +79,8 @@ export function registerVoiceIpc(manager: VoiceManager, clone: VoiceCloneManager
   handle(VOICE_CHANNELS.test, (kind: unknown) =>
     wrap(() => manager.test(validateKeyKind(kind)))
   )
+  handle(VOICE_CHANNELS.openclawStatus, () => wrap(() => manager.getOpenClawStatus()))
+  handle(VOICE_CHANNELS.openclawTest, () => wrap(() => manager.testOpenClawChannel()))
   handle(VOICE_CHANNELS.speak, (input: VoiceSpeakInput) =>
     wrap(() => manager.speak(input))
   )

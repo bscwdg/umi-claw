@@ -6,6 +6,9 @@ export type VoiceAutoSpeak = 'off' | 'tagged' | 'always'
  * （只在收到语音消息后才回语音）。
  */
 export type OpenClawTtsAuto = 'off' | 'always' | 'inbound' | 'tagged'
+/** 对话内语音的两条通道：本地桥接（Agent Plan）或 OpenClaw 标准 provider（语音控制台）。 */
+export type OpenClawTtsChannel = 'bridge' | 'volcengine'
+export type OpenClawTtsChannelSetting = 'auto' | OpenClawTtsChannel
 export type VoiceAudioFormat = 'mp3' | 'pcm'
 
 export interface VoiceCatalogVoice {
@@ -54,6 +57,8 @@ export interface VoiceSettings {
    * 与 autoSpeak 相互独立：这个管「在对话里回语音」，那个管「弹提醒时读一句」。
    */
   conversationTts: OpenClawTtsAuto
+  /** 对话内语音走哪条通道；auto 按 Key 与默认音色自动选。 */
+  conversationChannel: OpenClawTtsChannelSetting
   dailyCharLimit: number
   cacheLimitMB: number
   /**
@@ -126,6 +131,20 @@ export interface VoiceTestResult {
   ok: true
   audio?: VoiceSpeakResult
   message: string
+}
+
+export interface VoiceOpenClawStatus {
+  setting: OpenClawTtsChannelSetting
+  effective: OpenClawTtsChannel | null
+  /** 人能看懂的一句话，说明为什么选中/未选中。 */
+  reason: string
+}
+
+export interface VoiceOpenClawTestResult {
+  ok: boolean
+  channel: OpenClawTtsChannel | null
+  message: string
+  audio?: VoiceSpeakResult
 }
 
 export type VoiceCloneStatus = 'training' | 'success' | 'failed' | 'active' | 'not_found'

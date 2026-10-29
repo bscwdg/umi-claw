@@ -1963,6 +1963,9 @@ app.whenReady().then(() => {
       storage: voiceStorage,
       secrets: voiceSecretStore,
       cacheDir: join(configManager.getDataDir(), 'fish', 'audio'),
+      bridgeScriptPath: app.isPackaged
+        ? join(process.resourcesPath, 'resources', 'voice', 'volc-tts.mjs')
+        : join(app.getAppPath(), 'resources', 'voice', 'volc-tts.mjs'),
       logger: (message) => console.log(message),
       onSettingsChanged: () => {
         // tts 块写入 openclaw.json；环境变量部分由网关下次启动生效。
