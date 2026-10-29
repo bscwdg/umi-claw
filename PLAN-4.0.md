@@ -355,9 +355,12 @@ umi-claw/                       # 保持单个 package.json（延续 1.0/2.0/3.0
 | `scripts/gen-plugin-entries.mjs` | 扫 `plugins/*/plugin.json` → 生成两端入口表 + 拷贝清单到 `resources/plugins` |
 | `plugins/hello/` | 演示插件：2 条 IPC + 1 个定时任务 + 1 条路由 + 1 个导航组 |
 | `src/renderer/pluginUi.ts` | 渲染端注册表（路由/导航/插槽的安装与卸载） |
-| `test/plugin.accept.mjs` | 12 项：清单/能力/激活/停用 LIFO/失败隔离/重复 id/坏清单/超时/真 hello/UI 注册表 |
+| `test/plugin.accept.mjs` | 26 项：清单/能力/激活/停用 LIFO/失败隔离/重复 id/坏清单/超时/迟到注册/停用竞态/幂等/真 hello/UI 归属与路由冲突 |
+| `electron/preload/index.ts` | `api.plugins.{list,setEnabled,invoke,onChanged}`；`invoke` 即 `plugin:<id>:<method>` |
 
-**验收**：`npm run build` 通过；hello 代码进 bundle 而 `resources/plugins/hello/` 只有 `plugin.json`；`plugin.accept` 12/12。
+**验收**：`npm run build` 通过；hello 代码进 bundle 而 `resources/plugins/hello/` 只有 `plugin.json`；`plugin.accept` **26/26**。
+
+**审查与对抗修复**（`95a54a2`）：一轮代码审查 + 一轮对抗测试后修掉 4 类真问题——①激活超时后插件仍在跑（closed 标记 + 迟到注册一律拒绝）②停用竞态与重复 enable（幂等短路 + 关闭在途激活尝试）③UI 导航/插槽按名整体删除导致插件互删（改为按 owner 归属合并，路由名/路径冲突直接拒绝安装）④清单级失败只 console、管理页看不见（进 `plugin:list`，带 code + stage）。
 
 原始计划（保留作记录）：
 
