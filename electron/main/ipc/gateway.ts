@@ -22,6 +22,16 @@ export const WORK_GATEWAY_CHANNELS = {
   ensureReady: 'work:gateway:ensureReady'
 } as const
 
+/**
+ * 2.0 营销域 gateway 面：通道名独立，但**共用同一个 GatewayClient 实例**（单例约束）。
+ * 合并说明（MERGE-INVENTORY C-5）：两套 `*_GATEWAY_CHANNELS` 必须并存、由同一次
+ * `registerGatewayIpc` 注册；分开注册会因 `removeHandler` 静默覆盖而只活一个域。
+ */
+export const MARKETING_GATEWAY_CHANNELS = {
+  status: 'marketing:gateway:status',
+  ensureReady: 'marketing:gateway:ensureReady'
+} as const
+
 async function wrap<T>(fn: () => Promise<T>): Promise<GatewayIpcResult<T>> {
   try {
     return { ok: true, data: await fn() }
@@ -44,10 +54,8 @@ function handle(channel: string, fn: (...args: any[]) => Promise<GatewayIpcResul
  * - `ensureReady`：探活 → 按需自动拉起（starter，复用 clawManager）→ 就绪轮询 → 同一快照
  */
 export function registerGatewayIpc(gateway: GatewayClient): void {
-  handle(WORK_GATEWAY_CHANNELS.status, () =>
-    wrap<GatewayStatusSnapshot>(() => gateway.getStatus())
-  )
-  handle(WORK_GATEWAY_CHANNELS.ensureReady, () =>
-    wrap<GatewayStatusSnapshot>(() => gateway.ensureReady())
-  )
+  for (const channels of [WORK_GATEWAY_CHANNELS, MARKETING_GATEWAY_CHANNELS]) {
+    handle(channels.status, () => wrap<GatewayStatusSnapshot>(() => gateway.getStatus()))
+    handle(channels.ensureReady, () => wrap<GatewayStatusSnapshot>(() => gateway.ensureReady()))
+  }
 }

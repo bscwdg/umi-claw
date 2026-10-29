@@ -32,7 +32,15 @@ export const ERROR_CODES = {
   /** 原始文件解析失败 */
   FILE_PARSE_ERROR: 'FILE_PARSE_ERROR',
   /** 流式响应体已开始后的传输中断（应保留已得内容 + 提供重试，而非当作连接失败） */
-  STREAM_TRUNCATED: 'STREAM_TRUNCATED'
+  STREAM_TRUNCATED: 'STREAM_TRUNCATED',
+  /**
+   * 营销热点采集失败：collector 子进程超时 / 启动失败 / 退出码非零 / 全部数据源不可用。
+   *
+   * 4.0 合并说明（MERGE-INVENTORY R1）：3.0 曾把它删掉，但 2.0 的 `marketing/hotManager.ts`
+   * 与 `stores/marketing.ts` 仍在消费，删了会编译不过。**保留为第 13 项，标记 deprecated**，
+   * 等 marketing 装箱为插件时随插件自带错误码表迁走。
+   */
+  HOT_SOURCE_ERROR: 'HOT_SOURCE_ERROR'
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

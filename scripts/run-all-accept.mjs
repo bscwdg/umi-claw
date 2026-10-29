@@ -14,6 +14,8 @@ const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(here, '..')
 
 // 单模块验收（顺序：底座 → 上层）
+// 4.0 合并说明：context / knowledge 在 2.0 与 3.0 各自存在同名脚本（add/add），
+// 已按域拆到 test/work/* 与 test/marketing/*（见 MERGE-INVENTORY R5），两套都要跑。
 const ACCEPT = [
   ['db-worker', 'test/db-worker.accept.mjs'],
   ['gateway', 'test/gateway.accept.mjs'],
@@ -22,12 +24,23 @@ const ACCEPT = [
   ['config-writer', 'test/openclaw-config-writer.accept.mjs'],
   ['work', 'test/work.accept.mjs'],
   ['record', 'test/record.accept.mjs'],
-  ['context', 'test/context.accept.mjs'],
+  ['context:work', 'test/context.work.accept.mjs'],
+  ['context:marketing', 'test/context.marketing.accept.mjs'],
   ['today', 'test/today.accept.mjs'],
   ['report', 'test/report.accept.mjs'],
   ['openclaw-summary', 'test/openclaw-summary.accept.mjs'],
   ['qatool', 'test/qatool.accept.mjs'],
-  ['knowledge', 'test/knowledge.accept.mjs'],
+  ['knowledge:work', 'test/knowledge.work.accept.mjs'],
+  ['knowledge:marketing', 'test/knowledge.marketing.accept.mjs'],
+  ['project', 'test/project.accept.mjs'],
+  ['business', 'test/business.accept.mjs'],
+  ['advisor', 'test/advisor.accept.mjs'],
+  ['scan', 'test/scan.accept.mjs'],
+  ['content', 'test/content.accept.mjs'],
+  ['shooting', 'test/shooting.accept.mjs'],
+  ['hot', 'test/hot.accept.mjs'],
+  ['hotscore', 'test/hotscore.accept.mjs'],
+  ['platform', 'test/platform.accept.mjs'],
   ['wizard', 'test/wizard.accept.mjs'],
   ['voice', 'test/voice.accept.mjs'],
   ['ui', 'test/ui.accept.mjs']

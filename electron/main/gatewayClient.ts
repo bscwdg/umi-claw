@@ -126,8 +126,18 @@ export interface GatewayModels {
 }
 
 export interface GatewayChatInput {
-  /** §6.4 完整会话键：`conv:work:qa` / `conv:work:tool:{toolId}` / `conv:work:report:{type}:{period}` */
-  conversationKey: string
+  /**
+   * §6.4 完整会话键：`conv:work:qa` / `conv:work:tool:{toolId}` / `conv:work:report:{type}:{period}`
+   *
+   * 2.0 营销域可只给短键（`<conversation_key>`），此时必须同时给 `projectId`，由
+   * `buildConversationUser()` 拼成 `conv:<projectId>:<conversation_key>`（见 resolveConversationUser）。
+   */
+  conversationKey?: string
+  /**
+   * 2.0 营销域的当前 Project（硬规则 9：显式传参，禁止全局推断）。
+   * work 域没有 Project 概念，不传。
+   */
+  projectId?: string
   messages: GatewayChatMessage[]
   /** true = SSE 流式（产品必须走流式：§6.5 首字 ≤3s vs 冷启动 80.3s） */
   stream?: boolean
@@ -153,6 +163,11 @@ export interface GatewayStreamResult {
   /** 客户端主动中止（用户点「停止生成」）时为 true */
   aborted: boolean
   ms: number
+  /**
+   * 结构化产物的可读交付文本（2.0 shooting_script：版本行 JSON 渲染出的分镜清单，
+   * 「采用」由渲染端写回 `contents.content`）；其它流为缺省 / null。
+   */
+  deliverable?: string | null
 }
 
 export interface GatewayStreamHandle {
@@ -403,6 +418,32 @@ export function assertConversationKey(conversationKey: string): string {
     )
   }
   return key
+}
+
+/**
+ * 2.0 营销域：`conv:<projectId>:<conversation_key>`（含注入防护）。
+ *
+ * 与 `assertConversationKey` 的分工：本函数负责**拼装**（work 域不需要 Project 维度），
+ * `assertConversationKey` 负责**校验完整键形状**（work 域直接把整键记账）。
+ */
+export function buildConversationUser(projectId: string, conversationKey: string): string {
+  const pid = typeof projectId === 'string' ? projectId.trim() : ''
+  const key = typeof conversationKey === 'string' ? conversationKey.trim() : ''
+  if (!pid) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, '缺少 projectId（会话隔离键无法拼装）', { field: 'projectId' })
+  }
+  if (!key) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, '缺少 conversation_key（会话隔离键无法拼装）', {
+      field: 'conversationKey'
+    })
+  }
+  // 任一字段含 ':' 都能伪造出别人的会话边界（跨 Project 串 Memory），必须拒
+  if (pid.includes(':') || key.includes(':')) {
+    throw new AppError(ERROR_CODES.VALIDATION_ERROR, "projectId / conversation_key 不允许包含 ':'", {
+      field: pid.includes(':') ? 'projectId' : 'conversationKey'
+    })
+  }
+  return `${CONVERSATION_USER_PREFIX}${pid}:${key}`
 }
 
 /** abort 判别（前端据此区分「我停的」与「超时」） */
@@ -976,10 +1017,19 @@ export class GatewayClient {
 
   // ── 会话隔离键 ────────────────────────────────────────────────────────────
 
-  /** 解析会话键：显式给了就用（形状校验），否则走注入的解析器 */
+  /**
+   * 解析会话键。
+   *
+   * - work 域：`conversationKey` 是完整 `conv:` 键 → 只做形状校验。
+   * - 2.0 营销域：给了 `projectId` → 短键先拼成 `conv:<pid>:<key>`（`buildConversationUser`）。
+   * - 显式键缺失 → 走注入的 `conversationKeyResolver`（2.0 从 projects 表取 key）。
+   */
   async resolveConversationUser(input: GatewayChatInput): Promise<string> {
     const explicit = typeof input?.conversationKey === 'string' ? input.conversationKey.trim() : ''
-    if (explicit) return assertConversationKey(explicit)
+    const projectId = typeof input?.projectId === 'string' ? input.projectId.trim() : ''
+    if (explicit) {
+      return projectId ? buildConversationUser(projectId, explicit) : assertConversationKey(explicit)
+    }
     if (!this.conversationKeyResolver) {
       throw new AppError(
         ERROR_CODES.VALIDATION_ERROR,
@@ -987,8 +1037,8 @@ export class GatewayClient {
         { field: 'conversationKey' }
       )
     }
-    const key = await this.conversationKeyResolver(undefined)
-    return assertConversationKey(String(key ?? ''))
+    const key = await this.conversationKeyResolver(projectId || undefined)
+    return projectId ? buildConversationUser(projectId, String(key ?? '')) : assertConversationKey(String(key ?? ''))
   }
 
   // ── chat：请求体组装 ──────────────────────────────────────────────────────
@@ -1290,13 +1340,17 @@ export function forwardGatewayStream(
         })
       }
       if (cancelled) return
-      const res = handle ? await handle.result.catch(() => null) : null
+      // `handle.result` 的拒绝**不能吞**（2.0 的 A1 修复）：落版本 / 解析结构化产物失败发生在
+      // done 之前，吞掉会让渲染端收到一次「成功 done」，把未解析的原始输出当正文「采用」。
+      // 让它落到下面的 catch → error 事件；渲染端已累积的 chunk 仍在，可走「复制原文」兜底。
+      const res = handle ? await handle.result : null
       if (cancelled) return
       webContents.send(GATEWAY_STREAM_EVENTS.done, {
         runId: id,
         chunks: res?.chunks ?? chunks,
         text: res?.text ?? null,
-        aborted: res?.aborted ?? false
+        aborted: res?.aborted ?? false,
+        deliverable: res?.deliverable ?? null
       })
     } catch (e) {
       if (cancelled) return

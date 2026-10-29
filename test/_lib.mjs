@@ -23,6 +23,15 @@ export function resolveNodePath() {
 
 export const workerScriptPath = join(repoRoot, 'resources', 'database', 'db-worker.mjs')
 
+/**
+ * 营销域专用 worker（11 表 schema：projects / businesses / knowledge_items / contents / hot_* …）。
+ *
+ * 4.0 合并（MERGE-INVENTORY R2）：work 与 marketing 是**两套互斥 schema**，只有 app_meta
+ * 重叠，所以两域各带一个 worker 文件，而不是把两套 DDL 拼成一份白名单。
+ * 插件化后这一步会收敛为「每插件一套 schema + 参数化 worker」。
+ */
+export const marketingWorkerScriptPath = join(repoRoot, 'resources', 'database', 'db-worker-marketing.mjs')
+
 export function assert(cond, message) {
   if (!cond) throw new Error('断言失败: ' + message)
 }

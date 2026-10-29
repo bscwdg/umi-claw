@@ -19,7 +19,7 @@
 //
 // 契约先于代码（硬规则 11）：任何新增通道先改 PLAN-3.0.md §14，再动实现。
 
-export { registerGatewayIpc, WORK_GATEWAY_CHANNELS } from './gateway'
+export { registerGatewayIpc, WORK_GATEWAY_CHANNELS, MARKETING_GATEWAY_CHANNELS } from './gateway'
 export type { GatewayIpcResult } from './gateway'
 export {
   registerWorkIpc,
@@ -38,3 +38,44 @@ export {
   WORK_REMINDER_CHANNELS
 } from './work'
 export type { WorkIpcResult, WorkIpcDeps } from './work'
+
+// ── 2.0 营销域（合并自 release/2.0，通道前缀 marketing:*，与 work:* 正交）──────────
+export {
+  registerMarketingIpc,
+  MARKETING_SYSTEM_CHANNELS,
+  MARKETING_PROJECT_CHANNELS,
+  MARKETING_CONTEXT_CHANNELS,
+  MARKETING_BUSINESS_CHANNELS,
+  MARKETING_WATCHLIST_CHANNELS,
+  MARKETING_KNOWLEDGE_CHANNELS,
+  withMarketingBackup
+} from './marketing'
+export {
+  registerAdvisorIpc,
+  abortAllAdvisorStreams,
+  summarizePack,
+  MARKETING_ADVISOR_CHANNELS
+} from './advisor'
+export type {
+  AdvisorIpcResult,
+  AdvisorAskResult,
+  AdvisorPackSummary,
+  AdvisorWatchCandidatesResult
+} from './advisor'
+export {
+  registerScanIpc,
+  abortAllScanStreams,
+  activeScanCount,
+  MARKETING_SCAN_CHANNELS
+} from './scan'
+export type { ScanIpcResult, ScanRecognizeInput, ScanRecognizeResult } from './scan'
+export {
+  registerContentIpc,
+  abortAllContentGenerations,
+  activeContentStreamCount,
+  MARKETING_CONTENT_CHANNELS
+} from './content'
+export type { ContentIpcResult, ContentGenerateResult } from './content'
+export { registerHotIpc, abortHotCollectors, MARKETING_HOT_CHANNELS } from './hot'
+export type { HotIpcResult } from './hot'
+export type { IpcResult } from './marketing'

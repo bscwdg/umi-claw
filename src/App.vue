@@ -29,20 +29,23 @@
           {{ clawStore.running ? 'OpenClaw 运行中' : 'OpenClaw 已停止' }}
         </div>
 
-        <!-- 导航 -->
-        <nav class="nav">
-          <!-- 工作域导航（3.0） -->
-        <div class="nav-group-label">工作</div>
-        <router-link v-for="item in workNavItems" :key="item.to" :to="item.to" class="nav-item">
-          <span class="nav-icon">{{ item.icon }}</span>
-          <span class="nav-label">{{ item.label }}</span>
-        </router-link>
+        <!-- 当前商家（2.0 营销域；无 Project 概念的工作域用户会看到空态，Phase 2 装箱时改为插件插槽） -->
+        <ProjectSwitcher />
 
-        <div class="nav-group-label">管理</div>
-        <router-link v-for="item in navItems" :key="item.to" :to="item.to" class="nav-item">
-            <span class="nav-icon">{{ item.icon }}</span>
-            <span class="nav-label">{{ item.label }}</span>
-          </router-link>
+        <!-- 导航（分组：工作 / 控制台 / 营销 / OpenClaw / 系统） -->
+        <nav class="nav">
+          <template v-for="group in navGroups" :key="group.title">
+            <div class="nav-group-label">{{ group.title }}</div>
+            <router-link
+              v-for="item in group.items"
+              :key="item.to"
+              :to="item.to"
+              class="nav-item"
+            >
+              <span class="nav-icon">{{ item.icon }}</span>
+              <span class="nav-label">{{ item.label }}</span>
+            </router-link>
+          </template>
         </nav>
 
         <!-- 底部信息 -->
@@ -102,6 +105,7 @@ import { useRouter } from 'vue-router'
 import { useClawStore } from '@/stores/claw'
 import { useConfigStore } from '@/stores/config'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
+import ProjectSwitcher from '@/views/components/ProjectSwitcher.vue'
 import UserAgreementModal from '@/views/components/UserAgreementModal.vue'
 import WizardModal from '@/views/components/WizardModal.vue'
 import { wizardVisible } from '@/composables/useWizardGate'
@@ -120,28 +124,55 @@ const clawStore = useClawStore()
 const configStore = useConfigStore()
 const version = ref('')
 
-const workNavItems = [
-  { to: '/work/today', icon: '☀️', label: '新的一天' },
-  { to: '/work/records', icon: '🗂', label: '工作记录' },
-  { to: '/work/qa', icon: '💬', label: '工作问答' },
-  { to: '/work/reports', icon: '📊', label: '报告' },
-  { to: '/work/tools', icon: '🧰', label: '工具箱' },
-  { to: '/work/knowledge', icon: '📚', label: '工作知识库' },
-  { to: '/work/context', icon: '🔍', label: 'AI的世界' },
-  { to: '/work/settings', icon: '⚙️', label: '工作设置' }
-]
-
-const navItems = [
-  { to: '/dashboard', icon: '🏠', label: '控制台' },
-  { to: '/config',    icon: '⚙️', label: '模型配置' },
-  { to: '/voice',     icon: '🔊', label: '语音设置' },
-  { to: '/skills',    icon: '🧩', label: '技能管理' },
-  { to: '/logs',      icon: '📋', label: '运行日志' },
-  { to: '/setup',     icon: '🔧', label: '环境初始化' },
-  { to: '/channelsPage',     icon: '📩', label: '渠道接入' },
-  { to: '/terminal',     icon: '💻', label: 'OpenClaw终端' },
-  { to: '/obsidian',     icon: '📚', label: '知识库' },
-  { to: '/about',     icon: 'ℹ️', label: '关于' }
+// 分组导航：work 组来自 3.0，营销组来自 2.0；`/dashboard` 标签已拍板为「控制台」，
+// `/skills` 标签已拍板为「能力中心」（2026-10-30）。
+const navGroups = [
+  {
+    title: '工作',
+    items: [
+      { to: '/work/today', icon: '☀️', label: '新的一天' },
+      { to: '/work/records', icon: '🗂', label: '工作记录' },
+      { to: '/work/qa', icon: '💬', label: '工作问答' },
+      { to: '/work/reports', icon: '📊', label: '报告' },
+      { to: '/work/tools', icon: '🧰', label: '工具箱' },
+      { to: '/work/knowledge', icon: '📚', label: '工作知识库' },
+      { to: '/work/context', icon: '🔍', label: 'AI的世界' },
+      { to: '/work/settings', icon: '⚙️', label: '工作设置' }
+    ]
+  },
+  {
+    title: '控制台',
+    items: [{ to: '/dashboard', icon: '🏠', label: '控制台' }]
+  },
+  {
+    title: '营销',
+    items: [
+      { to: '/marketing/business', icon: '🏪', label: '商家大脑' },
+      { to: '/marketing/knowledge', icon: '📚', label: '知识库' },
+      { to: '/marketing/advisor', icon: '💬', label: 'AI 顾问（AI Advisor）' },
+      { to: '/marketing/content', icon: '✍️', label: '内容中心（Content Center）' },
+      { to: '/marketing/hot', icon: '🔥', label: '热点雷达' }
+    ]
+  },
+  {
+    title: 'OpenClaw',
+    items: [
+      { to: '/config', icon: '⚙️', label: '模型配置' },
+      { to: '/voice', icon: '🔊', label: '语音设置' },
+      { to: '/skills', icon: '🧩', label: '能力中心' },
+      { to: '/channelsPage', icon: '📩', label: '渠道接入' },
+      { to: '/terminal', icon: '💻', label: 'OpenClaw终端' },
+      { to: '/obsidian', icon: '📚', label: '知识库' },
+      { to: '/setup', icon: '🔧', label: '环境初始化' }
+    ]
+  },
+  {
+    title: '系统',
+    items: [
+      { to: '/logs', icon: '📋', label: '运行日志' },
+      { to: '/about', icon: 'ℹ️', label: '关于' }
+    ]
+  }
 ]
 
 let cleanup: (() => void) | null = null

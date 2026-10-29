@@ -173,6 +173,220 @@ const api = {
   },
 
   // Obsidian 知识库
+  marketing: {
+    system: {
+      dbStatus: (options?: { initialize?: boolean }) =>
+        ipcRenderer.invoke('marketing:system:dbStatus', options),
+      ping: () => ipcRenderer.invoke('marketing:system:ping'),
+      metaGet: (key: string) => ipcRenderer.invoke('marketing:system:metaGet', key),
+      metaSet: (key: string, value: string | null) =>
+        ipcRenderer.invoke('marketing:system:metaSet', key, value)
+    },
+    project: {
+      list: () => ipcRenderer.invoke('marketing:project:list'),
+      get: (projectId: string) => ipcRenderer.invoke('marketing:project:get', projectId),
+      create: (input: { name: string; industry?: string | null; description?: string | null }) =>
+        ipcRenderer.invoke('marketing:project:create', input),
+      update: (
+        projectId: string,
+        patch: { name?: string; industry?: string | null; description?: string | null }
+      ) => ipcRenderer.invoke('marketing:project:update', projectId, patch),
+      delete: (projectId: string) => ipcRenderer.invoke('marketing:project:delete', projectId)
+    },
+    context: {
+      getCurrentProject: () => ipcRenderer.invoke('marketing:context:getCurrentProject'),
+      setCurrentProject: (projectId: string | null) =>
+        ipcRenderer.invoke('marketing:context:setCurrentProject', projectId)
+    },
+    // Commit 04：Business 与 Project 1:1（无 list/create）；Watchlist 只做手工增删（**不采集**）
+    business: {
+      get: (projectId: string) => ipcRenderer.invoke('marketing:business:get', projectId),
+      upsert: (projectId: string, data: Record<string, string | null>) =>
+        ipcRenderer.invoke('marketing:business:upsert', projectId, data),
+      delete: (projectId: string) => ipcRenderer.invoke('marketing:business:delete', projectId)
+    },
+    watchlist: {
+      list: (projectId: string) => ipcRenderer.invoke('marketing:watchlist:list', projectId),
+      add: (projectId: string, keyword: string, type?: string | null) =>
+        ipcRenderer.invoke('marketing:watchlist:add', projectId, keyword, type),
+      remove: (projectId: string, keyword: string) =>
+        ipcRenderer.invoke('marketing:watchlist:remove', projectId, keyword),
+      setEnabled: (projectId: string, keyword: string, enabled: boolean) =>
+        ipcRenderer.invoke('marketing:watchlist:setEnabled', projectId, keyword, enabled)
+    },
+    // Commit 05a：知识库（导入时本地解析一次 → 文本入库、原文留 data/projects/<id>/）
+    knowledge: {
+      list: (projectId: string, options?: { limit?: number }) =>
+        ipcRenderer.invoke('marketing:knowledge:list', projectId, options),
+      get: (projectId: string, id: string) =>
+        ipcRenderer.invoke('marketing:knowledge:get', projectId, id),
+      create: (projectId: string, data: { title: string; type: string; content: string }) =>
+        ipcRenderer.invoke('marketing:knowledge:create', projectId, data),
+      update: (projectId: string, id: string, patch: { title?: string; content?: string }) =>
+        ipcRenderer.invoke('marketing:knowledge:update', projectId, id, patch),
+      delete: (projectId: string, id: string) =>
+        ipcRenderer.invoke('marketing:knowledge:delete', projectId, id),
+      search: (projectId: string, query: string, limit?: number) =>
+        ipcRenderer.invoke('marketing:knowledge:search', projectId, query, limit),
+      import: (
+        projectId: string,
+        input: { type: string; title?: string; text?: string; url?: string; filePath?: string }
+      ) => ipcRenderer.invoke('marketing:knowledge:import', projectId, input),
+      // 本地文件选择器（dialog 在主进程）；用户取消 → data.filePath = null，不是错误
+      pickFile: (): Promise<{ ok: true; data: { filePath: string | null } } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:knowledge:pickFile'),
+      // Commit 05b：扫描件/资料图 AI 识别兑底（**用户显式触发**；结果人工确认后才入库）。
+      // 流式增量沿用 07 的事件名（marketing:gateway:chunk / done / error，streamId=taskId），
+      // 复用 advisor 下面的 onChunk/onDone/onError 订阅（全局事件、按 streamId 归并，不另订一套）
+      recognize: (
+        projectId: string,
+        input: { filePath: string; type?: string }
+      ): Promise<{
+        ok: true
+        data: {
+          taskId: string
+          projectId: string
+          kind: 'pdf' | 'image'
+          suggestedTitle: string
+          images: Array<{ page: number; width: number; height: number; bytes: number; downscaled: boolean }>
+        }
+      } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:knowledge:recognize', projectId, input),
+      // 停止识别；幂等（任务已结束时返回 aborted:false，不报错）。
+      // 两路定位（05b 外部复审）：有 taskId 按 taskId；栅格化窗口里还没有 taskId 时按 projectId
+      // 中止该商家在途任务（主进程 recognizer 的注册表覆盖整个生命周期）。
+      abortRecognize: (taskId?: string | null, projectId?: string | null) =>
+        ipcRenderer.invoke('marketing:knowledge:recognize:abort', taskId ?? null, projectId ?? null),
+      // 人工确认后入库（硬规则 10：确认弹窗的「确认入库」是唯一写入路径）
+      commitRecognized: (
+        projectId: string,
+        input: { filePath: string; type: string; title?: string | null; content: string }
+      ): Promise<{
+        ok: true
+        data: Record<string, unknown>
+      } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:knowledge:commitRecognized', projectId, input)
+    },
+    // Commit 07：Gateway 只读面（硬规则 13：token 与 HTTP 调用只留主进程，渲染端只拿快照）
+    // status      = 只读就绪快照（零 token；只发 GET /health + GET /v1/models）
+    // ensureReady = 探活 → 按需自动拉起（复用 clawManager）→ 就绪轮询 → 同一快照
+    gateway: {
+      status: (): Promise<{
+        ok: true
+        data: {
+          ready: boolean
+          port: number
+          baseUrl: string
+          endpointsEnabled: boolean
+          lastError: { code: string; message: string; details?: unknown } | null
+        }
+      } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:gateway:status'),
+      ensureReady: (): Promise<{
+        ok: true
+        data: {
+          ready: boolean
+          port: number
+          baseUrl: string
+          endpointsEnabled: boolean
+          lastError: { code: string; message: string; details?: unknown } | null
+        }
+      } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
+        ipcRenderer.invoke('marketing:gateway:ensureReady')
+    },
+    // Commit 08：AI Advisor（grounded 问答 + 扩词候选）
+    // 流式增量走 07 定死的事件名（marketing:gateway:chunk / done / error，payload 带 streamId），
+    // 面板按 streamId 归并自己的流；abort 会真断上游（07 已验证）。
+    // 05b 的扫描件识别增量也走这三个事件（streamId=taskId），订阅只订一次。
+    advisor: {
+      ask: (input: { projectId: string; question: string; platform?: string | null; model?: string | null }) =>
+        ipcRenderer.invoke('marketing:advisor:ask', input),
+      // 停止生成；幂等（流已结束时返回 aborted:false，不报错）
+      abort: (streamId: string) => ipcRenderer.invoke('marketing:advisor:abort', streamId),
+      watchCandidates: (projectId: string, options?: { count?: number }) =>
+        ipcRenderer.invoke('marketing:advisor:watchCandidates', projectId, options),
+      onChunk: (cb: (payload: { streamId: string; index: number; delta: string }) => void) => {
+        const handler = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('marketing:gateway:chunk', handler)
+        return () => ipcRenderer.off('marketing:gateway:chunk', handler)
+      },
+      onDone: (
+        cb: (payload: {
+          streamId: string
+          chunks: number
+          text: string | null
+          aborted: boolean
+          /** shooting_script：版本 JSON 的可读渲染文本（其它流为 null） */
+          deliverable?: string | null
+        }) => void
+      ) => {
+        const handler = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('marketing:gateway:done', handler)
+        return () => ipcRenderer.off('marketing:gateway:done', handler)
+      },
+      onError: (cb: (payload: { streamId: string; error: { code: string; message: string; details?: unknown } }) => void) => {
+        const handler = (_: unknown, data: any) => cb(data)
+        ipcRenderer.on('marketing:gateway:error', handler)
+        return () => ipcRenderer.off('marketing:gateway:error', handler)
+      }
+    },
+    // Commit 09：Content Center（一次生成 3 版供选 → 编辑 → 版本 → 人工审核/发布标记）。
+    // 流式增量同样走 07 事件名（streamId=`<genTaskId>-<角度key>`），订阅复用 advisor 的
+    // onChunk/onDone/onError（全局事件按 streamId 归并，三路不串台）。
+    content: {
+      list: (projectId: string, options?: { status?: string | null; platform?: string | null; limit?: number }) =>
+        ipcRenderer.invoke('marketing:content:list', projectId, options),
+      get: (projectId: string, id: string) => ipcRenderer.invoke('marketing:content:get', projectId, id),
+      create: (
+        projectId: string,
+        data: { contentType?: string; title?: string | null; platform?: string | null; topic?: string | null; content?: string | null; sourceTopicId?: string | null }
+      ) => ipcRenderer.invoke('marketing:content:create', projectId, data),
+      update: (
+        projectId: string,
+        id: string,
+        patch: {
+          title?: string | null
+          platform?: string | null
+          topic?: string | null
+          content?: string | null
+          status?: string
+          published_at?: number | null
+          effect_note?: string | null
+        }
+      ) => ipcRenderer.invoke('marketing:content:update', projectId, id, patch),
+      // §五 扩面：delete（幂等；版本随 FK 级联清）
+      delete: (projectId: string, id: string) => ipcRenderer.invoke('marketing:content:delete', projectId, id),
+      // 一次生成 3 版供选（三路并行流式；硬规则 10：产出一律人工采纳，永不自动发）
+      generate: (
+        projectId: string,
+        spec: { contentId?: string | null; contentType?: string; businessLine?: string | null; platform: string; topic?: string | null; title?: string | null; customer?: string | null; sourceTopicId?: string | null; query?: string | null }
+      ) => ipcRenderer.invoke('marketing:content:generate', projectId, spec),
+      // 停止生成：两路定位（同 05b 口径）；幂等
+      abortGenerate: (genTaskId?: string | null, projectId?: string | null) =>
+        ipcRenderer.invoke('marketing:content:generate:abort', genTaskId ?? null, projectId ?? null),
+      saveVersion: (
+        projectId: string,
+        id: string,
+        input: { content: string; source?: string; prompt?: string | null },
+        options?: { activate?: boolean }
+      ) => ipcRenderer.invoke('marketing:content:saveVersion', projectId, id, input, options),
+      // §五 扩面：版本清单（历史面板）
+      versions: (projectId: string, id: string) => ipcRenderer.invoke('marketing:content:versions', projectId, id)
+    },
+    // Commit 11：热点雷达。list 打开页看时间差决定是否立即采集（force 强制）；
+    // Commit 12：score 懒评分（按批续评，force=手动重新分析）。
+    hot: {
+      list: (projectId: string, options?: { platform?: string | null; force?: boolean; skipCollect?: boolean; windowHours?: number }) =>
+        ipcRenderer.invoke('marketing:hot:list', projectId, options),
+      get: (topicId: string) => ipcRenderer.invoke('marketing:hot:get', topicId),
+      refresh: () => ipcRenderer.invoke('marketing:hot:refresh'),
+      score: (projectId: string, platform: string, options?: { force?: boolean }) =>
+        ipcRenderer.invoke('marketing:hot:score', projectId, platform, options)
+    }
+  },
+
+  // Obsidian 知识库
+
   obsidian: {
     getConfig: () => ipcRenderer.invoke('obsidian:getConfig'),
     saveConfig: (cfg: any) => ipcRenderer.invoke('obsidian:saveConfig', cfg),
