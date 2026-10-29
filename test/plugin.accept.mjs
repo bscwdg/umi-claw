@@ -640,6 +640,15 @@ const dbMod = await import(
   pathToFileURL(bundleEntry('electron/main/services/pluginDb.ts', 'plugin-db.mjs')).href
 )
 const { createPluginDbService } = dbMod
+const dbClientMod = await import(
+  pathToFileURL(bundleEntry('electron/main/database/database.ts', 'work-legacy-db.mjs')).href
+)
+const schemasMod = await import(
+  pathToFileURL(bundleEntry('electron/main/database/schemas.ts', 'work-schemas.mjs')).href
+)
+const migrateMod = await import(
+  pathToFileURL(bundleEntry('electron/main/work/migrate.ts', 'work-migrate.mjs')).href
+)
 
 await r.check('P25', 'schema 解析：从 hello 的 migrations 推出表/列/主键/目标版本', async () => {
   const schema = loadPluginSchema(join(repoRoot, 'plugins', 'hello', 'migrations'))
@@ -1446,6 +1455,66 @@ await r.check('P38', 'work 插件启停循环：停用摘通道，重新启用�
     await pluginDb.disposeAll()
   }
   return '停用摘通道 + 数据持久'
+})
+// ── P39 旧库一次性导入：work.db（只读）→ plugins/work/data.db ────────────────
+await r.check('P39', '旧库导入：只读 work.db 把数据搬进插件库，幂等且不改旧库', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'umi-workimport-'))
+  const { DatabaseClient } = dbClientMod
+  const { DB_SCHEMAS } = schemasMod
+  const { importWorkDataIfNeeded } = migrateMod
+
+  const oldDb = new DatabaseClient({
+    dbPath: join(root, 'work.db'),
+    backupDir: join(root, 'backup'),
+    workerScriptPath: join(repoRoot, 'resources', 'database', 'db-worker.mjs'),
+    nodePath: resolveNodePath(),
+    schema: DB_SCHEMAS.work,
+    subprocessName: 'legacy-work-db'
+  })
+  const pluginDb = createPluginDbService({
+    dataDir: root,
+    nodePath: resolveNodePath(),
+    workerScriptPath: join(repoRoot, 'resources', 'database', 'db-worker.mjs')
+  })
+
+  try {
+    await oldDb.ensureReady()
+    await oldDb.request('matters.create', { data: { id: 'm1', name: '旧库事项', status: 'active', created_at: 1, updated_at: 1 } })
+    await oldDb.request('todos.create', { data: { id: 't1', title: '旧库待办', state: 'confirmed', source: 'manual', created_at: 1, updated_at: 1 } })
+
+    const target = pluginDb.forPlugin({ id: 'work', dir: join(repoRoot, 'plugins', 'work') })
+    const result = await importWorkDataIfNeeded({
+      source: oldDb,
+      target,
+      pluginDataDir: join(root, 'plugins', 'work')
+    })
+
+    assertEq(result.imported, true, '首次导入执行')
+    assertEq(result.counts.matters, 1, 'matters 导入 1 行')
+    assertEq(result.counts.todos, 1, 'todos 导入 1 行')
+
+    const matters = await target.request('matters.list', {})
+    assertEq(matters.length, 1, '插件库能查到导入的事项')
+    assertEq(matters[0].name, '旧库事项', '内容一致')
+
+    // 旧库只读：原数据还在，没有被清空或改写
+    const oldRows = await oldDb.request('matters.list', {})
+    assertEq(oldRows.length, 1, '旧库数据未被改动')
+
+    // 幂等：第二次直接跳过
+    const again = await importWorkDataIfNeeded({
+      source: oldDb,
+      target,
+      pluginDataDir: join(root, 'plugins', 'work')
+    })
+    assertEq(again.imported, false, '第二次跳过')
+    assertEq(again.skipped, 'already-imported', '跳过原因')
+    assertEq((await target.request('matters.list', {})).length, 1, '重复导入不会翻倍')
+  } finally {
+    await oldDb.dispose()
+    await pluginDb.disposeAll()
+  }
+  return '导入幂等 + 旧库只读'
 })
 const result = r.toJSON()
 const ok = printResult(result)

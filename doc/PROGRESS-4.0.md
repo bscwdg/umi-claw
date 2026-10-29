@@ -168,3 +168,15 @@
 - 新验收 P38：真插件库上「创建事项 → 停用（通道清零）→ 重新启用 → 数据仍在」。
 
 **验收**：plugin **44/44**（+P38）；全量 19 套 **350/350**；双 typecheck 0 错；build 通过。
+
+### 2026-10-30 · Phase 2 数据切换（work 用自己的库 + 一次性导入）
+
+- `db` 服务对 work 改为 `plugins/work/data.db`（不再借宿主 work.db）；宿主 work.db 从此只承载 voice 的 app_meta。
+- 新增 `work/migrate.ts`：`importWorkDataIfNeeded` 按外键顺序（profile→matters→todos→activity_log→reports→knowledge→conversations→app_meta）
+  把旧库数据搬进插件库；**只读旧库**、写 `.imported` 标记、幂等、失败可重试；缺表（更老版本）跳过不算失败。
+- `scripts/gen-plugin-entries.mjs` 现在也把 `migrations/*.sql` 复制到 `resources/plugins/<id>/migrations/`
+  （打包后插件库靠它建表；之前只复制了 plugin.json，会是「装得上但建不了表」）。
+- 导入在 `initPlugins` 里、`host.activateAll()` 之前执行；失败只记日志不阻断启动。
+- 验收 P39：旧库建两个表各一行 → 导入 → 插件库查得到、旧库未被改动、第二次导入跳过、重复导入不翻倍。
+
+**验收**：plugin **45/45**（+P39）；全量 19 套 **352/352**；双 typecheck 0 错；build 通过。

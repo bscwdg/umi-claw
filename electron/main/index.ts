@@ -38,12 +38,12 @@ import {
   type HostOpsApi,
   type NotificationsApi,
   type OpenClawApi,
-  type PluginDbApi,
   type PluginStatus,
   type ServiceFactories
 } from './kernel'
 import { PLUGIN_MAIN_ENTRIES } from './kernel/plugins.main.generated'
 import { createPluginDbService } from './services/pluginDb'
+import { importWorkDataIfNeeded } from './work/migrate'
 import { getWorkRuntime } from '../../plugins/work/main'
 
 // ── 2.0 营销域 imports（合并自 release/2.0）────────────────────────────────────
@@ -484,51 +484,6 @@ let pluginDbService: ReturnType<typeof createPluginDbService> | null = null
 
 // ── 服务适配器（Phase 1 WP1）：窄接口，不把 manager 递给插件 ─────────────────
 
-/**
- * 过渡适配（Phase 2）：work 目前仍用宿主自建的 work.db（voice 也绑在这个库上），
- * 所以把 DatabaseClient 包成 PluginDbApi 交给插件；等 Phase 2 收尾再切到插件自己的 data.db。
- */
-function workDatabaseAsPluginService(): PluginDbApi {
-  if (!workDatabase) throw new Error('work 数据库尚未初始化')
-  const db = workDatabase
-  return {
-    path: db.dbPath,
-    async migrate() {
-      await db.ensureReady()
-    },
-    async request(method, params) {
-      return db.request(method, (params ?? {}) as Record<string, unknown>)
-    },
-    async metaGet(key) {
-      return db.metaGet(key)
-    },
-    async metaSet(key, value) {
-      return db.metaSet(key, value)
-    },
-    async list(table, query) {
-      return db.request(`${table}.list`, query ?? {}) as never
-    },
-    async get(table, idValue) {
-      return (await db.request(`${table}.get`, { pk: idValue })) as never
-    },
-    async create(table, values) {
-      return (await db.request(`${table}.create`, { data: values })) as never
-    },
-    async update(table, idValue, patch) {
-      const res = await db.request<{ changes: number }>(`${table}.update`, { pk: idValue, data: patch })
-      return { changes: res?.changes ?? 0 }
-    },
-    async remove(table, idValue) {
-      const res = await db.request<{ deleted: boolean }>(`${table}.delete`, { pk: idValue })
-      return { deleted: Boolean(res?.deleted) }
-    },
-    async backup(reason) {
-      const res = await db.backup(reason)
-      return { path: res.path }
-    }
-  }
-}
-
 /** 宿主副作用（过渡服务，Phase 4 拆细）：通知 / 渠道外发 / 旧库只读 */
 function createHostOpsService(): HostOpsApi {
   return {
@@ -605,9 +560,9 @@ async function initPlugins(): Promise<void> {
 
     const serviceFactories: ServiceFactories = {
       config: (info) => pluginConfigStore!.serviceFor(info.id),
-      // work 暂用宿主库（voice 也依赖它）；其它插件走自己的 data.db
-      db: (info) =>
-        info.id === 'work' && workDatabase ? workDatabaseAsPluginService() : pluginDbService!.forPlugin(info),
+      // 每个插件一个库：work 的数据落 plugins/work/data.db；
+      // 宿主 work.db 只剩 voice 的 app_meta（见 whenReady 的语音段）。
+      db: (info) => pluginDbService!.forPlugin(info),
       hostOps: () => createHostOpsService(),
       notifications: () => createNotificationsService(),
       openclaw: () => createOpenClawService()
@@ -701,6 +656,22 @@ async function initPlugins(): Promise<void> {
         }
       }
     })
+
+    // work 数据一次性导入（只读旧库 work.db → plugins/work/data.db，D2）
+    try {
+      if (workDatabase && pluginDbService && registry.get('work')) {
+        const result = await importWorkDataIfNeeded({
+          source: workDatabase,
+          target: pluginDbService.forPlugin({ id: 'work', dir: join(resourcesRoot(), 'plugins', 'work') }),
+          pluginDataDir: join(dataDir, 'plugins', 'work'),
+          logger: (line) => console.log(line)
+        })
+        if (result.imported) console.log('[work] 旧库数据已导入插件库：', JSON.stringify(result.counts))
+      }
+    } catch (e) {
+      // 导入失败不阻断启动：插件库缺失时 work 域会以空库运行，用户可在下次启动重试
+      console.error('[work] 数据导入失败（继续启动，可重试）:', e)
+    }
 
     await host.activateAll()
     broadcastPluginStatus()
@@ -2462,6 +2433,8 @@ app.whenReady().then(async () => {
   // work 的业务通道（work:*）由插件在 initPlugins() 里注册，宿主不再直接注册
   // ── 鱼语音：预设 TTS + 克隆音色共用 /voice 配置与音频缓存 ──
   // 语音是增强能力：初始化失败只降级，绝不阻断主流程启动。
+  // 注（Phase 2）：work 域数据已搬到 plugins/work/data.db，宿主 work.db 现在**只承载**
+  // voice 的 app_meta。Phase 4 再评估把语音偏好挪进 app.json / voice.db。
   try {
     if (!workDatabase) throw new Error('workDatabase 尚未初始化')
     const voiceSecretStore = new VoiceSecretStore(

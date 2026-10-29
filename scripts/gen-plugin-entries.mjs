@@ -87,6 +87,16 @@ for (const p of plugins) {
     readFileSync(join(pluginsDir, p.id, 'plugin.json'), 'utf-8'),
     'utf-8'
   )
+  // migrations 是**数据**，必须随包走（插件库的表结构从这里解析）
+  const migrationsSrc = join(pluginsDir, p.id, 'migrations')
+  if (existsSync(migrationsSrc)) {
+    const migrationsDst = join(targetDir, 'migrations')
+    mkdirSync(migrationsDst, { recursive: true })
+    for (const file of readdirSync(migrationsSrc)) {
+      if (!file.endsWith('.sql')) continue
+      writeFileSync(join(migrationsDst, file), readFileSync(join(migrationsSrc, file), 'utf-8'), 'utf-8')
+    }
+  }
 }
 
 console.log(`[plugin:gen] ${plugins.length} 个插件：${plugins.map((p) => p.id).join(', ') || '(无)'}`)
