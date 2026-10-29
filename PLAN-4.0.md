@@ -341,7 +341,25 @@ umi-claw/                       # 保持单个 package.json（延续 1.0/2.0/3.0
 - 验收四件：双 typecheck 绿；`npm run accept` 绿；1.0 全链路（启动/配置/终端/Obsidian/语音）；work 与 marketing 各一条最深链路（记录→今日；热榜→内容）。
 - **判据**：5 人天内跑不通 → 停插件化，回到「从 1.0 重建」并重估（§14 风险首行）。
 
-### Phase 0：契约与 Demo（3–5 人天）
+### Phase 0：契约与 Demo（3–5 人天）｜✅ 已完成（2026-10-30）
+
+**落地**（提交 `cb671db`）：
+
+| 文件 | 作用 |
+| --- | --- |
+| `electron/main/kernel/manifest.ts` | 清单校验（id / 版本 / **能力版本** / 路由前缀），错误带 `field` |
+| `electron/main/kernel/registry.ts` | 注册表 + 能力检查 + 启停状态（持久化可注入） |
+| `electron/main/kernel/lifecycle.ts` | activate/deactivate、disposer **LIFO** 清理、失败隔离、激活超时 |
+| `electron/main/kernel/discovery.ts` | 只扫构建期登记过的 id；坏清单只标记不抛 |
+| `electron/main/kernel/stateStore.ts` | `<dataDir>/plugins-state.json` |
+| `scripts/gen-plugin-entries.mjs` | 扫 `plugins/*/plugin.json` → 生成两端入口表 + 拷贝清单到 `resources/plugins` |
+| `plugins/hello/` | 演示插件：2 条 IPC + 1 个定时任务 + 1 条路由 + 1 个导航组 |
+| `src/renderer/pluginUi.ts` | 渲染端注册表（路由/导航/插槽的安装与卸载） |
+| `test/plugin.accept.mjs` | 12 项：清单/能力/激活/停用 LIFO/失败隔离/重复 id/坏清单/超时/真 hello/UI 注册表 |
+
+**验收**：`npm run build` 通过；hello 代码进 bundle 而 `resources/plugins/hello/` 只有 `plugin.json`；`plugin.accept` 12/12。
+
+原始计划（保留作记录）：
 
 - 本文定稿；`PLAN-4.0.md` 冻结。
 - 建 `electron/main/kernel`、`electron/main/services`、`plugins/hello`（不迁 monorepo，见 §10）。
