@@ -34,7 +34,7 @@
 
         <!-- 导航（分组：工作 / 控制台 / 营销 / OpenClaw / 系统） -->
         <nav class="nav">
-          <template v-for="group in allNavGroups" :key="group.title">
+          <template v-for="group in allNavGroups" :key="group.id">
             <div class="nav-group-label">{{ group.title }}</div>
             <router-link
               v-for="item in group.items"
@@ -176,8 +176,12 @@ const navGroups = [
   }
 ]
 
-// 插件导航组排在内核导航之后（manifest 的 order 决定组内顺序）
-const allNavGroups = computed(() => [...navGroups, ...pluginNavGroups.value])
+// 插件导航组排在内核导航之后。两组来源字段不同（内核只有 title，插件有 id/label），
+// 这里统一成 { id, title, items }：key 用 id（多个插件组不会撞 key），显示用 title。
+const allNavGroups = computed(() => [
+  ...navGroups.map((g) => ({ id: `core:${g.title}`, title: g.title, items: g.items })),
+  ...pluginNavGroups.value.map((g) => ({ id: `plugin:${g.id}`, title: g.label, items: g.items }))
+])
 
 let cleanup: (() => void) | null = null
 let closeCleanup: (() => void) | null = null

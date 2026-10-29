@@ -47,15 +47,29 @@ interface ActivePlugin {
   disposers: Array<{ label: string; run: () => void | Promise<void> }>
   timers: Set<ReturnType<typeof setTimeout>>
   config: Record<string, unknown>
+  /**
+   * 该次激活尝试是否已关闭（失败 / 超时 / 停用）。
+   *
+   * 为什么需要它：activate 超时后插件代码仍在跑，它随后调 ctx.registerIpc / jobs.every
+   * 若被接受，就会留下「宿主以为没激活、插件却在跑」的 handler 与定时器（审查 P0）。
+   * 关闭后所有注册入口一律 reject，迟到的 cleanup 也会被执行。
+   */
+  closed: boolean
 }
 
 const DEFAULT_ACTIVATION_TIMEOUT_MS = 5000
+/** 单个清理动作的上限：disposer 永不 settle 时不能让启停卡死（审查 P2） */
+const CLEANUP_TIMEOUT_MS = 2000
 
 export class PluginHost {
   private readonly registry: PluginRegistry
   private readonly ipc: KernelIpc
   private readonly opts: PluginHostOptions
   private readonly active = new Map<string, ActivePlugin>()
+  /** 进行中的激活（并发 setEnabled 去重） */
+  private readonly inflight = new Map<string, Promise<PluginStatus>>()
+  /** 进行中的激活尝试（可被停用打断：置 closed 后迟到注册被拒） */
+  private readonly attempts = new Map<string, ActivePlugin>()
 
   constructor(opts: PluginHostOptions) {
     this.opts = opts
@@ -92,21 +106,50 @@ export class PluginHost {
 
   async activate(id: string): Promise<PluginStatus> {
     const record = this.requireRecord(id)
+
+    // 停用的插件不加载：`activateAll` 已过滤，但直接调 activate 也必须守住这条，
+    // 否则「设置里关掉的插件」仍可能被别处误激活（探针用例 A1 抓到的缺陷）。
+    if (!record.enabled) {
+      this.log(record, '未启用，跳过激活')
+      return this.statusOf(record)
+    }
+
     if (record.state === 'activated') return this.statusOf(record)
+
+    // 并发去重：两次 setEnabled(true) 同时进来时只能加载/激活一次，
+    // 否则第二次会重复 registerIpc（真实 ipcMain 直接抛 second handler）
+    const inflight = this.inflight.get(id)
+    if (inflight) return inflight
+
+    const task = this.doActivate(record).finally(() => this.inflight.delete(id))
+    this.inflight.set(id, task)
+    return task
+  }
+
+  private async doActivate(record: PluginRecord): Promise<PluginStatus> {
+    const id = record.manifest.id
 
     const active: ActivePlugin = {
       module: { activate: () => undefined },
       disposers: [],
       timers: new Set(),
-      config: {}
+      config: {},
+      closed: false
     }
+    this.attempts.set(id, active)
 
     try {
       const mod = await this.loadWithTimeout(record)
+      if (active.closed) throw new PluginCancelledError('激活过程中被停用')
       active.module = mod
       const ctx = this.createContext(record, active)
 
       const result = await this.runWithTimeout(() => mod.activate(ctx))
+      // 超时 / 停用发生在 activate 进行中：迟到返回的 cleanup 也要执行，状态不能前进
+      if (active.closed) {
+        if (typeof result === 'function') await safeRun(result, CLEANUP_TIMEOUT_MS)
+        throw new PluginCancelledError('激活过程中被停用')
+      }
       if (typeof result === 'function') {
         active.disposers.push({ label: 'activate() 返回的 cleanup', run: result })
       }
@@ -116,11 +159,18 @@ export class PluginHost {
       record.error = undefined
       this.log(record, `已激活（ipc=${record.ipcMethods.size} jobs=${record.jobCount}）`)
     } catch (e) {
-      // 失败隔离：回滚已注册的东西，标记 failed，宿主继续跑
+      // 失败隔离：关闭该次尝试（迟到注册一律拒绝）→ 回滚已注册的东西 → 标记 failed
+      active.closed = true
       await this.rollback(record, active)
-      record.state = 'failed'
-      record.error = { code: errorCodeOf(e), message: errorMessage(e) }
+      record.state = record.enabled ? 'failed' : 'disabled'
+      record.error = {
+        code: errorCodeOf(e),
+        stage: activationStage(e),
+        message: errorMessage(e)
+      }
       this.log(record, `激活失败：${record.error.message}`)
+    } finally {
+      if (this.attempts.get(id) === active) this.attempts.delete(id)
     }
 
     const status = this.statusOf(record)
@@ -130,8 +180,15 @@ export class PluginHost {
 
   async deactivate(id: string): Promise<PluginStatus> {
     const record = this.requireRecord(id)
+
+    // 先关掉「在途激活」：否则 activate 在 await 之后继续注册，会留下宿主以为
+    // 已停用、实际仍在服务的 handler/定时器（审查 P0 / 对抗用例 A7）。
+    const pending = this.attempts.get(id)
+    if (pending) pending.closed = true
+
     const active = this.active.get(id)
     if (active) {
+      active.closed = true
       await this.rollback(record, active)
       this.active.delete(id)
       try {
@@ -140,7 +197,9 @@ export class PluginHost {
         this.log(record, `deactivate 抛错（已忽略）：${errorMessage(e)}`)
       }
     }
-    record.state = record.enabled ? 'deactivated' : 'disabled'
+    // 从未激活过就别说「deactivated」：保持 validated，只有显式停用才是 disabled
+    if (active || !record.enabled) record.state = 'disabled'
+    else if (record.state === 'activated') record.state = 'deactivated'
     const status = this.statusOf(record)
     this.opts.onStatusChange?.(status)
     return status
@@ -149,10 +208,17 @@ export class PluginHost {
   /** 启停开关：启用 → 立即激活；停用 → 卸载所有注册物 */
   async setEnabled(id: string, enabled: boolean): Promise<PluginStatus> {
     const record = this.requireRecord(id)
+
+    // 幂等短路：已经是「启用且激活」时再点一次不该重新走 activate
+    // （否则会重复 registerIpc → 撞 second handler，状态被打成 failed 但仍在服务）
+    if (enabled && record.enabled && record.state === 'activated') return this.statusOf(record)
+
     this.registry.setEnabled(id, enabled)
     if (!enabled) return this.deactivate(id)
-    record.state = 'validated'
-    record.error = undefined
+    if (record.state !== 'validated') {
+      record.state = 'validated'
+      record.error = undefined
+    }
     return this.activate(id)
   }
 
@@ -174,6 +240,7 @@ export class PluginHost {
 
     const jobs: PluginJobs = {
       every(intervalMs, fn, opts) {
+        assertOpen(active, id)
         const timer = setInterval(() => {
           void Promise.resolve()
             .then(fn)
@@ -182,6 +249,7 @@ export class PluginHost {
         return host.trackTimer(record, active, timer, opts?.name)
       },
       timeout(delayMs, fn, opts) {
+        assertOpen(active, id)
         const timer = setTimeout(() => {
           active.timers.delete(timer)
           record.jobCount = active.timers.size
@@ -218,6 +286,7 @@ export class PluginHost {
         all: () => ({ ...active.config })
       },
       registerIpc: (method, handler) => {
+        assertOpen(active, id)
         if (record.ipcMethods.has(method)) {
           throw new Error(`插件 ${id} 重复注册方法：${method}`)
         }
@@ -281,12 +350,16 @@ export class PluginHost {
     return await withTimeout(Promise.resolve().then(fn), timeout, `激活超时（>${timeout}ms）`)
   }
 
-  /** LIFO 清理：单个清理项抛错不影响其它项 */
+  /** LIFO 清理：单个清理项抛错/卡死都不影响其它项 */
   private async rollback(record: PluginRecord, active: ActivePlugin): Promise<void> {
     const disposers = active.disposers.splice(0).reverse()
     for (const d of disposers) {
       try {
-        await d.run()
+        await withTimeout(
+          Promise.resolve().then(d.run),
+          CLEANUP_TIMEOUT_MS,
+          `清理超时（>${CLEANUP_TIMEOUT_MS}ms）`
+        )
       } catch (e) {
         this.log(record, `清理失败 ${d.label}：${errorMessage(e)}`)
       }
@@ -306,6 +379,8 @@ export class PluginHost {
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  // 迟到的 reject 不能变成 unhandledRejection：race 已经结束的 promise 也要有人接住
+  promise.catch(() => undefined)
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     return await Promise.race([
@@ -318,6 +393,44 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
     ])
   } finally {
     if (timer) clearTimeout(timer)
+  }
+}
+
+/** 已关闭的激活尝试上再注册 → 明确拒绝（迟到回调不能留下永久 handler） */
+function assertOpen(active: ActivePlugin, id: string): void {
+  if (!active.closed) return
+  const err = new Error(`插件 ${id} 的激活已结束（超时/停用/失败），拒绝后续注册`)
+  ;(err as { code?: string }).code = 'PLUGIN_ACTIVATION_CLOSED'
+  throw err
+}
+
+/** 单次激活被停用打断（不是插件自身的错误，对外表现为 disabled） */
+class PluginCancelledError extends Error {
+  readonly code = 'PLUGIN_ACTIVATION_CANCELLED'
+  constructor(message: string) {
+    super(message)
+    this.name = 'PluginCancelledError'
+  }
+}
+
+/** 错误发生在哪一步：load（入口加载）/ activate（插件代码）/ unknown */
+function activationStage(e: unknown): string {
+  if (e instanceof PluginCancelledError) return 'cancelled'
+  const stage = (e as { stage?: unknown } | null)?.stage
+  if (typeof stage === 'string') return stage
+  const message = errorMessage(e)
+  if (message.includes('加载插件入口')) return 'load'
+  if (message.includes('激活超时')) return 'activate-timeout'
+  if (message.includes('拒绝后续注册')) return 'late-register'
+  return 'activate'
+}
+
+/** 执行插件返回的 cleanup，带超时保护 */
+async function safeRun(fn: () => void | Promise<void>, ms: number): Promise<void> {
+  try {
+    await withTimeout(Promise.resolve().then(fn), ms, `cleanup 超时（>${ms}ms）`)
+  } catch {
+    // cleanup 失败不影响状态机
   }
 }
 

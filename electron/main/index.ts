@@ -531,17 +531,41 @@ async function initPlugins(): Promise<void> {
 
     let registered = 0
     for (const item of discovered) {
-      if (!item.manifest) continue
+      if (!item.manifest) {
+        // 清单缺失/坏 JSON 也要在 plugin:list 里可见，否则用户看到的是「装了但什么也没发生」
+        registry.addFailed(
+          item.id,
+          {
+            code: item.loadError === 'MANIFEST_MISSING' ? 'PLUGIN_MANIFEST_MISSING' : 'PLUGIN_MANIFEST_INVALID',
+            stage: 'manifest',
+            message: item.loadError === 'MANIFEST_MISSING' ? '缺少 plugin.json' : `plugin.json 解析失败：${item.loadError}`
+          },
+          { dir: item.dir, source: item.source }
+        )
+        continue
+      }
       try {
         registry.register({
           dir: item.dir,
+          entryId: item.id,
           source: item.source,
           manifest: item.manifest,
           loadMain: item.loadMain
         })
         registered += 1
       } catch (e) {
-        console.error(`[plugin:${item.id}] 注册失败：${e instanceof Error ? e.message : String(e)}`)
+        const err = e as { code?: string; field?: string; message?: string }
+        registry.addFailed(
+          item.id,
+          {
+            code: typeof err.code === 'string' ? err.code : 'PLUGIN_REGISTER_FAILED',
+            stage: 'manifest',
+            field: err.field,
+            message: err.message ?? String(e)
+          },
+          { dir: item.dir, source: item.source }
+        )
+        console.error(`[plugin:${item.id}] 注册失败：${err.message ?? String(e)}`)
       }
     }
 

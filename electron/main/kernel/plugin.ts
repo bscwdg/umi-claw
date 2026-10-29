@@ -60,8 +60,10 @@ export const PLUGIN_IPC_PREFIX = 'plugin:'
 
 /** 通道名唯一来源：`plugin:<id>:<method>` */
 export function pluginIpcChannel(id: PluginId, method: string): string {
-  if (!method || /\s/.test(method)) {
-    throw new Error(`插件方法名非法：${JSON.stringify(method)}（不允许空白）`)
+  // 方法名不允许空白与冒号：通道按 `:` 分三段，方法里再出现 `:` 会让
+  // 「plugin:x:a:b」无法判断属于哪个插件（也便于日志/调试解析）。
+  if (!method || /[\s:]/.test(method)) {
+    throw new Error(`插件方法名非法：${JSON.stringify(method)}（不允许空白与冒号）`)
   }
   return `${PLUGIN_IPC_PREFIX}${id}:${method}`
 }

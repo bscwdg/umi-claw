@@ -8,7 +8,8 @@
 //
 // 用法：node test/plugin.accept.mjs（npm run accept:plugin）
 
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -31,6 +32,7 @@ const {
   parseManifest,
   PluginManifestError,
   discoverPlugins,
+  createJsonStateStore,
   pluginIpcChannel
 } = kernelMod
 
@@ -272,6 +274,73 @@ await r.check('P7', '零插件/坏清单：discover 不抛，坏清单只标记 
   return '坏插件不影响宿主'
 })
 
+// ── P10 停用的插件不加载 ────────────────────────────────────────────────────
+await r.check('P10', '停用的插件：直接调 activate 也不加载（防止被别处误激活）', async () => {
+  const ipc = createFakeIpc()
+  let loaded = 0
+  const registry = new PluginRegistry()
+  registry.register({
+    dir: '/fake/off',
+    source: '<test>',
+    manifest: { ...manifest, id: 'off', defaultEnabled: false },
+    loadMain: async () => {
+      loaded += 1
+      return { activate: () => undefined }
+    }
+  })
+  const host = makeHost(registry, ipc)
+  const status = await host.activate('off')
+  assertEq(loaded, 0, '不应加载入口')
+  assertEq(status.state, 'validated', '状态不前进')
+  return '停用即不加载'
+})
+
+// ── P11 并发启用去重 ────────────────────────────────────────────────────────
+await r.check('P11', '并发 setEnabled(true)×2：activate 只执行一次（不重复注册）', async () => {
+  const ipc = createFakeIpc()
+  let loaded = 0
+  let activations = 0
+  const registry = new PluginRegistry()
+  registry.register({
+    dir: '/fake/race',
+    source: '<test>',
+    manifest: { ...manifest, id: 'race' },
+    loadMain: async () => {
+      loaded += 1
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return {
+        activate: (ctx) => {
+          activations += 1
+          ctx.registerIpc('once', () => 'once')
+        }
+      }
+    }
+  })
+  const host = makeHost(registry, ipc)
+  const [a, b] = await Promise.all([host.setEnabled('race', true), host.setEnabled('race', true)])
+  assertEq(loaded, 1, '入口只加载一次')
+  assertEq(activations, 1, 'activate 只执行一次')
+  assertEq(a.state, 'activated', '第一个状态')
+  assertEq(b.state, 'activated', '第二个状态')
+  assertEq(ipc.handlers.size, 1, '只有一条 handler')
+  return '并发去重生效'
+})
+
+// ── P12 方法名约束 ──────────────────────────────────────────────────────────
+await r.check('P12', '方法名约束：含冒号/空白的方法名被拒绝（防止通道伪造与解析歧义）', async () => {
+  for (const bad of ['a:b', 'a b', '']) {
+    let thrown = null
+    try {
+      pluginIpcChannel('probe', bad)
+    } catch (e) {
+      thrown = e
+    }
+    assert(thrown instanceof Error, `${JSON.stringify(bad)} 应被拒绝`)
+  }
+  assertEq(pluginIpcChannel('probe', 'ok_1'), 'plugin:probe:ok_1', '合法方法名')
+  return '冒号/空白/空串均拒绝'
+})
+
 // ── P8 激活超时 ─────────────────────────────────────────────────────────────
 await r.check('P8', '激活超时：插件 activate 挂住 → failed（不拖死宿主）', async () => {
   const ipc = createFakeIpc()
@@ -327,6 +396,12 @@ function createFakeRouter() {
       const name = route.name ?? route.path
       routes.set(name, route)
       return () => routes.delete(name)
+    },
+    hasRoute(name) {
+      return routes.has(name)
+    },
+    getRoutes() {
+      return [...routes.values()]
     }
   }
 }
@@ -373,18 +448,230 @@ await r.check('U2', 'UI 注册：apply 中途抛错 → 不留下半装状态', 
   return '失败不留半装'
 })
 
-await r.check('U3', 'UI 注册：导航组按 order 排序，重复 id 覆盖不叠加', async () => {
+await r.check('U3', 'UI 导航：按 order 排序，同 id 组合并条目（按 to 去重）', async () => {
   const router = createFakeRouter()
   const registry = new PluginUiRegistry(router)
-  registry.apply('a', { nav: { id: 'x', label: 'X', order: 90, items: [] } })
+  registry.apply('a', { nav: { id: 'x', label: 'X', order: 90, items: [{ to: '/a', icon: 'a', label: 'A' }] } })
+  registry.apply('c', { nav: { id: 'x', label: 'X', order: 90, items: [{ to: '/c', icon: 'c', label: 'C' }] } })
   registry.apply('b', { nav: { id: 'y', label: 'Y', order: 10, items: [] } })
-  assertEq(pluginNavGroups.value.map((g) => g.id).join(','), 'y,x', 'order 升序')
 
-  registry.apply('a', { nav: { id: 'x', label: 'X2', order: 90, items: [] } })
-  assertEq(pluginNavGroups.value.filter((g) => g.id === 'x').length, 1, '同 id 不叠加')
-  assertEq(pluginNavGroups.value.find((g) => g.id === 'x').label, 'X2', '内容被覆盖')
+  assertEq(pluginNavGroups.value.map((g) => g.id).join(','), 'y,x', 'order 升序')
+  const x = pluginNavGroups.value.find((g) => g.id === 'x')
+  assertEq(x.items.map((i) => i.to).join(','), '/a,/c', '同 id 组合并两个插件的条目')
+  assertEq(pluginNavGroups.value.filter((g) => g.id === 'x').length, 1, '同 id 仍只有一组')
+
+  registry.remove('c')
+  assertEq(
+    (pluginNavGroups.value.find((g) => g.id === 'x')?.items ?? []).map((i) => i.to).join(','),
+    '/a',
+    '停用 c 只撤它自己的条目'
+  )
   registry.clear()
-  return '排序 + 幂等'
+  return '排序 + 合并 + 按归属撤销'
+})
+
+await r.check('U4', 'UI 路由冲突：插件不能覆盖内核路由名/路径（拒绝安装且不破坏内核路由）', async () => {
+  const router = createFakeRouter()
+  router.addRoute({ path: '/hello', name: 'hello' })
+  const registry = new PluginUiRegistry(router)
+
+  let nameConflict = false
+  try {
+    registry.apply('p', { routes: [{ path: '/other', name: 'hello' }] })
+  } catch {
+    nameConflict = true
+  }
+  assert(nameConflict, '同名路由应被拒绝')
+  assert(router.hasRoute('hello'), '内核路由仍在')
+
+  let pathConflict = false
+  try {
+    registry.apply('p', { routes: [{ path: '/hello', name: 'plugin-p-hello' }] })
+  } catch {
+    pathConflict = true
+  }
+  assert(pathConflict, '同路径路由应被拒绝')
+  assertEq(registry.ids().length, 0, '失败安装无残留')
+  return '命名/路径冲突都拒绝'
+})
+
+await r.check('U5', 'UI 插槽：多插件共用同名插槽，停一个只删自己的组件', async () => {
+  const router = createFakeRouter()
+  const registry = new PluginUiRegistry(router)
+  const A = { name: 'A' }
+  const B = { name: 'B' }
+  registry.apply('a', { slot: { 'settings.side': A } })
+  registry.apply('b', { slot: { 'settings.side': B } })
+  assertEq((pluginSlots.value['settings.side'] ?? []).length, 2, '两个组件都在')
+
+  registry.remove('a')
+  const left = pluginSlots.value['settings.side'] ?? []
+  assertEq(left.length, 1, '只剩 b 的组件')
+  assertEq(left[0], B, '留下的是 B')
+  registry.clear()
+  assertEq(Object.keys(pluginSlots.value).length, 0, 'clear 后清空')
+  return '按插件归属撤销'
+})
+
+await r.check('U6', 'UI 导航：共享 group id 时停用其一，另一插件导航仍保留', async () => {
+  const router = createFakeRouter()
+  const registry = new PluginUiRegistry(router)
+  registry.apply('a', { nav: { id: 'plugins', label: '插件', order: 90, items: [{ to: '/a', icon: 'a', label: 'A' }] } })
+  registry.apply('b', { nav: { id: 'plugins', label: '插件', order: 90, items: [{ to: '/b', icon: 'b', label: 'B' }] } })
+  registry.remove('b')
+  assertEq(pluginNavGroups.value.length, 1, '组还在')
+  assertEq(pluginNavGroups.value[0].items.map((i) => i.to).join(','), '/a', '只撤 b 的条目')
+  registry.clear()
+  return '共享组不互删'
+})
+
+// ── P13~P20 审查/对抗报告里点出的边界 ────────────────────────────────────────
+await r.check('P13', '幂等：已激活插件再 setEnabled(true) 不重复激活、状态不被污染', async () => {
+  const ipc = createFakeIpc()
+  let activations = 0
+  const registry = new PluginRegistry()
+  registry.register({
+    dir: '/fake/idem',
+    source: '<test>',
+    manifest: { ...manifest, id: 'idem' },
+    loadMain: async () => ({
+      activate: (ctx) => {
+        activations += 1
+        ctx.registerIpc('ping', () => 'pong')
+      }
+    })
+  })
+  const host = makeHost(registry, ipc)
+  await host.setEnabled('idem', true)
+  const again = await host.setEnabled('idem', true)
+  assertEq(activations, 1, 'activate 只执行一次')
+  assertEq(again.state, 'activated', '状态仍 activated')
+  assertEq(ipc.handlers.size, 1, 'handler 不重复')
+  return '幂等短路'
+})
+
+await r.check('P14', '停用打断在途激活：最终 disabled，不留 handler/定时器', async () => {
+  const ipc = createFakeIpc()
+  const registry = new PluginRegistry()
+  registry.register({
+    dir: '/fake/late',
+    source: '<test>',
+    manifest: { ...manifest, id: 'late' },
+    loadMain: async () => ({
+      activate: async (ctx) => {
+        await new Promise((resolve) => setTimeout(resolve, 60))
+        ctx.registerIpc('late', () => 'late')
+        ctx.jobs.every(20, () => undefined)
+      }
+    })
+  })
+  const host = makeHost(registry, ipc)
+  const pending = host.activate('late')
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  await host.setEnabled('late', false)
+  const status = await pending
+  assertEq(status.state, 'disabled', '状态 disabled')
+  assertEq(ipc.handlers.size, 0, '无 handler')
+  assertEq(status.jobCount, 0, '无定时器')
+  await host.disposeAll()
+  assertEq(ipc.handlers.size, 0, 'disposeAll 后仍无残留')
+  return '在途激活被正确打断'
+})
+
+await r.check('P15', '激活超时后迟到注册被拒：handler/定时器都不再产生', async () => {
+  const ipc = createFakeIpc()
+  const registry = new PluginRegistry()
+  registry.register({
+    dir: '/fake/slow2',
+    source: '<test>',
+    manifest: { ...manifest, id: 'slow2' },
+    loadMain: async () => ({
+      activate: async (ctx) => {
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        ctx.registerIpc('late', () => 'late')
+        ctx.jobs.every(20, () => undefined)
+      }
+    })
+  })
+  const host = makeHost(registry, ipc, { activationTimeoutMs: 40 })
+  const status = await host.activate('slow2')
+  assertEq(status.state, 'failed', '超时后 failed')
+  await new Promise((resolve) => setTimeout(resolve, 250))
+  assertEq(ipc.handlers.size, 0, '迟到注册没有落地')
+  assertEq(host.statuses().find((s) => s.id === 'slow2').jobCount, 0, '迟到定时器没有落地')
+  await host.disposeAll()
+  assertEq(ipc.handlers.size, 0, 'disposeAll 后仍干净')
+  return '超时后彻底失活'
+})
+
+await r.check('P16', '清单 id 与构建期入口不一致 → 拒绝注册（防止以 A 的 id 加载 B 的代码）', async () => {
+  const registry = new PluginRegistry()
+  let message = ''
+  try {
+    registry.register({ ...makeSource({ id: 'declared' }), entryId: 'entry' })
+  } catch (e) {
+    message = e.message
+  }
+  assert(message.includes('入口'), '错误应说明入口与清单不一致')
+  return 'id 一致性校验'
+})
+
+await r.check('P17', '清单声明未知 inject 服务 → 拒绝注册并点名', async () => {
+  const registry = new PluginRegistry()
+  let message = ''
+  try {
+    registry.register(makeSource({ inject: ['db'] }))
+  } catch (e) {
+    message = e.message
+  }
+  assert(message.includes('db'), '错误点名未知服务')
+  return 'inject 白名单'
+})
+
+await r.check('P18', 'onDemand 插件不参与启动激活（声明与行为一致）', async () => {
+  const registry = new PluginRegistry()
+  let loaded = 0
+  registry.register({
+    dir: '/fake/ondemand',
+    source: '<test>',
+    manifest: { ...manifest, id: 'od', activation: ['onDemand'] },
+    loadMain: async () => {
+      loaded += 1
+      return { activate: () => undefined }
+    }
+  })
+  const host = makeHost(registry, createFakeIpc())
+  const statuses = await host.activateAll()
+  assertEq(statuses.length, 0, '不在激活目标里')
+  assertEq(loaded, 0, '未加载入口')
+  return 'onDemand 留到 Phase 1'
+})
+
+await r.check('P19', '清单级失败进 plugin:list：状态 failed + code/stage，不再只剩 console', async () => {
+  const registry = new PluginRegistry()
+  const record = registry.addFailed(
+    'broken',
+    { code: 'PLUGIN_MANIFEST_INVALID', message: 'plugin.json 解析失败' },
+    { dir: '/fake/broken', source: '<test>' }
+  )
+  assertEq(record.state, 'failed', '状态 failed')
+  assertEq(record.error.stage, 'manifest', 'stage=manifest')
+  const host = makeHost(registry, createFakeIpc())
+  const status = host.statuses()[0]
+  assertEq(status.id, 'broken', '列表可见')
+  assertEq(status.error.code, 'PLUGIN_MANIFEST_INVALID', '错误码可见')
+  return '失败插件可见'
+})
+
+await r.check('P20', '状态文件为非对象（数组/null/坏 JSON）时回落 {}', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'umi-plugin-state-'))
+  for (const content of ['[true]', 'null', '{ 坏', '"true"']) {
+    const file = join(dir, `s-${Math.random().toString(36).slice(2)}.json`)
+    writeFileSync(file, content, 'utf-8')
+    const loaded = await createJsonStateStore(file).load()
+    assertEq(JSON.stringify(loaded), '{}', `${content} 应回落 {}`)
+  }
+  return '四类脏状态都回落空表'
 })
 
 const result = r.toJSON()

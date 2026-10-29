@@ -17,7 +17,8 @@ export function createJsonStateStore(filePath: string): PluginStateStore {
       try {
         if (!existsSync(filePath)) return {}
         const raw = JSON.parse(readFileSync(filePath, 'utf-8')) as unknown
-        if (!raw || typeof raw !== 'object') return {}
+        // 数组也是 object：JSON.parse('[true]') 会被误当成 map（审查 D6），显式排除
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
         const out: Record<string, boolean> = {}
         for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
           if (typeof value === 'boolean') out[id] = value
