@@ -400,7 +400,36 @@ await r.check('P9', '真插件：resources/plugins/hello 清单可解析，入�
   return 'hello 全链路'
 })
 
-// ── U1~U3 渲染端注册表 ──────────────────────────────────────────────────────
+// ── P24 管理页纯逻辑（Phase 1 WP4）──────────────────────────────────────────
+const adminMod = await import(
+  pathToFileURL(bundleEntry('src/renderer/pluginAdmin.ts', 'plugin-admin.mjs')).href
+)
+const { matchesPluginRoute, disablingBreaksCurrentPage, stateLabel, errorSummary, sortForDisplay } = adminMod
+
+await r.check('P24', '管理页逻辑：路由归属判定 / 停用拦截 / 状态文案 / 失败排序', async () => {
+  assertEq(matchesPluginRoute(['/hello'], '/hello'), true, '精确命中')
+  assertEq(matchesPluginRoute(['/hello'], '/hello/x'), true, '前缀命中')
+  assertEq(matchesPluginRoute(['/hello'], '/helloworld'), false, '不误伤同前缀单词')
+  assertEq(matchesPluginRoute(undefined, '/hello'), false, '无路由不命中')
+
+  const running = { id: 'hello', name: 'Hello', version: '0.1.0', state: 'activated', enabled: true, ipcMethods: [], jobCount: 0, contributes: { routes: ['/hello'] } }
+  const disabled = { ...running, enabled: false, state: 'disabled' }
+  assertEq(disablingBreaksCurrentPage(running, '/hello'), true, '当前页属于它 → 要拦')
+  assertEq(disablingBreaksCurrentPage(running, '/dashboard'), false, '不在它的页面 → 不拦')
+  assertEq(disablingBreaksCurrentPage(disabled, '/hello'), false, '已停用不拦')
+
+  assertEq(stateLabel(running), '运行中', '运行中文案')
+  assertEq(stateLabel(disabled), '已停用', '停用中文案')
+  assertEq(stateLabel({ ...running, state: 'failed', error: { code: 'X', message: 'm' } }), '加载失败', '失败文案')
+  assertEq(errorSummary({ ...running, error: { code: 'X', stage: 'manifest', message: '坏了' } }), 'X（manifest）：坏了', '失败摘要')
+
+  const sorted = sortForDisplay([
+    { ...running, id: 'b' },
+    { ...running, id: 'a', state: 'failed' }
+  ])
+  assertEq(sorted.map((s) => s.id).join(','), 'a,b', '失败项排前')
+  return '5 个纯函数行为正确'
+})
 const uiMod = await import(pathToFileURL(bundleEntry('src/renderer/pluginUi.ts', 'plugin-ui.mjs')).href)
 const { PluginUiRegistry, pluginNavGroups, pluginSlots } = uiMod
 

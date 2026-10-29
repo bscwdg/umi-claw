@@ -22,6 +22,8 @@ const router = createRouter({
     { path: '/terminal', component: () => import('../views/TerminalPage.vue') },
     { path: '/about', component: () => import('../views/About.vue') },
     { path: '/obsidian', component: () => import('../views/ObsidianPage.vue') },
+    // 插件管理（宿主页面，不是插件页面）
+    { path: '/plugins', component: () => import('../views/PluginManager.vue') },
     // ── work 域（3.0 UI）──
     { path: '/work', redirect: '/work/today' },
     { path: '/work/today', component: () => import('../views/work/TodayPage.vue') },

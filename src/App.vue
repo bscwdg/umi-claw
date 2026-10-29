@@ -170,6 +170,7 @@ const navGroups = [
   {
     title: '系统',
     items: [
+      { to: '/plugins', icon: '🧩', label: '插件管理' },
       { to: '/logs', icon: '📋', label: '运行日志' },
       { to: '/about', icon: 'ℹ️', label: '关于' }
     ]

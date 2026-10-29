@@ -28,7 +28,7 @@
 | Phase 0.5 基线合并 | ✅ | 全量 333/333 |
 | Phase 0 契约与 hello | ✅ | plugin 29/29 |
 | Phase 1 · WP1 服务容器 | ✅ | plugin 29/29、全量 336/336 |
-| Phase 1 · WP4 插件管理页 | ⬜ | — |
+| Phase 1 · WP4 插件管理页 | ✅ | plugin 30/30、全量 337/337 |
 | Phase 1 · WP2 每插件独立库 | ⬜ | — |
 | Phase 1 · WP3 类型化 IPC 生成 | ⬜（建议并入 Phase 2） | — |
 | Phase 2 work 装箱 | ⬜ | — |
