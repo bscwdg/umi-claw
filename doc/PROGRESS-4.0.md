@@ -28,8 +28,9 @@
 | Phase 0.5 基线合并 | ✅ | 全量 333/333 |
 | Phase 0 契约与 hello | ✅ | plugin 29/29 |
 | Phase 1 · WP1 服务容器 | ✅ | plugin 29/29、全量 336/336 |
-| Phase 1 · WP4 插件管理页 | ✅ | plugin 30/30、全量 337/337 |
-| Phase 1 · WP2 每插件独立库 | ⬜ | — |
+| Phase 1 · WP4 插件管理页 | ✅ | plugin 30/30 → 39/39 |
+| Phase 1 · WP2 每插件独立库 | ✅ | plugin 39/39、全量 346/346 |
+| Phase 1 · 审查/对抗修复 | ✅ | 见下节 R1–R12 |
 | Phase 1 · WP3 类型化 IPC 生成 | ⬜（建议并入 Phase 2） | — |
 | Phase 2 work 装箱 | ⬜ | — |
 | Phase 3 marketing 装箱 | ⬜ | — |
@@ -71,3 +72,31 @@
 
 - `plugin.accept` 29 → **30/30**（新增 P24 覆盖 5 个纯函数）
 - 全量 19 套 **337/337**；双 typecheck 0 错；`npm run build` 通过
+
+### 2026-10-30 · Phase 1 WP2 每插件独立库
+
+**改了什么**
+
+- `kernel/pluginSchema.ts`：从插件 `migrations/*.sql` 解析出表/列/主键/迁移步骤（SQL 是唯一真相）；去掉 `--`/`/* */` 注释后再切语句（首版被注释头坑过一次）。
+- `resources/database/db-worker.mjs`：新增 `--tables <json>`，**整体替换**内置 8 表白名单（不是合并），插件库因此看不到 work 的表。
+- `database.ts`：`DatabaseClient` 支持直接注入 `schema` 档案与 `workerArgs`（插件库的表结构与版本运行时才知道）。
+- `services/pluginDb.ts`：每插件一个 `<dataDir>/plugins/<id>/data.db`，迁移/CRUD/备份都走白名单；停用时 `dispose()` 释放 worker（由 lifecycle 登记进 disposer）。
+- hello 插件加 `migrations/001_init.sql`（notes 表）、`inject: [db]`，激活时 `migrate()` 并暴露 `note.add`。
+
+**验收**：plugin **39/39**（新增 P25 schema 解析、P26 真 worker 建库+CRUD+白名单、P27 两库隔离+迁移幂等、P28 inject 门禁、P29 失败态闭环、P30 服务名单一来源、P31 落盘健壮性、P32 渲染端边界静态扫描、P33 管理页新增逻辑）；全量 19 套 **346/346**；双 typecheck 0 错；build 通过。
+
+### 2026-10-30 · Phase 1 审查/对抗修复（R1–R12）
+
+两路报告（审查 12 条 + 对抗 26 例）逐条处理：
+
+| 编号 | 问题 | 处理 |
+| --- | --- | --- |
+| R1 | 插件 renderer 可用完整 `window.api`（无边界） | 宿主注入窄 API `host.invoke`；hello 改用它；新增 P32 静态扫描（禁 window.api / electron / require，注释先剥离） |
+| R2/R12 | `ctx.config` 绕过 inject；服务名有两份真相 | `ctx.config` 改为可选且仅 inject 时存在；`resolveService` 改为查 factories 同名键，`availableServices` 共用 `SERVICE_NAMES`；P28/P30 锁定 |
+| R3 | 配置落盘失败静默、坏值拖垮全体、坏文件被覆盖 | 逐插件序列化（坏值只影响自己且仍写好的）、坏文件先 `.bad-<ts>` 备份、`flush()` 返回成功与否、错误记录可查；P31 锁定 |
+| R4 | before-quit 是 async 监听器，Electron 不等待 | 改 `preventDefault` + 清理（每步带超时）+ 完成后 `app.quit()` |
+| R5 | 失败态不闭环（failed 不能停用/不能重试；清单级失败可被「启用」复活） | 运行时失败允许重试、清单级失败拒绝启用并在 UI 禁用按钮；P29 锁定 |
+| R6 | D5 停用确认在 `/plugins` 下不可达 | 判定改为「已启用+已激活+有页面」，`shouldConfirmDisable` 并接进页面；P33 覆盖 |
+| R7/R8/R9/R11 | 管理页：排序用错 ref、空态与错误同显、订阅晚于 reload（可能泄漏）、停用插件也给「打开页面」 | 模板改用 `list`；空态加 `!loadError` 并给重试；先订阅再 reload + disposed 兜底；`openableRoute` 只在 activated 时给链接 |
+| R10 | `onDispose` 未走 assertOpen（迟到登记永不执行） | closed 时立即执行一次并记日志 |
+| 其他 | stateStore 裸写、pluginDb 不释放 | stateStore 改临时文件+rename；pluginDb 增 `dispose()` 由 lifecycle 在停用时调用 |

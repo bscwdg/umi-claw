@@ -22,7 +22,8 @@ import {
 export type SchemaId = 'work' | 'marketing'
 
 export interface DbSchemaProfile {
-  id: SchemaId
+  /** 内置库是 'work' | 'marketing'；插件库用 plugin:<id> */
+  id: string
   /** 人类可读名字（进日志/报错） */
   label: string
   /** 该库应有的表清单（assertSchemaShape 用） */

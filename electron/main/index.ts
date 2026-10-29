@@ -41,6 +41,7 @@ import {
   type ServiceFactories
 } from './kernel'
 import { PLUGIN_MAIN_ENTRIES } from './kernel/plugins.main.generated'
+import { createPluginDbService } from './services/pluginDb'
 
 // ── 2.0 营销域 imports（合并自 release/2.0）────────────────────────────────────
 // 与 work 域同名的模块内标识符加 `Marketing*` / `*Lib` 别名区分：
@@ -511,6 +512,7 @@ function createWorkDatabase(): DatabaseClient {
 let pluginHost: PluginHost | null = null
 let pluginRegistry: PluginRegistry | null = null
 let pluginConfigStore: ReturnType<typeof createPluginConfigStore> | null = null
+let pluginDbService: ReturnType<typeof createPluginDbService> | null = null
 
 // ── 服务适配器（Phase 1 WP1）：窄接口，不把 manager 递给插件 ─────────────────
 
@@ -569,8 +571,16 @@ async function initPlugins(): Promise<void> {
 
     // ── 服务层（Phase 1 WP1）：插件只能经 ctx.services 拿到这些窄接口 ──────────
     pluginConfigStore = createPluginConfigStore(join(dataDir, 'plugin-config.json'))
+    pluginDbService = createPluginDbService({
+      dataDir,
+      nodePath: configManager.getNodePath(),
+      workerScriptPath: join(resourcesRoot(), 'database', 'db-worker.mjs'),
+      logger: (line) => console.log(line)
+    })
+
     const serviceFactories: ServiceFactories = {
-      config: (pluginId) => pluginConfigStore!.serviceFor(pluginId),
+      config: (info) => pluginConfigStore!.serviceFor(info.id),
+      db: (info) => pluginDbService!.forPlugin(info),
       notifications: () => createNotificationsService(),
       openclaw: () => createOpenClawService()
     }
@@ -2697,16 +2707,41 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', async () => {
+let quitCleanupDone = false
+let quitCleanupRunning = false
+
+/**
+ * 退出清理。
+ *
+ * Electron **不 await** before-quit 的 async 监听器，所以必须 preventDefault 后自己做
+ * 清理，完成后再 app.quit() 一次（审查 R4）。否则插件 deactivate / 配置 flush 只靠
+ * 「恰好是微任务」才跑得完，真实异步（worker/HTTP）会丢。
+ */
+app.on('before-quit', (event) => {
+  if (quitCleanupDone) return
+  event.preventDefault()
+  if (quitCleanupRunning) return
+  quitCleanupRunning = true
   ; (app as any).isQuiting = true
-  // 插件先优雅停用：移除 IPC / 清定时器，避免退出过程中还有插件回调在跑
-  try {
-    await pluginHost?.disposeAll()
-    // 插件配置的合并写可能还在 300ms 防抖里，退出前强制落盘
-    await pluginConfigStore?.flush()
-  } catch (e) {
-    console.error('[Main] 停用插件失败（继续退出）:', e)
+  void runQuitCleanup()
+})
+
+async function runQuitCleanup(): Promise<void> {
+  const step = async (name: string, fn: () => Promise<unknown> | undefined, ms: number): Promise<void> => {
+    try {
+      await Promise.race([
+        Promise.resolve(fn()),
+        new Promise((resolve) => setTimeout(resolve, ms))
+      ])
+    } catch (e) {
+      console.error(`[Main] 退出清理 ${name} 失败（继续）:`, e)
+    }
   }
+  // 插件先优雅停用：移除 IPC / 清定时器，避免退出过程中还有插件回调在跑
+  await step('停用插件', () => pluginHost?.disposeAll(), 3000)
+  // 配置的合并写可能还在 300ms 防抖里，退出前强制落盘
+  await step('插件配置落盘', () => pluginConfigStore?.flush(), 2000)
+  await step('关闭插件库', () => pluginDbService?.disposeAll(), 3000)
   // 确保在退出前杀死所有子进程，防止孤儿进程
   killAllTerminalSessions()
   // 在途的 Advisor 流先中止：否则应用退出时上游可能还在生成（白烧 token）
@@ -2751,8 +2786,11 @@ app.on('before-quit', async () => {
   } catch (e) {
     console.error('[Main] 停止注册表子进程失败:', e)
   }
-  await clawManager.stop()
-})
+  await step('停止 OpenClaw', () => clawManager.stop(), 5000)
+
+  quitCleanupDone = true
+  app.quit()
+}
 
 // 类型扩展
 declare global {

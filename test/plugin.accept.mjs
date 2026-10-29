@@ -8,7 +8,7 @@
 //
 // 用法：node test/plugin.accept.mjs（npm run accept:plugin）
 
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -20,7 +20,8 @@ import {
   printResult,
   writeJson,
   __dirname,
-  repoRoot
+  repoRoot,
+  resolveNodePath
 } from './_lib.mjs'
 
 const r = new Recorder('Phase 0 · 插件内核（manifest / registry / lifecycle / UI registry）')
@@ -360,13 +361,49 @@ await r.check('P8', '激活超时：插件 activate 挂住 → failed（不拖�
   return '超时被隔离'
 })
 
-// ── P9 真 hello 插件（清单 + 入口） ─────────────────────────────────────────
-await r.check('P9', '真插件：resources/plugins/hello 清单可解析，入口激活后 ping 可用', async () => {
+// ── P9 真 hello 插件（清单 + 入口 + 插件库） ─────────────────────────────────
+await r.check('P9', '真插件：hello 清单可解析，入口激活后 ping / 插件库可用', async () => {
   const ipc = createFakeIpc()
   const helloConfig = new Map()
+  const notes = []
+  const fakeDb = {
+    path: ':memory:',
+    async migrate() {},
+    async list(table) {
+      assertEq(table, 'notes', '只允许访问插件自己的表')
+      return notes
+    },
+    async create(table, values) {
+      assertEq(table, 'notes', '写入也走白名单')
+      notes.push(values)
+      return values
+    },
+    async get() {
+      return null
+    },
+    async update() {
+      return { changes: 0 }
+    },
+    async remove() {
+      return { deleted: false }
+    },
+    async backup() {
+      return { path: ':memory:' }
+    }
+  }
+  const services = {
+    config: () => ({
+      get: (k, fallback) => (helloConfig.has(k) ? helloConfig.get(k) : fallback),
+      set: (k, v) => {
+        helloConfig.set(k, v)
+      },
+      all: () => Object.fromEntries(helloConfig)
+    }),
+    db: () => fakeDb
+  }
   const registry = new PluginRegistry({
     persistedEnabled: { hello: true },
-    hostServices: ['host', 'config']
+    hostServices: availableServices(services)
   })
   registry.register({
     dir: join(repoRoot, 'resources', 'plugins', 'hello'),
@@ -374,37 +411,40 @@ await r.check('P9', '真插件：resources/plugins/hello 清单可解析，入�
     manifest: helloManifestRaw,
     loadMain: async () => helloMod.default
   })
-  const host = makeHost(registry, ipc, {
-    services: {
-      config: () => ({
-        get: (k, fallback) => (helloConfig.has(k) ? helloConfig.get(k) : fallback),
-        set: (k, v) => {
-          helloConfig.set(k, v)
-        },
-        all: () => Object.fromEntries(helloConfig)
-      })
-    }
-  })
+  const host = makeHost(registry, ipc, { services })
   const status = await host.activate('hello')
 
   assertEq(status.state, 'activated', 'hello 激活')
-  assertEq(status.ipcMethods.join(','), 'ping,state', '两条方法')
+  assertEq(status.ipcMethods.join(','), 'note.add,ping,state', '三条方法')
   const pong = await ipc.invoke('plugin:hello:ping', 'hi')
   assertEq(pong.pong, true, 'ping 返回 pong')
   assertEq(pong.echo, 'hi', 'payload 透传')
+
+  await ipc.invoke('plugin:hello:note.add', { body: '第一条' })
+  assertEq(notes.length, 1, 'note.add 写入插件库')
   const st = await ipc.invoke('plugin:hello:state')
   assertEq(st.hostVersion, '4.0.0-test', 'context 里的宿主版本')
+  assertEq(st.notes, 1, 'state 能读到自己的数据')
 
   await host.disposeAll()
   assertEq(ipc.handlers.size, 0, '停用后无残留')
-  return 'hello 全链路'
+  return 'hello 全链路（含插件库）'
 })
 
 // ── P24 管理页纯逻辑（Phase 1 WP4）──────────────────────────────────────────
 const adminMod = await import(
   pathToFileURL(bundleEntry('src/renderer/pluginAdmin.ts', 'plugin-admin.mjs')).href
 )
-const { matchesPluginRoute, disablingBreaksCurrentPage, stateLabel, errorSummary, sortForDisplay } = adminMod
+const {
+  matchesPluginRoute,
+  disablingBreaksCurrentPage,
+  stateLabel,
+  errorSummary,
+  sortForDisplay,
+  shouldConfirmDisable,
+  openableRoute,
+  normalizeListPayload
+} = adminMod
 
 await r.check('P24', '管理页逻辑：路由归属判定 / 停用拦截 / 状态文案 / 失败排序', async () => {
   assertEq(matchesPluginRoute(['/hello'], '/hello'), true, '精确命中')
@@ -430,6 +470,172 @@ await r.check('P24', '管理页逻辑：路由归属判定 / 停用拦截 / 状�
   assertEq(sorted.map((s) => s.id).join(','), 'a,b', '失败项排前')
   return '5 个纯函数行为正确'
 })
+
+// ── P32 渲染端能力边界（静态扫描）+ 管理页新增纯函数 ────────────────────────
+await r.check('P32', '渲染端边界：插件 renderer 不得直接用 window.api / electron / require', async () => {
+  const dir = join(repoRoot, 'plugins')
+  const files = readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => join(dir, d.name, 'renderer.ts'))
+    .filter((f) => existsSync(f))
+  assert(files.length > 0, '至少有一个插件 renderer')
+
+  for (const file of files) {
+    // 去掉注释再扫：注释里解释「不要用 window.api」不该被当成违规
+    const src = readFileSync(file, 'utf-8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split(/\r?\n/)
+      .map((line) => line.replace(/\/\/.*$/, ''))
+      .join('\n')
+    const name = file.replace(repoRoot, '')
+    assert(!/window\.api/.test(src), `${name} 不应使用 window.api（宿主 API）`)
+    assert(!/window\.electron/.test(src), `${name} 不应使用 window.electron`)
+    assert(!/from ['"]electron['"]/.test(src), `${name} 不应 import electron`)
+    assert(!/require\(/.test(src), `${name} 不应 require`)
+    assert(/host\.invoke|invoke</.test(src), `${name} 应通过 host.invoke 调自己的能力`)
+  }
+  return `${files.length} 个插件 renderer 都守边界`
+})
+
+await r.check('P33', '管理页新增逻辑：确认条件 / 可打开路由 / 列表载荷防御 / 路径规整', async () => {
+  const running = {
+    id: 'hello',
+    name: 'Hello',
+    version: '0.1.0',
+    state: 'activated',
+    enabled: true,
+    ipcMethods: [],
+    jobCount: 0,
+    contributes: { routes: ['/hello'] }
+  }
+  assertEq(shouldConfirmDisable(running), true, '运行中且有页面 → 要确认')
+  assertEq(shouldConfirmDisable({ ...running, state: 'failed' }), false, '失败态不确认')
+  assertEq(shouldConfirmDisable({ ...running, contributes: {} }), false, '没页面不确认')
+  assertEq(openableRoute(running), '/hello', '运行中给链接')
+  assertEq(openableRoute({ ...running, enabled: false }), '', '停用不给链接')
+  assertEq(openableRoute({ ...running, state: 'failed' }), '', '失败不给链接')
+
+  assertEq(matchesPluginRoute(['/hello'], '/Hello'), true, '大小写不敏感（与 vue-router 一致）')
+  assertEq(matchesPluginRoute(['/hello'], '/hello/'), true, '尾斜杠宽松')
+  assertEq(matchesPluginRoute(['/'], '/dashboard'), true, '根路由按接管处理')
+
+  let threw = false
+  try {
+    normalizeListPayload({ ok: true })
+  } catch {
+    threw = true
+  }
+  assert(threw, '非数组载荷应报错而不是塞进 v-for')
+  assertEq(normalizeListPayload([running]).length, 1, '数组原样返回')
+  return '4 个新增函数行为正确'
+})
+
+// ── P25~P27 每插件独立库（Phase 1 WP2）──────────────────────────────────────
+const schemaMod = await import(
+  pathToFileURL(bundleEntry('electron/main/kernel/pluginSchema.ts', 'plugin-schema.mjs')).href
+)
+const { loadPluginSchema } = schemaMod
+const dbMod = await import(
+  pathToFileURL(bundleEntry('electron/main/services/pluginDb.ts', 'plugin-db.mjs')).href
+)
+const { createPluginDbService } = dbMod
+
+await r.check('P25', 'schema 解析：从 hello 的 migrations 推出表/列/主键/目标版本', async () => {
+  const schema = loadPluginSchema(join(repoRoot, 'plugins', 'hello', 'migrations'))
+  assertEq(schema.targetUserVersion, 1, '目标版本')
+  assertEq(schema.steps.length, 1, '一步迁移')
+  const notes = schema.tables.notes
+  assert(Boolean(notes), '解析出 notes 表')
+  assertEq(notes.pk.join(','), 'id', '主键')
+  assertEq(notes.columns.join(','), 'id,body,created_at,updated_at', '列顺序与内容')
+  assertEq(notes.createdAt, 'created_at', 'createdAt 元列')
+  return 'SQL → 结构推导正确'
+})
+
+await r.check('P26', '插件库：真 worker + 真迁移 + CRUD（notes 能建、work 的表不可见）', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'umi-plugindb-'))
+  const pluginDir = join(root, 'alpha')
+  mkdirSync(join(pluginDir, 'migrations'), { recursive: true })
+  writeFileSync(
+    join(pluginDir, 'migrations', '001_init.sql'),
+    'CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, body TEXT NOT NULL, created_at INTEGER);',
+    'utf-8'
+  )
+
+  const svc = createPluginDbService({
+    dataDir: join(root, 'data'),
+    nodePath: resolveNodePath(),
+    workerScriptPath: join(repoRoot, 'resources', 'database', 'db-worker.mjs')
+  })
+
+  try {
+    const db = svc.forPlugin({ id: 'alpha', dir: pluginDir })
+    await db.migrate()
+    await db.create('notes', { id: 'n1', body: 'hello', created_at: 1 })
+    const rows = await db.list('notes')
+    assertEq(rows.length, 1, '写入后能查到')
+    assertEq(rows[0].body, 'hello', '内容正确')
+    assert(String(db.path).endsWith(join('plugins', 'alpha', 'data.db')), '库文件在插件目录下')
+
+    const tablesJson = JSON.parse(
+      readFileSync(join(root, 'data', 'plugins', 'alpha', 'tables.json'), 'utf-8')
+    )
+    assertEq(Object.keys(tablesJson).join(','), 'notes', 'tables.json 只有插件自己的表')
+
+    let rejected = false
+    try {
+      await db.list('todos')
+    } catch (e) {
+      rejected = String(e.message).includes('未在插件 migrations 中定义')
+    }
+    assert(rejected, '未知表应被拒绝')
+  } finally {
+    await svc.disposeAll()
+  }
+  return '真 worker 建库 + CRUD + 白名单'
+})
+
+await r.check('P27', '插件库隔离：两插件各自的库互不可见；重复 migrate 幂等', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'umi-plugindb2-'))
+  for (const id of ['a', 'b']) {
+    mkdirSync(join(root, id, 'migrations'), { recursive: true })
+    writeFileSync(
+      join(root, id, 'migrations', '001_init.sql'),
+      `CREATE TABLE IF NOT EXISTS items_${id} (id TEXT PRIMARY KEY, v TEXT);`,
+      'utf-8'
+    )
+  }
+  const svc = createPluginDbService({
+    dataDir: join(root, 'data'),
+    nodePath: resolveNodePath(),
+    workerScriptPath: join(repoRoot, 'resources', 'database', 'db-worker.mjs')
+  })
+
+  try {
+    const a = svc.forPlugin({ id: 'a', dir: join(root, 'a') })
+    const b = svc.forPlugin({ id: 'b', dir: join(root, 'b') })
+    await a.migrate()
+    await b.migrate()
+    await a.create('items_a', { id: '1', v: 'A' })
+
+    assertEq((await a.list('items_a')).length, 1, 'a 库有数据')
+    let bCannot = false
+    try {
+      await b.list('items_a')
+    } catch {
+      bCannot = true
+    }
+    assert(bCannot, 'b 看不到 a 的表')
+    assert(a.path !== b.path, '两个插件库文件不同')
+
+    await a.migrate()
+    assertEq((await a.list('items_a')).length, 1, '重复 migrate 保留数据')
+  } finally {
+    await svc.disposeAll()
+  }
+  return '库隔离 + 迁移幂等'
+})
+
 const uiMod = await import(pathToFileURL(bundleEntry('src/renderer/pluginUi.ts', 'plugin-ui.mjs')).href)
 const { PluginUiRegistry, pluginNavGroups, pluginSlots } = uiMod
 
@@ -796,6 +1002,142 @@ await r.check('P23', '插件配置落盘：set → flush → 重新打开仍能�
   assertEq(reopened.values('b').k, 'other', 'b 的值')
   assertEq(JSON.stringify(reopened.values('c')), '{}', '未写过的插件是空对象')
   return '命名空间隔离 + 原子落盘'
+})
+
+// ── P28~P31 审查/对抗报告里点出的服务与落盘边界 ─────────────────────────────
+await r.check('P28', 'inject 门禁：未声明 config 时 ctx.config 为 undefined', async () => {
+  const ipc = createFakeIpc()
+  const registry = new PluginRegistry({ hostServices: ['host', 'config'] })
+  registry.register({
+    dir: '/fake/gate',
+    source: '<test>',
+    manifest: { ...manifest, id: 'gate', inject: ['host'] },
+    loadMain: async () => ({
+      activate(ctx) {
+        ctx.registerIpc('probe', () => ({ config: ctx.config === undefined, services: Object.keys(ctx.services) }))
+      }
+    })
+  })
+  const host = makeHost(registry, ipc, {
+    services: { config: () => ({ get: () => undefined, set: () => undefined, all: () => ({}) }) }
+  })
+  await host.activate('gate')
+  const res = await ipc.invoke('plugin:gate:probe')
+  assertEq(res.config, true, 'ctx.config 必须是 undefined')
+  assertEq(res.services.length, 0, 'services 也是空')
+  return '别名不绕过 inject'
+})
+
+await r.check('P29', '清单级失败不可启用；运行时失败可重试', async () => {
+  const registry = new PluginRegistry()
+  registry.addFailed('broken', { code: 'PLUGIN_MANIFEST_INVALID', message: '坏了' }, { dir: '/x', source: '<t>' })
+  let blocked = false
+  try {
+    registry.setEnabled('broken', true)
+  } catch {
+    blocked = true
+  }
+  assert(blocked, '清单级失败应拒绝启用')
+
+  const ipc = createFakeIpc()
+  let attempts = 0
+  const reg2 = new PluginRegistry()
+  reg2.register({
+    dir: '/fake/retry',
+    source: '<test>',
+    manifest: { ...manifest, id: 'retry' },
+    loadMain: async () => ({
+      activate: () => {
+        attempts += 1
+        if (attempts === 1) throw new Error('第一次失败')
+      }
+    })
+  })
+  const host = makeHost(reg2, ipc)
+  const first = await host.setEnabled('retry', true)
+  assertEq(first.state, 'failed', '第一次失败')
+  const second = await host.setEnabled('retry', true)
+  assertEq(second.state, 'activated', '重试成功')
+  assertEq(attempts, 2, '确实重试了一次')
+  return '失败态闭环'
+})
+
+await r.check('P30', '服务名单一来源：availableServices 的每个名字都能被真实解析', async () => {
+  const factories = {
+    config: () => ({ get: () => undefined, set: () => undefined, all: () => ({}) }),
+    db: () => ({
+      path: ':memory:',
+      migrate: async () => undefined,
+      list: async () => [],
+      get: async () => null,
+      create: async () => ({}),
+      update: async () => ({ changes: 0 }),
+      remove: async () => ({ deleted: false }),
+      backup: async () => ({ path: ':memory:' })
+    }),
+    notifications: () => ({ show: () => undefined }),
+    openclaw: () => ({
+      status: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
+      ensureReady: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
+      chat: async () => ({ text: '', model: null }),
+      stream: () => {
+        throw new Error('not used')
+      }
+    }),
+    voice: () => ({ speak: async () => undefined })
+  }
+  const names = availableServices(factories).filter((n) => n !== 'host')
+  assertEq(names.slice().sort().join(','), 'config,db,notifications,openclaw,voice', '名单覆盖全部服务')
+
+  for (const name of names) {
+    const ipc = createFakeIpc()
+    const registry = new PluginRegistry({ hostServices: availableServices(factories) })
+    registry.register({
+      dir: '/fake/s',
+      source: '<test>',
+      manifest: { ...manifest, id: 's', inject: ['host', name] },
+      loadMain: async () => ({
+        activate(ctx) {
+          ctx.registerIpc('has', () => Boolean(ctx.services[name]))
+        }
+      })
+    })
+    const host = makeHost(registry, ipc, { services: factories })
+    const status = await host.activate('s')
+    assertEq(status.state, 'activated', `${name} 应可激活`)
+    assertEq(await ipc.invoke('plugin:s:has'), true, `${name} 应被注入`)
+    await host.disposeAll()
+  }
+  return '注册期校验与解析同源'
+})
+
+await r.check('P31', '配置落盘健壮性：坏文件先备份、坏值只影响该插件、写失败 flush 返回 false', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'umi-plugin-config2-'))
+  const file = join(dir, 'plugin-config.json')
+
+  writeFileSync(file, '{ 坏 JSON', 'utf-8')
+  const store = createPluginConfigStore(file, { onError: () => undefined })
+  assertEq(JSON.stringify(store.values('x')), '{}', '坏文件回落空表')
+  assertEq(readdirSync(dir).filter((f) => f.includes('.bad-')).length, 1, '坏文件被备份')
+
+  const cyclic = {}
+  cyclic.self = cyclic
+  store.serviceFor('bad').set('loop', cyclic)
+  store.serviceFor('good').set('k', 1)
+  assertEq(await store.flush(), false, '含坏值的 flush 返回失败')
+  const reopened = createPluginConfigStore(file, { onError: () => undefined })
+  assertEq(JSON.stringify(reopened.values('bad')), '{}', '坏插件未落盘')
+  assertEq(reopened.values('good').k, 1, '好插件照常落盘')
+
+  // 让父路径是个文件 → mkdirSync 必失败（比「目标是个目录」更可靠的写失败注入）
+  const blockedParent = join(dir, 'blocked-parent')
+  writeFileSync(blockedParent, 'x', 'utf-8')
+  const dirTarget = join(blockedParent, 'plugin-config.json')
+  const store2 = createPluginConfigStore(dirTarget, { onError: () => undefined })
+  store2.serviceFor('p').set('k', 1)
+  assertEq(await store2.flush(), false, '写失败返回 false')
+  assertEq(store2.errors().length > 0, true, '失败被记录')
+  return '落盘失败可见、坏值隔离'
 })
 
 const result = r.toJSON()

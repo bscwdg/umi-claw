@@ -173,7 +173,21 @@ export class PluginRegistry {
   setEnabled(id: string, enabled: boolean): PluginRecord {
     const record = this.records.get(id)
     if (!record) throw new PluginManifestError('MANIFEST_INVALID', `未注册的插件：${id}`, { pluginId: id })
+    // 清单级失败（坏 JSON / 缺清单 / id 冲突）不是「重试就能好」的：允许启用会让
+    // plugin:list 报出假状态（审查 R5）。
+    if (enabled && record.error?.stage === 'manifest') {
+      throw new PluginManifestError(
+        'MANIFEST_INVALID',
+        `插件 ${id} 的清单本身不可用（${record.error.code}），修好清单并重新构建后才能启用`,
+        { pluginId: id, field: 'manifest' }
+      )
+    }
     record.enabled = enabled
+    if (enabled && record.state === 'failed') {
+      // 运行时失败允许重试：重置为 validated，由宿主重新激活
+      record.state = 'validated'
+      record.error = undefined
+    }
     this.persistedEnabled[id] = enabled
     if (!enabled && record.state === 'activated') record.state = 'disabled'
     return record

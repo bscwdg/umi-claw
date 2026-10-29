@@ -17,7 +17,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { AppError, ERROR_CODES, type ErrorCode } from './errors'
-import { resolveDbSchema, type SchemaId } from './schemas'
+import { resolveDbSchema, type DbSchemaProfile, type SchemaId } from './schemas'
 
 /**
  * 3.0 工作库文件名（与 2.0 的 `umi-claw.db` 区分开）。
@@ -58,6 +58,17 @@ export interface DatabaseClientOptions {
    * 每套有自己的 DDL 与 user_version 序列，因此必须显式选库，不能靠文件名推断。
    */
   schemaId?: SchemaId
+  /**
+   * 直接给一套 schema 档案（插件库用，Phase 1 WP2）。
+   *
+   * 插件库的表结构与迁移来自插件自带 SQL，运行时才解析出来，没法预先写进
+   * `DB_SCHEMAS`；所以这里允许整体覆盖 `schemaId`。
+   */
+  schema?: DbSchemaProfile
+  /**
+   * 额外传给 worker 的参数（插件库用来传 `--tables <json>` 做白名单替换）。
+   */
+  workerArgs?: string[]
   /** 子进程启动钩子：返回反注册函数（index.ts 把它接到 subprocessRegistry） */
   onSpawn?: (info: { name: string; pid: number; gracefulStop: () => Promise<void> }) => () => void
   /** 日志（默认静默） */
@@ -168,7 +179,7 @@ export class DatabaseClient {
       | 'autoBackupIntervalMs'
       | 'gracefulStopTimeoutMs'
     >
-  > & { subprocessName: string; schemaId: SchemaId }
+  > & { subprocessName: string; schemaId: SchemaId; schema?: DbSchemaProfile; workerArgs: string[] }
 
   private child: ChildProcess | null = null
   private pending = new Map<string, PendingEntry>()
@@ -201,7 +212,9 @@ export class DatabaseClient {
       autoBackupIntervalMs: options.autoBackupIntervalMs ?? DEFAULT_AUTO_BACKUP_INTERVAL_MS,
       gracefulStopTimeoutMs: options.gracefulStopTimeoutMs ?? DEFAULT_GRACEFUL_STOP_MS,
       subprocessName: options.subprocessName ?? `${options.schemaId ?? 'work'}-db-worker`,
-      schemaId: options.schemaId ?? 'work'
+      schemaId: options.schemaId ?? 'work',
+      schema: options.schema,
+      workerArgs: options.workerArgs ?? []
     }
     this.onSpawn = options.onSpawn
     this.logger = options.logger
@@ -210,9 +223,9 @@ export class DatabaseClient {
   private onSpawn?: DatabaseClientOptions['onSpawn']
   private logger?: DatabaseClientOptions['logger']
 
-  /** 当前库的 schema 档案（tables / 目标版本 / 迁移步骤） */
+  /** 当前库的 schema 档案（插件库直接给档案，内置库按 schemaId 取） */
   private get schema() {
-    return resolveDbSchema(this.opts.schemaId)
+    return this.opts.schema ?? resolveDbSchema(this.opts.schemaId)
   }
 
   // ── 只读状态 ────────────────────────────────────────────────────────────────
@@ -269,7 +282,7 @@ export class DatabaseClient {
     mkdirSync(dirname(dbPath), { recursive: true })
     mkdirSync(backupDir, { recursive: true })
 
-    const child = spawn(nodePath, [workerScriptPath, '--db', dbPath], {
+    const child = spawn(nodePath, [workerScriptPath, '--db', dbPath, ...this.opts.workerArgs], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
       shell: false,

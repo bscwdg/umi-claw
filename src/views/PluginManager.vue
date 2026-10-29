@@ -10,13 +10,16 @@
       <button class="btn" :disabled="loading" @click="reload">刷新</button>
     </header>
 
-    <p v-if="loadError" class="error-banner">{{ loadError }}</p>
+    <p v-if="loadError" class="error-banner">
+      {{ loadError }}
+      <button class="btn btn-sm" @click="reload">重试</button>
+    </p>
 
-    <div v-if="!plugins.length && !loading" class="empty">
+    <div v-if="!plugins.length && !loading && !loadError" class="empty">
       没有已登记的插件。把插件放到 <code>resources/plugins/&lt;id&gt;/</code> 并重新构建即可。
     </div>
 
-    <section v-for="p in plugins" :key="p.id" class="plugin-card">
+    <section v-for="p in list" :key="p.id" class="plugin-card">
       <div class="card-head">
         <div class="titles">
           <strong>{{ p.name }}</strong>
@@ -38,12 +41,14 @@
         <button
           class="btn"
           :class="{ 'btn-danger': p.enabled, 'btn-primary': !p.enabled }"
-          :disabled="busy === p.id || p.state === 'failed'"
+          :disabled="busy === p.id || enableBlocked(p)"
           @click="toggle(p)"
         >
-          {{ busy === p.id ? '处理中…' : p.enabled ? '停用' : '启用' }}
+          {{ busy === p.id ? '处理中…' : buttonText(p) }}
         </button>
-        <router-link v-if="firstRoute(p)" class="btn btn-ghost" :to="firstRoute(p)">打开页面</router-link>
+        <router-link v-if="openableRoute(p)" class="btn btn-ghost" :to="openableRoute(p)">
+          打开页面
+        </router-link>
       </div>
     </section>
 
@@ -51,7 +56,7 @@
       v-model:visible="confirmVisible"
       icon="⚠️"
       title="停用插件"
-      confirm-text="停用并离开"
+      confirm-text="停用"
       cancel-text="取消"
       danger
       @confirm="confirmDisable"
@@ -64,17 +69,17 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 import type { PluginStatus } from '../../electron/main/kernel/lifecycle'
 import {
-  disablingBreaksCurrentPage,
   errorSummary,
+  normalizeListPayload,
+  openableRoute,
+  shouldConfirmDisable,
   sortForDisplay,
   stateLabel
 } from '@/renderer/pluginAdmin'
 
-const router = useRouter()
 const plugins = ref<PluginStatus[]>([])
 const loading = ref(false)
 const loadError = ref('')
@@ -83,14 +88,25 @@ const confirmVisible = ref(false)
 const confirmMessage = ref('')
 let pendingDisable: PluginStatus | null = null
 let unsubscribe: (() => void) | null = null
+let disposed = false
 
 const list = computed(() => sortForDisplay(plugins.value))
+
+/** 清单级失败不能靠「启用」复活，按钮直接禁用；运行时失败允许重试 */
+function enableBlocked(status: PluginStatus): boolean {
+  return !status.enabled && status.error?.stage === 'manifest'
+}
+
+function buttonText(status: PluginStatus): string {
+  if (status.enabled) return '停用'
+  return status.state === 'failed' ? '重试启用' : '启用'
+}
 
 async function reload(): Promise<void> {
   loading.value = true
   loadError.value = ''
   try {
-    plugins.value = await window.api.plugins.list()
+    plugins.value = normalizeListPayload(await window.api.plugins.list())
   } catch (e) {
     loadError.value = `读取插件列表失败：${e instanceof Error ? e.message : String(e)}`
   } finally {
@@ -98,14 +114,10 @@ async function reload(): Promise<void> {
   }
 }
 
-function firstRoute(status: PluginStatus): string {
-  return status.contributes?.routes?.[0] ?? ''
-}
-
 async function applyToggle(status: PluginStatus, enabled: boolean): Promise<void> {
   busy.value = status.id
   try {
-    plugins.value = await window.api.plugins.setEnabled(status.id, enabled)
+    plugins.value = normalizeListPayload(await window.api.plugins.setEnabled(status.id, enabled))
   } catch (e) {
     loadError.value = `操作失败：${e instanceof Error ? e.message : String(e)}`
   } finally {
@@ -118,15 +130,12 @@ async function toggle(status: PluginStatus): Promise<void> {
     await applyToggle(status, true)
     return
   }
-
-  // 停用会拆掉脚下的页面 → 先问一句（D5）
-  if (disablingBreaksCurrentPage(status, router.currentRoute.value.path)) {
+  if (shouldConfirmDisable(status)) {
     pendingDisable = status
-    confirmMessage.value = `「${status.name}」正在被当前页面使用，停用后这个页面会关闭。确定停用？`
+    confirmMessage.value = `「${status.name}」正在运行，停用后它的页面会被关闭。确定停用？`
     confirmVisible.value = true
     return
   }
-
   await applyToggle(status, false)
 }
 
@@ -136,9 +145,6 @@ async function confirmDisable(): Promise<void> {
   pendingDisable = null
   if (!target) return
   await applyToggle(target, false)
-  if (router.currentRoute.value.path !== '/plugins') {
-    void router.replace('/dashboard').catch(() => undefined)
-  }
 }
 
 function cancelDisable(): void {
@@ -147,14 +153,26 @@ function cancelDisable(): void {
 }
 
 onMounted(async () => {
-  await reload()
+  // 先订阅再拉列表：否则首屏加载期间的 plugin:changed 会丢（审查 P2-9）
   unsubscribe = window.api.plugins.onChanged((next: PluginStatus[]) => {
-    plugins.value = next
+    try {
+      plugins.value = normalizeListPayload(next)
+    } catch {
+      // 推送不合法就保持现状，等用户手动刷新
+    }
   })
+  if (disposed) {
+    unsubscribe?.()
+    unsubscribe = null
+    return
+  }
+  await reload()
 })
 
 onUnmounted(() => {
+  disposed = true
   unsubscribe?.()
+  unsubscribe = null
 })
 </script>
 

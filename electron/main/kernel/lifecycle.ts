@@ -273,21 +273,26 @@ export class PluginHost {
     }
 
     // ── 服务注入：只注入 manifest.inject 里声明的，未声明的不存在 ──────────────
-    const configService =
-      this.opts.services?.config?.(id) ??
-      this.inMemoryConfig(active)
     const services: PluginServiceBag = {}
     for (const name of record.manifest.inject) {
       if (name === 'host') continue
-      const value = this.resolveService(name, id)
-      if (value === undefined) {
+      const value = this.resolveService(name, record)
+      if (value === undefined || value === null) {
         const err = new Error(`插件 ${id} 声明的服务不可用：${name}`)
         ;(err as { code?: string }).code = 'SERVICE_NOT_INJECTED'
         throw err
       }
       ;(services as Record<string, unknown>)[name] = value
     }
-    if (record.manifest.inject.includes('config')) services.config = configService
+    // ctx.config 只是 services.config 的别名，必须同样受 inject 门禁（审查 R2）：
+    // 没声明 config 的插件不该能读写持久化配置。
+    // 停用即释放：插件库的 worker 子进程不该在插件停用后继续占着
+    if (services.db?.dispose) {
+      const db = services.db
+      active.disposers.push({ label: 'db service dispose', run: () => db.dispose!() })
+    }
+
+    const injectedConfig = services.config
 
     return {
       id,
@@ -303,7 +308,7 @@ export class PluginHost {
         error: (m, meta) => this.log(record, `[error] ${m}${meta === undefined ? '' : ' ' + safeJson(meta)}`)
       },
       jobs,
-      config: configService,
+      config: injectedConfig,
       services,
       registerIpc: (method, handler) => {
         assertOpen(active, id)
@@ -323,42 +328,32 @@ export class PluginHost {
         })
       },
       onDispose: (fn) => {
+        // 迟到的 onDispose 不能静默接受（审查 P2-10）：closed 后直接执行一次并记日志，
+        // 否则插件以为清理登记成功、实际永远不会被调用。
+        if (active.closed) {
+          void Promise.resolve()
+            .then(fn)
+            .catch((e) => this.log(record, `迟到 onDispose 执行失败：${errorMessage(e)}`))
+          this.log(record, '激活已结束，onDispose 立即执行（不再入栈）')
+          return
+        }
         active.disposers.push({ label: `onDispose(${id})`, run: fn })
       }
     }
   }
 
   /** 服务解析：每次激活现取（工厂返回单例则由宿主保证） */
-  private resolveService(name: string, pluginId: string): unknown {
-    const factories = this.opts.services
-    if (!factories) return undefined
-    switch (name) {
-      case 'config':
-        return factories.config?.(pluginId)
-      case 'db':
-        return factories.db?.(pluginId)
-      case 'openclaw':
-        return factories.openclaw?.()
-      case 'notifications':
-        return factories.notifications?.()
-      case 'voice':
-        return factories.voice?.()
-      default:
-        return undefined
-    }
-  }
-
-  /** 未提供 config 服务工厂时的兜底：内存态（测试用） */
-  private inMemoryConfig(active: ActivePlugin) {
-    return {
-      get: <T,>(key: string, fallback?: T) =>
-        (key in active.config ? (active.config[key] as T) : fallback) as T | undefined,
-      set: (key: string, value: unknown) => {
-        active.config[key] = value
-        void this.opts.persistConfig?.(active.pluginId ?? '', { ...active.config })
-      },
-      all: () => ({ ...active.config })
-    }
+  /**
+   * 服务解析：**只查 factories 的同名键**（审查 R12）。
+   *
+   * 早期版本是手写 switch，与 availableServices 是两份真相：新增服务漏改 switch 会
+   * 「注册期通过、激活期报不可用」。现在注册期校验与实际解析走同一份键集合。
+   */
+  private resolveService(name: string, record: PluginRecord): unknown {
+    const factories = this.opts.services as Record<string, ((info: { id: string; dir: string }) => unknown) | undefined> | undefined
+    const factory = factories?.[name]
+    if (typeof factory !== 'function') return undefined
+    return factory({ id: record.manifest.id, dir: record.dir })
   }
 
   private trackTimer(

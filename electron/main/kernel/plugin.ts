@@ -43,8 +43,11 @@ export interface PluginContext {
   readonly host: PluginHostInfo
   readonly logger: PluginLogger
   readonly jobs: PluginJobs
-  /** 插件配置（等价于 `services.config`，保留是为了早期插件不炸） */
-  readonly config: PluginConfigApi
+  /**
+   * 插件配置：**只有 manifest.inject 含 `config` 时才存在**（别名，等价于 services.config）。
+   * 没声明就是 undefined——插件不能靠别名绕过注入门禁。
+   */
+  readonly config?: PluginConfigApi
   /** 按 manifest.inject 注入的宿主能力：没声明的不存在 */
   readonly services: PluginServiceBag
   /** 注册 `plugin:<id>:<method>` 通道（停用自动 removeHandler） */

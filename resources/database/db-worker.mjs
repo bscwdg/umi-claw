@@ -19,7 +19,7 @@
 // 是 electron/main/database/schema.ts（Commit 00 交付物，单一真相来源）。
 
 import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync, existsSync, statSync } from 'node:fs'
+import { mkdirSync, existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 // ── 参数 ──────────────────────────────────────────────────────────────────────
@@ -140,7 +140,31 @@ const TABLES = {
   }
 }
 
-const TABLE_NAMES = Object.keys(TABLES)
+const BUILTIN_TABLES = TABLES
+
+/**
+ * 插件库的表白名单（Phase 1 WP2）。
+ *
+ * `--tables <json>` 由宿主的插件 DB 服务生成：内容是从插件 `migrations/*.sql`
+ * 解析出来的 `{ 表名: { pk, columns, createdAt, updatedAt } }`。
+ * **给了就必须整体替换**内置 8 表——否则插件库会意外拥有 work 域的表（跨插件越权）。
+ */
+const tablesArg = argValue('--tables')
+let ACTIVE_TABLES = BUILTIN_TABLES
+if (tablesArg) {
+  try {
+    const parsed = JSON.parse(readFileSync(tablesArg, 'utf-8'))
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('内容必须是对象')
+    }
+    ACTIVE_TABLES = parsed
+  } catch (e) {
+    process.stderr.write(`[db-worker] --tables 解析失败：${e.message}\n`)
+    process.exit(1)
+  }
+}
+
+const TABLE_NAMES = Object.keys(ACTIVE_TABLES)
 
 /** 标识符一律双引号包裹 + 白名单校验（双保险） */
 function qi(name) {
@@ -157,7 +181,7 @@ function table(nameOrParams, fallback) {
       : nameOrParams && typeof nameOrParams.table === 'string'
         ? nameOrParams.table
         : fallback
-  const t = TABLES[name]
+  const t = ACTIVE_TABLES[name]
   if (!t) throw new WorkerError('VALIDATION_ERROR', `未知表: ${name}`)
   return t
 }
@@ -247,7 +271,7 @@ function clampLimit(v, def, max) {
 
 // ── 通用 CRUD ─────────────────────────────────────────────────────────────────
 function opList(name, params) {
-  const t = TABLES[name]
+  const t = ACTIVE_TABLES[name]
   const p = requireParams(params)
   const where = []
   const args = []
@@ -311,7 +335,7 @@ function opList(name, params) {
 }
 
 function opCount(name, params) {
-  const t = TABLES[name]
+  const t = ACTIVE_TABLES[name]
   const p = requireParams(params)
   const where = []
   const args = []
@@ -330,7 +354,7 @@ function opCount(name, params) {
 }
 
 function opGet(name, params) {
-  const t = TABLES[name]
+  const t = ACTIVE_TABLES[name]
   const p = requireParams(params)
   const keys = normalizeKeys(t, p)
   const sql =
@@ -346,7 +370,7 @@ function opGet(name, params) {
 }
 
 function opCreate(name, params) {
-  const t = TABLES[name]
+  const t = ACTIVE_TABLES[name]
   const p = requireParams(params)
   const data = pickColumns(t, p.data)
   if (!Object.keys(data).length) throw new WorkerError('VALIDATION_ERROR', 'data 不能为空')
@@ -370,7 +394,7 @@ function opCreate(name, params) {
 }
 
 function opUpsert(name, params) {
-  const t = TABLES[name]
+  const t = ACTIVE_TABLES[name]
   const p = requireParams(params)
   const data = pickColumns(t, p.data)
   if (!Object.keys(data).length) throw new WorkerError('VALIDATION_ERROR', 'data 不能为空')
@@ -400,7 +424,7 @@ function opUpsert(name, params) {
 }
 
 function opUpdate(name, params) {
-  const t = TABLES[name]
+  const t = ACTIVE_TABLES[name]
   const p = requireParams(params)
   const keys = normalizeKeys(t, p)
   const data = pickColumns(t, p.data)
@@ -420,7 +444,7 @@ function opUpdate(name, params) {
 }
 
 function opDelete(name, params) {
-  const t = TABLES[name]
+  const t = ACTIVE_TABLES[name]
   const p = requireParams(params)
   const keys = normalizeKeys(t, p)
   const sql =

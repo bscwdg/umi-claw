@@ -25,6 +25,13 @@ export interface PluginNavGroup {
 
 export interface PluginUiHost {
   id: string
+  /**
+   * 调自己的 main 侧能力（等价 `plugin:<id>:<method>`）。
+   *
+   * 插件 renderer **不该直接用 `window.api`**：那是宿主 API（能停网关、开终端、改配置）。
+   * 这里给的是按插件 id 收窄的入口，宿主保证未启用/未注册时通道不存在。
+   */
+  invoke<T = unknown>(method: string, payload?: unknown): Promise<T>
   addSlot(name: string, component: Component): void
 }
 
@@ -86,6 +93,8 @@ export class PluginUiRegistry {
       if (mod.setup) {
         const cleanup = mod.setup({
           id,
+          invoke: <T,>(method: string, payload?: unknown) =>
+            window.api.plugins.invoke<T>(id, method, payload),
           addSlot: (name, component) => {
             this.addSlot(id, name, component)
             this.recompute()

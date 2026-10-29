@@ -3,7 +3,7 @@
 // PLAN-4.0 §4.3：启停状态持久化在宿主设置中。Phase 0 用一个独立 JSON 文件
 // （<dataDir>/plugins-state.json），等宿主 configService 稳定后再并进去。
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 export interface PluginStateStore {
@@ -31,7 +31,10 @@ export function createJsonStateStore(filePath: string): PluginStateStore {
     },
     async save(state) {
       mkdirSync(dirname(filePath), { recursive: true })
-      writeFileSync(filePath, JSON.stringify(state, null, 2), 'utf-8')
+      // 原子写：先写临时文件再 rename，避免半截文件把启停状态洗掉
+      const tmp = `${filePath}.tmp-${process.pid}`
+      writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf-8')
+      renameSync(tmp, filePath)
     }
   }
 }
