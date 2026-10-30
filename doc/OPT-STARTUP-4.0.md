@@ -75,74 +75,62 @@
 
 ---
 
-## 3. 优化计划（按性价比排序）
+## 3. 优化计划（2026-10-30 决策后定稿）
 
-> **2026-10-30 修订**：用户确认渠道（含微信/企微）都在用 → 原「精简插件」项作废，改为「调查重复构建 + 降低重启频率」。
+### 决策记录
 
-### 批次 1（P0：用户可感知最快，先做）
+| 决策 | 结论 |
+|---|---|
+| 精简渠道插件（原 1.1） | **作废**：企微/微信等渠道都在用 |
+| 配置 patch 后台化/去抖（原 2.3） | **不做**：保持现状（保存即同步 patch） |
+| 「启动中/已就绪」状态（原 1.2） | **做** |
+| 启动埋点 | **做**（与就绪态同批，用来量化「慢多少」） |
+| 只读调查（重复构建/缓存） | 待确认（不改配置，只统计） |
 
-#### 1.1 「打开网页」等就绪 + 启动进度（原 1.2，提前）
-- 验证：记录动作前后 `plugin-captures` 的文件数/体积；重启网关记录 spawn→首个 `/health` 200 秒数；确认飞书收发仍正常。
-- 回滚：`openclaw plugins enable <id>`（uninstall 的情况需重装）。
+### 批次 1（现在做：就绪态 + 埋点，不改启动行为）
 
-#### 1.2 「打开网页」等就绪 + 启动进度
+**1.1 启动埋点（先量化）**
+- `clawManager._spawnGateway()` 记录 `spawnAt`；
+- 首次 `GET /health` 200 记录 `readyAt`，计算 `spawn → ready` 秒数；
+- 写入日志面板一行：`[gateway] 启动耗时 623.4s（spawn→health）`，同时落 `data/logs/`；
+- 可选采样：启动前后 `plugin-captures` 文件数/体积（诊断用，默认只记一次）。
+- 文件：`electron/main/clawManager.ts`。
+- 风险：极低（只加日志与计时）。
 
+**1.2 「启动中 / 已就绪」状态**
 - 主进程：
-  - `clawManager` 加 `waitReady(timeoutMs)`：轮询 `http://127.0.0.1:<port>/health`（300–500ms/次），返回是否就绪与耗时。
-  - 新增 IPC `claw:waitReady`；`getStatus` 增加 `starting`（已 spawn 未就绪）/`startingSince`/`ready`。
-  - `claw:openWeb` 保持打开浏览器，但前端改为「先等就绪再打开」。
+  - `clawManager.waitReady(timeoutMs)`：轮询 `http://127.0.0.1:<port>/health`（300–500ms/次），返回 `{ ready, elapsedMs }`；
+  - 新增 IPC `claw:waitReady`；
+  - `getStatus()` 增加 `starting`（进程在但未就绪）/`startingSince`/`ready`；
+  - 重启失败/超时：透出明确错误（启动超时、exit 78、端口占用），前端可显示并引导看日志。
 - 渲染端：
-  - `stores/claw.ts`：新增 `starting`、`startedAt` 语义修正（spawn 与 ready 分开）。
-  - `src/views/Dashboard.vue`：未就绪时「打开网页」禁用 + 显示「启动中 12s…」；就绪后提示「已就绪」。
-  - `src/views/voice/VoicePage.vue:792` 的「重启网关」：重启后自动等待并在就绪时 toast。
-- 预期：真实耗时不变，但**不再出现空白页/误判卡死**；用户能等到明确的「已就绪」。
-- 验证：`ui.accept` 增加「未就绪禁用打开网页」的静态/组件断言；手动重启观察文案与按钮状态；全量验收回归。
+  - `src/stores/claw.ts`：新增 `starting`、`ready`、`startedAt/readyAt`；`start()/restart()` 成功后进入「启动中」，轮询/waitReady 后才置「已就绪」；
+  - `src/views/Dashboard.vue`：「打开网页」在未就绪时禁用，按钮旁显示「启动中 32s…」；就绪后恢复并提示「已就绪」；
+  - `src/views/voice/VoicePage.vue:792`「重启网关」：重启后自动等待，就绪 toast「网关已就绪（耗时 xx s）」。
+- 失败路径：若 `waitReady` 超时或进程退出，显示「启动失败/超时」+「查看日志」入口，不无限转圈。
+- 风险：中低（跨 3 个渲染文件 + 1 个主进程文件；需覆盖失败分支）。
 
-### 批次 2（P1：调查可压缩项 + 减少重复成本）
+**1.3 验收**
+- 双 typecheck、`npm run build`；
+- `plugin.accept`（61/61）与全量 19 套（368/368）回归；
+- `ui.accept` 增加断言：未就绪时「打开网页」禁用、就绪后可用、文案含「启动中」；
+- 人工：重启网关，记录「点击 → 界面显示已就绪」秒数，与日志里的 `spawn→health` 对齐；确认失败场景（如端口被占用）能给出错误而不是一直转圈。
 
-#### 2.0 调查「重复构建 / 缓存复用」（新增，收益未知但可能最大）
+### 批次 2（待确认：只读调查，不改配置）
 
-- 现象：同一次 boot 里 feishu 插件被构建两次（50k 文件 / 147 MB）；`native/admission-*` 还有 15 个目录各含 node_modules。
-- 调查项：
-  1. 记录每次启动后 `captures/` 下各 build 目录数量与耗时（对比两次重启是否稳定翻倍）；
-  2. 查 openclaw 是否有插件构建缓存/复用开关（`openclaw plugins build --help`、`plugins list --verbose`、`cache/` 目录只有 control-ui-assets，疑似未复用）；
-  3. 检查应用侧 `syncOpenClawConfig` 的 CLI patch 是否也触发同一套构建（对比「保存配置前后 captures 目录数」）。
-- 产出：要么找到开关/复用方式（收益大），要么确认是 openclaw 上游行为 → 记录限制，转向「少重启」。
+- 统计多次启动的 `captures/` 目录数/文件数/耗时，确认「飞书被构建两次」是否稳定复现；
+- `openclaw plugins list --verbose` / `plugins inspect`、`plugins build --help`：找是否有可复用缓存或开关；
+- 对比「保存配置前后」captures 目录数，确认 CLI patch 是否也触发同一套构建；
+- 产出：若能压缩则给实施方案与预期收益；若不能则记录为 openclaw 上游限制，转向「减少重启次数 / 语音热更」。
 
-#### 2.1 captures 清理加时间预算
+### 批次 3（可选：低风险清理）
 
-- 现状：`_cleanStalePluginCaptures`（`clawManager.ts:284`）串行 `fs.rm` 所有 stale 副本，Windows 上数万小文件可能分钟级，**阻塞 spawn**。
-- 改法：最多阻塞 3–5s；剩余目录转后台继续删（不 await），日志区分「已清理 / 后台清理中」。
-- 预期：最坏情况不再因为清理把启动拖成分钟级；目录仍会收敛。
-- 风险：后台清理与启动并发 → 需保持「先 rename 再 rm」的既有安全口径（已实现）。
+- `_cleanStalePluginCaptures`（`clawManager.ts:284`）加 3–5s 阻塞上限，剩余转后台删除（保持「先 rename 再 rm」口径）。
 
-#### 2.2 启动埋点（让「慢」可量化）
+### 批次 4（长期，暂不做）
 
-- `_spawnGateway` 记 `spawnAt`；`waitReady` 首次 200 记 `readyAt`；
-- 写日志面板与 `data/logs/`：`[gateway] 启动耗时 12.3s（spawn→health）`；
-- 附带记录 `plugin-captures` 文件数与体积（启动前后各一次，采样即可）。
-- 预期：下次再慢能直接定位是「spawn 前准备」还是「openclaw boot」。
-
-#### 2.3 配置 patch 后台化（替代原「去抖」）
-
-> 原计划是「去抖 + 串行队列」，但单次保存的收益很小；真正影响体感的是**保存时阻塞**。
-- 改法：`saveConfig` 仍然先落 `app.json`（不丢配置），patch 改为「串行队列 + 后台执行 + 状态提示」；`clawManager.start()` 前 `flushPendingPatch()` 兜底，保证重启前一定落盘。
-- 风险：保存后立刻看 `openclaw.json` 可能还没更新（几百 ms 到数秒）；重启前 flush 可消除「读到旧配置」风险；进程崩溃窗口内 app.json 已落盘，下次启动会补。
-- 备选：若你更在意「保存即同步」，可保留同步 patch，只做串行队列（不合并），收益有限。
-
-### 批次 3（P2：openclaw 侧继续压缩 boot）
-
-- `skills.entries` 40 条：用应用已具备的技能开关（`configManager` 的 skills patch 通道）关掉不用的，观察 boot 变化（每关一批测一次）。
-- `mcp.servers`（obsidian）：进程树显示 20:49:26 才起，可能已懒加载；确认是否可再延后/按需。
-- `openclaw plugins list/inspect`：确认三渠道 + providers 之外没有多余插件参与 boot。
-- 注意：`openclaw plugins reload` 只热重载插件，不是配置热重载；`tts` 块仍需重启生效。
-
-### 批次 4（P3：架构级，长期）
-
-- **语音热更**：把 bridge 的 `UMI_VOICE_SPEAKER`/Key 从「网关进程 env」改为「`volc-tts.mjs` 每次合成时读设置文件」；这样至少「改音色/Key」不必重启网关（`tts.auto`/`provider` 变更仍需）。
-- **两阶段启动**：先轻量 spawn 再后台 patch/校验；或评估 `openclaw gateway install`（systemd/schtasks 常驻）避免每次冷启动（与当前便携式分发冲突，需单独评估）。
-
----
+- 语音热更：bridge 脚本每次读设置文件，改音色/Key 不必重启网关；
+- 两阶段启动/常驻服务评估。
 
 ## 4. 验收与度量（DoD）
 
@@ -164,14 +152,12 @@
 
 ---
 
-## 5. 需要拍板的点
+## 5. 决策记录（已拍板）
 
-1. ~~企微/微信插件是否在用~~ → **已确认在用，插件保留**（原「精简插件」作废）。
-2. 「配置 patch」选哪种：**后台化 + 重启前 flush**（推荐，保存不卡）还是保持同步（保存即写，但每次要等）？
-3. 是否同意加「启动中/已就绪」状态（会改 Dashboard 与语音页文案）？
-4. 是否允许先做**只读调查**（批次 2.0：统计 captures、试 `plugins build --help` 等，不改配置），再决定是否值得动 openclaw 侧？
-
----
+1. 渠道（企微/微信/飞书等）**都在用** → 不精简、不卸载插件。
+2. 配置 patch **保持现状**（保存即同步），不做后台化/去抖。
+3. 「启动中/已就绪」状态 + 启动埋点 **做**（批次 1）。
+4. 重复构建/缓存复用：先做只读调查（批次 2），有数据后再决定是否动 openclaw 侧。
 
 ## 6. 复现/度量命令（只读）
 
