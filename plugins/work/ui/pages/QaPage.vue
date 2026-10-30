@@ -44,6 +44,7 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { workApi } from '../../../shared/hostBridge'
 import { useRoute } from 'vue-router'
 import { useWorkStream } from '@/composables/useWorkStream'
 import { useToast } from '@/composables/useToast'
@@ -85,7 +86,7 @@ async function ask(): Promise<void> {
   })
 
   try {
-    const res = await window.api.work.qa.ask({ question: q })
+    const res = await workApi().qa.ask({ question: q })
     stream.bind(res.runId)
     const done = await stream.done
     const last = messages.value[messages.value.length - 1]
@@ -110,7 +111,7 @@ function watchDelta(cb: (d: string) => void): () => void {
 
 async function stop(): Promise<void> {
   try {
-    if (stream.runId.value) await window.api.work.qa.abortAsk(stream.runId.value)
+    if (stream.runId.value) await workApi().qa.abortAsk(stream.runId.value)
   } catch (e: any) {
     showToast(`停止失败：${e.message}`, 'error')
   }
@@ -119,7 +120,7 @@ async function stop(): Promise<void> {
 // 路由切走：在途流先中止（避免白烧 token），再移除 IPC 监听器
 onBeforeUnmount(() => {
   const rid = stream.runId.value
-  if (rid) void window.api.work.qa.abortAsk(rid)
+  if (rid) void workApi().qa.abortAsk(rid)
   stream.unsubscribe()
 })
 

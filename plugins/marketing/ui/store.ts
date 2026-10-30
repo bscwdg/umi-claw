@@ -14,6 +14,7 @@
 //     其余动作失败时置 error **并抛出**：调用方需要知道是否真的成功（例如关弹窗）
 
 import { defineStore } from 'pinia'
+import { marketingApi } from '../../shared/hostBridge'
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
 
 export interface Project {
@@ -660,7 +661,7 @@ export const useMarketingStore = defineStore('marketing', () => {
   async function load(): Promise<void> {
     loading.value = true
     error.value = null
-    const api = window.api.marketing
+    const api = marketingApi()
     try {
       const [listRes, currentRes] = (await Promise.all([
         api.project.list(),
@@ -697,7 +698,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     loading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.project.create({
+      const res = (await marketingApi().project.create({
         name: input.name,
         industry: input.industry ?? null,
         description: input.description ?? null
@@ -724,7 +725,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     loading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.project.update(id, patch)) as IpcEnvelope<any>
+      const res = (await marketingApi().project.update(id, patch)) as IpcEnvelope<any>
       if (!res?.ok) throw envelopeToError(res, '保存商家信息失败')
       const project = toProject(res.data)
       upsertLocal(project)
@@ -742,7 +743,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     loading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.project.delete(id)) as IpcEnvelope<any>
+      const res = (await marketingApi().project.delete(id)) as IpcEnvelope<any>
       if (!res?.ok) throw envelopeToError(res, '删除商家失败')
       projects.value = projects.value.filter((p) => p.id !== id)
       // 删的是当前商家 → 清空（服务端也已清 current_project_id，这里同步本地状态）
@@ -760,7 +761,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     loading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.context.setCurrentProject(id)) as IpcEnvelope<{
+      const res = (await marketingApi().context.setCurrentProject(id)) as IpcEnvelope<{
         currentProjectId?: string | null
       }>
       if (!res?.ok) throw envelopeToError(res, '切换商家失败')
@@ -808,7 +809,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     businessLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.business.get(projectId)) as IpcEnvelope<any>
+      const res = (await marketingApi().business.get(projectId)) as IpcEnvelope<any>
       if (!res?.ok) {
         business.value = null
         error.value = envelopeToError(res, '加载商家资料失败').message
@@ -831,7 +832,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     businessLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.business.upsert(
+      const res = (await marketingApi().business.upsert(
         projectId,
         pickBusinessPayload(data)
       )) as IpcEnvelope<any>
@@ -862,7 +863,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     watchlistLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.watchlist.list(projectId)) as IpcEnvelope<any[]>
+      const res = (await marketingApi().watchlist.list(projectId)) as IpcEnvelope<any[]>
       if (!res?.ok) {
         watchlist.value = []
         error.value = envelopeToError(res, '加载关注词失败').message
@@ -887,7 +888,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     watchlistLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.watchlist.add(
+      const res = (await marketingApi().watchlist.add(
         projectId,
         keyword,
         type ?? null
@@ -907,7 +908,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     watchlistLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.watchlist.remove(projectId, keyword)) as IpcEnvelope<any>
+      const res = (await marketingApi().watchlist.remove(projectId, keyword)) as IpcEnvelope<any>
       if (!res?.ok) throw envelopeToError(res, '删除关注词失败')
       const word = String(res.data?.keyword ?? keyword)
       watchlist.value = watchlist.value.filter((w) => w.keyword !== word)
@@ -924,7 +925,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     watchlistLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.watchlist.setEnabled(
+      const res = (await marketingApi().watchlist.setEnabled(
         projectId,
         keyword,
         enabled
@@ -971,7 +972,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     knowledgeLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.knowledge.list(projectId)) as IpcEnvelope<any[]>
+      const res = (await marketingApi().knowledge.list(projectId)) as IpcEnvelope<any[]>
       if (!res?.ok) {
         knowledge.value = []
         error.value = envelopeToError(res, '加载知识库失败').message
@@ -1000,7 +1001,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     knowledgeLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.knowledge.import(projectId, input)) as IpcEnvelope<any>
+      const res = (await marketingApi().knowledge.import(projectId, input)) as IpcEnvelope<any>
       if (!res?.ok) throw envelopeToError(res, '导入资料失败')
       const item = toKnowledgeItem(res.data)
       const rest = knowledge.value.filter((k) => k.id !== item.id)
@@ -1021,7 +1022,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     knowledgeLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.knowledge.delete(projectId, id)) as IpcEnvelope<any>
+      const res = (await marketingApi().knowledge.delete(projectId, id)) as IpcEnvelope<any>
       if (!res?.ok) throw envelopeToError(res, '删除资料失败')
       knowledge.value = knowledge.value.filter((item) => item.id !== id)
     } catch (e) {
@@ -1037,7 +1038,7 @@ export const useMarketingStore = defineStore('marketing', () => {
    * 返回命中片段，不把结果缓存进列表（搜到的不一定是当前 project 的全部资料）。
    */
   async function searchKnowledge(projectId: string, query: string, limit?: number): Promise<KnowledgeHit[]> {
-    const res = (await window.api.marketing.knowledge.search(projectId, query, limit)) as IpcEnvelope<any[]>
+    const res = (await marketingApi().knowledge.search(projectId, query, limit)) as IpcEnvelope<any[]>
     if (!res?.ok) throw envelopeToError(res, '检索资料失败')
     const rows = Array.isArray(res.data) ? res.data : []
     return rows.map((row) => ({
@@ -1082,12 +1083,12 @@ export const useMarketingStore = defineStore('marketing', () => {
   function ensureAdvisorSubscription(): void {
     if (advisorOff.length) return
     advisorOff = [
-      window.api.marketing.advisor.onChunk((payload) => {
+      marketingApi().advisor.onChunk((payload) => {
         if (!advisorStreamId || payload?.streamId !== advisorStreamId) return
         const last = advisorLastAssistant()
         if (last?.streaming) last.content += String(payload?.delta ?? '')
       }),
-      window.api.marketing.advisor.onDone((payload) => {
+      marketingApi().advisor.onDone((payload) => {
         if (!advisorStreamId || payload?.streamId !== advisorStreamId) return
         const last = advisorLastAssistant()
         if (last) {
@@ -1099,7 +1100,7 @@ export const useMarketingStore = defineStore('marketing', () => {
         advisorStreaming.value = false
         advisorStreamId = null
       }),
-      window.api.marketing.advisor.onError((payload) => {
+      marketingApi().advisor.onError((payload) => {
         if (!advisorStreamId || payload?.streamId !== advisorStreamId) return
         const code = String(payload?.error?.code ?? 'DB_ERROR')
         const last = advisorLastAssistant()
@@ -1152,7 +1153,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     })
     advisorStreaming.value = true
     try {
-      const res = (await window.api.marketing.advisor.ask({
+      const res = (await marketingApi().advisor.ask({
         projectId,
         question: q,
         platform: platform ?? null
@@ -1188,7 +1189,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     }
     if (!id) return
     try {
-      await window.api.marketing.advisor.abort(id)
+      await marketingApi().advisor.abort(id)
     } catch {
       /* 中止失败不弹错：上游最迟会因空闲超时结束，不值得打扰老板 */
     }
@@ -1206,7 +1207,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     advisorCandidatesLoading.value = true
     advisorError.value = null
     try {
-      const res = (await window.api.marketing.advisor.watchCandidates(
+      const res = (await marketingApi().advisor.watchCandidates(
         projectId,
         count ? { count } : undefined
       )) as IpcEnvelope<any>
@@ -1266,7 +1267,7 @@ export const useMarketingStore = defineStore('marketing', () => {
   /** 订阅识别增量（只订一次；事件名是 07 定的全局通道，按当前 taskId 过滤） */
   function ensureScanSubscription(): void {
     if (scanOff.length) return
-    const stream = window.api.marketing.advisor // chunk/done/error 是 07 事件名的全局订阅入口
+    const stream = marketingApi().advisor // chunk/done/error 是 07 事件名的全局订阅入口
     scanOff = [
       stream.onChunk((payload) => {
         if (!scanStreamId || payload?.streamId !== scanStreamId) return
@@ -1329,7 +1330,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     scanPriceSuspected.value = false
     scanStreaming.value = true
     try {
-      const res = (await window.api.marketing.knowledge.recognize(projectId, {
+      const res = (await marketingApi().knowledge.recognize(projectId, {
         filePath: input.filePath,
         type: input.type
       })) as IpcEnvelope<any>
@@ -1338,7 +1339,7 @@ export const useMarketingStore = defineStore('marketing', () => {
         const staleTaskId = String(res?.ok && res.data?.taskId ? res.data.taskId : '') || null
         if (res?.ok && staleTaskId) {
           try {
-            await window.api.marketing.knowledge.abortRecognize(staleTaskId, projectId)
+            await marketingApi().knowledge.abortRecognize(staleTaskId, projectId)
           } catch {
             /* 尽力中止 */
           }
@@ -1388,7 +1389,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     scanAborted.value = true
     if (!id && !pid) return
     try {
-      await window.api.marketing.knowledge.abortRecognize(id, pid)
+      await marketingApi().knowledge.abortRecognize(id, pid)
     } catch {
       /* 中止失败不弹错：上游最迟会因空闲超时结束，不值得打扰老板 */
     }
@@ -1408,7 +1409,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     scanPriceSuspected.value = false
     scanResetError()
     if (id || pid) {
-      void window.api.marketing.knowledge.abortRecognize(id, pid).catch(() => {
+      void marketingApi().knowledge.abortRecognize(id, pid).catch(() => {
         /* 尽力中止；失败不扰民 */
       })
     }
@@ -1436,7 +1437,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     knowledgeLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.knowledge.commitRecognized(projectId, {
+      const res = (await marketingApi().knowledge.commitRecognized(projectId, {
         filePath: input.filePath,
         type: input.type,
         title: input.title ?? null,
@@ -1477,7 +1478,7 @@ export const useMarketingStore = defineStore('marketing', () => {
 
   function ensureContentSubscription(): void {
     if (contentOff.length) return
-    const stream = window.api.marketing.advisor // 07 全局事件名的订阅入口（同 05b）
+    const stream = marketingApi().advisor // 07 全局事件名的订阅入口（同 05b）
     const slotOf = (streamId: string | undefined | null) => {
       const id = String(streamId ?? '')
       if (!contentStreamIds.has(id)) return null
@@ -1526,7 +1527,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     contentsLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.content.list(projectId, options ?? {})) as IpcEnvelope<any[]>
+      const res = (await marketingApi().content.list(projectId, options ?? {})) as IpcEnvelope<any[]>
       if (!res?.ok) {
         contents.value = []
         error.value = envelopeToError(res, '加载内容列表失败').message
@@ -1547,7 +1548,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     contentsLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.content.create(projectId, data)) as IpcEnvelope<any>
+      const res = (await marketingApi().content.create(projectId, data)) as IpcEnvelope<any>
       if (!res?.ok) throw envelopeToError(res, '新建草稿失败')
       const item = toContentItem(res.data)
       contents.value = sortContents([item, ...contents.value.filter((c) => c.id !== item.id)])
@@ -1569,7 +1570,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     contentsLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.content.update(projectId, id, patch)) as IpcEnvelope<any>
+      const res = (await marketingApi().content.update(projectId, id, patch)) as IpcEnvelope<any>
       if (!res?.ok) throw envelopeToError(res, '保存失败')
       const item = toContentItem(res.data)
       contents.value = sortContents(
@@ -1591,7 +1592,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     contentsLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.content.delete(projectId, id)) as IpcEnvelope<any>
+      const res = (await marketingApi().content.delete(projectId, id)) as IpcEnvelope<any>
       if (!res?.ok) throw envelopeToError(res, '删除内容失败')
       contents.value = contents.value.filter((c) => c.id !== id)
     } catch (e) {
@@ -1603,7 +1604,7 @@ export const useMarketingStore = defineStore('marketing', () => {
   }
 
   async function loadContentVersions(projectId: string, id: string): Promise<ContentVersion[]> {
-    const res = (await window.api.marketing.content.versions(projectId, id)) as IpcEnvelope<any[]>
+    const res = (await marketingApi().content.versions(projectId, id)) as IpcEnvelope<any[]>
     if (!res?.ok) throw envelopeToError(res, '加载版本失败')
     const rows = Array.isArray(res.data) ? res.data : []
     return rows.map(toContentVersion)
@@ -1619,7 +1620,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     contentsLoading.value = true
     error.value = null
     try {
-      const res = (await window.api.marketing.content.saveVersion(projectId, id, input, options)) as IpcEnvelope<any>
+      const res = (await marketingApi().content.saveVersion(projectId, id, input, options)) as IpcEnvelope<any>
       if (!res?.ok) throw envelopeToError(res, '保存版本失败')
       const item = toContentItem(res.data?.content)
       contents.value = sortContents(contents.value.map((c) => (c.id === item.id ? item : c)))
@@ -1645,12 +1646,12 @@ export const useMarketingStore = defineStore('marketing', () => {
     contentCurrentProjectId = projectId
     ensureContentSubscription()
     try {
-      const res = (await window.api.marketing.content.generate(projectId, spec)) as IpcEnvelope<any>
+      const res = (await marketingApi().content.generate(projectId, spec)) as IpcEnvelope<any>
       if (seq !== contentCallSeq) {
         const staleId = String(res?.ok && res.data?.genTaskId ? res.data.genTaskId : '') || null
         if (res?.ok && staleId) {
           try {
-            await window.api.marketing.content.abortGenerate(staleId, projectId)
+            await marketingApi().content.abortGenerate(staleId, projectId)
           } catch {
             /* 尽力中止 */
           }
@@ -1712,7 +1713,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     }
     if (!id && !pid) return
     try {
-      await window.api.marketing.content.abortGenerate(id, pid)
+      await marketingApi().content.abortGenerate(id, pid)
     } catch {
       /* 中止失败不弹错：上游最迟空闲超时结束 */
     }
@@ -1753,7 +1754,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     hotLoading.value = true
     hotError.value = null
     try {
-      const res = (await window.api.marketing.hot.list(projectId, options ?? {})) as IpcEnvelope<HotRadarView>
+      const res = (await marketingApi().hot.list(projectId, options ?? {})) as IpcEnvelope<HotRadarView>
       if (!res?.ok) throw envelopeToError(res, '热点雷达加载失败')
       const view = toHotRadar(res.data)
       if (seq !== hotCallSeq) return view // 迟到响应：只返回给当时的调用方，不覆盖当前视图
@@ -1775,7 +1776,7 @@ export const useMarketingStore = defineStore('marketing', () => {
     hotRefreshing.value = true
     hotError.value = null
     try {
-      const res = (await window.api.marketing.hot.refresh()) as IpcEnvelope<HotCollectStatus>
+      const res = (await marketingApi().hot.refresh()) as IpcEnvelope<HotCollectStatus>
       if (!res?.ok) throw envelopeToError(res, '热点刷新失败')
       return res.data as HotCollectStatus
     } catch (e) {
@@ -1821,7 +1822,7 @@ export const useMarketingStore = defineStore('marketing', () => {
           if (seq !== hotScoreSeq) return
           let res: IpcEnvelope<HotScoreBatchResult>
           try {
-            res = (await window.api.marketing.hot.score(
+            res = (await marketingApi().hot.score(
               projectId,
               platform,
               force ? { force: true } : {}

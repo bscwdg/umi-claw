@@ -119,6 +119,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { workApi } from '../../../shared/hostBridge'
 
 interface SnapshotView {
   scope: string
@@ -168,7 +169,7 @@ async function load(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
-    view.value = await window.api.work.context.snapshot({ scope: 'latest' })
+    view.value = await workApi().context.snapshot({ scope: 'latest' })
   } catch (e: any) {
     error.value = `读取上下文快照失败：${e.message}`
   } finally {

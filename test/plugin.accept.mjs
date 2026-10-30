@@ -493,14 +493,30 @@ await r.check('P24', '管理页逻辑：路由归属判定 / 停用拦截 / 状�
 })
 
 // ── P32 渲染端能力边界（静态扫描）+ 管理页新增纯函数 ────────────────────────
-await r.check('P32', '渲染端边界：插件 renderer 不得直接用 window.api / electron / require', async () => {
+await r.check('P32', '渲染端边界：插件 UI 只准经 hostBridge 触达 window.api', async () => {
   const dir = join(repoRoot, 'plugins')
+
+  /** 递归收集插件源文件（renderer.ts + ui/** + main.ts，排除 node_modules） */
+  const collect = (pluginDir, out = []) => {
+    for (const entry of readdirSync(pluginDir, { withFileTypes: true })) {
+      const full = join(pluginDir, entry.name)
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules') continue
+        collect(full, out)
+      } else if (/\.(ts|vue)$/.test(entry.name)) {
+        out.push(full)
+      }
+    }
+    return out
+  }
+
   const files = readdirSync(dir, { withFileTypes: true })
     .filter((d) => d.isDirectory())
-    .map((d) => join(dir, d.name, 'renderer.ts'))
-    .filter((f) => existsSync(f))
-  assert(files.length > 0, '至少有一个插件 renderer')
+    .flatMap((d) => collect(join(dir, d.name)))
+  assert(files.length > 0, '至少有一个插件源文件')
 
+  const bridge = join(dir, 'shared', 'hostBridge.ts')
+  let bridgeSeen = false
   for (const file of files) {
     // 去掉注释再扫：注释里解释「不要用 window.api」不该被当成违规
     const src = readFileSync(file, 'utf-8')
@@ -509,7 +525,6 @@ await r.check('P32', '渲染端边界：插件 renderer 不得直接用 window.a
       .map((line) => line.replace(/\/\/.*$/, ''))
       .join('\n')
     const name = file.replace(repoRoot, '')
-    assert(!/window\.api/.test(src), `${name} 不应使用 window.api（宿主 API）`)
     assert(!/window\.electron/.test(src), `${name} 不应使用 window.electron`)
     assert(!/from ['"]electron['"]/.test(src), `${name} 不应 import electron`)
     assert(!/require\(/.test(src), `${name} 不应 require`)
@@ -517,8 +532,15 @@ await r.check('P32', '渲染端边界：插件 renderer 不得直接用 window.a
     if (/\.invoke\(/.test(src)) {
       assert(/host\.invoke/.test(src), `${name} 调 IPC 时必须走 host.invoke`)
     }
+    // window.api 只允许出现在桥接层（Phase 4 把 80+ 处直连收敛到一处，后续换 host.invoke 只改一个文件）
+    if (/window\.api/.test(src)) {
+      assertEq(file, bridge, `${name} 直接用了 window.api——请改走 plugins/shared/hostBridge`)
+      bridgeSeen = true
+    }
   }
-  return `${files.length} 个插件 renderer 都守边界`
+  const bridgeSrc = readFileSync(bridge, 'utf-8')
+  assert(/window/.test(bridgeSrc) && /\bapi\b/.test(bridgeSrc), 'hostBridge 应封装 window.api（否则说明这一层没生效）')
+  return `${files.length} 个插件源文件都守边界，window.api 只在 hostBridge`
 })
 
 await r.check('P33', '管理页新增逻辑：确认条件 / 可打开路由 / 列表载荷防御 / 路径规整', async () => {

@@ -240,6 +240,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { shellApi } from '../../../shared/hostBridge'
 import { useRouter } from 'vue-router'
 import { useMarketingStore, type HotTopic } from '../store'
 import { useProjectSwitcher } from '../composables/useProjectSwitcher'
@@ -407,7 +408,7 @@ function openUrl(url: string): void {
     return
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return
-  window.api.shell.openExternal(parsed.toString()).catch(() => undefined)
+  shellApi().openExternal(parsed.toString()).catch(() => undefined)
 }
 
 /** 一键只带草稿（硬规则 10）：预填选题与发布平台，不自动生成、不自动发布 */

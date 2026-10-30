@@ -163,6 +163,10 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { workApi } from '../../../shared/hostBridge'
+
+/** 桥接层是 any 结构，这里只声明本页用到的字段（状态机在 openclawSummaryManager 里） */
+type SummaryRunToday = () => Promise<{ date: string; proposed: number; empty: boolean }>
 import { useRouter } from 'vue-router'
 import type { TodayView } from '../../../../electron/main/work/todayManager'
 import type { SummaryStatus } from '../../../../electron/main/work/openclawSummaryManager'
@@ -237,7 +241,7 @@ const reportLabel = computed(() => {
 
 async function refresh(): Promise<void> {
   try {
-    view.value = await window.api.work.today.get()
+    view.value = await workApi().today.get()
   } catch (e: any) {
     showToast(`加载失败：${e.message}`, 'error')
   }
@@ -246,7 +250,7 @@ async function refresh(): Promise<void> {
 /** 读完整度（失败不影响今日页主流程） */
 async function loadCompleteness(): Promise<void> {
   try {
-    const v = await window.api.work.profile.get()
+    const v = await workApi().profile.get()
     completeness.value = v?.completeness ?? null
   } catch {
     completeness.value = null
@@ -296,7 +300,7 @@ async function onQuick(): Promise<void> {
   try {
     // B3：router.route 永不失败。这里调它仅为 best-effort 提取标题/日期，
     // 任何 target（含 qa/工具/报告）都只落待办，绝不导航。
-    const r = await window.api.work.router.route(text)
+    const r = await workApi().router.route(text)
     const title = r.target === 'todo_extract' ? r.draft?.title ?? r.text : r.text
     let dueDate = dueTime.value.slice(0, 10) // datetime-local 值的日期段
     if (r.target === 'todo_extract' && r.draft?.dueDate) {
@@ -310,7 +314,7 @@ async function onQuick(): Promise<void> {
         dueDate = r.draft.dueDate
       }
     }
-    await window.api.work.todos.create({ title, dueDate, dueAt, remindAt })
+    await workApi().todos.create({ title, dueDate, dueAt, remindAt })
     quickText.value = ''
     pushChecked.value = false
     remindTime.value = ''
@@ -378,7 +382,7 @@ function formatRemind(ts: number): string {
 /** 读外发就绪状态（失败按未就绪处理；只影响外发，不影响本机提醒） */
 async function loadPushReady(): Promise<void> {
   try {
-    const cfg = await window.api.work.reminder.getPushConfig()
+    const cfg = await workApi().reminder.getPushConfig()
     const configured = !!(cfg.channel && cfg.target)
     channelReady.value = configured && cfg.enabled
     pushBlocked.value = !configured ? 'unconfigured' : cfg.enabled ? 'none' : 'disabled'
@@ -390,7 +394,7 @@ async function loadPushReady(): Promise<void> {
 
 async function onComplete(id: string): Promise<void> {
   try {
-    await window.api.work.todos.complete(id)
+    await workApi().todos.complete(id)
     showToast('已完成，已自动记入', 'success')
     await refresh()
   } catch (e: any) {
@@ -400,24 +404,24 @@ async function onComplete(id: string): Promise<void> {
 
 async function confirmTodos(): Promise<void> {
   const ids = view.value.candidateTodos.map((t) => t.id)
-  await window.api.work.todos.confirmBatch(ids)
+  await workApi().todos.confirmBatch(ids)
   showToast('AI 待办已记入', 'success')
   await refresh()
 }
 async function ignoreTodos(): Promise<void> {
   const ids = view.value.candidateTodos.map((t) => t.id)
-  await window.api.work.todos.ignoreBatch(ids)
+  await workApi().todos.ignoreBatch(ids)
   await refresh()
 }
 async function confirmRecords(): Promise<void> {
   const ids = view.value.candidateRecords.map((r) => r.id)
-  await window.api.work.records.confirmBatch(ids)
+  await workApi().records.confirmBatch(ids)
   showToast('候选已记入', 'success')
   await refresh()
 }
 async function ignoreRecords(): Promise<void> {
   const ids = view.value.candidateRecords.map((r) => r.id)
-  await window.api.work.records.ignoreBatch(ids)
+  await workApi().records.ignoreBatch(ids)
   await refresh()
 }
 
@@ -444,7 +448,7 @@ const summaryHint = computed(() => {
 
 async function loadSummaryStatus(): Promise<void> {
   try {
-    summaryStatus.value = await window.api.work.openclawSummary.getStatus()
+    summaryStatus.value = await workApi().openclawSummary.getStatus()
   } catch {
     // 状态读不到不影响页面主功能：不显示那一行就是了
     summaryStatus.value = null
@@ -455,9 +459,9 @@ async function loadSummaryStatus(): Promise<void> {
 async function onSummarize(): Promise<void> {
   if (summarizing.value) return
   summarizing.value = true
-  let result: Awaited<ReturnType<typeof window.api.work.openclawSummary.runToday>> | null = null
+  let result: Awaited<ReturnType<SummaryRunToday>> | null = null
   try {
-    result = await window.api.work.openclawSummary.runToday()
+    result = await workApi().openclawSummary.runToday()
   } catch (e: any) {
     showToast(`总结失败：${String(e?.message ?? e)}`, 'error')
   } finally {

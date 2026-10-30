@@ -162,6 +162,7 @@
 // 与主进程的分工：本组件**只做展示与交互**；上下文组装、事实护栏、模型调用全在主进程
 // （advisorManager）。错误一律按 `error.code` 分支（§五），不解析 message。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { marketingApi } from '../../../shared/hostBridge'
 import { useRouter } from 'vue-router'
 import { ADVISOR_PLATFORMS, ERROR_TEXT, WATCHLIST_MAX, WATCHLIST_PRESET_TYPES, useMarketingStore } from '../store'
 import { useProjectSwitcher } from '../composables/useProjectSwitcher'
@@ -247,7 +248,7 @@ function onClear(): void {
 async function onStartGateway(): Promise<void> {
   startingGateway.value = true
   try {
-    const res = (await window.api.marketing.gateway.ensureReady()) as
+    const res = (await marketingApi().gateway.ensureReady()) as
       | { ok: true; data: { ready: boolean; port: number } }
       | { ok: false; error: { code: string; message: string } }
     if (res?.ok && res.data?.ready) {

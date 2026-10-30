@@ -85,6 +85,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { workApi } from '../../../shared/hostBridge'
 import { useRoute } from 'vue-router'
 import { useWorkStream } from '@/composables/useWorkStream'
 import { useToast } from '@/composables/useToast'
@@ -133,7 +134,7 @@ async function run(): Promise<void> {
   resultText.value = ''
   productiveDone.value = false
   try {
-    const res = await window.api.work.tools.run({ toolId: current.value.id, text: sourceText.value })
+    const res = await workApi().tools.run({ toolId: current.value.id, text: sourceText.value })
     stream.bind(res.runId)
     const done = await stream.done
     if (current.value?.kind === 'processing') {
@@ -150,13 +151,13 @@ async function run(): Promise<void> {
 }
 
 async function abort(): Promise<void> {
-  if (stream.runId.value) await window.api.work.tools.abortRun(stream.runId.value)
+  if (stream.runId.value) await workApi().tools.abortRun(stream.runId.value)
 }
 
 // 路由切走：在途流先中止（避免白烧 token），再移除 IPC 监听器
 onBeforeUnmount(() => {
   const rid = stream.runId.value
-  if (rid) void window.api.work.tools.abortRun(rid)
+  if (rid) void workApi().tools.abortRun(rid)
   stream.unsubscribe()
 })
 
@@ -170,7 +171,7 @@ async function copy(): Promise<void> {
 }
 
 onMounted(async () => {
-  tools.value = await window.api.work.tools.list()
+  tools.value = await workApi().tools.list()
   // 从今日页/路由预填
   const preTarget = typeof route.query.target === 'string' ? route.query.target : null
   const preText = typeof route.query.text === 'string' ? route.query.text : ''

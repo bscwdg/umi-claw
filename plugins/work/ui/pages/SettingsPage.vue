@@ -315,6 +315,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
+import { workApi, clawApi } from '../../../shared/hostBridge'
 import { useRouter, useRoute } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import {
@@ -436,7 +437,7 @@ const decisionLabel = computed(() => {
 
 async function loadProfile(): Promise<void> {
   try {
-    const view = await window.api.work.profile.get()
+    const view = await workApi().profile.get()
     const p = view.profile
     form.value = {
       callName: p.call_name ?? '', position: p.position ?? '', department: p.department ?? '',
@@ -452,7 +453,7 @@ async function loadProfile(): Promise<void> {
 
 async function saveProfile(): Promise<void> {
   try {
-    const view = await window.api.work.profile.update({
+    const view = await workApi().profile.update({
       callName: form.value.callName || null,
       position: form.value.position || null,
       department: form.value.department || null,
@@ -473,17 +474,17 @@ async function saveProfile(): Promise<void> {
 async function loadReminders(): Promise<void> {
   try {
     reminders.value = {
-      morning: await window.api.work.reminder.isEnabled('morning'),
-      report: await window.api.work.reminder.isEnabled('report')
+      morning: await workApi().reminder.isEnabled('morning'),
+      report: await workApi().reminder.isEnabled('report')
     }
-    const times = await window.api.work.reminder.getTimes()
+    const times = await workApi().reminder.getTimes()
     reminderTimes.value = {
       morning: fmtTime(times.morning),
       report: fmtTime(times.report)
     }
-    push.value = await window.api.work.reminder.getPushConfig()
-    pushChannelOptions.value = await window.api.work.reminder.availablePushChannels()
-    pushStatus.value = await window.api.work.reminder.getPushStatus()
+    push.value = await workApi().reminder.getPushConfig()
+    pushChannelOptions.value = await workApi().reminder.availablePushChannels()
+    pushStatus.value = await workApi().reminder.getPushStatus()
     await loadPushTargets()
   } catch (e: any) {
     showToast(`读取提醒设置失败：${e.message}`, 'error')
@@ -494,10 +495,10 @@ async function loadReminders(): Promise<void> {
 async function loadPushTargets(): Promise<void> {
   try {
     primaryTargetOptions.value = push.value.channel
-      ? await window.api.work.reminder.availablePushTargets(push.value.channel)
+      ? await workApi().reminder.availablePushTargets(push.value.channel)
       : []
     fallbackTargetOptions.value = push.value.fallbackChannel
-      ? await window.api.work.reminder.availablePushTargets(push.value.fallbackChannel)
+      ? await workApi().reminder.availablePushTargets(push.value.fallbackChannel)
       : []
   } catch {
     primaryTargetOptions.value = []
@@ -508,7 +509,7 @@ async function loadPushTargets(): Promise<void> {
 /** 开关外发；未配好通道/目标时后端会拒，前端回滚到真实状态 */
 async function togglePush(enabled: boolean): Promise<void> {
   try {
-    push.value = await window.api.work.reminder.setPushConfig({ enabled })
+    push.value = await workApi().reminder.setPushConfig({ enabled })
     showToast(enabled ? '外发已开启' : '外发已关闭', 'success')
   } catch (e: any) {
     showToast(`设置失败：${e.message}`, 'error')
@@ -530,7 +531,7 @@ async function savePushChannel(value: string): Promise<void> {
     } = { channel }
     if (channel !== null && channel === push.value.fallbackChannel) patch.fallbackChannel = null
     if (changed) patch.target = null
-    push.value = await window.api.work.reminder.setPushConfig(patch)
+    push.value = await workApi().reminder.setPushConfig(patch)
     await loadPushTargets()
     showToast('首选渠道已保存', 'success')
   } catch (e: any) {
@@ -545,7 +546,7 @@ async function saveFallbackChannel(value: string): Promise<void> {
     : null
   const changed = channel !== push.value.fallbackChannel
   try {
-    push.value = await window.api.work.reminder.setPushConfig({
+    push.value = await workApi().reminder.setPushConfig({
       fallbackChannel: channel,
       ...(changed ? { fallbackTarget: null } : {})
     })
@@ -561,7 +562,7 @@ async function saveFallbackChannel(value: string): Promise<void> {
 async function savePushTarget(value: string): Promise<void> {
   const target = value || null
   try {
-    push.value = await window.api.work.reminder.setPushConfig({ target })
+    push.value = await workApi().reminder.setPushConfig({ target })
     testResult.value = null
     showToast('已保存发给谁', 'success')
   } catch (e: any) {
@@ -573,7 +574,7 @@ async function savePushTarget(value: string): Promise<void> {
 async function saveFallbackTarget(value: string): Promise<void> {
   const target = value || null
   try {
-    push.value = await window.api.work.reminder.setPushConfig({ fallbackTarget: target })
+    push.value = await workApi().reminder.setPushConfig({ fallbackTarget: target })
     showToast('次选目标已保存', 'success')
   } catch (e: any) {
     showToast(`设置失败：${e.message}`, 'error')
@@ -589,15 +590,15 @@ async function runTestPush(): Promise<void> {
   try {
     // 前置：推送由 OpenClaw 投递，未运行就没法测（北 2026-09-24）
     // 直接问主进程（不依赖 pinia store：本页在组件级验收里需能独立挂载）
-    const clawStatus = await window.api.claw.status()
+    const clawStatus = await clawApi().status()
     if (!clawStatus?.running) {
       needStartClaw.value = true
       showToast('请先启动 OpenClaw 再测试推送', 'error')
       return
     }
-    const res = await window.api.work.reminder.testPush()
+    const res = await workApi().reminder.testPush()
     testResult.value = { ok: res.ok, message: res.message }
-    pushStatus.value = await window.api.work.reminder.getPushStatus()
+    pushStatus.value = await workApi().reminder.getPushStatus()
     showToast(res.ok ? '测试推送成功' : `测试推送失败：${res.message}`, res.ok ? 'success' : 'error')
   } catch (e: any) {
     testResult.value = { ok: false, message: e.message }
@@ -622,7 +623,7 @@ async function saveReminderTime(id: 'morning' | 'report', value: string): Promis
   const hour = Number(m[1])
   const minute = Number(m[2])
   try {
-    await window.api.work.reminder.setTime(id, hour, minute)
+    await workApi().reminder.setTime(id, hour, minute)
     reminderTimes.value[id] = fmtTime({ hour, minute })
     showToast('提醒时间已保存', 'success')
   } catch (e: any) {
@@ -633,7 +634,7 @@ async function saveReminderTime(id: 'morning' | 'report', value: string): Promis
 
 async function toggleReminder(id: 'morning' | 'report', enabled: boolean): Promise<void> {
   try {
-    await window.api.work.reminder.setEnabled(id, enabled)
+    await workApi().reminder.setEnabled(id, enabled)
     reminders.value[id] = enabled
     showToast(enabled ? '提醒已开启' : '提醒已关闭', 'success')
   } catch (e: any) {
@@ -644,7 +645,7 @@ async function toggleReminder(id: 'morning' | 'report', enabled: boolean): Promi
 
 async function loadOpenClawSummary(): Promise<void> {
   try {
-    autoSummary.value = await window.api.work.openclawSummary.isAutoEnabled()
+    autoSummary.value = await workApi().openclawSummary.isAutoEnabled()
   } catch (e: any) {
     showToast(`读取 OpenClaw 总结设置失败：${e.message}`, 'error')
   }
@@ -656,7 +657,7 @@ async function toggleAutoSummary(enabled: boolean): Promise<void> {
   if (summaryTogglePending) return
   summaryTogglePending = true
   try {
-    const result = await window.api.work.openclawSummary.setAutoEnabled(enabled)
+    const result = await workApi().openclawSummary.setAutoEnabled(enabled)
     autoSummary.value = result.enabled
     showToast(result.enabled ? '自动总结已开启' : '自动总结已关闭', 'success')
   } catch (e: any) {
@@ -664,7 +665,7 @@ async function toggleAutoSummary(enabled: boolean): Promise<void> {
     // 落库结果未知：尽力回读真实状态；回读也失败时保持原值——
     // 绝不臆造成「关」，否则实际开着自动总结、用户却以为关不掉
     try {
-      autoSummary.value = await window.api.work.openclawSummary.isAutoEnabled()
+      autoSummary.value = await workApi().openclawSummary.isAutoEnabled()
     } catch {
       /* 保持原值（finally 会把复选框对齐到它） */
     }
@@ -678,7 +679,7 @@ async function toggleAutoSummary(enabled: boolean): Promise<void> {
 
 async function loadWizard(): Promise<void> {
   try {
-    const s = await window.api.work.wizard.status()
+    const s = await workApi().wizard.status()
     wizard.value = { oldDb: s.oldDb, oldDbDecision: s.oldDbDecision }
     syncConsent(s.consent, s.consentAt ?? null)
   } catch (e: any) {
@@ -688,7 +689,7 @@ async function loadWizard(): Promise<void> {
 
 async function reenter(decision: 'keep' | 'fresh' | 'later'): Promise<void> {
   try {
-    await window.api.work.wizard.decide(decision)
+    await workApi().wizard.decide(decision)
     await loadWizard()
     showToast('已更新旧库选择', 'success')
   } catch (e: any) {

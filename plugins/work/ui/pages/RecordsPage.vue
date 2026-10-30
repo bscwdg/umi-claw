@@ -156,6 +156,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { workApi } from '../../../shared/hostBridge'
 import type { RecordRow } from '../../../../electron/main/work/recordManager'
 import type { MatterRow } from '../../../../electron/main/work/matterManager'
 import { useToast } from '@/composables/useToast'
@@ -238,15 +239,15 @@ function matterColor(id: string | null): string {
 }
 
 async function loadMatters(): Promise<void> {
-  matters.value = await window.api.work.matters.list({ status: 'all' })
+  matters.value = await workApi().matters.list({ status: 'all' })
 }
 
 async function load(): Promise<void> {
   try {
     if (statusFilter.value === 'filtered') {
-      rows.value = await window.api.work.records.listFiltered({ limit: 500 })
+      rows.value = await workApi().records.listFiltered({ limit: 500 })
     } else {
-      rows.value = await window.api.work.records.list({
+      rows.value = await workApi().records.list({
         status: statusFilter.value,
         query: query.value.trim() || undefined,
         matterId: matterFilter.value || undefined,
@@ -292,10 +293,10 @@ async function save(): Promise<void> {
       matterId: form.value.matterId || null
     }
     if (editingId.value) {
-      await window.api.work.records.update(editingId.value, payload)
+      await workApi().records.update(editingId.value, payload)
       showToast('已保存', 'success')
     } else {
-      await window.api.work.records.create(payload)
+      await workApi().records.create(payload)
       showToast('已记下', 'success')
     }
     editing.value = false
@@ -307,16 +308,16 @@ async function save(): Promise<void> {
 }
 
 async function confirmRec(id: string): Promise<void> {
-  await window.api.work.records.confirm(id)
+  await workApi().records.confirm(id)
   showToast('已记入事实层', 'success')
   await load()
 }
 async function ignoreRec(id: string): Promise<void> {
-  await window.api.work.records.ignore(id)
+  await workApi().records.ignore(id)
   await load()
 }
 async function restoreRec(id: string): Promise<void> {
-  await window.api.work.records.restore(id)
+  await workApi().records.restore(id)
   showToast('已恢复为候选', 'success')
   await load()
 }
@@ -342,12 +343,12 @@ async function doRemove(): Promise<void> {
   if (!id) return
   try {
     if (kind === 'matter') {
-      await window.api.work.matters.delete(id)
+      await workApi().matters.delete(id)
       showToast('事项已删除（挂在其下的记录保留，仅解绑）', 'success')
       await loadMatters()
       await load()
     } else {
-      await window.api.work.records.delete(id)
+      await workApi().records.delete(id)
       showToast('已删除', 'success')
       await load()
     }
@@ -360,7 +361,7 @@ async function addMatter(): Promise<void> {
   const name = newMatterName.value.trim()
   if (!name) return
   try {
-    await window.api.work.matters.create({ name, color: newMatterColor.value })
+    await workApi().matters.create({ name, color: newMatterColor.value })
     newMatterName.value = ''
     await loadMatters()
     showToast('已添加事项', 'success')
@@ -372,14 +373,14 @@ async function renameMatter(id: string, name: string): Promise<void> {
   const v = name.trim()
   if (!v) return
   try {
-    await window.api.work.matters.update(id, { name: v })
+    await workApi().matters.update(id, { name: v })
     await loadMatters()
   } catch (e: any) {
     showToast(`重命名失败：${e.message}`, 'error')
   }
 }
 async function toggleMatterStatus(m: MatterRow): Promise<void> {
-  await window.api.work.matters.update(m.id, { status: m.status === 'active' ? 'archived' : 'active' })
+  await workApi().matters.update(m.id, { status: m.status === 'active' ? 'archived' : 'active' })
   await loadMatters()
 }
 

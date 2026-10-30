@@ -115,6 +115,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { workApi } from '../../../shared/hostBridge'
 import { useRoute, useRouter } from 'vue-router'
 import type { ReportDetail, ReportSummary } from '../../../../electron/main/work/reportManager'
 import { useWorkStream } from '@/composables/useWorkStream'
@@ -166,13 +167,13 @@ function todayStr(): string {
 }
 
 async function loadList(): Promise<void> {
-  list.value = await window.api.work.reports.list({ limit: 200 })
+  list.value = await workApi().reports.list({ limit: 200 })
 }
 
 async function select(id: string): Promise<void> {
   currentId.value = id
   try {
-    detail.value = await window.api.work.reports.get(id)
+    detail.value = await workApi().reports.get(id)
     selectedVersion.value = detail.value.versions[detail.value.versions.length - 1]?.version ?? null
     editingContent.value = detail.value.content ?? ''
   } catch (e: any) {
@@ -187,7 +188,7 @@ function setFilter(id: 'all' | 'daily' | 'weekly'): void {
 async function generate(type: 'daily' | 'weekly'): Promise<void> {
   try {
     generatingType.value = type
-    const res = await window.api.work.reports.generate({ type })
+    const res = await workApi().reports.generate({ type })
     stream.bind(res.runId)
     currentId.value = res.reportId
     await stream.done
@@ -202,19 +203,19 @@ async function generate(type: 'daily' | 'weekly'): Promise<void> {
 }
 
 async function abort(): Promise<void> {
-  if (stream.runId.value) await window.api.work.reports.abortGenerate(stream.runId.value)
+  if (stream.runId.value) await workApi().reports.abortGenerate(stream.runId.value)
 }
 
 // 路由切走：在途流先中止（避免白烧 token），再移除 IPC 监听器
 onBeforeUnmount(() => {
   const rid = stream.runId.value
-  if (rid) void window.api.work.reports.abortGenerate(rid)
+  if (rid) void workApi().reports.abortGenerate(rid)
   stream.unsubscribe()
 })
 
 async function saveDraft(): Promise<void> {
   if (!detail.value) return
-  await window.api.work.reports.saveDraft(detail.value.id, editingContent.value)
+  await workApi().reports.saveDraft(detail.value.id, editingContent.value)
   showToast('草稿已保存', 'success')
   await select(detail.value.id)
 }
@@ -225,8 +226,8 @@ async function confirm(): Promise<void> {
   // 先保存编辑内容，再确认。
   // confirm 的 IPC 契约是 (id: string)（主进程走 requireId），传整个 detail 对象
   // 会被判成非字符串 → VALIDATION_ERROR，「确认报告」按钮点了必炸
-  await window.api.work.reports.saveDraft(reportId, editingContent.value)
-  await window.api.work.reports.confirm(reportId)
+  await workApi().reports.saveDraft(reportId, editingContent.value)
+  await workApi().reports.confirm(reportId)
   await loadList()
   await select(reportId)
   showToast('报告已确认', 'success')
@@ -235,7 +236,7 @@ async function confirm(): Promise<void> {
 async function regenerate(): Promise<void> {
   if (!detail.value) return
   generatingType.value = detail.value.type === 'weekly' ? 'weekly' : 'daily'
-  const res = await window.api.work.reports.regenerate(detail.value.id)
+  const res = await workApi().reports.regenerate(detail.value.id)
   stream.bind(res.runId)
   await stream.done
   await loadList()

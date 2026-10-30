@@ -111,6 +111,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { workApi } from '../../../shared/hostBridge'
 import { useToast } from '@/composables/useToast'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 
@@ -166,14 +167,14 @@ function preview(c: string): string {
 }
 
 async function load(): Promise<void> {
-  rows.value = await window.api.work.knowledge.list({ limit: 500 })
+  rows.value = await workApi().knowledge.list({ limit: 500 })
 }
 
 async function onSearch(): Promise<void> {
   const q = query.value.trim()
   if (!q) return
   try {
-    searchHits.value = await window.api.work.knowledge.search(q, 50)
+    searchHits.value = await workApi().knowledge.search(q, 50)
     searching.value = true
   } catch (e: any) {
     showToast(`检索失败：${e.message}`, 'error')
@@ -212,7 +213,7 @@ function startImport(): void {
 
 async function view(id: string): Promise<void> {
   try {
-    const r = await window.api.work.knowledge.get(id)
+    const r = await workApi().knowledge.get(id)
     editMode.value = 'view'
     editId.value = r.id
     editTitle.value = r.title
@@ -225,7 +226,7 @@ async function view(id: string): Promise<void> {
 
 async function pickFile(): Promise<void> {
   try {
-    const r = await window.api.work.knowledge.pickFile(importType.value)
+    const r = await workApi().knowledge.pickFile(importType.value)
     if (r.canceled) return
     pickedPath.value = r.filePath
     pickedName.value = r.name
@@ -238,19 +239,19 @@ async function saveEditor(): Promise<void> {
   try {
     if (editMode.value === 'import') {
       if (importType.value === 'url') {
-        await window.api.work.knowledge.import({ type: 'url', url: importUrl.value, title: importTitle.value || null })
+        await workApi().knowledge.import({ type: 'url', url: importUrl.value, title: importTitle.value || null })
       } else {
         if (!pickedPath.value) { showToast('请先选择文件', 'warning'); return }
-        await window.api.work.knowledge.import({
+        await workApi().knowledge.import({
           type: importType.value, filePath: pickedPath.value, title: importTitle.value || null
         })
       }
       showToast('导入成功', 'success')
     } else if (editId.value) {
-      await window.api.work.knowledge.update(editId.value, { title: editTitle.value, content: editContent.value })
+      await workApi().knowledge.update(editId.value, { title: editTitle.value, content: editContent.value })
       showToast('已保存', 'success')
     } else {
-      await window.api.work.knowledge.create({
+      await workApi().knowledge.create({
         type: editMode.value === 'faq' ? 'faq' : 'text',
         title: editTitle.value || null,
         content: editContent.value
@@ -283,7 +284,7 @@ async function doRemove(): Promise<void> {
   pendingId.value = null
   if (!id) return
   try {
-    await window.api.work.knowledge.delete(id)
+    await workApi().knowledge.delete(id)
     showToast('已删除', 'success')
     await load()
   } catch (e: any) {

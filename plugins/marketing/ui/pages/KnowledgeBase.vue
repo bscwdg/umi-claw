@@ -232,6 +232,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { marketingApi } from '../../../shared/hostBridge'
 import { useMarketingStore, MarketingIpcError, PRICE_SUSPECT_REGEX } from '../store'
 import { useProjectSwitcher } from '../composables/useProjectSwitcher'
 import { useToast } from '@/composables/useToast'
@@ -345,7 +346,7 @@ const gatewayStarting = ref(false)
 async function ensureGatewayReady() {
   gatewayStarting.value = true
   try {
-    const res = await window.api.marketing.gateway.ensureReady()
+    const res = await marketingApi().gateway.ensureReady()
     if (res?.ok && res.data?.ready) {
       showToast('OpenClaw 已就绪，请重新点「用 AI 识别」', 'success')
       marketing.clearScan()
@@ -454,7 +455,7 @@ async function reload() {
 
 async function pickFile() {
   try {
-    const res = await window.api.marketing.knowledge.pickFile()
+    const res = await marketingApi().knowledge.pickFile()
     const p = res?.data?.filePath
     if (p) filePath.value = p
   } catch (e) {

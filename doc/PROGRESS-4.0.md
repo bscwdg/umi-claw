@@ -316,3 +316,18 @@
 5. `multimodalConfigured` 注入（扫描件栅格化前预检）；
 6. 删除 Dashboard 兼容垫片（改插件插槽后）；
 7. 升级/回滚与卸载归档 runbook（含插件库合并策略）。
+
+### 2026-10-30 · Phase 4 第二批：插件 UI 的宿主 API 收敛
+
+- 新增 `plugins/shared/hostBridge.ts`：插件 UI 访问宿主 API 的**唯一**入口（`workApi/marketingApi/clawApi/shellApi/pluginsApi`）。
+- 12 个插件 UI 文件（8 个 work 页面 + 4 个 marketing 文件）里的 80+ 处 `window.api.*` 全部改为桥接函数调用；
+  现在整个 `plugins/**` 里 `window.api` 只出现在 hostBridge 一个文件。
+- **P32 扫描范围扩大**：从「每个插件的 renderer.ts」扩到 `plugins/**/*.{ts,vue}`（含 ui/ 与 main.ts），
+  并断言「只有 hostBridge 可以出现 window.api」——之前 121 处直连的假绿被堵上。
+- 顺带修了 `TodayPage` 的 `typeof workApi().xxx` 类型写法（类型位置不能用调用表达式），改为显式结果类型。
+
+**验收**：plugin **53/53**（P32 强化后仍全绿）；全量 19 套 **360/360**；ui.accept 17/17；双 typecheck 0 错；build 通过。
+
+**为什么先做这一层而不是直接改 host.invoke**：`host.invoke` 的签名只对「插件自有通道」通用，
+而这 80+ 处里既有域通道也有宿主能力（claw.status / shell.openExternal）。先把入口收敛成一处，
+下一步只需改 hostBridge 一个文件就能整体切到更窄的接口（并按需补 `host.shell` 这类显式能力）。
