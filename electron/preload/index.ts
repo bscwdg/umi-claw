@@ -20,8 +20,6 @@ import type {
   VoiceUsageDay,
   VoiceOpenClawStatus,
   VoiceOpenClawTestResult,
-  VoiceOpenClawStatus,
-  VoiceOpenClawTestResult
 } from '../main/fish/voice/core/types'
 console.log('✅ preload loaded')
 async function voiceCall<T>(channel: string, ...args: unknown[]): Promise<T> {
