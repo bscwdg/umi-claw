@@ -2140,6 +2140,21 @@ await r.check('P49', 'resume 广播：插件经 ctx.host.onResume 订阅，清�
   assertEq(resumeHandler, null, '停用后自动退订，不留悬空回调')
   return 'resume 订阅/退订正确'
 })
+// ── P50 多模态预检：能力注入 + 运行时透传 ───────────────────────────────────
+await r.check('P50', '扫描件识别在栅格化前预检：hostOps 暴露能力，插件注入给 runtime', async () => {
+  const servicesSrc = readFileSync(join(repoRoot, 'electron', 'main', 'kernel', 'services.ts'), 'utf-8')
+  assert(/isMultimodalConfigured\(\): boolean/.test(servicesSrc), 'HostOpsApi 暴露 isMultimodalConfigured')
+
+  const hostSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
+  assert(/isMultimodalConfigured: \(\) => Boolean\(resolveGatewayModels\(\)\.multimodal\)/.test(hostSrc), '宿主按次读配置实现')
+
+  const pluginSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
+  assert(/multimodalConfigured:/.test(pluginSrc), '插件把预检注入 runtime')
+
+  const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+  assert(/multimodalConfigured: deps\.multimodalConfigured/.test(runtimeSrc), 'runtime 透传给 scanRecognizer')
+  return '预检链完整'
+})
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin.json'), result)

@@ -130,6 +130,11 @@ export interface HostOpsApi {
   listPushTargets(channel: string): Promise<unknown[]>
   locateOldDbs(): unknown[]
   readOldDb(info: unknown): Promise<unknown>
+  /**
+   * 当前配置的模型是否支持多模态（按次读配置，与网关同源）。
+   * 扫描件识别用它做「栅格化前预检」：没配多模态模型就别先花几秒解码 PDF。
+   */
+  isMultimodalConfigured(): boolean
 }
 
 /** 注入给插件的服务袋：只有 manifest.inject 里声明的键会出现 */

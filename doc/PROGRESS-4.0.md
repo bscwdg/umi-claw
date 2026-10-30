@@ -343,3 +343,16 @@
 - 新验收：**P48**（宿主零注册 marketing gateway / 插件注册）、**P49**（resume 订阅 + 停用自动退订）。
 
 **验收**：plugin **55/55**（+P48/P49）；全量 19 套 **362/362**；双 typecheck 0 错；build 通过。
+
+### 2026-10-30 · Phase 4 第四批：多模态预检 + 运维手册
+
+- `HostOpsApi.isMultimodalConfigured()`：宿主按次读配置（`resolveGatewayModels().multimodal`），
+  营销插件注入给 `createScanRecognizer` 的 `multimodalConfigured` —— 没配多模态模型时**在栅格化前**就返回，
+  不再先花几秒解码 PDF 才报错。
+- 新增 `doc/RUNBOOK-4.0.md`：数据布局（新旧库/插件库/标记文件）、升级导入与失败处置、回滚（单向，含手工搬运步骤）、
+  卸载归档、7 类故障速查、Windows 安装冒烟 7 步清单、开发侧常用命令。
+- 新验收 **P50**：hostOps 暴露能力 / 宿主实现 / 插件注入 / runtime 透传 四处齐。
+
+**验收**：plugin **56/56**（+P50）；全量 19 套 **363/363**；双 typecheck 0 错；build 通过。
+
+**Phase 4 剩余**：Dashboard 营销摘要改插件插槽并删兼容垫片；Windows NSIS 真机安装冒烟（本环境只能做静态核对 + 手册清单）。

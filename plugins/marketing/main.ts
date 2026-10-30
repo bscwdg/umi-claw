@@ -83,6 +83,10 @@ export default definePlugin({
       }),
       nodePath: ctx.host.paths.nodePath,
       collectorScriptPath: `${runtimeDir}/collector/index.mjs`,
+      // 栅格化前预检：没配多模态模型就直接返回，别先花几秒解码 PDF（Phase 4 审查 #7）
+      multimodalConfigured: ctx.services.hostOps
+        ? () => ctx.services.hostOps!.isMultimodalConfigured()
+        : undefined,
       getDailyhotBase: () => ctx.services.config?.get('dailyhotBase') ?? null,
       logger: (m) => ctx.logger.info(m)
     })

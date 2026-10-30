@@ -402,7 +402,9 @@ function createHostOpsService(): HostOpsApi {
     listPushChannels: async () => (await listPushChannelOptions()) as never,
     listPushTargets: async (channel) => (await listPushTargetOptions(channel)) as never,
     locateOldDbs: () => locateLegacyDbs(configManager.getDataDir()) as never,
-    readOldDb: async (info) => (await readLegacyDb(info as never)) as never
+    readOldDb: async (info) => (await readLegacyDb(info as never)) as never,
+    // 与网关同源按次读配置：扫描件识别用它做栅格化前预检
+    isMultimodalConfigured: () => Boolean(resolveGatewayModels().multimodal)
   }
 }
 
