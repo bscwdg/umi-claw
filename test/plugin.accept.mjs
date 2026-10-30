@@ -1952,6 +1952,124 @@ await r.check('P43', '两个插件都在 inject 里声明 legacyDb，且激活�
   }
   return '清单声明 + 服务注入 + 导入执行 全链路'
 })
+// ── P45 故障隔离压测：坏插件不拖垮宿主与好插件 ─────────────────────────────
+await r.check('P45', '故障隔离：抛错 / 挂死 / 坏清单的插件都不影响其它插件与宿主', async () => {
+  const ipc = createFakeIpc()
+  const mk = (id, main) => ({
+    dir: `/fake/${id}`,
+    source: '<test>',
+    manifest: { ...manifest, id },
+    loadMain: async () => main
+  })
+
+  const registry = new PluginRegistry({ persistedEnabled: { good1: true, boom: true, hang: true, good2: true } })
+  registry.register(mk('good1', { activate: (ctx) => ctx.registerIpc('ping', () => 'pong') }))
+  registry.register(mk('boom', {
+    activate: () => {
+      throw new Error('故意炸')
+    }
+  }))
+  registry.register(mk('hang', { activate: () => new Promise(() => undefined) }))
+  // 坏清单：注册阶段就失败（不阻塞其它人）
+  let badManifestRejected = false
+  try {
+    registry.register({
+      dir: '/fake/bad',
+      source: '<test>',
+      manifest: { id: 'BAD ID!', name: 'bad', version: '1.0.0', capabilities: [], inject: [], channels: [], activation: [], contributes: {}, defaultEnabled: true },
+      loadMain: async () => ({ activate: () => undefined })
+    })
+  } catch {
+    badManifestRejected = true
+  }
+  registry.register(mk('good2', { activate: (ctx) => ctx.registerIpc('ping', () => 'pong2') }))
+
+  const host = makeHost(registry, ipc, { activationTimeoutMs: 300 })
+  try {
+    const statuses = await host.activateAll()
+    const byId = Object.fromEntries(statuses.map((s) => [s.id, s]))
+    assertEq(byId.good1.state, 'activated', 'good1 正常激活')
+    assertEq(byId.good2.state, 'activated', 'good2 正常激活')
+    assertEq(byId.boom.state, 'failed', 'boom 失败')
+    assert(byId.boom.error?.code.includes('PLUGIN_ACTIVATION_FAILED'), 'boom 有失败码：' + JSON.stringify(byId.boom.error))
+    assertEq(byId.hang.state, 'failed', 'hang 超时失败')
+    assert(/timeout/.test(String(byId.hang.error?.stage ?? '')), 'hang 标记为超时：' + JSON.stringify(byId.hang.error))
+    assert(badManifestRejected, '坏清单在注册阶段被拒')
+
+    // 宿主仍可用：好插件的通道能调
+    assertEq(await ipc.invoke('plugin:good1:ping'), 'pong', 'good1 通道可用')
+    assertEq(await ipc.invoke('plugin:good2:ping'), 'pong2', 'good2 通道可用')
+    // 失败插件不留通道
+    assertEq(ipc.handlers.has('plugin:boom:ping'), false, '失败插件无残留通道')
+  } finally {
+    await host.disposeAll()
+  }
+  assertEq(ipc.handlers.size, 0, '全部卸载后 handler 清零')
+  return '4 类故障全部隔离'
+})
+
+// ── P46 启动预算：插件并行激活（串行会线性叠加）────────────────────────────
+await r.check('P46', '并行激活：3 个各 sleep 120ms 的插件总耗时应接近 1 个', async () => {
+  const ipc = createFakeIpc()
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const ids = ['p1', 'p2', 'p3']
+  const registry = new PluginRegistry({ persistedEnabled: Object.fromEntries(ids.map((id) => [id, true])) })
+  for (const id of ids) {
+    registry.register({
+      dir: `/fake/${id}`,
+      source: '<test>',
+      manifest: { ...manifest, id },
+      loadMain: async () => ({
+        activate: async () => {
+          await sleep(120)
+        }
+      })
+    })
+  }
+  const host = makeHost(registry, ipc, { activationTimeoutMs: 3000 })
+  try {
+    const started = Date.now()
+    const statuses = await host.activateAll()
+    const elapsed = Date.now() - started
+    assertEq(statuses.filter((s) => s.state === 'activated').length, 3, '三个都激活')
+    assert(elapsed < 300, `并行激活应 <300ms（实际 ${elapsed}ms；串行至少 360ms）`)
+  } finally {
+    await host.disposeAll()
+  }
+  return '并行启动生效'
+})
+
+// ── P47 打包契约：资源副本与清单一致 ────────────────────────────────────────
+await r.check('P47', '打包契约：resources/plugins 的清单与 migrations 和源码一致', async () => {
+  const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf-8'))
+  assertEq(pkg.build.extraResources[0].from, 'resources', 'resources 整目录进安装包')
+  assert(pkg.build.files.includes('dist-electron/**/*'), 'dist-electron 进 asar')
+
+  for (const id of ['work', 'marketing', 'hello']) {
+    const srcManifest = JSON.parse(readFileSync(join(repoRoot, 'plugins', id, 'plugin.json'), 'utf-8'))
+    const packedManifest = JSON.parse(
+      readFileSync(join(repoRoot, 'resources', 'plugins', id, 'plugin.json'), 'utf-8')
+    )
+    assertEq(JSON.stringify(packedManifest), JSON.stringify(srcManifest), `${id} 清单副本与源码一致`)
+
+    const srcMigrations = join(repoRoot, 'plugins', id, 'migrations')
+    const packedMigrations = join(repoRoot, 'resources', 'plugins', id, 'migrations')
+    if (existsSync(srcMigrations)) {
+      const srcFiles = readdirSync(srcMigrations).filter((f) => f.endsWith('.sql')).sort()
+      const packedFiles = readdirSync(packedMigrations).filter((f) => f.endsWith('.sql')).sort()
+      assertEq(packedFiles.join(','), srcFiles.join(','), `${id} migrations 副本完整`)
+    }
+  }
+
+  for (const file of [
+    'resources/collector/index.mjs',
+    'resources/database/db-worker.mjs',
+    'resources/database/db-worker-marketing.mjs'
+  ]) {
+    assert(existsSync(join(repoRoot, file)), `${file} 存在（打包 required）`)
+  }
+  return '清单/migrations/worker/collector 都在包里'
+})
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin.json'), result)

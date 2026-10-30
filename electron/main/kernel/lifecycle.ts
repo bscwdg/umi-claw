@@ -121,13 +121,38 @@ export class PluginHost {
     }
   }
 
-  /** 激活所有「启用且未激活」的插件；单个失败不影响其它 */
+  /**
+   * 激活所有「启用且未激活」的插件；单个失败不影响其它。
+   *
+   * **并行**：每个插件的激活彼此独立（各自的 attempt/disposers/超时），串行会把
+   * 「spawn 便携 node + 建库迁移」的耗时叠加到首屏。用 allSettled 保证一个挂掉/超时
+   * 不拖累其它，返回顺序仍按登记顺序，便于 UI 稳定展示。
+   */
   async activateAll(): Promise<PluginStatus[]> {
-    const results: PluginStatus[] = []
-    for (const record of this.registry.activationTargets()) {
-      results.push(await this.activate(record.manifest.id))
-    }
-    return results
+    const targets = this.registry.activationTargets()
+    const settled = await Promise.allSettled(
+      targets.map((record) => this.activate(record.manifest.id))
+    )
+    return settled.map((result, index) => {
+      if (result.status === 'fulfilled') return result.value
+      // activate 自身只在「记录不存在」这类异常时 reject：兜成 failed 状态，不能让一个插件炸穿启动
+      const id = targets[index].manifest.id
+      return {
+        id,
+        name: targets[index].manifest.name,
+        version: targets[index].manifest.version,
+        state: 'failed' as const,
+        enabled: targets[index].enabled,
+        error: {
+          code: 'PLUGIN_ACTIVATION_FAILED',
+          message: result.reason instanceof Error ? result.reason.message : String(result.reason)
+        },
+        ipcMethods: [],
+        channels: [],
+        jobCount: 0,
+        contributes: targets[index].manifest.contributes
+      }
+    })
   }
 
   async activate(id: string): Promise<PluginStatus> {

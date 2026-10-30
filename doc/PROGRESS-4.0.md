@@ -292,3 +292,27 @@
 - `multimodalConfigured` 未注入，扫描件识别少了栅格化前预检；
 - 兼容垫片（src/stores/marketing.ts、useProjectSwitcher）待 Dashboard 改插槽后删除；
 - marketing 知识库原文仍写全局 `<dataDir>/projects/<id>`。
+
+### 2026-10-30 · Phase 4 加固（第一批：隔离/启动预算/打包契约）
+
+- **并行激活**：`PluginHost.activateAll` 从串行改为 `Promise.allSettled`，单个插件抛错/超时不再拖累其它，
+  返回顺序仍按登记顺序（UI 稳定）；`activate` 自身 reject 兜底成 failed 状态而不是炸穿启动。
+  动机：work/marketing 各要 spawn 便携 node + 建库迁移，串行会把两段耗时叠到首屏。
+- **P45 故障隔离压测**：抛错 / 挂死（超时）/ 坏清单 / 两个正常插件共存 —— 正常的照常可用，
+  坏的分别拿到 `PLUGIN_ACTIVATION_FAILED` 与 `activate-timeout`，全部卸载后 handler 清零。
+- **P46 启动预算**：3 个各 sleep 120ms 的插件并行激活 < 300ms（串行至少 360ms），防退回串行。
+- **P47 打包契约**：`resources/plugins/<id>/plugin.json` 与源码逐字节一致、migrations 副本完整、
+  `resources/collector/index.mjs` / `db-worker.mjs` / `db-worker-marketing.mjs` 都在包里；
+  `package.json` 的 extraResources 整目录带 resources、files 带 dist-electron。
+- 顺跑既有打包态冒烟 `node test/packaged.smoke.mjs` **5/5**、「一天」端到端 `one-day.e2e` **11/11**。
+
+**验收**：plugin **53/53**（+P45/P46/P47）；全量 19 套 **360/360**；e2e 11/11；smoke 5/5；双 typecheck 0 错；build 通过。
+
+**Phase 4 剩余（下一批）**：
+1. Windows NSIS 真机安装冒烟（需真实安装包 + GUI，当前环境只能静态核对）；
+2. 插件 UI 的 121 处 `window.api` 收窄到 `host.invoke`（P32 需扩到 `ui/**`）；
+3. `marketing:gateway:*` 归属（宿主无条件注册，占用 marketing 命名空间）；
+4. 热点 `powerMonitor.resume` 即时补采（`ctx.jobs.onResume`）；
+5. `multimodalConfigured` 注入（扫描件栅格化前预检）；
+6. 删除 Dashboard 兼容垫片（改插件插槽后）；
+7. 升级/回滚与卸载归档 runbook（含插件库合并策略）。
