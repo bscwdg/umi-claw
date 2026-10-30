@@ -55,21 +55,33 @@
 
 ⇒ 端口没监听时点「打开网页」= 连接被拒/空白页，体感就是「很慢/没反应」。
 
+### 2.4 补充：boot 期复制明细（2026-10-30 晚追加）
+
+用户确认**企微/微信等渠道都要用**，所以「精简插件」不可行。进一步拆了活跃 capture：
+
+| capture 子目录 | 文件数 | 体积 | 创建时间 |
+|---|---|---|---|
+| openclaw-model-catalog-* | 45,221 | 0.2 MB | 20:48:55 |
+| openclaw-plugin-build-88Vj93（feishu） | 25,230 | 73.6 MB | 20:44:24 |
+| openclaw-plugin-build-DAlikc（feishu，**第二次**） | 25,277 | 73.7 MB | 20:47:31 |
+| openclaw-plugin-build-6Jj9ux（wecom） | 17,320 | 18.4 MB | 20:48:24 |
+| openclaw-plugin-build-3XlwcS（weixin） | 16,913 | 6.6 MB | 20:47:54 |
+| 3 × provider 插件 | 各 ~15,075 | 各 0.1 MB | 20:48:42–57 |
+
+另外 `native/admission-*` 有 15 个目录（各含 `content` + `node_modules`），也是启动期生成。
+
+结论：**同一个飞书插件在 boot 中被构建/复制了两次**（约 5 万文件 / 147 MB），且 provider 插件每个也带 1.5 万文件；
+这是 openclaw 启动期行为，属于「可比精简插件更值得调查」的方向（见批次 2）。
+
 ---
 
 ## 3. 优化计划（按性价比排序）
 
+> **2026-10-30 修订**：用户确认渠道（含微信/企微）都在用 → 原「精简插件」项作废，改为「调查重复构建 + 降低重启频率」。
+
 ### 批次 1（P0：用户可感知最快，先做）
 
-#### 1.1 精简未使用的受管插件（收益最大）
-
-- 动作：确认企微/微信是否在用；不用则
-  - 可逆：`openclaw plugins disable wecom-openclaw-plugin openclaw-weixin`
-  - 更彻底：`openclaw plugins uninstall wecom-openclaw-plugin openclaw-weixin`（回收约 32k 文件 / 25 MB）
-  - 三个 provider 插件（deepseek / longcat / volcengine）体积很小，保留即可。
-  - 入口限制：应用内 `ChannelManager`（`electron/main/channelManager.ts`）只有 `installPlugin`，没有卸载；`ChannelsPage.vue` 只做安装。卸载需走官方 CLI，或后续在应用内加「渠道插件管理」。
-- 预期：captures 从 40 万文件量级降到 feishu 单插件量级；启动时间显著下降（与注释描述的劣化机制一致）。
-- 风险：真在用企微/微信会断渠道 → **先 disable（可逆）观察，再决定 uninstall**。
+#### 1.1 「打开网页」等就绪 + 启动进度（原 1.2，提前）
 - 验证：记录动作前后 `plugin-captures` 的文件数/体积；重启网关记录 spawn→首个 `/health` 200 秒数；确认飞书收发仍正常。
 - 回滚：`openclaw plugins enable <id>`（uninstall 的情况需重装）。
 
@@ -86,7 +98,16 @@
 - 预期：真实耗时不变，但**不再出现空白页/误判卡死**；用户能等到明确的「已就绪」。
 - 验证：`ui.accept` 增加「未就绪禁用打开网页」的静态/组件断言；手动重启观察文案与按钮状态；全量验收回归。
 
-### 批次 2（P1：缩短真实启动时间 / 减少重复成本）
+### 批次 2（P1：调查可压缩项 + 减少重复成本）
+
+#### 2.0 调查「重复构建 / 缓存复用」（新增，收益未知但可能最大）
+
+- 现象：同一次 boot 里 feishu 插件被构建两次（50k 文件 / 147 MB）；`native/admission-*` 还有 15 个目录各含 node_modules。
+- 调查项：
+  1. 记录每次启动后 `captures/` 下各 build 目录数量与耗时（对比两次重启是否稳定翻倍）；
+  2. 查 openclaw 是否有插件构建缓存/复用开关（`openclaw plugins build --help`、`plugins list --verbose`、`cache/` 目录只有 control-ui-assets，疑似未复用）；
+  3. 检查应用侧 `syncOpenClawConfig` 的 CLI patch 是否也触发同一套构建（对比「保存配置前后 captures 目录数」）。
+- 产出：要么找到开关/复用方式（收益大），要么确认是 openclaw 上游行为 → 记录限制，转向「少重启」。
 
 #### 2.1 captures 清理加时间预算
 
@@ -102,18 +123,18 @@
 - 附带记录 `plugin-captures` 文件数与体积（启动前后各一次，采样即可）。
 - 预期：下次再慢能直接定位是「spawn 前准备」还是「openclaw boot」。
 
-#### 2.3 配置 patch 频率治理
+#### 2.3 配置 patch 后台化（替代原「去抖」）
 
-- 现状：每次 `saveConfig` → `syncOpenClawConfig()` → 官方 CLI patch（有 diff 时），而**每次 patch 也会复制插件副本**；`buildJsonMergePatch` 为 null 时已跳过（`configManager.ts:1274-1278`，这点现状没问题）。
-- 改法：给 patch 加 300–500ms 去抖 + 串行队列（同一时刻只跑一次，合并连续保存），失败保持现有 `rejected/timeout/process` 分类。
-- 预期：模型页/语音页连续保存只付一次 patch 成本。
-- 风险：去抖延迟配置落盘（极端崩溃窗口）；app.json 已先落盘，启动时会补同步，可接受。
+> 原计划是「去抖 + 串行队列」，但单次保存的收益很小；真正影响体感的是**保存时阻塞**。
+- 改法：`saveConfig` 仍然先落 `app.json`（不丢配置），patch 改为「串行队列 + 后台执行 + 状态提示」；`clawManager.start()` 前 `flushPendingPatch()` 兜底，保证重启前一定落盘。
+- 风险：保存后立刻看 `openclaw.json` 可能还没更新（几百 ms 到数秒）；重启前 flush 可消除「读到旧配置」风险；进程崩溃窗口内 app.json 已落盘，下次启动会补。
+- 备选：若你更在意「保存即同步」，可保留同步 patch，只做串行队列（不合并），收益有限。
 
 ### 批次 3（P2：openclaw 侧继续压缩 boot）
 
-- `openclaw plugins list` / `plugins inspect <id>` 看 startup 实际加载了哪些插件、各自耗时；只留必需（feishu + 当前 provider）。
-- `skills.entries` 40 条：用应用已具备的技能开关（`configManager` 的 skills patch 通道）关掉不用的，观察 boot 变化。
+- `skills.entries` 40 条：用应用已具备的技能开关（`configManager` 的 skills patch 通道）关掉不用的，观察 boot 变化（每关一批测一次）。
 - `mcp.servers`（obsidian）：进程树显示 20:49:26 才起，可能已懒加载；确认是否可再延后/按需。
+- `openclaw plugins list/inspect`：确认三渠道 + providers 之外没有多余插件参与 boot。
 - 注意：`openclaw plugins reload` 只热重载插件，不是配置热重载；`tts` 块仍需重启生效。
 
 ### 批次 4（P3：架构级，长期）
@@ -131,8 +152,9 @@
 - 应用启动（主进程 → 插件 worker）：≈ 6–7s（18:54:06 → 18:54:12/13）
 
 **目标**
-- 批次 1 后：captures 降到 feishu 单插件量级；重启到网页可打开 ≤ 基线的 1/3（以 `_spawnGateway` 埋点计时为准）
-- 批次 2 后：连续保存配置只触发一次 patch；日志能看到「启动耗时 xxs」
+- 批次 1 后：不再出现「显示运行中但网页打不开」；记录到真实启动耗时（spawn→health）
+- 批次 2.0 后：明确 captures 是否有可复用/去重空间；有则给出数据，没有则记录上游限制
+- 批次 2.3 后：保存配置不再阻塞在 patch 上（重启前有 flush 兜底）
 - 任何批次都不得破坏：全量 19 套 accept（当前 368/368）、`plugin.accept`（61/61）、`one-day.e2e`（11/11）、`packaged.smoke`（6/6）、双 typecheck、`npm run build`
 
 **人工验证**
@@ -144,9 +166,10 @@
 
 ## 5. 需要拍板的点
 
-1. **企微（wecom）/微信（weixin）插件是否在用？** 决定 `disable` 还是 `uninstall`（这是收益最大的一步）。
-2. 是否接受「保存配置后 patch 去抖/延迟落盘」？
+1. ~~企微/微信插件是否在用~~ → **已确认在用，插件保留**（原「精简插件」作废）。
+2. 「配置 patch」选哪种：**后台化 + 重启前 flush**（推荐，保存不卡）还是保持同步（保存即写，但每次要等）？
 3. 是否同意加「启动中/已就绪」状态（会改 Dashboard 与语音页文案）？
+4. 是否允许先做**只读调查**（批次 2.0：统计 captures、试 `plugins build --help` 等，不改配置），再决定是否值得动 openclaw 侧？
 
 ---
 
