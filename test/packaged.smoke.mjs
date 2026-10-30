@@ -70,6 +70,37 @@ try {
     assert(!/api[_-]?key\s*=\s*["'][^"']{10,}/i.test(html), 'html 无内联密钥')
     return 'renderer html ✓'
   })
+
+  // ── S6 真实打包产物（release/win-unpacked，存在才跑：先 npm run build:win 或 electron-builder --dir）──
+  await r.check('S6', '安装包目录：清单/migrations 在 resources，代码在 asar 且不含插件数据', async () => {
+    const unpacked = join(repoRoot, 'release', 'win-unpacked')
+    if (!existsSync(unpacked)) {
+      return '跳过（未构建 release/win-unpacked）'
+    }
+    const resRoot = join(unpacked, 'resources', 'resources')
+    assert(existsSync(join(resRoot, 'plugins', 'work', 'plugin.json')), '包内 work 清单')
+    assert(existsSync(join(resRoot, 'plugins', 'marketing', 'plugin.json')), '包内 marketing 清单')
+    assert(existsSync(join(resRoot, 'plugins', 'work', 'migrations', '001_init.sql')), '包内 work migrations')
+    assert(
+      existsSync(join(resRoot, 'plugins', 'marketing', 'migrations', '001_init.sql')),
+      '包内 marketing migrations'
+    )
+    for (const f of ['collector/index.mjs', 'database/db-worker.mjs', 'database/db-worker-marketing.mjs']) {
+      assert(existsSync(join(resRoot, f)), `包内 ${f}`)
+    }
+
+    const asar = join(unpacked, 'resources', 'app.asar')
+    assert(existsSync(asar), 'app.asar 存在')
+    const asarBytes = readFileSync(asar)
+    assert(asarBytes.length > 500_000, `app.asar 体积合理（${asarBytes.length} B）`)
+    const asarText = asarBytes.toString('utf8')
+    assert(asarText.includes('work:gateway:status'), 'asar 内含主进程代码（work:gateway:status）')
+    // asar 头里列出文件路径：代码在 asar，插件数据（清单/migrations）只在 resources
+    assert(/dist-electron\/main\/index\.js/.test(asarText), 'asar 含 dist-electron/main/index.js')
+    assert(!asarText.includes('plugins/work/plugin.json'), 'asar 不应打包插件清单')
+    assert(!asarText.includes('plugins/work/migrations'), 'asar 不应打包插件 migrations')
+    return '打包产物结构正确 ✓'
+  })
 } catch (e) {
   console.error('smoke 自身异常:', e)
 }

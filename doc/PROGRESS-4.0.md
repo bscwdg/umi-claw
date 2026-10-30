@@ -370,3 +370,15 @@
 **验收**：plugin **57/57**（+P51）；全量 19 套 **364/364**；双 typecheck 0 错；build 通过。
 
 **Phase 4 剩余**：Windows NSIS 真机安装冒烟（本环境无 GUI/安装器，只能 `packaged.smoke` + RUNBOOK §6 人工清单）。
+
+### 2026-10-30 · Phase 4 收尾：真实打包产物核对
+
+- 实际跑通 `electron-builder --win --dir`（Electron 30.5.1 → `release/win-unpacked`），
+  产物结构核对：`resources/resources/plugins/{work,marketing}/{plugin.json,migrations}` 齐全、
+  `collector/index.mjs` 与两个 db-worker 在包内、插件数据**没有**被打进 `app.asar`、
+  asar 内含 `dist-electron/main/index.js`。
+- `test/packaged.smoke.mjs` 新增 **S6**：把上面这条变成常驻断言（构建过 `release/win-unpacked` 才跑，否则跳过）。
+  跑通结果：**6/6**。
+
+**Phase 4 自动化部分完成**。唯一未执行项：Windows NSIS 真机安装/卸载（当前环境无 GUI 安装器），
+清单已写入 `doc/RUNBOOK-4.0.md` §6。
