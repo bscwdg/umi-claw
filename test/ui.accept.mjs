@@ -885,6 +885,104 @@ await r.check('U17', 'CSP 放行 blob:（否则语音播不出来）', async () 
   return 'CSP 已放行媒体 blob:，且未放宽脚本来源'
 })
 
+// ── U18/U19 启动就绪态（2026-10-30 启动优化）────────────────────────────────
+await r.check('U18', 'claw store：start 后进入「启动中」，waitReady 成功才翻「已就绪」', async () => {
+  const { createPinia, setActivePinia } = await import('pinia')
+  const storeMod = await import(
+    pathToFileURL(
+      esbuildBundle(join(repoRoot, 'src', 'stores', 'claw.ts'), 'ui-claw-store.mjs', {
+        externals: ['vue', 'pinia']
+      })
+    ).href
+  )
+  const savedWindow = globalThis.window
+  try {
+    setActivePinia(createPinia())
+    // 用「手动 resolve」模拟真实的长等待：这样 start() 返回时一定还处于「启动中」
+    let resolveReady = null
+    let statusHandler = null
+    globalThis.window = {
+      api: {
+        claw: {
+          start: async () => ({ success: true }),
+          stop: async () => ({ success: true }),
+          restart: async () => ({ success: true }),
+          status: async () => ({ running: false, port: 3213 }),
+          waitReady: () => new Promise((resolve) => { resolveReady = resolve }),
+          onLog: () => () => undefined,
+          onStatusChange: (cb) => {
+            statusHandler = cb
+            return () => undefined
+          }
+        }
+      }
+    }
+
+    const store = storeMod.useClawStore()
+    assertEq(store.running, false, '初始未运行')
+    assertEq(store.ready, false, '初始未就绪')
+
+    await store.start()
+    assertEq(store.running, true, 'start 后进程态为运行')
+    assertEq(store.starting, true, 'start 后先进入「启动中」')
+    assertEq(store.ready, false, '未就绪前 ready 必须为 false（关键：不能拿 running 当可用）')
+
+    resolveReady?.({ ready: true, elapsedMs: 1234 })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assertEq(store.ready, true, 'waitReady 成功后 ready=true')
+    assertEq(store.starting, false, '就绪后不再显示启动中')
+    assertEq(store.startupMs, 1234, '记录启动耗时')
+
+    // 失败路径：waitReady 返回错误 → startupError，不能假装就绪
+    setActivePinia(createPinia())
+    const failReady = { ready: false, error: '启动超时（>1s）' }
+    // 第二次 start 的 waitReady 直接返回失败结果
+    globalThis.window.api.claw.waitReady = async () => failReady
+    const store2 = storeMod.useClawStore()
+    await store2.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assertEq(store2.ready, false, '失败时 ready 仍为 false')
+    assertEq(store2.startupError, '启动超时（>1s）', '失败原因透出给页面')
+
+    // 主进程后台探活先就绪 → statusChange 事件要能翻转状态
+    store2.setupListeners()
+    statusHandler?.({ running: true, ready: true, starting: false, startupMs: 2000 })
+    assertEq(store2.ready, true, 'statusChange(ready=true) 能翻转状态')
+    assertEq(store2.starting, false, '同步清掉启动中')
+
+    return '启动中/就绪/失败/事件 四条路径都正确'
+  } finally {
+    globalThis.window = savedWindow
+  }
+})
+
+await r.check('U19', '就绪态接线：Dashboard 用 ready 门禁、语音页重启后等 waitReady', async () => {
+  const dashSrc = readFileSync(join(repoRoot, 'src', 'views', 'Dashboard.vue'), 'utf-8')
+  assert(/:disabled="!clawStore\.ready"/.test(dashSrc), '「打开网页」必须等 ready')
+  assert(/clawStore\.starting/.test(dashSrc), '启动中状态要在界面上可见')
+  assert(/clawStore\.startingSeconds/.test(dashSrc), '展示已等待秒数')
+  assert(/已就绪/.test(dashSrc), '就绪提示')
+
+  const voiceSrc = readFileSync(join(repoRoot, 'src', 'views', 'voice', 'VoicePage.vue'), 'utf-8')
+  assert(/claw\.waitReady\(/.test(voiceSrc), '语音页重启后要等网关就绪')
+
+  // 主进程/桥接层接线（缺一环就静默掉回「用 running 当可用」）
+  const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
+  assert(/claw:waitReady/.test(preloadSrc), 'preload 暴露 claw:waitReady')
+  const mainSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
+  assert(/ipcMain\.handle\('claw:waitReady'/.test(mainSrc), '主进程注册 claw:waitReady')
+  const clawMgrSrc = readFileSync(join(repoRoot, 'electron', 'main', 'clawManager.ts'), 'utf-8')
+  assert(/_fetchHealthOk/.test(clawMgrSrc), 'clawManager 用 /health 探活')
+  assert(/async waitReady\(/.test(clawMgrSrc), 'clawManager 提供 waitReady')
+  assert(/启动耗时 \$\{/.test(clawMgrSrc), '就绪时记录 spawn→health 耗时日志')
+
+  const storeSrc = readFileSync(join(repoRoot, 'src', 'stores', 'claw.ts'), 'utf-8')
+  for (const token of ['ready', 'starting', 'startingSeconds', 'startupMs', 'trackReady', 'waitReadyNow']) {
+    assert(storeSrc.includes(token), `store 应暴露 ${token}`)
+  }
+  return '就绪态接线完整'
+})
+
 const result = r.toJSON({})
 
 const ok = printResult(result)

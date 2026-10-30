@@ -7,8 +7,14 @@
         <p class="text-muted text-sm" style="margin-top:4px">管理 OpenClaw 服务状态</p>
       </div>
       <div class="flex gap-2">
-        <button class="btn" @click="openWeb" :disabled="!clawStore.running">
-          🌐 打开 Web 界面
+        <!-- 必须等 ready（/health 200）才可打开：running 只代表进程已 spawn，网页此时还打不开 -->
+        <button
+          class="btn"
+          @click="openWeb"
+          :disabled="!clawStore.ready"
+          :title="clawStore.starting ? '网关正在启动，就绪后即可打开' : '打开 OpenClaw Web 界面'"
+        >
+          {{ clawStore.starting ? `🌐 启动中 ${clawStore.startingSeconds}s…` : '🌐 打开 Web 界面' }}
         </button>
       </div>
     </div>
@@ -16,14 +22,21 @@
     <!-- Status Card -->
     <div class="status-card" :class="{ running: clawStore.running }">
       <div class="status-main">
-        <div class="status-icon">{{ clawStore.running ? '🟢' : (clawStore.maintenance ? '🟡' : '🔴') }}</div>
+        <div class="status-icon">{{ clawStore.ready ? '🟢' : (clawStore.starting || clawStore.maintenance ? '🟡' : '🔴') }}</div>
         <div class="status-info">
           <div class="status-title">
-            OpenClaw {{ clawStore.running ? '运行中' : (clawStore.maintenance ? '修复中' : '已停止') }}
+            <template v-if="clawStore.starting">OpenClaw 启动中（已等 {{ clawStore.startingSeconds }}s）</template>
+            <template v-else-if="clawStore.ready">OpenClaw 运行中</template>
+            <template v-else-if="clawStore.maintenance">OpenClaw 修复中</template>
+            <template v-else>OpenClaw 已停止</template>
           </div>
           <div class="status-sub text-muted text-sm">
-            <template v-if="clawStore.running">
+            <template v-if="clawStore.starting">
+              正在加载插件与渠道，就绪后才能打开 Web 界面（首次启动可能较慢，日志见下方）
+            </template>
+            <template v-else-if="clawStore.ready">
               PID: {{ clawStore.pid }} · 端口: {{ clawStore.port }} · 运行时长: {{ clawStore.uptime || '--' }}
+              <span v-if="clawStore.startupMs"> · 本次启动耗时 {{ Math.round(clawStore.startupMs / 1000) }}s</span>
             </template>
             <template v-else-if="clawStore.maintenance">
               正在修复配置 / 迁移数据库（doctor --fix，可能需要数分钟）… 请稍候，网关修复完成会自动启动
@@ -45,14 +58,14 @@
         {{ actionLoading ? '启动中...' : '▶ 启动' }}
       </button>
       <template v-else>
-          <button class="btn btn-success btn-lg" @click="handleFetchToken" :disabled="loading && actionLoading">
+          <button class="btn btn-success btn-lg" @click="handleFetchToken" :disabled="(loading && actionLoading) || !clawStore.ready">
             {{ loading ? '正在获取...' : '获取 Token(网关令牌)' }}
           </button>
           <button class="btn btn-danger" @click="handleStop" :disabled="actionLoading">
             {{ actionLoading ? '停止中...' : '⏹ 停止' }}
           </button>
-          <button class="btn" @click="handleRestart" :disabled="actionLoading">
-            🔄 重启
+          <button class="btn" @click="handleRestart" :disabled="actionLoading || clawStore.starting">
+            {{ clawStore.starting ? '启动中…' : '🔄 重启' }}
           </button>
         </template>
       </div>
@@ -208,8 +221,38 @@ async function handleRestart() {
 }
 
 function openWeb() {
+  // 进程起了 ≠ 端口在监听：未就绪时打开只会看到空白页，这里明确拦住并给提示
+  if (!clawStore.ready) {
+    showToast(
+      clawStore.starting
+        ? `网关还在启动中（已等 ${clawStore.startingSeconds}s），就绪后请再点一次`
+        : '网关尚未就绪，请先启动服务',
+      'warning'
+    )
+    return
+  }
   api.claw.openWeb()
 }
+
+// 启动/重启后的长等待在 store 里后台进行：就绪或失败时在这里给用户反馈
+watch(
+  () => clawStore.ready,
+  (isReady) => {
+    if (isReady) {
+      const secs = clawStore.startupMs ? Math.round(clawStore.startupMs / 1000) : null
+      showToast(secs !== null ? `OpenClaw 已就绪（启动耗时 ${secs}s）` : 'OpenClaw 已就绪', 'success')
+    }
+  }
+)
+
+watch(
+  () => clawStore.startupError,
+  (err) => {
+    if (!err) return
+    errorMsg.value = err
+    showToast(err, 'error')
+  }
+)
 async function handleFetchToken() {
   loading.value = true
   try {

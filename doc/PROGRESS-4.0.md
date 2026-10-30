@@ -445,3 +445,24 @@ deepseek-v4-flash. Use --replace-path models.providers.umiclaw-deepseek.models t
   并行会话键顺序竞态：单独重跑 9/9 通过，同一提交上复现率与环境相关，与本改动无关）。
 - `test/p0-sync-selftest.mjs` 本机失败原因是它自己的前置 `doctor --fix` 超时（180s 预算，本机并行
   进程多），失败点在 doctor 门禁而非本次改动路径。
+
+### 2026-10-30 · 启动慢优化 批次 1（就绪态 + 埋点）
+
+按 `doc/OPT-STARTUP-4.0.md` 实施（渠道保留、不做 patch 后台化）：
+
+- **启动埋点**：`clawManager` 新增 `_fetchHealthOk()`（HTTP `GET /health`，1.5s 超时）与后台探活
+  `_startReadyProbe()`；就绪时写日志 `[gateway] 启动耗时 X.Xs（spawn→health）` 并推 `statusChange`。
+- **`waitReady(timeoutMs)`**：UI 等待网关真正可用；超时/进程退出返回 `error`（不再用「进程存在」冒充可用）。
+- **`ClawStatus` 扩展**：`starting / ready / readyAt / startupMs`；`statusChange` 广播一并带上。
+- **新 IPC**：`claw:waitReady`（只读探测，不启动、不走协议闸门）；preload 暴露 `claw.waitReady`。
+- **`stores/claw.ts`**：区分 `running`（进程已 spawn）与 `ready`（/health 200）；`start/restart` 后进入
+  `starting` 并后台 `trackReady()`；失败写 `startupError`；暴露 `startingSeconds`、`waitReadyNow`。
+- **Dashboard**：「打开网页」只认 `ready`；启动中显示「启动中 xx s…」、状态卡显示已等秒数与
+  「就绪后才能打开 Web 界面」提示；就绪/失败各给一次 toast；Token/重启按钮在启动中禁用。
+- **语音页重启**：`restart` 后等待 `waitReady`，就绪 toast「本次启动 xx s」，失败给错误（不再误报成功）。
+- **验收**：`ui.accept` 新增 **U18**（store 四条路径：启动中/就绪/失败/事件翻转）与 **U19**（Dashboard 门禁、
+  语音页等待、主进程/预加载/探活接线静态断言）。
+
+**验收**：全量 19 套 **370/370**；ui **19/19**；e2e 11/11；smoke 6/6；双 typecheck 0 错；build 通过。
+**人工验证**：点重启 → 状态卡出现「启动中（已等 xx s）」→ 就绪后 toast「启动耗时 xx s」，日志面板有
+`[gateway] 启动耗时`；就绪前「打开网页」禁用。

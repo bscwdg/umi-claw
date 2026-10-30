@@ -14,6 +14,7 @@ import {
 import { promises as fs } from "fs";
 import { ConfigManager } from './configManager'
 import { promisify } from "util";
+import { get as httpGet } from 'node:http'
 import { toOpenClawProviderKey } from './modelConfig'
 import { openClawPaths, toPosix, buildOpenClawEnv } from './openClawPaths'
 
@@ -25,6 +26,14 @@ export interface ClawStatus {
   startedAt?: number
   /** doctor --fix / 状态库迁移进行中（网关未起但非静止） */
   maintenance?: boolean
+  /** 进程已起但 `/health` 还没通（启动中） */
+  starting?: boolean
+  /** 网关真正可用（`/health` 200） */
+  ready?: boolean
+  /** 就绪时刻（毫秒时间戳），未就绪为空 */
+  readyAt?: number
+  /** 最近一次「spawn→就绪」耗时（毫秒），便于前端/日志展示 */
+  startupMs?: number
 }
 
 export interface LogEntry {
@@ -166,6 +175,16 @@ export class ClawManager extends EventEmitter {
   private maxLogs = 2000
   private startedAt?: number
   private port = 3213
+  /**
+   * 网关「真正可用」标记（`GET /health` 返回 200）。
+   *
+   * 注意：`startedAt` 只表示**进程已 spawn**，此时 openclaw 还要加载插件/渠道/状态库
+   * （实测可达数分钟）。前端/UI 必须用 `ready` 判断「能不能开网页」，不能用 `running`。
+   */
+  private ready = false
+  private readyAt?: number
+  /** 后台探活进行中：停止/退出后置 true，避免旧探针继续改状态 */
+  private readyProbeStopped = false
   private configManager: ConfigManager
   private isStopping = false
   // 网关退出码 78（状态库需要 schema 迁移）时的自动修复状态
@@ -607,6 +626,7 @@ export class ClawManager extends EventEmitter {
       })
 
       this.startedAt = Date.now()
+      this._startReadyProbe()
       this._setupProcessEvents(this.process!)
       this.emit('statusChange', true, this.port)
       if (this.healthyResetTimer) clearTimeout(this.healthyResetTimer)
@@ -666,6 +686,7 @@ export class ClawManager extends EventEmitter {
       proc.on('exit', () => {
         clearTimeout(timeout)
         this.startedAt = undefined
+        this._markNotReady()
         this.emit('statusChange', false)
         this._addLog('OpenClaw 已停止', 'system')
         finish()
@@ -674,11 +695,122 @@ export class ClawManager extends EventEmitter {
       proc.on('error', (err) => {
         clearTimeout(timeout)
         this.startedAt = undefined
+        this._markNotReady()
         this.emit('statusChange', false)
         this._addLog(`停止过程中出错: ${err.message}`, 'system')
         finish()
       })
     })
+  }
+
+  /**
+   * 探测网关是否真正可用（`GET /health` 200）。
+   *
+   * 用短超时的 http 请求而不是「进程是否存活」：openclaw spawn 后要加载插件/渠道/状态库，
+   * 进程在但端口没监听是常态（实测可达数分钟），只有 /health 通才算能开网页。
+   */
+  private _fetchHealthOk(timeoutMs = 1500): Promise<boolean> {
+    const port = Number(this.configManager.getConfig().port) || this.port
+    return new Promise((resolve) => {
+      let settled = false
+      const done = (ok: boolean): void => {
+        if (settled) return
+        settled = true
+        resolve(ok)
+      }
+      try {
+        const req = httpGet({ host: '127.0.0.1', port, path: '/health', timeout: timeoutMs }, (res) => {
+          res.resume()
+          done(res.statusCode === 200)
+        })
+        req.on('timeout', () => {
+          req.destroy()
+          done(false)
+        })
+        req.on('error', () => done(false))
+      } catch {
+        done(false)
+      }
+    })
+  }
+
+  /** 进程停止/退出：清 ready 并停掉后台探针（避免旧探针改新实例状态） */
+  private _markNotReady(): void {
+    this.ready = false
+    this.readyAt = undefined
+    this.readyProbeStopped = true
+  }
+
+  /** spawn 成功后启动后台探活：就绪时记 readyAt、写耗时日志、推状态 */
+  private _startReadyProbe(): void {
+    this.ready = false
+    this.readyAt = undefined
+    this.readyProbeStopped = false
+    const spawnAt = this.startedAt ?? Date.now()
+    const poll = async (): Promise<void> => {
+      if (this.readyProbeStopped || !this.process) return
+      if (await this._fetchHealthOk()) {
+        if (this.readyProbeStopped || !this.process) return
+        this.ready = true
+        this.readyAt = Date.now()
+        this._addLog(
+          `[gateway] 启动耗时 ${((this.readyAt - spawnAt) / 1000).toFixed(1)}s（spawn→health）`,
+          'system'
+        )
+        this.emit('statusChange', true, this.port)
+        return
+      }
+      setTimeout(() => void poll(), 500)
+    }
+    void poll()
+  }
+
+  /**
+   * 等待网关就绪（UI 的「启动中…」/「打开网页」前调用）。
+   *
+   * @returns ready=false 时带 error：进程已退出（启动失败）或超时。
+   */
+  async waitReady(
+    timeoutMs = 15 * 60_000
+  ): Promise<{ ready: boolean; elapsedMs: number; error?: string }> {
+    const startAt = this.startedAt ?? Date.now()
+    if (!this.process) {
+      return { ready: false, elapsedMs: 0, error: 'OpenClaw 未在运行' }
+    }
+    if (this.ready) {
+      return { ready: true, elapsedMs: (this.readyAt ?? Date.now()) - startAt }
+    }
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (!this.process) {
+        return {
+          ready: false,
+          elapsedMs: Date.now() - startAt,
+          error: 'OpenClaw 进程已退出（启动失败），请查看日志'
+        }
+      }
+      if (this.ready) {
+        return { ready: true, elapsedMs: (this.readyAt ?? Date.now()) - startAt }
+      }
+      if (await this._fetchHealthOk()) {
+        if (!this.ready) {
+          this.ready = true
+          this.readyAt = Date.now()
+          this._addLog(
+            `[gateway] 启动耗时 ${((this.readyAt - startAt) / 1000).toFixed(1)}s（spawn→health）`,
+            'system'
+          )
+          this.emit('statusChange', true, this.port)
+        }
+        return { ready: true, elapsedMs: (this.readyAt ?? Date.now()) - startAt }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+    return {
+      ready: false,
+      elapsedMs: Date.now() - startAt,
+      error: `启动超时（>${Math.round(timeoutMs / 1000)}s），请查看日志`
+    }
   }
 
   getStatus(): ClawStatus {
@@ -695,7 +827,12 @@ export class ClawManager extends EventEmitter {
       startedAt: this.startedAt,
       // doctor --fix / 状态库迁移进行中：网关虽未起，但也不是静止，
       // 前端据此把「启动中」细化为「正在修复配置…」，避免用户以为卡死重复点击。
-      maintenance: this.maintenanceActive
+      maintenance: this.maintenanceActive,
+      starting: !!this.process && !this.ready,
+      ready: !!this.process && this.ready,
+      readyAt: this.readyAt,
+      startupMs:
+        this.startedAt && this.readyAt ? Math.max(0, this.readyAt - this.startedAt) : undefined
     }
   }
 
@@ -1264,6 +1401,7 @@ export class ClawManager extends EventEmitter {
       if (isTracked) {
         this.process = null
         this.startedAt = undefined
+        this._markNotReady()
         this.emit('statusChange', false)
       }
       // 退出码 78（EX_CONFIG）或本生命周期内出现过迁移提示：自动 doctor --fix 后重启，每次启动最多一次
@@ -1300,6 +1438,7 @@ export class ClawManager extends EventEmitter {
       if (this.process === proc) {
         this.process = null
         this.startedAt = undefined
+        this._markNotReady()
         this.emit('statusChange', false)
       }
     })
