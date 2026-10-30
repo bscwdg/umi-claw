@@ -533,7 +533,14 @@ await r.check('P32', '渲染端边界：插件 UI 只准经 hostBridge 触达 wi
       assert(/host\.invoke/.test(src), `${name} 调 IPC 时必须走 host.invoke`)
     }
     // window.api 只允许出现在桥接层（Phase 4 把 80+ 处直连收敛到一处，后续换 host.invoke 只改一个文件）
-    if (/window\.api/.test(src)) {
+    // 覆盖点号、可选链、方括号、解构与「先赋给变量再取」等常见绕过写法
+    const touchesHostApi =
+      /window\s*\??\.\s*api/.test(src) ||
+      /window\s*\[\s*['\"]api['\"]\s*\]/.test(src) ||
+      /\\{[^}]*\\bapi\\b[^}]*\\}\\s*=\\s*window/.test(src) ||
+      /(?:const|let|var)\\s+\\w+\\s*=\\s*window\\b[\\s\\S]{0,40}?\\.api\\b/.test(src) ||
+      /globalThis[\\s\\S]{0,20}?window[\\s\\S]{0,20}?\\.api/.test(src)
+    if (touchesHostApi) {
       assertEq(file, bridge, `${name} 直接用了 window.api——请改走 plugins/shared/hostBridge`)
       bridgeSeen = true
     }
@@ -2173,6 +2180,199 @@ await r.check('P51', '控制台营销摘要走插件插槽：宿主零 store 依
   assert(/'dashboard\.marketing': DashboardMarketingCard/.test(rendererSrc), '插件注册控制台插槽')
   assert(/slot: \{/.test(rendererSrc) && /topbar: ProjectSwitcher/.test(rendererSrc), '顶栏插槽仍在')
   return '宿主零依赖 / 插槽归插件 / 垫片清零'
+})
+// ── P52 注册器不越界：激活结束后必须复位，宿主注册才不会被劫持 ────────────────
+await r.check('P52', '通道注册器只在激活阶段存在：营销插件就绪后 hasChannelRegistrar()=false', async () => {
+  // 单入口 bundle：插件装配与注册器必须是**同一个模块实例**，否则断言恒真（空断言）
+  const entry = await import(
+    pathToFileURL(
+      bundleEntry('test/fixtures/plugin-registrar-entry.ts', 'plugin-registrar-entry.mjs', {
+        alias: ['electron=./test/.tmp/electron-stub.mjs'],
+        externals: ['mammoth', 'exceljs', 'docx', 'pdfjs-dist']
+      })
+    ).href
+  )
+
+  const services = {
+    db: () => ({
+      path: ':memory:',
+      async migrate() {},
+      async metaGet() {
+        return null
+      },
+      async metaSet() {
+        return { changes: 1 }
+      },
+      async request() {
+        return []
+      },
+      async list() {
+        return []
+      },
+      async get() {
+        return null
+      },
+      async create() {
+        return {}
+      },
+      async update() {
+        return { changes: 1 }
+      },
+      async remove() {
+        return { deleted: true }
+      },
+      async backup() {
+        return { path: 'x' }
+      }
+    }),
+    openclaw: () => ({
+      getStatus: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
+      ensureReady: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
+      chat: async () => ({ text: '', model: null }),
+      stream: () => {
+        throw new Error('not used')
+      }
+    }),
+    hostOps: () => ({
+      notify: () => undefined,
+      push: async () => ({ ok: true }),
+      listPushChannels: async () => [],
+      listPushTargets: async () => [],
+      locateOldDbs: () => [],
+      readOldDb: async () => ({}),
+      isMultimodalConfigured: () => false
+    }),
+    legacyDb: () => ({ list: async () => [] }),
+    config: () => ({ get: () => undefined, set: () => undefined, all: () => ({}) })
+  }
+
+  const manifestForMkt = JSON.parse(
+    readFileSync(join(repoRoot, 'resources', 'plugins', 'marketing', 'plugin.json'), 'utf-8')
+  )
+  const registry = new PluginRegistry({
+    hostServices: availableServices(services),
+    persistedEnabled: { marketing: true }
+  })
+  registry.register({
+    dir: join(repoRoot, 'plugins', 'marketing'),
+    source: 'resources/plugins/marketing/plugin.json',
+    manifest: manifestForMkt,
+    loadMain: async () => entry.marketing
+  })
+  const ipc = createFakeIpc()
+  const host = makeHost(registry, ipc, {
+    services,
+    activationTimeoutMs: 20000,
+    paths: {
+      appPath: repoRoot,
+      resourcesPath: join(repoRoot, 'resources'),
+      isPackaged: false,
+      nodePath: process.execPath
+    }
+  })
+
+  try {
+    assertEq(entry.hasChannelRegistrar(), false, '激活前没有插件接管')
+    const status = await host.activate('marketing')
+    assertEq(status.state, 'activated', '激活：' + JSON.stringify(status.error))
+    assertEq(entry.hasChannelRegistrar(), false, '激活结束后必须复位（否则宿主注册会被劫持）')
+
+    // 关键回归：修复前这里会抛 CHANNEL_NOT_LEASED（被营销注册器接管）
+    let hijackError = null
+    try {
+      entry.registerWorkGatewayIpc({ getStatus: async () => ({}), ensureReady: async () => ({}) })
+    } catch (e) {
+      hijackError = e
+    }
+    assertEq(hijackError, null, '宿主注册 work gateway 不应被劫持：' + String(hijackError))
+  } finally {
+    await host.disposeAll()
+  }
+  return '注册器生命周期正确'
+})
+
+// ── P53/P54 停用与在途激活的收敛（对抗 F1/F2）──────────────────────────────
+await r.check('P53', '停用打断激活：迟到 cleanup 只执行一次（不双跑）', async () => {
+  const ipc = createFakeIpc()
+  let cleanupRuns = 0
+  let releaseGate = null
+  const gate = new Promise((resolve) => {
+    releaseGate = resolve
+  })
+  const registry = new PluginRegistry({ persistedEnabled: { slow: true } })
+  registry.register({
+    dir: '/fake/slow',
+    source: '<test>',
+    manifest: { ...manifest, id: 'slow' },
+    loadMain: async () => ({
+      activate: async () => {
+        await gate
+        return () => {
+          cleanupRuns += 1
+        }
+      }
+    })
+  })
+  const host = makeHost(registry, ipc, { activationTimeoutMs: 1000 })
+  const activating = host.activate('slow')
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  const disabled = await host.setEnabled('slow', false)
+  assertEq(disabled.state, 'disabled', '停用立即返回 disabled')
+  releaseGate()
+  await activating.catch(() => undefined)
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assertEq(cleanupRuns, 1, 'cleanup 必须恰好执行一次（双跑=资源被清两遍）')
+  await host.disposeAll()
+  return 'cleanup 单次执行'
+})
+
+await r.check('P54', '停用不被在途激活拖住：activate 永不 resolve 时也在 1s 内返回', async () => {
+  const ipc = createFakeIpc()
+  const registry = new PluginRegistry({ persistedEnabled: { hang: true } })
+  registry.register({
+    dir: '/fake/hang',
+    source: '<test>',
+    manifest: { ...manifest, id: 'hang' },
+    loadMain: async () => ({ activate: () => new Promise(() => undefined) })
+  })
+  const host = makeHost(registry, ipc, { activationTimeoutMs: 1500 })
+  // 不要 await：activate 永不 resolve，会等满 activationTimeout（P54 变慢的根因）
+  void host.activate('hang').catch(() => undefined)
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  const started = Date.now()
+  const disabled = await host.setEnabled('hang', false)
+  const elapsed = Date.now() - started
+  assertEq(disabled.state, 'disabled', '状态 disabled')
+  assert(elapsed < 1000, `停用耗时 ${elapsed}ms 应 <1000ms（不能等满 activationTimeout）`)
+  await host.disposeAll()
+  return `停用耗时 ${elapsed}ms`
+})
+
+await r.check('P55', '激活超时：迟到返回的 cleanup 仍然执行（不能泄漏插件资源）', async () => {
+  const ipc = createFakeIpc()
+  let cleanupRuns = 0
+  const registry = new PluginRegistry({ persistedEnabled: { late: true } })
+  registry.register({
+    dir: '/fake/late',
+    source: '<test>',
+    manifest: { ...manifest, id: 'late' },
+    loadMain: async () => ({
+      activate: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        return () => {
+          cleanupRuns += 1
+        }
+      }
+    })
+  })
+  const host = makeHost(registry, ipc, { activationTimeoutMs: 100 })
+  const status = await host.activate('late')
+  assertEq(status.state, 'failed', '超时失败')
+  assert(/timeout/.test(String(status.error?.stage ?? '')), '失败阶段是超时：' + JSON.stringify(status.error))
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  assertEq(cleanupRuns, 1, '迟到 resolve 的 cleanup 必须执行且只执行一次')
+  await host.disposeAll()
+  return '迟到 cleanup 执行一次'
 })
 const result = r.toJSON()
 const ok = printResult(result)

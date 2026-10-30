@@ -9,6 +9,7 @@
 //
 // 失败统一信封：{ ok: false, error: { code, message, details? } }
 
+import { ipcMain } from 'electron'
 import { channelHandle } from './channelRegistrar'
 import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
 import type { GatewayClient, GatewayStatusSnapshot } from '../gatewayClient'
@@ -40,8 +41,20 @@ async function wrap<T>(fn: () => Promise<T>): Promise<GatewayIpcResult<T>> {
   }
 }
 
-function handle(channel: string, fn: (...args: any[]) => Promise<GatewayIpcResult<unknown>>): void {
-  // 走统一注册器：插件激活 marketing 时能接管到自己名下（停用即摘除）
+/** 宿主通道：直连 ipcMain（不能走插件注册器——那会在插件激活期间被劫持，见审查 P0#1） */
+function hostHandle(
+  channel: string,
+  fn: (...args: any[]) => Promise<GatewayIpcResult<unknown>>
+): void {
+  ipcMain.removeHandler(channel)
+  ipcMain.handle(channel, (_e, ...args) => fn(...args))
+}
+
+/** 插件通道：走 channelRegistrar，插件激活时接管到自己的租约下（停用即摘除） */
+function pluginHandle(
+  channel: string,
+  fn: (...args: any[]) => Promise<GatewayIpcResult<unknown>>
+): void {
   channelHandle(channel, fn as never)
 }
 
@@ -60,16 +73,19 @@ function handle(channel: string, fn: (...args: any[]) => Promise<GatewayIpcResul
  * 之前两套通道由同一次调用注册，导致「停用营销后 marketing:gateway:* 仍然活着」。
  */
 export function registerWorkGatewayIpc(gateway: GatewayClient): void {
-  handle(WORK_GATEWAY_CHANNELS.status, () => wrap<GatewayStatusSnapshot>(() => gateway.getStatus()))
-  handle(WORK_GATEWAY_CHANNELS.ensureReady, () =>
+  hostHandle(WORK_GATEWAY_CHANNELS.status, () => wrap<GatewayStatusSnapshot>(() => gateway.getStatus()))
+  hostHandle(WORK_GATEWAY_CHANNELS.ensureReady, () =>
     wrap<GatewayStatusSnapshot>(() => gateway.ensureReady())
   )
 }
 
 /** 营销域 gateway 面：由 marketing 插件在自己的通道租约下注册（不再由宿主代劳） */
 export function registerMarketingGatewayIpc(gateway: GatewayClient): void {
-  handle(MARKETING_GATEWAY_CHANNELS.status, () => wrap<GatewayStatusSnapshot>(() => gateway.getStatus()))
-  handle(MARKETING_GATEWAY_CHANNELS.ensureReady, () =>
+  pluginHandle(
+    MARKETING_GATEWAY_CHANNELS.status,
+    () => wrap<GatewayStatusSnapshot>(() => gateway.getStatus())
+  )
+  pluginHandle(MARKETING_GATEWAY_CHANNELS.ensureReady, () =>
     wrap<GatewayStatusSnapshot>(() => gateway.ensureReady())
   )
 }

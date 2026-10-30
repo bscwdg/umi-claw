@@ -159,6 +159,9 @@ export default definePlugin({
     })
     if (offResume) ctx.onDispose(offResume)
 
+    // 注册阶段结束：复位注册器，避免宿主后续注册自己的通道时被劫持（审查 P0#1）
+    setChannelRegistrar(null)
+
     runtime = marketing
     ctx.logger.info(`营销域就绪（库 ${db.path}）`)
 

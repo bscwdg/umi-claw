@@ -382,3 +382,20 @@
 
 **Phase 4 自动化部分完成**。唯一未执行项：Windows NSIS 真机安装/卸载（当前环境无 GUI 安装器），
 清单已写入 `doc/RUNBOOK-4.0.md` §6。
+
+### 2026-10-30 · Phase 4 审查/对抗修复（R29–R36）
+
+两路子代理（Phase 4 审查 + 对抗验收）结论：2 个必现 P0、2 个 P1、若干 P2/P3。逐条修复：
+
+| 编号 | 问题 | 修复 |
+|---|---|---|
+| R29 [P0] | `channelRegistrar` 模块级单例被营销插件激活后**不复位**：宿主随后 `registerWorkGatewayIpc` 被劫持 → `CHANNEL_NOT_LEASED` 抛出在 try 之外 → 有旧库的升级用户**无窗口无托盘** | ① work gateway 面改 `hostHandle` 直连 `ipcMain`（宿主通道不走插件注册器）；② 插件注册阶段结束即 `setChannelRegistrar(null)` |
+| R30 [P0] | `Dashboard.vue` 用了 `pluginSlots` 却没 import → 首页必崩；`tsc` 不检查 .vue 模板，所以「双 typecheck 0 错」挡不住 | 补 import；并用 `@vue/compiler-sfc` 真编译一次作为验证 |
+| R31 [P1] | 旧库不存在时 `legacyDb` 工厂 throw → 新装用户营销域**永久激活失败** | 返回空 reader（`list: async () => []`），插件照常激活、导入自然跳过 |
+| R32 [P1] | 超时路径丢弃 `activate()` 迟到返回的 cleanup → 后台任务/注册器残留 | `lateCleanupDone` 标记 + 统一迟到 cleanup 入口（超时与停用两条路径各执行一次，不双跑） |
+| R33 [P2] | `activate` 期间停用：返回 disabled 但 handler/job 仍存活（生产窗口可达 20s） | deactivate 对在途 attempt **立即 rollback**（closed 后迟到注册本就全拒），返回时已不服务；实测 0ms |
+| R34 [P2] | P52 是空断言：两次 `bundleEntry` 各自内联注册器，模块状态不共享 | 新增单入口 `test/fixtures/plugin-registrar-entry.ts`，同一实例里断言「复位 + 宿主注册不抛」 |
+| R35 [P2] | P54 等待永不 resolve 的 activation，让套件多跑 20s | 不 await；该用例超时降到 1.5s；新增 **P55**（超时 + 迟到 cleanup 路径） |
+| R36 [P3] | `ui.accept` U11 仍是旧架构断言（要求宿主注册 marketing:gateway）、P32 可被 8 种写法绕过、RUNBOOK 数字/版本漂移 | U11 改为「宿主不得注册 marketing:gateway」并只加载 work 面；P32 增加可选链/方括号/解构等模式；RUNBOOK 修正 |
+
+**验收**：plugin **61/61**（+P55）；全量 19 套 **368/368**；e2e 11/11；smoke 6/6；双 typecheck 0 错；build 通过。

@@ -388,7 +388,10 @@ export async function loadWorkIpcChannels({ electronStub }) {
     { externals: ['vue'], alias: [`electron=${posix(electronStub)}`] }
   )
   const gwMod = await import(pathToFileURL(gwBundle).href)
-  if (typeof gwMod.registerGatewayIpc === 'function') {
+  // Phase 4 起宿主只注册 work 面；marketing:gateway:* 归营销插件（本套件不加载它）
+  if (typeof gwMod.registerWorkGatewayIpc === 'function') {
+    gwMod.registerWorkGatewayIpc({ getStatus: async () => ({}), ensureReady: async () => ({}) })
+  } else if (typeof gwMod.registerGatewayIpc === 'function') {
     gwMod.registerGatewayIpc({ getStatus: async () => ({}), ensureReady: async () => ({}) })
   }
 

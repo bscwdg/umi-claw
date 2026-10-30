@@ -499,17 +499,17 @@ try {
 
     // 反向：主进程注册的 handler，渲染端应都能触达（防「注册了但没人用」的孤儿通道）
     //
-    // 4.0 合并（MERGE-INVENTORY C-2）：gateway 面只保留一个 registerGatewayIpc，
-    // 它一次注册 work:gateway:* 与 marketing:gateway:* 两套常量。本套件只加载 work 域
-    // IPC（ipc/work.ts + ipc/gateway.ts），营销域通道由 test/marketing/* 覆盖，
-    // 所以孤儿检查按域过滤，并对 marketing:gateway:* 单独断言「确实注册了」。
-    const mergedMarketingGatewayChannels = ['marketing:gateway:status', 'marketing:gateway:ensureReady']
-    for (const ch of mergedMarketingGatewayChannels) {
-      assert(registered.includes(ch), `gateway IPC 应同时注册 ${ch}（两套通道常量并存）`)
+    // Phase 4 起 gateway 面**按域拆分**：宿主只注册 work:gateway:*，
+    // marketing:gateway:* 由营销插件在自己的通道租约下注册（停用即摘）。
+    // 本套件只加载 work 域 IPC，所以营销通道不应出现在这里（否则说明宿主又代劳了）。
+    const marketingGatewayChannels = ['marketing:gateway:status', 'marketing:gateway:ensureReady']
+    for (const ch of marketingGatewayChannels) {
+      assert(
+        !registered.includes(ch),
+        `宿主不应再注册 ${ch}（Phase 4 起归营销插件，见 plugin.accept P48）`
+      )
     }
-    const orphan = registered
-      .filter((ch) => !ch.startsWith('marketing:'))
-      .filter((ch) => !invoked.includes(ch))
+    const orphan = registered.filter((ch) => !invoked.includes(ch))
     assertEq(orphan.length, 0, `主进程注册但渲染端无法触达（孤儿）: ${orphan.join(', ')}`)
 
     return `渲染端 ${invoked.length} 通道 = 主进程 ${registered.length} handler，全对齐 ✓`

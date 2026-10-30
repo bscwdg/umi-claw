@@ -42,6 +42,11 @@ export function setChannelRegistrar(registrar: ChannelRegistrar | null): void {
   active = registrar
 }
 
+/** 当前是否有插件接管了通道注册（验收用：激活结束后必须为 false，否则宿主注册会被劫持） */
+export function hasChannelRegistrar(): boolean {
+  return active !== null
+}
+
 export function channelHandle(
   channel: string,
   fn: (...args: any[]) => Promise<unknown>

@@ -62,6 +62,8 @@ interface ActivePlugin {
   disposers: Array<{ label: string; run: () => void | Promise<void> }>
   timers: Set<ReturnType<typeof setTimeout>>
   config: Record<string, unknown>
+  /** 迟到返回的 cleanup 是否已被统一入口执行过（防超时/停用两条路径各跑一次） */
+  lateCleanupDone?: boolean
   /**
    * 该次激活尝试是否已关闭（失败 / 超时 / 停用）。
    *
@@ -198,10 +200,26 @@ export class PluginHost {
       active.module = mod
       const ctx = this.createContext(record, active)
 
-      const result = await this.runWithTimeout(() => mod.activate(ctx))
+      // 保留原始 promise：超时/停用后它可能仍会 resolve 出一个 cleanup，
+      // 那条 cleanup 必须执行，否则插件申请的外部资源会泄漏（对抗 A2-2 / 审查 P1#4）
+      const activation = Promise.resolve().then(() => mod.activate(ctx))
+      // 统一入口：closed 之后 resolve 出的 cleanup 只在这里执行一次（含超时路径）。
+      // 下面 await 续体只跑「closed 且尚未处理」的情况，避免双跑（对抗 F1）。
+      activation
+        .then(async (late) => {
+          if (typeof late !== 'function' || !active.closed || active.lateCleanupDone) return
+          active.lateCleanupDone = true
+          await safeRun(late, CLEANUP_TIMEOUT_MS)
+        })
+        .catch(() => undefined)
+
+      const result = await this.runWithTimeout(() => activation)
       // 超时 / 停用发生在 activate 进行中：迟到返回的 cleanup 也要执行，状态不能前进
       if (active.closed) {
-        if (typeof result === 'function') await safeRun(result, CLEANUP_TIMEOUT_MS)
+        if (typeof result === 'function' && !active.lateCleanupDone) {
+          active.lateCleanupDone = true
+          await safeRun(result, CLEANUP_TIMEOUT_MS)
+        }
         throw new PluginCancelledError('激活过程中被停用')
       }
       if (typeof result === 'function') {
@@ -238,7 +256,13 @@ export class PluginHost {
     // 先关掉「在途激活」：否则 activate 在 await 之后继续注册，会留下宿主以为
     // 已停用、实际仍在服务的 handler/定时器（审查 P0 / 对抗用例 A7）。
     const pending = this.attempts.get(id)
-    if (pending) pending.closed = true
+    if (pending) {
+      pending.closed = true
+      // 立即回滚这次在途尝试已注册的通道/定时器：closed 之后插件的迟到注册本就会被
+      // assertOpen 拒掉，所以不必等它自己 resolve。这样「停用返回」时一定已不服务
+      // （对抗 A3-1：之前等待上限 500ms，慢插件会有 disabled 但仍可调用的窗口）。
+      await this.rollback(record, pending)
+    }
 
     const active = this.active.get(id)
     if (active) {

@@ -36,6 +36,7 @@ import {
   PluginHost,
   PluginRegistry,
   type HostOpsApi,
+  type LegacyDbApi,
   type NotificationsApi,
   type OpenClawApi,
   type PluginStatus,
@@ -484,7 +485,9 @@ async function initPlugins(): Promise<void> {
             : info.id === 'work'
               ? workDatabase
               : null
-        if (!client) throw new Error(`旧库尚未初始化：${info.id}`)
+        // 旧库不存在（全新安装 / 没装过 2.0）不是错误：返回空 reader，
+        // 插件照常激活、导入逻辑自然跳过（审查 P1#3：否则营销域在新装用户上永久激活失败）
+        if (!client) return { list: (async () => []) as unknown as LegacyDbApi['list'] }
         return {
           list: (table, params) =>
             client.request(`${table}.list`, (params ?? {}) as Record<string, unknown>)

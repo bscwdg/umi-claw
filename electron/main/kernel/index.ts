@@ -43,6 +43,7 @@ export {
   availableServices,
   SERVICE_NAMES,
   type HostOpsApi,
+  type LegacyDbApi,
   type ServiceInfo,
   type ServiceName,
   type NotificationsApi,

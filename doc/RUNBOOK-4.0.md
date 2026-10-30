@@ -79,11 +79,12 @@
 | 工作/营销页面空白、控制台 `No handler registered for work:*` | 对应插件没激活（清单坏 / 激活超时 / 被停用） | 打开「能力中心」看该插件状态与错误；点重试 |
 | 启动慢、首屏很久才出来 | 首次导入大库（分页 5000/批）；或激活插件 spawn worker 慢 | 看日志 `[import]`；第二次启动不会重复导入 |
 | 数据「没了」 | 导入失败未写标记，插件以空库运行 | 看日志错误；修好后重启重试（见 §2） |
-| 停用插件后功能还在 | 通道归属错误（如 gateway 面） | 4.0.1 起 gateway 按域拆分；确认版本 |
+| 停用插件后功能还在 | 通道归属错误（如 gateway 面） | 4.0.0 起 gateway 按域拆分；确认版本 |
 | 停用后提醒还在响 | 提醒循环属 work 插件，随停用停止 | 确认是 work 插件停用而非仅隐藏菜单 |
 | 热点雷达不更新 | 没配置多模态/网关未就绪 / collector 路径错 | 看 `[hot]` 日志；确认 `<resources>/collector/index.mjs` 存在 |
-| 扫描件识别很慢才报「未配置多模态」 | 预检未生效（版本 < 4.0.1） | 升级；新版本会在栅格化前直接返回 |
+| 扫描件识别慢才报「未配置多模态」 | 预检未生效（旧版本） | 升级到 4.0.0+；新版本在栅格化前直接返回 |
 | 升级后要求重新同意协议 | consent 存在插件库；插件库被删/未导入 | 重新同意一次即可 |
+| 营销插件激活失败、错误里提到旧库 | 旧版本会在缺 `umi-claw.db` 时抛错 | 4.0.0+ 已改为返回空 reader（全新安装可正常激活） |
 
 ---
 
@@ -108,9 +109,9 @@
 npm run plugin:gen          # 生成插件入口 + 复制清单/migrations 到 resources
 npm run build               # 生成 + 构建（含插件代码）
 npm run typecheck:node      # 主进程
-npm run typecheck:web       # 渲染端（含 plugins/**/*.vue）
-node test/plugin.accept.mjs # 插件内核 + 两个域装箱（55 项）
-npm run accept              # 全量 19 套
+npm run typecheck:web       # 渲染端（tsc 只管 .ts；.vue 由构建期 vite/vue 编译检查）
+node test/plugin.accept.mjs # 插件内核 + 两个域装箱 + 加固（60 项）
+npm run accept              # 全量验收（本仓库 19 个脚本套件，含 db/gateway/work/marketing/ui）
 node test/packaged.smoke.mjs# 打包态静态冒烟
 node test/one-day.e2e.mjs   # 「一天」端到端
 ```

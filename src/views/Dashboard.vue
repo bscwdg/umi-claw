@@ -142,6 +142,7 @@ import { useRouter } from 'vue-router'
 import { useClawStore } from '@/stores/claw'
 import { useConfigStore } from '@/stores/config'
 import { useToast } from '@/composables/useToast'
+import { pluginSlots } from '@/renderer/pluginUi'
 
 const router = useRouter()
 const clawStore = useClawStore()
