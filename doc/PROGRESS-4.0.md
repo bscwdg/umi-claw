@@ -331,3 +331,15 @@
 **为什么先做这一层而不是直接改 host.invoke**：`host.invoke` 的签名只对「插件自有通道」通用，
 而这 80+ 处里既有域通道也有宿主能力（claw.status / shell.openExternal）。先把入口收敛成一处，
 下一步只需改 hostBridge 一个文件就能整体切到更窄的接口（并按需补 `host.shell` 这类显式能力）。
+
+### 2026-10-30 · Phase 4 第三批：gateway 通道归属 + 系统唤醒事件
+
+- `ipc/gateway.ts` 拆成 `registerWorkGatewayIpc` / `registerMarketingGatewayIpc`（`registerGatewayIpc` 保留为兼容两域一起注册，仅测试/脚本用）。
+  宿主只注册 work 面；**marketing:gateway:* 由营销插件在自己的通道租约下注册**，停用即摘——
+  修掉「停用营销后 marketing:gateway:* 仍活着、甚至能拉起 OpenClaw」。
+- gateway 的 handle 改走共享 `channelHandle`，插件侧才能接管。
+- 内核新增 `ctx.host.onResume(cb)`（宿主 `PluginHostOptions.hostEvents` 注入，生产用 `powerMonitor.resume` 广播）。
+  营销插件订阅后「唤醒立即补一轮热点采集」，激活时也先补一次——补回 Phase 3 丢掉的 resume 行为。
+- 新验收：**P48**（宿主零注册 marketing gateway / 插件注册）、**P49**（resume 订阅 + 停用自动退订）。
+
+**验收**：plugin **55/55**（+P48/P49）；全量 19 套 **362/362**；双 typecheck 0 错；build 通过。

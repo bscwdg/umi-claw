@@ -9,7 +9,7 @@
 //
 // 失败统一信封：{ ok: false, error: { code, message, details? } }
 
-import { ipcMain } from 'electron'
+import { channelHandle } from './channelRegistrar'
 import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
 import type { GatewayClient, GatewayStatusSnapshot } from '../gatewayClient'
 
@@ -41,9 +41,8 @@ async function wrap<T>(fn: () => Promise<T>): Promise<GatewayIpcResult<T>> {
 }
 
 function handle(channel: string, fn: (...args: any[]) => Promise<GatewayIpcResult<unknown>>): void {
-  // 防御性：重复注册会抛 "Attempted to register a second handler"，先移除
-  ipcMain.removeHandler(channel)
-  ipcMain.handle(channel, (_e, ...args) => fn(...args))
+  // 走统一注册器：插件激活 marketing 时能接管到自己名下（停用即摘除）
+  channelHandle(channel, fn as never)
 }
 
 /**
@@ -53,9 +52,30 @@ function handle(channel: string, fn: (...args: any[]) => Promise<GatewayIpcResul
  *   （只发 `GET /health` + `GET /v1/models`，零 token、绝不触发拉起、绝不调 chat）
  * - `ensureReady`：探活 → 按需自动拉起（starter，复用 clawManager）→ 就绪轮询 → 同一快照
  */
+/**
+ * 注册 Gateway 只读面。
+ *
+ * Phase 4：**按域拆开**——work 命名空间由宿主持有（网关是宿主级能力），
+ * marketing 命名空间归插件（营销插件激活时用自己的通道租约注册，停用即摘除）。
+ * 之前两套通道由同一次调用注册，导致「停用营销后 marketing:gateway:* 仍然活着」。
+ */
+export function registerWorkGatewayIpc(gateway: GatewayClient): void {
+  handle(WORK_GATEWAY_CHANNELS.status, () => wrap<GatewayStatusSnapshot>(() => gateway.getStatus()))
+  handle(WORK_GATEWAY_CHANNELS.ensureReady, () =>
+    wrap<GatewayStatusSnapshot>(() => gateway.ensureReady())
+  )
+}
+
+/** 营销域 gateway 面：由 marketing 插件在自己的通道租约下注册（不再由宿主代劳） */
+export function registerMarketingGatewayIpc(gateway: GatewayClient): void {
+  handle(MARKETING_GATEWAY_CHANNELS.status, () => wrap<GatewayStatusSnapshot>(() => gateway.getStatus()))
+  handle(MARKETING_GATEWAY_CHANNELS.ensureReady, () =>
+    wrap<GatewayStatusSnapshot>(() => gateway.ensureReady())
+  )
+}
+
+/** 兼容旧调用：两个域一起注册（仅用于测试/脚本，生产按域调用） */
 export function registerGatewayIpc(gateway: GatewayClient): void {
-  for (const channels of [WORK_GATEWAY_CHANNELS, MARKETING_GATEWAY_CHANNELS]) {
-    handle(channels.status, () => wrap<GatewayStatusSnapshot>(() => gateway.getStatus()))
-    handle(channels.ensureReady, () => wrap<GatewayStatusSnapshot>(() => gateway.ensureReady()))
-  }
+  registerWorkGatewayIpc(gateway)
+  registerMarketingGatewayIpc(gateway)
 }

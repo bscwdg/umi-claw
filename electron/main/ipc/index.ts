@@ -19,7 +19,13 @@
 //
 // 契约先于代码（硬规则 11）：任何新增通道先改 PLAN-3.0.md §14，再动实现。
 
-export { registerGatewayIpc, WORK_GATEWAY_CHANNELS, MARKETING_GATEWAY_CHANNELS } from './gateway'
+export {
+  registerGatewayIpc,
+  registerWorkGatewayIpc,
+  registerMarketingGatewayIpc,
+  WORK_GATEWAY_CHANNELS,
+  MARKETING_GATEWAY_CHANNELS
+} from './gateway'
 export type { GatewayIpcResult } from './gateway'
 export {
   registerWorkIpc,

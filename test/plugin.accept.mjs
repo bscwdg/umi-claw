@@ -2092,6 +2092,54 @@ await r.check('P47', '打包契约：resources/plugins 的清单与 migrations �
   }
   return '清单/migrations/worker/collector 都在包里'
 })
+// ── P48 gateway 面按域拆分：marketing:gateway 归插件 ────────────────────────
+await r.check('P48', 'gateway 通道归属：宿主只注册 work 面，marketing 面由插件注册', async () => {
+  const hostSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
+  const pluginSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
+  assert(/registerWorkGatewayIpc\(/.test(hostSrc), '宿主注册 work gateway 面')
+  assert(!/registerMarketingGatewayIpc\(/.test(hostSrc), '宿主不再注册 marketing gateway 面')
+  assert(/registerMarketingGatewayIpc\(/.test(pluginSrc), '营销插件注册自己的 gateway 面')
+  return '按域拆分完成'
+})
+
+// ── P49 宿主系统事件：resume 能广播给插件（ctx.host.onResume）───────────────
+await r.check('P49', 'resume 广播：插件经 ctx.host.onResume 订阅，清理时退订', async () => {
+  const ipc = createFakeIpc()
+  let resumeHandler = null
+  const hostEvents = {
+    onResume(callback) {
+      resumeHandler = callback
+      return () => {
+        if (resumeHandler === callback) resumeHandler = null
+      }
+    }
+  }
+  let ticks = 0
+  const registry = new PluginRegistry({ persistedEnabled: { p: true } })
+  registry.register({
+    dir: '/fake/p',
+    source: '<test>',
+    manifest: { ...manifest, id: 'p' },
+    loadMain: async () => ({
+      activate: (ctx) => {
+        const off = ctx.host.onResume?.(() => {
+          ticks += 1
+        })
+        if (off) ctx.onDispose(off)
+      }
+    })
+  })
+  const host = makeHost(registry, ipc, { hostEvents })
+  const status = await host.activate('p')
+  assertEq(status.state, 'activated', '激活：' + JSON.stringify(status.error))
+  assert(typeof resumeHandler === 'function', '插件拿到了 onResume 订阅')
+  resumeHandler()
+  resumeHandler()
+  assertEq(ticks, 2, '每次唤醒都触发回调')
+  await host.disposeAll()
+  assertEq(resumeHandler, null, '停用后自动退订，不留悬空回调')
+  return 'resume 订阅/退订正确'
+})
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin.json'), result)

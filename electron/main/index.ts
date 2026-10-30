@@ -9,8 +9,9 @@ import {
   nativeImage,
   protocol,
   Notification,
-  // marketing 域（2.0）：热点定时器在系统唤醒后补检
-  safeStorage
+  // 系统唤醒后热点采集补检（Phase 4：改为插件订阅 hostEvents.onResume）
+  safeStorage,
+  powerMonitor
 } from 'electron'
 import { join, parse, dirname, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -63,7 +64,7 @@ import {
   type GatewayModels,
   type GatewayStarterResult
 } from './gatewayClient'
-import { registerGatewayIpc } from './ipc'
+import { registerWorkGatewayIpc } from './ipc'
 import {
   VoiceSecretStore,
   VoiceCloneManager,
@@ -553,6 +554,13 @@ async function initPlugins(): Promise<void> {
         resourcesPath: process.resourcesPath,
         isPackaged: app.isPackaged,
         nodePath: configManager.getNodePath()
+      },
+      // 系统从睡眠恢复：广播给插件（热点采集立即补一轮等）
+      hostEvents: {
+        onResume: (callback) => {
+          powerMonitor.on('resume', callback)
+          return () => powerMonitor.removeListener('resume', callback)
+        }
       },
       services: serviceFactories,
       // work 激活要 spawn 便携 node + 建库/迁移，5s 在慢机上会误判超时（审查 P1-4）
@@ -2116,7 +2124,8 @@ app.whenReady().then(async () => {
   registerIpcHandlers()
   // ── work.gateway（Commit 01：只读快照 + 探活/自动拉起/就绪轮询）──
   // 只注册两条通道；业务流（qa/tools/reports 的 SSE 增量）归各自 Commit
-  registerGatewayIpc(workGatewayClient)
+  // 只注册 work 面：marketing:gateway:* 归营销插件（激活时自注册，停用即摘）
+  registerWorkGatewayIpc(workGatewayClient)
   // work 的业务通道（work:*）由插件在 initPlugins() 里注册，宿主不再直接注册
   // ── 鱼语音：预设 TTS + 克隆音色共用 /voice 配置与音频缓存 ──
   // 语音是增强能力：初始化失败只降级，绝不阻断主流程启动。

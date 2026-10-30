@@ -39,6 +39,8 @@ export interface PluginHostOptions {
   platform?: string
   /** 宿主路径（透传给 ctx.host.paths；缺省回落到 dataDir） */
   paths?: { appPath: string; resourcesPath: string; isPackaged: boolean; nodePath: string }
+  /** 宿主系统事件（resume）：插件通过 ctx.host.onResume 订阅 */
+  hostEvents?: { onResume(callback: () => void): () => void }
   /**
    * 宿主提供的服务工厂（PLAN-4.0 §4.2）。
    *
@@ -348,7 +350,10 @@ export class PluginHost {
           resourcesPath: this.opts.dataDir,
           isPackaged: false,
           nodePath: process.execPath
-        }
+        },
+        onResume: this.opts.hostEvents
+          ? (callback) => this.opts.hostEvents!.onResume(callback)
+          : undefined
       },
       logger: {
         info: (m, meta) => this.log(record, `[info] ${m}${meta === undefined ? '' : ' ' + safeJson(meta)}`),

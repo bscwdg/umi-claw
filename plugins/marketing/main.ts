@@ -12,6 +12,7 @@ import { registerAdvisorIpc } from '../../electron/main/ipc/advisor'
 import { registerScanIpc } from '../../electron/main/ipc/scan'
 import { registerContentIpc } from '../../electron/main/ipc/content'
 import { registerHotIpc } from '../../electron/main/ipc/hot'
+import { registerMarketingGatewayIpc } from '../../electron/main/ipc/gateway'
 import {
   abortAllAdvisorStreams,
   abortAllContentGenerations,
@@ -109,6 +110,9 @@ export default definePlugin({
         )
     })
 
+    // 激活后立刻尝试一次（不阻塞激活：失败只记日志）
+    void marketing.hot.tickDue().catch(() => undefined)
+
     try {
       const facade = databaseFacade(db) as never
       registerMarketingIpc(
@@ -122,6 +126,8 @@ export default definePlugin({
       registerScanIpc(marketing.scan, marketing.knowledge)
       registerContentIpc(marketing.content)
       registerHotIpc(marketing.hot, marketing.hotScore)
+      // marketing:gateway:* 也归本插件（宿主不再代劳，停用即摘）
+      registerMarketingGatewayIpc(buildOpenClawGateway(openclaw))
     } catch (e) {
       setChannelRegistrar(null)
       throw e
@@ -142,6 +148,12 @@ export default definePlugin({
       },
       { name: 'hot-tick' }
     )
+
+    // 系统唤醒后立即补一轮（宿主把 powerMonitor.resume 广播成 onResume）
+    const offResume = ctx.host.onResume?.(() => {
+      void marketing.hot.tickDue().catch((e) => ctx.logger.warn('[hot] 唤醒补采失败', { message: String(e) }))
+    })
+    if (offResume) ctx.onDispose(offResume)
 
     runtime = marketing
     ctx.logger.info(`营销域就绪（库 ${db.path}）`)

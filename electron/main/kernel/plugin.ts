@@ -41,6 +41,11 @@ export interface PluginHostInfo {
     /** 便携 node（缺失时回退系统 node）；collector 与 db worker 用它跑脚本 */
     nodePath: string
   }
+  /**
+   * 订阅宿主系统事件（目前只有 `resume`：从睡眠恢复）。
+   * 插件跑周期任务时用它「唤醒立即补一轮」，比等下一个 interval 及时；返回取消订阅函数。
+   */
+  onResume?(callback: () => void): () => void
 }
 
 /**
