@@ -82,6 +82,62 @@ export function buildJsonMergePatch(original: unknown, desired: unknown): Record
   return isPlainObject(diff) && Object.keys(diff).length > 0 ? diff : null
 }
 
+/** 按 id 索引的数组：全部元素都是带非空字符串 id 的对象时返回 id 集合，否则 null。 */
+function idKeyedArrayIds(value: unknown): Set<string> | null {
+  if (!Array.isArray(value)) return null
+  const ids = new Set<string>()
+  for (const entry of value) {
+    if (!isPlainObject(entry) || typeof entry.id !== 'string' || !entry.id.trim()) return null
+    ids.add(entry.id.trim())
+  }
+  return ids
+}
+
+/** 与官方 `formatConcreteConfigPath` 同口径：普通键走点号，其余键走 ["..."] 括号形式。 */
+function formatConcretePath(segments: string[]): string {
+  return segments.reduce((path, segment) => {
+    if (!/^[A-Za-z_$][A-Za-z0-9_$:-]*$/.test(segment)) return `${path}[${JSON.stringify(segment)}]`
+    return path ? `${path}.${segment}` : segment
+  }, '')
+}
+
+/**
+ * 计算「需要显式整体替换」的按 id 数组路径（供 `--replace-path` 使用）。
+ *
+ * 背景（OpenClaw 2026.10.x 起）：`config patch` 对按 id 的数组（如
+ * `models.providers.<id>.models`）做**非破坏性**校验——若补丁里的数组会丢掉既有条目，
+ * 整单被拒（exit 1，`Refusing to replace ...; it would remove existing entries: ...`），
+ * 必须显式 `--replace-path <path>` 才允许替换。本项目是这些模型数组的唯一作者
+ * （预设 + 用户自定义模型 + 激活模型补录），目标列表就是权威列表，因此对确实会移除
+ * 条目的数组带上该开关；否则（例如老版本 CLI 没有该选项）不传，保持兼容。
+ *
+ * 只在「原数组与新数组都是按 id 数组」时判定：非按 id 数组（字符串数组、缺 id 的数组）
+ * 不在官方校验范围内，传了反而可能因路径不匹配被判为无效参数。
+ *
+ * @returns 相对 openclaw.json 根的点号路径列表，可直接作为 `--replace-path` 参数
+ */
+export function collectLossyIdArrayReplacePaths(original: unknown, desired: unknown): string[] {
+  const paths: string[] = []
+  const walk = (base: unknown, next: unknown, path: string[]): void => {
+    if (!isPlainObject(next)) return
+    for (const [key, value] of Object.entries(next)) {
+      const childPath = [...path, key]
+      const baseValue = isPlainObject(base) ? (base as Record<string, unknown>)[key] : undefined
+      if (Array.isArray(value)) {
+        const nextIds = idKeyedArrayIds(value)
+        const baseIds = idKeyedArrayIds(baseValue)
+        if (nextIds && baseIds && [...baseIds].some((id) => !nextIds.has(id))) {
+          paths.push(formatConcretePath(childPath))
+        }
+        continue
+      }
+      walk(baseValue, value, childPath)
+    }
+  }
+  walk(original, desired, [])
+  return paths
+}
+
 function diffValue(original: unknown, desired: unknown): unknown {
   if (isPlainObject(original) && isPlainObject(desired)) {
     const patch: Record<string, unknown> = {}
@@ -104,6 +160,16 @@ function diffValue(original: unknown, desired: unknown): unknown {
   return JSON.stringify(original) === JSON.stringify(desired) ? undefined : desired
 }
 
+export interface OpenClawPatchOptions {
+  /** 覆盖默认超时预算（毫秒） */
+  timeoutMs?: number
+  /**
+   * 允许「整体替换」的按 id 数组路径（见 collectLossyIdArrayReplacePaths）。
+   * 逐条转成官方 `config patch --replace-path <path>`（可重复）。
+   */
+  replacePaths?: string[]
+}
+
 /**
  * 通过官方 CLI 把 merge patch 应用到 openclaw.json（--stdin 喂 JSON，避免临时文件编码问题）。
  * 运行时（绿色 Node + openclaw 包）缺失时直接失败，不去 spawn 不存在的二进制。
@@ -111,17 +177,19 @@ function diffValue(original: unknown, desired: unknown): unknown {
 export function applyOpenClawConfigPatch(
   dataDir: string,
   patch: Record<string, unknown>,
-  timeoutMs: number = PATCH_TIMEOUT_MS
+  options: OpenClawPatchOptions = {}
 ): Promise<OpenClawPatchResult> {
   const configPath = openClawPaths.openClawConfig(dataDir)
-  return serializePatch(configPath, () => runPatchProcess(dataDir, patch, timeoutMs))
+  return serializePatch(configPath, () => runPatchProcess(dataDir, patch, options))
 }
 
 function runPatchProcess(
   dataDir: string,
   patch: Record<string, unknown>,
-  timeoutMs: number
+  options: OpenClawPatchOptions
 ): Promise<OpenClawPatchResult> {
+  const timeoutMs = options.timeoutMs ?? PATCH_TIMEOUT_MS
+  const replacePaths = Array.isArray(options.replacePaths) ? options.replacePaths.filter((p) => typeof p === 'string' && p.trim()) : []
   return new Promise((resolve) => {
     const nodePath = openClawPaths.nodeBinary(dataDir)
     const clawJsPath = openClawPaths.clawJs(dataDir)
@@ -138,7 +206,16 @@ function runPatchProcess(
 
     const child = spawn(
       nodePath,
-      [clawJsPath, 'config', 'patch', '--stdin'],
+      [
+        clawJsPath,
+        'config',
+        'patch',
+        '--stdin',
+        // 官方 2026.10.x：按 id 数组若会移除既有条目，必须显式声明整体替换意图；
+        // 否则整单被拒（Refusing to replace ...）。老版本 CLI 无此选项时不该出现这些路径
+        // （见 collectLossyIdArrayReplacePaths 的注释），所以这里不会给老版本传未知参数。
+        ...replacePaths.flatMap((p) => ['--replace-path', p])
+      ],
       {
         cwd: openClawPaths.installDir(dataDir),
         env: buildOpenClawEnv(dataDir, nodePath),
