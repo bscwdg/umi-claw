@@ -470,6 +470,20 @@
             <button class="btn btn-sm" :disabled="cloneBusy" @click="closeCloneWizard">关闭</button>
           </div>
 
+          <!--
+            向导内的提示条：页面级 error/notice 是普通文档流且位于遮罩（z-index 80）之下，
+            训练成功/失败时用户看不到任何反馈（历史现象：点了「开始训练」像没反应）。
+            所以向导内部单独渲染同一份状态，保证「成功/失败」在弹窗里立刻可见。
+          -->
+          <div v-if="error" class="notice notice-error clone-inline-notice">
+            <span>{{ error }}</span>
+            <button class="notice-close" type="button" @click="showError('')">×</button>
+          </div>
+          <div v-else-if="notice" class="notice clone-inline-notice">
+            <span>{{ notice }}</span>
+            <button class="notice-close" type="button" @click="dismissNotice">×</button>
+          </div>
+
           <div class="clone-form">
             <div class="form-group">
               <label class="form-label">音色名称</label>
@@ -1417,6 +1431,13 @@ onBeforeUnmount(() => {
 .notice-error {
   background: rgba(255, 86, 86, 0.12);
   color: #ff8d8d;
+}
+
+/* 克隆向导内的提示条：与弹窗内容同宽、不参与页面级提示的布局 */
+.clone-inline-notice {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .text-area {

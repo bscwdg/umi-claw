@@ -1034,5 +1034,92 @@ await recorder.check('V18', '远端对账：远端缺失/失败/已变化/一致
   return '四态判定均正确，且结论可读'
 })
 
+await recorder.check('V19', '资源未授权失败：中文可执行提示 + 失败记录落库 + 测试走配置接口', async () => {
+  const RESOURCE_MSG = '[resource_id=volc.megatts.timbre] requested resource not granted'
+  const storage = memoryStore()
+  const secrets = secretStore({ tts: 'tts-key-12345678', clone: 'clone-key-12345678' })
+  const fetchImpl = async (url) => {
+    const u = String(url)
+    if (u.endsWith('/voice_clone') || u.endsWith('/get_voice')) {
+      return new Response(JSON.stringify({ code: 40000001, message: RESOURCE_MSG }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    throw new Error(`unexpected URL ${u}`)
+  }
+  const voiceManager = createVoiceManager({
+    storage,
+    secrets,
+    cacheDir: join(runDir, 'v19-audio'),
+    fetchImpl,
+    logger: () => undefined
+  })
+  const cloneManager = new VoiceCloneManager({
+    storage,
+    secrets,
+    voicesDir: join(runDir, 'v19-voices'),
+    voiceManager,
+    fetchImpl,
+    logger: () => undefined,
+    pollIntervalMs: 60_000
+  })
+  const samplePath = join(runDir, 'v19-sample.wav')
+  const wav = Buffer.alloc(1024)
+  wav.write('RIFF', 0, 'ascii')
+  wav.write('WAVE', 8, 'ascii')
+  writeFileSync(samplePath, wav)
+  const sample = await cloneManager.registerSample(samplePath)
+
+  let thrown = null
+  try {
+    await cloneManager.train({ token: sample.token, consent: true, displayName: '资源未授权', language: 0 })
+  } catch (error) {
+    thrown = error
+  }
+  assert(thrown instanceof Error, '训练失败必须抛错（主进程据此提示）')
+  assertEq(thrown.code, VOICE_ERROR_CODES.CLONE_FAILED, '错误码 CLONE_FAILED')
+  assert(
+    String(thrown.message).includes('声音复刻'),
+    '提示要讲人话：指明「声音复刻」资源未开通，而不是只回英文原文'
+  )
+  assert(
+    String(thrown.message).includes('volc.megatts.timbre'),
+    '保留原始资源标识，便于报障/搜索'
+  )
+
+  const record = (await cloneManager.list())[0]
+  assertEq(record.status, 'failed', '失败记录落库（关闭弹窗后列表仍能看到原因）')
+  assert(String(record.lastError).includes('声音复刻'), '记录里的 lastError 也是中文可执行提示')
+
+  // 「测试」必须打用户配置的克隆查询接口，而不是写死默认地址（否则测试通过 ≠ 真实链路可用）
+  const testCalls = []
+  const testManager = createVoiceManager({
+    storage: memoryStore(),
+    secrets: secretStore({ tts: 'tts-key-12345678', clone: 'clone-key-12345678' }),
+    cacheDir: join(runDir, 'v19-audio2'),
+    fetchImpl: async (url) => {
+      testCalls.push(String(url))
+      return new Response(JSON.stringify({ code: 45001107, message: 'SpeakerID not found' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    },
+    logger: () => undefined
+  })
+  await testManager.updateSettings({
+    cloneStatusEndpoint: 'https://openspeech.bytedance.com/api/v3/tts/get_voice_custom'
+  })
+  const tested = await testManager.test('clone')
+  assertEq(tested.ok, true, '自定义查询接口仍判定鉴权通过')
+  assertEq(
+    testCalls[0],
+    'https://openspeech.bytedance.com/api/v3/tts/get_voice_custom',
+    '测试走用户配置的克隆查询接口'
+  )
+
+  return '中文提示 + 记录落库 + 测试接口一致'
+})
+
 const ok = printResult(recorder.toJSON({ cacheDir, catalog: join(repoRoot, 'resources/voice/curated-voices.v1.json') }))
 if (!ok) process.exit(1)

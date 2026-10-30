@@ -207,6 +207,16 @@ export function applyVoiceSettingsPatch(
       src.cloneResourceId === undefined
         ? current.cloneResourceId
         : strictResourceId(src.cloneResourceId, '克隆 Resource'),
+    // 克隆训练 / 状态查询接口此前漏在 patch 白名单外：界面上改完保存会「看起来成功」，
+    // 实际被 normalizeVoiceSettings 回落成默认值（用户以为换了接口，其实还在打旧地址）。
+    cloneTrainEndpoint:
+      src.cloneTrainEndpoint === undefined
+        ? current.cloneTrainEndpoint
+        : strictEndpoint(src.cloneTrainEndpoint, '克隆训练接口'),
+    cloneStatusEndpoint:
+      src.cloneStatusEndpoint === undefined
+        ? current.cloneStatusEndpoint
+        : strictEndpoint(src.cloneStatusEndpoint, '克隆状态查询接口'),
     defaultSpeaker:
       src.defaultSpeaker === undefined
         ? current.defaultSpeaker
