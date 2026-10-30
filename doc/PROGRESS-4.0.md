@@ -31,10 +31,10 @@
 | Phase 1 · WP4 插件管理页 | ✅ | plugin 30/30 → 39/39 |
 | Phase 1 · WP2 每插件独立库 | ✅ | plugin 39/39、全量 346/346 |
 | Phase 1 · 审查/对抗修复 | ✅ | 见下节 R1–R12 |
-| Phase 1 · WP3 类型化 IPC 生成 | ⬜（建议并入 Phase 2） | — |
-| Phase 2 work 装箱 | 🚧 前置完成（D1 通道租约 + D3 domainSrc） | plugin 41/41 |
-| Phase 3 marketing 装箱 | ⬜ | — |
-| Phase 4 加固与打包 | ⬜ | — |
+| Phase 1 · WP3 类型化 IPC 生成 | ⬜ 未排期（原建议并入 Phase 2，实际未执行） | — |
+| Phase 2 work 装箱 | ✅ 完成（含 R13–R22） | plugin 45/45、全量 352/352 |
+| Phase 3 marketing 装箱 | ✅ 完成（含 R23–R28） | plugin 50/50、全量 357/357 |
+| Phase 4 加固与打包 | ✅ 自动化完成；NSIS 真机安装待人工（RUNBOOK §6） | plugin 53/53、全量 360/360、packaged.smoke |
 
 ## 记录
 
