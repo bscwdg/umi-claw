@@ -356,3 +356,17 @@
 **验收**：plugin **56/56**（+P50）；全量 19 套 **363/363**；双 typecheck 0 错；build 通过。
 
 **Phase 4 剩余**：Dashboard 营销摘要改插件插槽并删兼容垫片；Windows NSIS 真机安装冒烟（本环境只能做静态核对 + 手册清单）。
+
+### 2026-10-30 · Phase 4 第五批：D4 收口（营销摘要进插槽，垫片清零）
+
+- 新增 `plugins/marketing/ui/components/DashboardMarketingCard.vue`：把控制台的营销摘要卡（当前商家 + AI 营销）
+  连同样式与数据加载一起搬进插件，注册到插槽 `dashboard.marketing`。
+- `src/views/Dashboard.vue`：营销块改为渲染 `pluginSlots['dashboard.marketing']`；
+  删除对插件 store / composable 的 import、`marketingReady` 探测、`formatDate` 与营销样式。
+- 删除两个兼容垫片：`src/stores/marketing.ts`、`src/composables/useProjectSwitcher.ts`。
+  → 「marketing store 跟插件走」（D4）从文件位置层面**升到语义层面**：宿主不再静态依赖插件代码，停用营销后摘要卡整块消失。
+- 新验收 **P51**：Dashboard 零 store/composable 依赖 + 插槽注册 + 垫片不存在。
+
+**验收**：plugin **57/57**（+P51）；全量 19 套 **364/364**；双 typecheck 0 错；build 通过。
+
+**Phase 4 剩余**：Windows NSIS 真机安装冒烟（本环境无 GUI/安装器，只能 `packaged.smoke` + RUNBOOK §6 人工清单）。

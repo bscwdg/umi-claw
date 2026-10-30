@@ -2155,6 +2155,25 @@ await r.check('P50', '扫描件识别在栅格化前预检：hostOps 暴露能�
   assert(/multimodalConfigured: deps\.multimodalConfigured/.test(runtimeSrc), 'runtime 透传给 scanRecognizer')
   return '预检链完整'
 })
+// ── P51 Dashboard 去插件依赖：营销摘要走插槽，兼容垫片已删 ──────────────────
+await r.check('P51', '控制台营销摘要走插件插槽：宿主零 store 依赖，垫片已删除', async () => {
+  const dashSrc = readFileSync(join(repoRoot, 'src', 'views', 'Dashboard.vue'), 'utf-8')
+  assert(!/stores\/marketing/.test(dashSrc), 'Dashboard 不再 import 插件 store')
+  assert(!/useProjectSwitcher/.test(dashSrc), 'Dashboard 不再 import 插件 composable')
+  assert(/'dashboard\.marketing'/.test(dashSrc), 'Dashboard 渲染 dashboard.marketing 插槽')
+  assert(!/marketingReady/.test(dashSrc), '不再在宿主里探测营销插件状态（插槽自己负责）')
+
+  assert(!existsSync(join(repoRoot, 'src', 'stores', 'marketing.ts')), '兼容垫片 src/stores/marketing.ts 已删除')
+  assert(
+    !existsSync(join(repoRoot, 'src', 'composables', 'useProjectSwitcher.ts')),
+    '兼容垫片 useProjectSwitcher.ts 已删除'
+  )
+
+  const rendererSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'renderer.ts'), 'utf-8')
+  assert(/'dashboard\.marketing': DashboardMarketingCard/.test(rendererSrc), '插件注册控制台插槽')
+  assert(/slot: \{/.test(rendererSrc) && /topbar: ProjectSwitcher/.test(rendererSrc), '顶栏插槽仍在')
+  return '宿主零依赖 / 插槽归插件 / 垫片清零'
+})
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin.json'), result)

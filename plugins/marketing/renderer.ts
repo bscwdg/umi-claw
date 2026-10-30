@@ -4,6 +4,7 @@
 
 import type { PluginUiModule } from '../../src/renderer/pluginUi'
 import ProjectSwitcher from './ui/components/ProjectSwitcher.vue'
+import DashboardMarketingCard from './ui/components/DashboardMarketingCard.vue'
 
 const mod: PluginUiModule = {
   routes: [
@@ -26,8 +27,11 @@ const mod: PluginUiModule = {
       { to: '/marketing/hot', icon: '🔥', label: '热点雷达' }
     ]
   },
-  // 顶栏「当前商家」：切项目属于营销域的信息，跟着插件走（D4）
-  slot: { topbar: ProjectSwitcher }
+  // 顶栏「当前商家」+ 控制台营销摘要卡：都属于营销域信息，跟着插件走（D4）
+  slot: {
+    topbar: ProjectSwitcher,
+    'dashboard.marketing': DashboardMarketingCard
+  }
 }
 
 export default mod
