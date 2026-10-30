@@ -67,6 +67,26 @@
 - UI 必须提示“远端音色可能仍保留，需在火山控制台管理”；
 - 等确认官方删除接口和计费/权限规则后，再补远端删除。
 
+### 1.5 开通前置与资源校验（2026-10-30 实测）
+
+- **控制台开通页**：<https://console.volcengine.com/speech/new/setting/activate?projectName=default>
+- **必须开通**：「声音复刻2.0」（复刻字数额度）＋「音色槽位」（音色资源，转正计费项）。只开声音复刻2.0、没开音色槽位时，复刻类接口一律不可用。
+- **未开通的表现**：`POST /api/v3/tts/voice_clone` 与 `POST /api/v3/tts/get_voice` 均返回 **HTTP 403**：
+  `{"code":45000030,"message":"[resource_id=volc.megatts.timbre] requested resource not granted"}`。
+  这是账号/项目级资源校验（不是 401，也和样本、参数、格式无关）。
+- **实测记录**：2026-10-30 用有效 API Key 调 `get_voice`（随机 custom_speaker_id）拿到上述 403，
+  `X-Tt-Logid=20261030163434A5C8566CEBDBA1EF8553`；同日控制台截图显示「声音复刻2.0 已开通（剩余 19,983/20000 字）、音色槽位 未开通」。
+- **计费要点**：训练扣「声音复刻2.0」复刻字数；**首次正式合成即视为转正并收取「音色槽位」费**（官方文档原文）。
+  因此不存在「免费把克隆音色接到 API 朗读」的路径；只在控制台试听可以不计槽位费。
+- **查询能力边界**：`get_voice` 只能按已知 `speaker_id` 单查状态/试听：
+  - 预付费/控制台音色：`{"speaker_id":"S_xxx"}`；
+  - 后付费自建音色：`{"speaker_id":"custom_speaker_id","custom_speaker_id":"<自建ID>"}`。
+  官方**没有**「列出本账号全部复刻音色」的接口，所以控制台体验页复刻的音色不会自动出现在应用列表里——
+  要在应用里用，必须拿到该音色的 `S_xxx` ID 手动登记（应用目前只登记自己训练的 `umi_voice_*` 后付费音色）。
+
+> 想让 OpenClaw 对话回复变成语音（精选音色 / 克隆音色两条通道、`/tts` 命令、各渠道形态、排查表）见
+> [OPENCLAW-VOICE-GUIDE.md](./OPENCLAW-VOICE-GUIDE.md)。
+
 ## 二、首批下拉音色
 
 机器可读清单位于 `resources/voice/curated-voices.v1.json`。筛选原则：优先通用/客服场景、中文自然、角色属性弱、适合桌面助手短提示；首批不放入 IP 角色、儿童音色和强角色扮演音色。
