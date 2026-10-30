@@ -508,3 +508,15 @@ Content-Type: application/json
   - 试听下载不再写死 `model_type=4/5`，切到 1.0 资源也能拿到 demo。
   - 克隆侧捕获 `X-Tt-Logid` 进脱敏诊断日志。
 - 待办：飞书原生语音条的音频转码/上传、2.0 与 1.0 分支移植、真实 Key 手工联调和三份安装包冒烟。
+- **2026-10-30 修复：克隆训练「成功/失败都没有提示」+ 两处静默不生效**
+  - 向导内的提示：页面级 `error/notice` 是普通文档流，被克隆向导的 `Teleport` 遮罩（z-index 80）盖住；训练同步失败时 `cloneWizardRecord` 还是 null，弹窗里既不显示原因也看不到成功。现在向导内部单独渲染同一份提示条（`.clone-inline-notice`）。
+  - `applyVoiceSettingsPatch` 漏了 `cloneTrainEndpoint` / `cloneStatusEndpoint`：在「接口与模型（高级）」改这两个接口保存后会被 `normalizeVoiceSettings` 静默回落成默认值（与「模型配置保存不生效」同类的静默失败）。已补进 patch 白名单。
+  - 「测试」按钮（克隆 Key）此前写死默认 `get_voice` 地址、且只看 HTTP 200 就判通过；现改走 `settings.cloneStatusEndpoint`，并要求业务码 0/200（或 45001107 SpeakerID 未找到）才算通过，避免「Key 有效但未被授予声音复刻资源」被误报成鉴权通过。
+  - 供应商错误统一映射成中文可执行提示：`[resource_id=volc.megatts.timbre] requested resource not granted`（账号/项目未开通声音复刻资源）、450011xx（WER 不一致 / 审核拒绝 / 音频质量 / 次数上限等）不再只把英文原文抛给用户，原始信息保留在括号里便于报障。
+  - `accept:voice` 新增 **V19** 覆盖上述三点（19/19）；`ui.accept` VoicePage 渲染 17/17。
+- **2026-10-30 记录：声音复刻的开通前置（用户实测）**
+  - 开通页：<https://console.volcengine.com/speech/new/setting/activate?projectName=default>，需要「声音复刻2.0」**和**「音色槽位」都开通；只开 2.0、槽位未开通时 `train` / `get_voice` 都是 HTTP 403 `{"code":45000030,"message":"[resource_id=volc.megatts.timbre] requested resource not granted"}`（实测 logid `20261030163434A5C8566CEBDBA1EF8553`）。
+  - 计费：训练扣复刻字数；**首次正式合成＝转正＝收「音色槽位」费**，没有免费接 API 朗读的路径；控制台体验页复刻只能试听。
+  - `get_voice` 只能按已知 `speaker_id` 单查（预付 `S_xxx` / 后付 `custom_speaker_id` + 自建 ID），官方无「列出全部音色」接口；应用内「核对远端」也只核**本地已有记录**，不会发现控制台新复刻的音色。
+  - 应用内错误提示已带上开通页地址与这两个服务名（`volcengineClone.ts` 的 `humanizeFailure`）。
+- **2026-10-30 新增操作手册**：`doc/voice/OPENCLAW-VOICE-GUIDE.md` —— 「让 OpenClaw 回复语音」的配置步骤（精选音色走本地桥接、克隆音色走标准接口）、通道判定规则、`/tts` 命令、各渠道输出形态、`tts` 块自查样例与排查表。
