@@ -4,7 +4,6 @@ import { wrapPcmAsWav } from './audio'
 import { VoiceAudioCache, voiceCacheKey, voiceAudioId } from './cache'
 import { VoiceBudget } from './budget'
 import {
-  VOICE_ENDPOINTS,
   applyVoiceSettingsPatch,
   isVoiceKeyKind,
   normalizeVoiceSettings,
@@ -423,7 +422,10 @@ export class VoiceManager {
       if (!key) {
         throw new VoiceError(VOICE_ERROR_CODES.KEY_REQUIRED, '请先保存语音服务 Key')
       }
-      const result = await this.cloneProvider.testAuth(VOICE_ENDPOINTS.cloneStatus, key)
+      // 与训练/查询走同一份配置：用户把「克隆状态查询接口」改到自定义值（如代理域名）时，
+      // 测试必须打同一个地址，否则测试通过 ≠ 实际链路可用。
+      const settings = await this.loadSettings()
+      const result = await this.cloneProvider.testAuth(settings.cloneStatusEndpoint, key)
       return { kind, ok: true, message: result.message }
     }
     const settings = await this.loadSettings()
