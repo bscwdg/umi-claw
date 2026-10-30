@@ -369,7 +369,7 @@ umi-claw/                       # 保持单个 package.json（延续 1.0/2.0/3.0
 - `hello` 验证：manifest、activate、1 条 IPC、1 个路由/导航、1 个插槽、1 个 migration、启停。
 - 验收：宿主启动 + hello 启用/停用；插件异常不崩宿主。
 
-### Phase 1：Kernel 与运行时（1.5–2 周）
+### Phase 1：Kernel 与运行时（1.5–2 周）｜✅ 已完成（2026-10-30，plugin 53/53）
 
 - 把合并产物里的 `database` / `gatewayClient` / `ipc` / `voice` 抽成 service 容器接口（能力下沉，见 §4.1 `inject`）。
 - 实现 registry / lifecycle / 启用状态 / 懒加载 + 构建期清单生成（`plugins.generated.ts`）。
@@ -377,19 +377,19 @@ umi-claw/                       # 保持单个 package.json（延续 1.0/2.0/3.0
 - 宿主 DB 服务统一入口：每插件独立库 / migration / 备份（复用 3.0 的 `db-worker` 与迁移版本表）。
 - 验收：hello 插件全链路；宿主零插件也能启动；停用后路由、导航、插槽、定时器全部卸载。
 
-### Phase 2：work 装箱（1.5–2 周）
+### Phase 2：work 装箱（1.5–2 周）｜✅ 已完成（2026-10-30，含 R1–R22 修复）
 
 - 迁 17 个 `work/*` 模块、DB schema、`ipc/work.ts` 通道、9 个页面、22 个验收脚本到 `plugins/work`。
 - 宿主提供 work 所需服务适配（db/openclaw/notifications）。
 - 验收：3.0 全部页面/功能通过；插件启停后路由/导航正确增删；数据迁移幂等。
 
-### Phase 3：marketing 装箱（1.5–2 周）
+### Phase 3：marketing 装箱（1.5–2 周）｜✅ 已完成（2026-10-30，含 R23–R28 修复）
 
 - 迁 `marketing/*` 14 个模块、`ipc/{marketing,hot,content,advisor,scan}.ts`、7 个页面、collector 资源。
 - 插件管理页（官方插件列表/启停/详情/错误）。
 - 验收：2.0 核心链路；两个插件同时启用无冲突。
 
-### Phase 4：加固与打包（1 周）
+### Phase 4：加固与打包（1 周）｜🚧 进行中（隔离/启动预算/打包契约已完成；NSIS 实装与 UI 权限收窄待办）
 
 - 插件失败隔离、启动耗时、懒加载、日志。
 - 安装包三平台冒烟；插件资源路径；升级/回滚。
