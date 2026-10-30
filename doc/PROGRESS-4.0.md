@@ -399,3 +399,49 @@
 | R36 [P3] | `ui.accept` U11 仍是旧架构断言（要求宿主注册 marketing:gateway）、P32 可被 8 种写法绕过、RUNBOOK 数字/版本漂移 | U11 改为「宿主不得注册 marketing:gateway」并只加载 work 面；P32 增加可选链/方括号/解构等模式；RUNBOOK 修正 |
 
 **验收**：plugin **61/61**（+P55）；全量 19 套 **368/368**；e2e 11/11；smoke 6/6；双 typecheck 0 错；build 通过。
+
+### 2026-10-30 · 缺陷修复：模型配置保存后 openclaw.json 不生效（官方 config patch 破坏性数组守卫）
+
+**现象**（用户报告）：在「模型配置」给火山方舟加自定义模型 `deepseek-v4.1-flash-economy`、选中并保存，
+`app.json` 已落盘（`activeProvider=volcengine-agent-plan`、`model=deepseek-v4.1-flash-economy`、
+`customModels` 有该条目），但 `openclaw.json` 完全没变：`agents.defaults.model.primary` 仍是
+`umiclaw-deepseek/deepseek-v4-flash`、provider 的 `models` 里也没有 economy 条目——「保存了但没生效」，
+而且此后每次保存都同样失败。
+
+**根因**（隔离 dataDir + 真实 `ConfigManager` + 真实 `openclaw config patch` 复现，CLI 原话）：
+
+```
+Refusing to replace models.providers.umiclaw-deepseek.models; it would remove existing entries:
+deepseek-v4-flash. Use --replace-path models.providers.umiclaw-deepseek.models to replace intentionally.
+```
+
+- `_syncOpenClawConfig` 的「激活模型自洽性兜底」会把激活模型补进 `models.providers[].models`
+  （例如 deepseek 的 `deepseek-v4-flash`），而官方预设列表里没有这个 id；
+- 切换到别的服务商后，目标数组不再包含它 → 该数组替换「移除了既有条目」；
+- OpenClaw 2026.10.x 起对按 id 数组做**非破坏性校验**：会移除既有条目的数组替换整单被拒（exit 1），
+  **整份补丁**（含 primary、新自定义模型、modelPolicy）一起不落盘；且它不属于「配置非法」诊断面
+  （不触发 doctor），用户只看到一次警告 toast；
+- 于是形成**死锁**：只要 openclaw.json 里存在一条预设之外的补录模型，此后的任何保存（切服务商 /
+  加自定义模型 / 换 key / 调超时）都失败。
+
+**修复**
+
+- `electron/main/openClawConfigWriter.ts`：新增 `collectLossyIdArrayReplacePaths(original, desired)`——
+  按官方路径口径（普通键点号，含特殊字符的键走 `["..."]`）找出「会移除既有 id」的按 id 数组路径；
+  `applyOpenClawConfigPatch` 增加可选 `replacePaths`，逐条转成官方 `--replace-path`（可重复参数）。
+- `electron/main/configManager.ts`：`_syncOpenClawConfig` 算补丁时一并算 replacePaths 传入。
+  依据是「本应用是这些模型数组的唯一作者，目标列表即权威列表」；**只在确实会移除条目时才传**，
+  老版本 CLI（没有该选项/没有该守卫）行为完全不变，也不会因未知参数失败。
+
+**验收**
+
+- `openclaw-config-writer.accept` 新增 4 条用例（会移除→给出路径；只增/同集→为空；缺数组/非按 id→为空；
+  带点号的 provider 键走括号形式）：21/21 通过。
+- 真实复现脚本（隔离 dataDir + 真 CLI，`test/.tmp/repro-economy-sync.mjs`）修复前后对照：
+  `syncOk` false → true；`primary` `umiclaw-deepseek/deepseek-v4-flash` →
+  `volcengine-agent-plan/deepseek-v4.1-flash-economy`；plan provider `models` 出现 economy 条目；
+  `modelPolicy.allow` → `volcengine-agent-plan/*`。
+- 双 typecheck 0 错；`npm run build` 通过；全量 accept 除 `shooting` S5 外全绿（S5 是本就存在的
+  并行会话键顺序竞态：单独重跑 9/9 通过，同一提交上复现率与环境相关，与本改动无关）。
+- `test/p0-sync-selftest.mjs` 本机失败原因是它自己的前置 `doctor --fix` 超时（180s 预算，本机并行
+  进程多），失败点在 doctor 门禁而非本次改动路径。

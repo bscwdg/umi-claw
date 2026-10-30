@@ -39,8 +39,13 @@ if (!existsSync(bundled)) {
   ], { stdio: 'inherit', shell: process.platform === 'win32' })
 }
 
-const { buildJsonMergePatch, summarizePatchError, isConfigRejectionOutput, applyOpenClawConfigPatch } =
-  await import(pathToFileURL(bundled).href)
+const {
+  buildJsonMergePatch,
+  collectLossyIdArrayReplacePaths,
+  summarizePatchError,
+  isConfigRejectionOutput,
+  applyOpenClawConfigPatch
+} = await import(pathToFileURL(bundled).href)
 
 test('完全相等（含嵌套/数组）→ null，触发无变更跳过', () => {
   const a = { a: 1, b: { c: 2, d: [1, 2], e: { f: 'x' } } }
@@ -153,6 +158,54 @@ test('isConfigRejectionOutput：崩溃/无输出 → false（不触发 doctor）
     'OOM/崩溃不是配置非法'
   )
   assert.equal(isConfigRejectionOutput('', 'Error: spawn ENOENT'), false)
+})
+
+test('collectLossyIdArrayReplacePaths：模型数组会丢掉既有 id → 返回 replace 路径', () => {
+  const original = {
+    models: { providers: { deepseek: { models: [{ id: 'deepseek-flash' }, { id: 'deepseek-v4-flash' }] } } }
+  }
+  const desired = {
+    models: { providers: { deepseek: { models: [{ id: 'deepseek-flash' }] } } }
+  }
+  assert.deepEqual(collectLossyIdArrayReplacePaths(original, desired), [
+    'models.providers.deepseek.models'
+  ])
+})
+
+test('collectLossyIdArrayReplacePaths：只新增/同集 → 空（不传 --replace-path，兼容老版本 CLI）', () => {
+  const original = { models: { providers: { p: { models: [{ id: 'a' }] } } } }
+  const grown = { models: { providers: { p: { models: [{ id: 'a' }, { id: 'b' }] } } } }
+  assert.deepEqual(collectLossyIdArrayReplacePaths(original, grown), [])
+  // 仅条目参数变化（id 集合不变）也不算移除
+  const retuned = { models: { providers: { p: { models: [{ id: 'a', contextWindow: 999 }] } } } }
+  assert.deepEqual(collectLossyIdArrayReplacePaths(original, retuned), [])
+})
+
+test('collectLossyIdArrayReplacePaths：原配置缺该数组/非按 id 数组 → 空', () => {
+  const original = { models: { providers: { p: {} } } }
+  const desired = { models: { providers: { p: { models: [{ id: 'a' }] } } } }
+  assert.deepEqual(collectLossyIdArrayReplacePaths(original, desired), [])
+  // 字符串数组、缺 id 的数组不在官方「按 id 数组」校验面内
+  assert.deepEqual(
+    collectLossyIdArrayReplacePaths(
+      { agents: { defaults: { modelPolicy: { allow: ['x/*', 'y/*'] } } } },
+      { agents: { defaults: { modelPolicy: { allow: ['x/*'] } } } }
+    ),
+    []
+  )
+  assert.deepEqual(
+    collectLossyIdArrayReplacePaths(
+      { models: { providers: { p: { models: [{ name: '无 id' }, { id: 'a' }] } } } },
+      { models: { providers: { p: { models: [{ id: 'a' }] } } } }
+    ),
+    []
+  )
+})
+
+test('collectLossyIdArrayReplacePaths：含点号的 provider 键走括号形式（可被官方路径解析回原键）', () => {
+  const original = { models: { providers: { 'a.b': { models: [{ id: 'm1' }, { id: 'm2' }] } } } }
+  const desired = { models: { providers: { 'a.b': { models: [{ id: 'm1' }] } } } }
+  assert.deepEqual(collectLossyIdArrayReplacePaths(original, desired), ['models.providers["a.b"].models'])
 })
 
 test('applyOpenClawConfigPatch：运行时未安装 → 立即 ok:false，不 spawn', async () => {

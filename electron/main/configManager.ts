@@ -5,7 +5,7 @@ import AdmZip from 'adm-zip'
 import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawProviderRefs, isReservedOpenClawProviderKey } from './modelConfig'
 import { ModelPresetService, type PresetInfo, type RefreshResult } from './modelPresets'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
-import { applyOpenClawConfigPatch, buildJsonMergePatch, type OpenClawPatchResult } from './openClawConfigWriter'
+import { applyOpenClawConfigPatch, buildJsonMergePatch, collectLossyIdArrayReplacePaths, type OpenClawPatchResult } from './openClawConfigWriter'
 import type { ObsidianConfig } from './obsidian/types'
 
 /**
@@ -1276,7 +1276,15 @@ private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string; kind
       this._archiveLegacyAuthProfiles()
       return { ok: true }
     }
-    const result: OpenClawPatchResult = await applyOpenClawConfigPatch(this.dataDir, patch)
+    // 模型数组（models.providers[].models）按 id 合并的语义在官方 2026.10.x 收紧了：
+    // 补丁里的数组若会移除既有条目，整单被拒（exit 1「Refusing to replace ...」），
+    // 必须逐条带 --replace-path 声明整体替换意图。本应用是这些数组的唯一作者，
+    // 目标列表即权威列表（预设 + 自定义模型 + 激活模型补录），所以对确实会移除条目的
+    // 数组显式声明替换。历史坑：激活模型补录会在 provider.models 里留下预设没有的条目
+    // （如 deepseek-v4-flash），下次保存（切服务商/加自定义模型/换 key）的目标数组不再
+    // 包含它 → 整个补丁被拒 → 界面上「保存成功但模型没生效」，且此后每次保存都会同样失败。
+    const replacePaths = collectLossyIdArrayReplacePaths(parsedExisting, existingConfig)
+    const result: OpenClawPatchResult = await applyOpenClawConfigPatch(this.dataDir, patch, { replacePaths })
     if (!result.ok) {
       console.error('[ConfigManager] openclaw.json 同步被官方写入器拒绝:', result.error)
       return { ok: false, error: result.error, kind: result.kind }
