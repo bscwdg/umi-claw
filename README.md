@@ -699,3 +699,33 @@ OpenClaw 通过 MCP 工具按需检索片段，不用把整个知识库塞进上
 ## License
 
 MIT
+
+## 启动可靠性修复（2026-10-31，自 4.0 同步）
+
+release/1.0 = master + 鱼语音功能。本次把 4.0 的启动慢优化与可靠性修复同步到 1.0，
+**保持原有鱼语音代码逐字节未动，且未引入语音音色热更**。
+
+### 新增能力
+- **就绪态与阶段可视化**：`running`（进程）与 `ready`（/health 200）分离；点击启动立即显示「启动中」；
+  状态推送新增 `starting/ready/startedAt/startupMs/bootPhase/estimateStartupMs`；Dashboard 展示阶段与 ETA
+- **webhook 迁移标记兜底**：无 `legacyWebhook` 时自动补 `meta.migrations.webhookListeners=true`，
+  避免每次启动重跑旧迁移（约 185s 级）；备份 + 原子写回退 + BOM/CRLF 保留，走官方写入串行队列
+- **退出应用时保留网关（可选，默认关）**：开启后网关 detached 运行、退出应用不停网关，
+  下次启动校验端口 owner/版本/健康后直接复用（跳过冷启动）；退出路径统一幂等 `handleAppQuit`
+- **启动耗时统计与 ETA**：最近 5 次，样本 ≤2 用最近一次、≥3 取最近 3 次中位数
+- **网关日志文件 tail**：增量读、半行 carry、截断检测、stdout/stderr 分流、兼容 pino `msg`
+- 环境开关：`OPENCLAW_GATEWAY_STARTUP_TRACE` 默认关、fs-safe 覆盖值白名单、Node 编译缓存清理
+
+### 审查后收尾
+- 清理批次 A 后遗留的克隆轮询死代码（`pollIntervalMs` / `schedulePoll`，node typecheck 归零）
+- VoicePage 提示改为「关闭页面将暂停轮询」；移除 voice 测试里已删除的 `pollIntervalMs` 选项
+- adopt 复用网关时不再显示异常「本次启动耗时」；编译缓存清理覆盖默认配置；
+  串行配置写入避免未处理 rejection；渲染端 `AppConfig` 补 `keepGatewayOnQuit`
+
+### 验证
+- `npm run typecheck` 0 错、build 通过
+- voice 8/8、`accept:startup-sync` 53/53
+
+### 冒烟建议
+开启保留网关 → 重启应用 → 退出 → 再开（应秒级复用）；关闭开关退出应正常停网关；
+升级核心包后旧后台网关应被拒绝复用并结束；确认托盘/关窗/系统退出三入口与语音自动朗读行为。
