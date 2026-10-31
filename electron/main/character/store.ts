@@ -224,6 +224,8 @@ export class CharacterStore {
     await this.kv.set(FISH_KEYS.state, null)
     await this.kv.set(FISH_KEYS.dedup, null)
     await this.kv.set(FISH_KEYS.unlocks, null)
+    // 删记忆/全量删除都要轮换聊天代际：旧 sticky 上下文不能再被复用
+    await this.kv.set(FISH_KEYS.chatGen, null)
     for (const date of dates) {
       await this.kv.set(FISH_KEYS.day(date), null)
       await this.kv.set(FISH_KEYS.life(date), null)

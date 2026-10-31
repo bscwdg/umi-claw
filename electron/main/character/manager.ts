@@ -53,6 +53,7 @@ import {
   filterAssistantOutput,
   isCrisisText,
   normalizeDeleteScope,
+  scrubDeep,
   type CharacterExport,
   type DeleteScope
 } from './safety'
@@ -535,8 +536,12 @@ export class CharacterManager {
     // 生成常 >30s：tick 与手动可能同时进入；单飞锁必须在第一个 await 之前同步占位
     if (this.memoryInFlight) return this.memoryInFlight
     const task = (async () => {
-      const date = manual ? toDateKey(now) : memoryDateFor(now)
       const settings = await this.getSettings()
+      // D10：未确认年龄不做自动记忆（也不接受手动补写）
+      if (!settings.safety.ageConfirmed) return { ran: false, reason: 'age-unconfirmed' as const }
+      // 凌晨手动「现在写一篇」补的是前一天；白天手动补今天
+      const earlyMorning = new Date(now).getHours() < 6
+      const date = manual && !earlyMorning ? toDateKey(now) : memoryDateFor(now)
       const day = (await this.store.readDay<{ memory?: MemoryDayState }>(date)) ?? {}
       const gate = shouldRunMemory({ now, day: day.memory ?? {}, settings, manual })
       if (!gate.run) return { ran: false, reason: gate.reason }
@@ -568,7 +573,9 @@ export class CharacterManager {
       if (!cleaned) {
         const settings = await this.getSettings()
         const state = await this.getState()
-        const life = await this.ensureDailyLife(now)
+        // 凌晨补偿写「昨天」的日记时，LIFE 也要取昨天那份
+        const lifeNow = date === toDateKey(now) ? now : now - 86_400_000
+        const life = await this.ensureDailyLife(lifeNow)
         const workspaceMemory = this.readWorkspaceMemory
           ? await this.readWorkspaceMemory(date).catch(() => null)
           : null
@@ -685,6 +692,35 @@ export class CharacterManager {
     })
   }
 
+  /** 语音额度预留（发送前计数，失败再回滚）：防并发超发 */
+  async claimVoiceSlot(now = this.now()): Promise<{ ok: boolean; reason?: string; used?: number }> {
+    this.assertInitialized()
+    return this.withMutation(async () => {
+      const settings = await this.getSettings()
+      const date = toDateKey(now)
+      const day = (await this.store.readDay<{ voiceSent?: number }>(date)) ?? {}
+      const used = day.voiceSent ?? 0
+      const cap = Math.max(0, Math.min(100, Math.round(settings.voice.dailyCap)))
+      if (used >= cap) return { ok: false, reason: 'daily-cap' }
+      await this.patchDayUnlocked(date, (record) => ({
+        ...record,
+        voiceSent: (typeof record.voiceSent === 'number' ? record.voiceSent : 0) + 1
+      }))
+      return { ok: true, used: used + 1 }
+    })
+  }
+
+  /** 语音发送失败：退回预留额度（不按失败计用量） */
+  async releaseVoiceSlot(now = this.now()): Promise<number> {
+    this.assertInitialized()
+    const date = toDateKey(now)
+    const next = await this.patchDay(date, (day) => ({
+      ...day,
+      voiceSent: Math.max(0, (typeof day.voiceSent === 'number' ? day.voiceSent : 0) - 1)
+    }))
+    return typeof next.voiceSent === 'number' ? next.voiceSent : 0
+  }
+
   /** 记一次语音条成功发送 */
   async markVoiceSent(now = this.now()): Promise<number> {
     this.assertInitialized()
@@ -731,17 +767,25 @@ export class CharacterManager {
     }
     const days: Record<string, unknown> = {}
     for (const day of meta.days.slice(-90)) {
-      const record = await this.store.readDay(day)
-      if (record) days[day] = record
+      const record = await this.store.readDay<Record<string, unknown>>(day)
+      if (record) {
+        const copy = JSON.parse(JSON.stringify(record)) as Record<string, unknown>
+        // 日记正文（pendingText）不进导出，也不随 day 结构外泄
+        const memory = copy.memory as Record<string, unknown> | undefined
+        if (memory) delete memory.pendingText
+        days[day] = copy
+      }
     }
-    return buildExportPayload({
-      exportedAt: now,
-      settings,
-      state,
-      life,
-      days,
-      unlocks: await this.store.readUnlocks()
-    })
+    return scrubDeep(
+      buildExportPayload({
+        exportedAt: now,
+        settings,
+        state,
+        life,
+        days,
+        unlocks: await this.store.readUnlocks()
+      })
+    )
   }
 
   /** 分层删除：values 只清数值；memory 清日记/关系；all 连设置与人格文件（归档） */

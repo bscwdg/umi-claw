@@ -71,6 +71,35 @@ export interface ApplyAgentPatchOptions {
   workspace: string
 }
 
+/** 删除 agent 条目（uninstall/all 删除用）：官方 config patch 置 null */
+export async function removeAgentEntry(options: {
+  runner: CliRunner
+  tmpDir: string
+  agentId?: string
+}): Promise<{ ok: boolean; error?: string }> {
+  const agentId = options.agentId ?? CHARACTER_AGENT_ID
+  const patchPath = join(options.tmpDir, `character-agent-remove-${agentId}.json5`)
+  try {
+    mkdirSync(options.tmpDir, { recursive: true })
+    writeFileSync(
+      patchPath,
+      `${JSON.stringify({ agents: { entries: { [agentId]: null } } })}\n`,
+      'utf8'
+    )
+    const result = await options.runner.run(['config', 'patch', '--file', patchPath])
+    if (result.code !== 0) return { ok: false, error: `config patch 失败（exit ${result.code}）` }
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: (error as Error)?.message ?? String(error) }
+  } finally {
+    try {
+      rmSync(patchPath, { force: true })
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 export interface ApplyAgentPatchResult {
   ok: boolean
   error?: string

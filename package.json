@@ -112,5 +112,8 @@
       "shortcutName": "Umi Claw",
       "include": "build/installer.nsh"
     }
+  },
+  "optionalDependencies": {
+    "silk-wasm": "^3.7.1"
   }
 }

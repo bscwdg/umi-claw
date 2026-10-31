@@ -155,6 +155,30 @@ export class EmotionStreamFilter {
   }
 }
 
+/**
+ * 输出过滤滑窗：独占/卖惨模式可能被模型拆到两个 chunk 里，
+ * 先扣住尾部 8 个字符，等下一块拼上再过滤，避免「只有我」+「最懂你」漏网。
+ */
+export class OutputStreamFilter {
+  private pending = ''
+  constructor(private readonly filter: (text: string) => string) {}
+
+  push(chunk: string): string {
+    this.pending += chunk
+    if (this.pending.length <= 8) return ''
+    const cut = this.pending.length - 8
+    const head = this.pending.slice(0, cut)
+    this.pending = this.pending.slice(cut)
+    return this.filter(head)
+  }
+
+  flush(): string {
+    const out = this.filter(this.pending)
+    this.pending = ''
+    return out
+  }
+}
+
 export class CharacterChatService {
   private gen = 1
   private seq = 0
@@ -182,19 +206,12 @@ export class CharacterChatService {
   ): Promise<{ runId: string; conversationKey: string; gen: number }> {
     const text = typeof input?.text === 'string' ? input.text.trim() : ''
     if (!text) throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '消息不能为空')
-    if (text.length > MAX_INPUT_LENGTH) {
-      throw new CharacterError(
-        CHARACTER_ERROR_CODES.BAD_PAYLOAD,
-        `消息过长（上限 ${MAX_INPUT_LENGTH} 字）`
-      )
-    }
+    // 安全闸门前置：危机内容先给求助资源，不能因为「超长」先把求助挡掉
+    const screened = this.options.screenInput?.(text)
     const session = (input?.session as CharacterChatSession) ?? 'main'
     const conversationKey = this.conversationKey(session)
-    const runId = `chat-${this.options.now?.() ?? Date.now()}-${(this.seq += 1)}`
-
-    // 输入侧安全闸门：危机词直接给求助资源，不把内容送进模型
-    const screened = this.options.screenInput?.(text)
     if (screened?.blocked) {
+      const runId = `chat-${this.options.now?.() ?? Date.now()}-${(this.seq += 1)}`
       const reply = screened.reply ?? '这个话题我不接，先照顾好自己。'
       queueMicrotask(() => {
         this.safeEmit(emit, { runId, gen: this.gen, kind: 'chunk', text: reply })
@@ -202,6 +219,13 @@ export class CharacterChatService {
       })
       return { runId, conversationKey, gen: this.gen }
     }
+    if (text.length > MAX_INPUT_LENGTH) {
+      throw new CharacterError(
+        CHARACTER_ERROR_CODES.BAD_PAYLOAD,
+        `消息过长（上限 ${MAX_INPUT_LENGTH} 字）`
+      )
+    }
+    const runId = `chat-${this.options.now?.() ?? Date.now()}-${(this.seq += 1)}`
 
     let handle: CharacterChatHandle
     let context = ''
@@ -280,6 +304,9 @@ export class CharacterChatService {
     userText: string
   ): Promise<void> {
     const filter = new EmotionStreamFilter()
+    const outFilter = this.options.filterOutput
+      ? new OutputStreamFilter(this.options.filterOutput)
+      : null
     const gen = this.gen
     let full = ''
     try {
@@ -288,7 +315,7 @@ export class CharacterChatService {
         if (this.cancelled.has(runId)) break
         const part = filter.push(delta?.delta ?? '')
         if (part.text) {
-          const visible = this.options.filterOutput ? this.options.filterOutput(part.text) : part.text
+          const visible = outFilter ? outFilter.push(part.text) : part.text
           if (visible) {
             full += visible
             this.safeEmit(emit, { runId, gen, kind: 'chunk', text: visible })
@@ -298,10 +325,17 @@ export class CharacterChatService {
       const cancelled = this.cancelled.has(runId)
       const rest = cancelled ? { text: '', emotion: undefined } : filter.flush()
       if (rest.text) {
-        const visible = this.options.filterOutput ? this.options.filterOutput(rest.text) : rest.text
+        const visible = outFilter ? outFilter.push(rest.text) : rest.text
         if (visible) {
           full += visible
           this.safeEmit(emit, { runId, gen, kind: 'chunk', text: visible })
+        }
+      }
+      if (outFilter && !cancelled) {
+        const tail = outFilter.flush()
+        if (tail) {
+          full += tail
+          this.safeEmit(emit, { runId, gen, kind: 'chunk', text: tail })
         }
       }
       const result = await handle.result.catch(() => null)

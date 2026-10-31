@@ -36,6 +36,7 @@ export type MemoryGateReason =
   | 'cooldown'
   | 'in-flight'
   | 'failed'
+  | 'age-unconfirmed'
   | 'ok'
 
 export interface MemoryGateInput {

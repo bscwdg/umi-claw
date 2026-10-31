@@ -35,22 +35,28 @@ export interface VoicePolicyInput {
 export function isVoiceRequest(text: string): boolean {
   const raw = (text ?? '').trim()
   if (!raw) return false
-  return /(发|来|出)(一?条|个|段)?(语音|声音|语音条)/.test(raw) ||
-    /语音(说|讲|回|发)/.test(raw) ||
-    /(用|拿)(你的)?声音/.test(raw) ||
-    /说句(话|话嘛|话听听)/.test(raw)
+  // 否定表达先排除（「我不想发语音」「别用声音」不是要求）
+  if (/(不想|不要|不用|别)(发|来|用|听|说).{0,4}(语音|声音)/.test(raw)) return false
+  if (/(发|来|出)(一?条|个|段)?(语音|声音|语音条)/.test(raw)) return true
+  if (/语音(说|讲|回|发)/.test(raw)) return true
+  if (/(用|拿)(你的)?声音/.test(raw)) return true
+  if (/说句(话|话嘛|话听听)/.test(raw)) return true
+  return false
 }
 
 export function decideVoice(input: VoicePolicyInput): VoiceDecision {
   const requested = Boolean(input.requested)
   const deny = (reason: VoiceDecisionReason): VoiceDecision => ({ send: false, reason, requested })
   if (!input.voiceEnabled) return deny('disabled')
-  if (requested && !input.requestAllowed) return deny('request-not-allowed')
-  if (input.quiet) return deny('quiet')
+  // §5.7 优先级：用户明确要求 > 阶段解锁 > 内容适配 > 免打扰
+  if (requested) {
+    if (!input.requestAllowed) return deny('request-not-allowed')
+  } else {
+    if (input.stage < 2) return deny('not-unlocked')
+    if (input.quiet) return deny('quiet')
+  }
   const max = input.textMaxChars ?? 120
   if ((input.text ?? '').length > max) return deny('too-long')
   if (input.usedToday >= Math.max(0, input.dailyCap)) return deny('daily-cap')
-  // 未解锁：初识（stage<2）只在用户明确要求时发
-  if (!requested && input.stage < 2) return deny('not-unlocked')
   return { send: true, reason: 'ok', requested }
 }

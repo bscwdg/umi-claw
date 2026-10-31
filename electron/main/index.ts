@@ -2271,18 +2271,33 @@ app.whenReady().then(async () => {
           const payload = await voiceManager.readAudio(result.audioId)
           return payload.bytes
         },
-        // 凭据只读：从 channels.qqbot 读，缺 openid 时降级文字（等 C08 真机补 openid 发现）
+        // 凭据只读：openclaw.json 才是 qqbot 的真源（app.json 只是 UI 副本）
         creds: () => {
-          const cfg = configManager.getConfig() as unknown as {
-            channels?: { qqbot?: Record<string, unknown> }
+          const channels = configManager.getOpenClawChannels()
+          const qq = (channels?.qqbot ?? {}) as Record<string, unknown>
+          const accounts = (qq.accounts ?? {}) as Record<string, Record<string, unknown>>
+          const candidates: Record<string, unknown>[] = [qq, ...Object.values(accounts ?? {})]
+          const pickString = (obj: Record<string, unknown>, keys: string[]): string => {
+            for (const key of keys) {
+              const value = obj[key]
+              if (typeof value === 'string' && value.trim()) return value.trim()
+            }
+            return ''
           }
-          const qq = cfg?.channels?.qqbot
-          if (!qq) return null
-          const appId = (qq.appId ?? qq.appid ?? qq.app_id) as string | undefined
-          const clientSecret = (qq.clientSecret ?? qq.appSecret ?? qq.secret) as string | undefined
-          const openid = (qq.openid ?? qq.ownerOpenid ?? qq.userOpenId) as string | undefined
-          if (!appId || !clientSecret || !openid) return null
-          return { appId, clientSecret, openid }
+          for (const candidate of candidates) {
+            const appId = pickString(candidate, ['appId', 'appid', 'app_id'])
+            const secret = pickString(candidate, ['clientSecret', 'secret', 'appSecret'])
+            const openid = pickString(candidate, ['openid', 'userOpenid', 'c2cOpenid', 'ownerOpenid'])
+            // 计划 §13.2-10：只接受 32 位 clientSecret，避免 16 位 AppSecret 写坏通道
+            if (appId && secret.length === 32 && openid) return { appId, clientSecret: secret, openid }
+          }
+          const envApp = process.env.UMI_QQBOT_APP_ID
+          const envSecret = process.env.UMI_QQBOT_CLIENT_SECRET
+          const envOpenid = process.env.UMI_QQBOT_OPENID
+          if (envApp && envSecret && envSecret.length === 32 && envOpenid) {
+            return { appId: envApp, clientSecret: envSecret, openid: envOpenid }
+          }
+          return null
         }
       },
       obsidianVaultPath: () => configManager.getConfig().obsidian?.vaultPath,

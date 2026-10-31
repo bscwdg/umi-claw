@@ -192,18 +192,23 @@ export function registerCharacterIpc(
     if (!manager.isEnabled()) {
       throw new CharacterError(CHARACTER_ERROR_CODES.DISABLED, '大肥鱼未启用')
     }
-    const text = typeof (payload as { text?: unknown } | undefined)?.text === 'string'
-      ? String((payload as { text: string }).text).slice(0, 120)
-      : '本鱼在呢。'
+    const rawText = (payload as { text?: unknown } | undefined)?.text
+    const text = typeof rawText === 'string' ? rawText.slice(0, 120) : '本鱼在呢。'
+    const claimed = await manager.claimVoiceSlot()
+    if (!claimed.ok) {
+      return { delivered: false, channel: 'text' as const, reason: claimed.reason ?? 'daily-cap' }
+    }
     const decision = await manager.decideVoiceFor(text, true)
     if (!decision.send) {
+      await manager.releaseVoiceSlot()
       return { delivered: false, channel: 'text' as const, reason: decision.reason }
     }
     if (!deps.deliverVoice) {
+      await manager.releaseVoiceSlot()
       return { delivered: false, channel: 'text' as const, reason: 'not-wired' }
     }
     const result = await deps.deliverVoice(text, decision.requested)
-    if (result.delivered) await manager.markVoiceSent()
+    if (!result.delivered) await manager.releaseVoiceSlot()
     return { ...result, reason: decision.reason }
   })
   handle(CHARACTER_CHANNELS.exportData, () => manager.exportData())

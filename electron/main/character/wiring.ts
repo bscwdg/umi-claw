@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path'
 import { CharacterManager } from './manager'
 import { registerCharacterIpc, type CharacterIpcDisposer } from './ipc'
 import { CharacterStore } from './store'
-import { applyAgentPatch, createOpenClawCliRunner } from './agentPatchRunner'
+import { applyAgentPatch, createOpenClawCliRunner, removeAgentEntry } from './agentPatchRunner'
 import { CHARACTER_AGENT_ID, CHARACTER_AGENT_MODEL, readAgentEntry } from './agentConfig'
 import { loadPersonaTemplates, runBootstrap } from './bootstrap'
 import { parseLifeDeck } from './contentCards'
@@ -142,6 +142,8 @@ async function registerCharacterInternal(
   try {
     const store = new CharacterStore({ kv: deps.kv, now: deps.now })
     const workspaceDir = join(deps.dataDir, 'config', '.openclaw', 'workspace-feiyu')
+    // 删除全量时再摘 agent 条目（runner 在下方创建，先留可调用位）
+    let removeAgentEntryFn: (() => Promise<unknown>) | null = null
     const manager = new CharacterManager({
       store,
       now: deps.now,
@@ -232,6 +234,14 @@ async function registerCharacterInternal(
             removeSafe(join(workspaceDir, file))
           }
           removeSafe(join(workspaceDir, '.fish-managed.json'))
+          // §13.1-4：全量删除后 openclaw.json 里不应再有 feiyu 条目
+          if (removeAgentEntryFn) {
+            try {
+              await removeAgentEntryFn()
+            } catch (error) {
+              logger(`[character] 删除 agent 条目失败: ${(error as Error)?.message ?? String(error)}`)
+            }
+          }
         }
       }
     })
@@ -286,15 +296,21 @@ async function registerCharacterInternal(
           if (deliverVoiceFn && isVoiceRequest(userText)) {
             void (async () => {
               try {
+                const claimed = await manager.claimVoiceSlot()
+                if (!claimed.ok) return
                 const decision = await manager.decideVoiceFor(text, true)
-                if (!decision.send) return
+                if (!decision.send) {
+                  await manager.releaseVoiceSlot()
+                  return
+                }
                 const result = await deliverVoiceFn(text)
                 if (result.delivered) {
-                  await manager.markVoiceSent()
                   await manager.applyRelationshipEvent({
                     type: 'voice.request',
                     refId: `v:${refId}`
                   })
+                } else {
+                  await manager.releaseVoiceSlot()
                 }
               } catch (error) {
                 logger(`[character] 语音条失败（已降级文字）: ${(error as Error)?.message ?? String(error)}`)
@@ -368,6 +384,7 @@ async function registerCharacterInternal(
     // 引导接线：官方 CLI 写 agent 条目；人格文件走受管写入
     const tmpDir = join(deps.dataDir, 'cache')
     const runner = createOpenClawCliRunner(deps.cli)
+    removeAgentEntryFn = () => removeAgentEntry({ runner, tmpDir, agentId: CHARACTER_AGENT_ID })
     manager.setBootstrapRunner(() =>
       runBootstrap({
         workspaceDir,

@@ -12,7 +12,7 @@
 //
 // 用法：node test/packaged.smoke.mjs（npm run smoke）；前置 npm run build
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   Recorder, __dirname, assert, printResult, writeJson
@@ -20,6 +20,19 @@ import {
 
 const repoRoot = join(__dirname, '..')
 const outDir = join(repoRoot, 'dist-electron')
+
+/** 选一个可用的已解包产物目录：显式 env > release-alt（次选，绕开被占用）> release */
+function resolveUnpacked() {
+  const candidates = [
+    process.env.UMI_PACKAGED_DIR,
+    join(repoRoot, 'release-alt', 'win-unpacked'),
+    join(repoRoot, 'release', 'win-unpacked')
+  ].filter(Boolean)
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+  return null
+}
 
 const r = new Recorder('Commit 10 · 打包态冒烟')
 
@@ -73,8 +86,8 @@ try {
 
   // ── S6 真实打包产物（release/win-unpacked，存在才跑：先 npm run build:win 或 electron-builder --dir）──
   await r.check('S6', '安装包目录：清单/migrations 在 resources，代码在 asar 且不含插件数据', async () => {
-    const unpacked = join(repoRoot, 'release', 'win-unpacked')
-    if (!existsSync(unpacked)) {
+    const unpacked = resolveUnpacked()
+    if (!unpacked) {
       return '跳过（未构建 release/win-unpacked）'
     }
     const resRoot = join(unpacked, 'resources', 'resources')
@@ -103,8 +116,8 @@ try {
   })
   // ── S7 角色内容包与桌宠 preload（C10）──
   await r.check('S7', '角色内容包随包（persona/cards/emotions）且桌宠独立 preload 进 asar', async () => {
-    const unpacked = join(repoRoot, 'release', 'win-unpacked')
-    if (!existsSync(unpacked)) {
+    const unpacked = resolveUnpacked()
+    if (!unpacked) {
       return '跳过（未构建 release/win-unpacked）'
     }
     const resRoot = join(unpacked, 'resources', 'resources')
@@ -120,13 +133,21 @@ try {
       'cards/lines.v1.json',
       'emotions.v1.json'
     ]) {
-      assert(existsSync(join(character, rel)), `包内角色内容 ${rel}`)
+      const file = join(character, rel)
+      assert(existsSync(file), `包内角色内容 ${rel}`)
+      assert(statSync(file).size > 100, `包内角色内容非空 ${rel}`)
     }
     const asarText = readFileSync(join(unpacked, 'resources', 'app.asar')).toString('utf8')
     assert(asarText.includes('"pet.js"'), 'asar 含桌宠独立 preload（pet.js）')
     assert(asarText.includes('character:window:pet'), 'asar 含角色通道代码')
+    assert(asarText.includes('silk-wasm'), 'asar 含 silk-wasm 依赖声明')
     assert(!asarText.includes('doc/research/upstream'), 'asar 不含上游参考库')
-    return '角色资源/桌宠 preload ✓'
+    // NOTICE：第三方署名与许可（silk-wasm / codex-deepseek-pet 署名）
+    const notice = readFileSync(join(repoRoot, 'NOTICE.md'), 'utf8')
+    assert(notice.includes('silk-wasm'), 'NOTICE 列 silk-wasm')
+    assert(notice.includes('YunYueSama'), 'NOTICE 保留上游署名')
+    assert(notice.includes('CC BY-NC-SA'), 'NOTICE 标注非商业素材边界')
+    return '角色资源/桌宠 preload/NOTICE ✓'
   })
 } catch (e) {
   console.error('smoke 自身异常:', e)

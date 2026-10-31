@@ -43,23 +43,46 @@ export interface DeliverVoiceResult {
   messageId?: string
 }
 
-/** 从 WAV 里取 PCM 数据块与采样率；不是 RIFF 时按原始 PCM 处理 */
+/** 从 WAV 里取 PCM 数据块与采样率；不是合法 RIFF/WAVE 或不是单声道16bit 直接拒绝 */
 export function extractWavPcm(bytes: Uint8Array): { pcm: Uint8Array; sampleRate: number } {
+  if (bytes.byteLength < 44) throw new Error('WAV 过短')
+  const isRiff =
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x41 &&
+    bytes[10] === 0x56 &&
+    bytes[11] === 0x45
+  if (!isRiff) throw new Error('不是合法 WAV（缺少 RIFF/WAVE 头）')
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  if (bytes.byteLength > 44 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) {
-    const sampleRate = view.getUint32(24, true) || 16000
-    let offset = 12
-    while (offset + 8 <= bytes.byteLength) {
-      const id = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3])
-      const size = view.getUint32(offset + 4, true)
-      if (id === 'data') {
-        const start = offset + 8
-        return { pcm: bytes.slice(start, Math.min(bytes.byteLength, start + size)), sampleRate }
-      }
-      offset += 8 + size + (size % 2)
+  let offset = 12
+  let sampleRate = 0
+  let channels = 0
+  let bits = 0
+  while (offset + 8 <= bytes.byteLength) {
+    const id = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3])
+    const size = view.getUint32(offset + 4, true)
+    if (id === 'fmt ') {
+      const format = view.getUint16(offset + 8, true)
+      channels = view.getUint16(offset + 10, true)
+      sampleRate = view.getUint32(offset + 12, true) || 0
+      bits = view.getUint16(offset + 22, true)
+      if (format !== 1 && format !== 0xfffe) throw new Error(`不支持的 WAV 编码（format=${format}）`)
+      if (channels !== 1) throw new Error(`语音条只支持单声道（实际 ${channels} 声道）`)
+      if (bits !== 16) throw new Error(`语音条只支持 16bit（实际 ${bits}bit）`)
     }
+    if (id === 'data') {
+      if (!sampleRate || !channels || !bits) throw new Error('WAV 缺少有效 fmt 块')
+      const start = offset + 8
+      const pcm = bytes.slice(start, Math.min(bytes.byteLength, start + size))
+      if (pcm.byteLength === 0) throw new Error('WAV 数据为空')
+      return { pcm, sampleRate }
+    }
+    offset += 8 + size + (size % 2)
   }
-  return { pcm: bytes, sampleRate: 16000 }
+  throw new Error('WAV 缺少 data 块')
 }
 
 export function nextMsgSeq(prev: number): number {
@@ -83,18 +106,39 @@ async function defaultEncodeSilk(pcm: Uint8Array, sampleRate: number): Promise<U
   }
 }
 
+const tokenCache = new Map<string, { token: string; expiresAt: number }>()
+
+function fetchWithTimeout(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit,
+  ms = 15_000
+): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), ms)
+  const signal = controller.signal
+  return fetchImpl(url, { ...init, signal }).finally(() => clearTimeout(timer))
+}
+
 async function getAccessToken(creds: QqBotCreds, deps: QqVoiceDeps): Promise<string> {
+  const cacheKey = `${creds.appId}:${creds.clientSecret.slice(-6)}`
+  const cached = tokenCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token
   const fetchImpl = deps.fetchImpl ?? fetch
   const base = deps.tokenBase ?? QQ_TOKEN_BASE
-  const res = await fetchImpl(`${base}/app/getAppAccessToken`, {
+  const res = await fetchWithTimeout(fetchImpl, `${base}/app/getAppAccessToken`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ appId: creds.appId, clientSecret: creds.clientSecret })
   })
-  const json = (await res.json().catch(() => null)) as { access_token?: string; message?: string } | null
+  const json = (await res.json().catch(() => null)) as
+    | { access_token?: string; expires_in?: number; message?: string }
+    | null
   if (!res.ok || !json?.access_token) {
     throw new Error(`QQ access_token 获取失败（HTTP ${res.status}）`)
   }
+  const ttl = Math.max(120, Math.min(3600, Number(json.expires_in) || 3600))
+  tokenCache.set(cacheKey, { token: json.access_token, expiresAt: Date.now() + ttl * 1000 })
   return json.access_token
 }
 
@@ -125,11 +169,15 @@ export async function deliverVoice(input: DeliverVoiceInput): Promise<DeliverVoi
       silk.byteOffset + silk.byteLength
     ) as ArrayBuffer
     form.append('file', new Blob([silkBuffer]), 'voice.silk')
-    const upload = await fetchImpl(`${base}/v2/users/${encodeURIComponent(input.creds.openid)}/files`, {
-      method: 'POST',
-      headers: { Authorization: `QQBot ${token}` },
-      body: form
-    })
+    const upload = await fetchWithTimeout(
+      fetchImpl,
+      `${base}/v2/users/${encodeURIComponent(input.creds.openid)}/files`,
+      {
+        method: 'POST',
+        headers: { Authorization: `QQBot ${token}` },
+        body: form
+      }
+    )
     const uploaded = (await upload.json().catch(() => null)) as {
       file_info?: string
       file_uuid?: string
@@ -139,13 +187,14 @@ export async function deliverVoice(input: DeliverVoiceInput): Promise<DeliverVoi
     if (!upload.ok || !fileInfo) {
       throw new Error(`QQ 语音上传失败（HTTP ${upload.status}）`)
     }
-    const send = await fetchImpl(
+    const send = await fetchWithTimeout(
+      fetchImpl,
       `${base}/v2/users/${encodeURIComponent(input.creds.openid)}/messages`,
       {
         method: 'POST',
         headers: { Authorization: `QQBot ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content: '',
+          // 计划要求：语音条不带 content / msg_id
           msg_type: QQ_VOICE_MSG_TYPE,
           media: { file_info: fileInfo },
           msg_seq: seq

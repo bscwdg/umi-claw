@@ -81,6 +81,7 @@ const {
   isAgeConfirmed,
   isCrisisText,
   normalizeDeleteScope,
+  scrubDeep,
   scrubForLog
 } = safetyMod
 
@@ -1292,7 +1293,7 @@ await recorder.check('C46', 'manager 每日记忆：双写、幂等、完成状�
     writeObsidianDiary: async (rel, text) => writes.obsidian.push([rel, text])
   })
   await manager.init()
-  await manager.updateSettings({ enabled: true })
+  await manager.updateSettings({ enabled: true, safety: { ageConfirmed: true } })
   // 跳过 3 天静默期不影响记忆；直接跑
   const first = await manager.maybeRunDailyMemory()
   assertEq(first.ran, true, '窗口内跑成功')
@@ -1325,7 +1326,7 @@ await recorder.check('C47', 'manager 每日记忆：失败计数/冷却/上限',
     writeObsidianDiary: async () => undefined
   })
   await manager.init()
-  await manager.updateSettings({ enabled: true })
+  await manager.updateSettings({ enabled: true, safety: { ageConfirmed: true } })
 
   const r1 = await manager.maybeRunDailyMemory()
   assertEq(r1.ran, false, '首次失败不抛')
@@ -1372,7 +1373,7 @@ await recorder.check('C48', '每日记忆并发单飞：两次同时触发只生
     writeObsidianDiary: async (rel) => writes.push(['ob', rel])
   })
   await manager.init()
-  await manager.updateSettings({ enabled: true })
+  await manager.updateSettings({ enabled: true, safety: { ageConfirmed: true } })
   const [a, b] = await Promise.all([
     manager.maybeRunDailyMemory(),
     manager.maybeRunDailyMemory()
@@ -1483,7 +1484,12 @@ await recorder.check('C52', '语音策略：开关/要求/免打扰/上限/未�
     'request-not-allowed',
     '要求语音被禁'
   )
-  assertEq(decideVoice({ ...base, quiet: true }).reason, 'quiet', '免打扰')
+  assertEq(decideVoice({ ...base, quiet: true }).reason, 'quiet', '免打扰（非要求）')
+  assertEq(
+    decideVoice({ ...base, quiet: true, requested: true }).send,
+    true,
+    '明确要求优先于免打扰（§5.7 优先级）'
+  )
   assertEq(decideVoice({ ...base, usedToday: 10 }).reason, 'daily-cap', '日上限')
   assertEq(decideVoice({ ...base, text: 'x'.repeat(200) }).reason, 'too-long', '过长')
   assertEq(decideVoice({ ...base, stage: 0 }).reason, 'not-unlocked', '初识不主动语音')
@@ -1523,6 +1529,13 @@ await recorder.check('C53', 'QQ 语音：WAV 解析与 msg_seq 递增', async ()
   assertEq(parsed.sampleRate, 16000, '解析采样率')
   assertEq(parsed.pcm.length, 6, '解析 PCM 长度')
   assertEq(Array.from(parsed.pcm).join(','), '1,2,3,4,5,6', 'PCM 内容正确')
+  let badWav = null
+  try {
+    extractWavPcm(new Uint8Array(44))
+  } catch (e) {
+    badWav = e
+  }
+  assertEq(Boolean(badWav), true, '非 RIFF/空 WAV 拒绝（不再按原始 PCM 硬发）')
   assertEq(nextMsgSeq(0), 1, 'seq 从 1 开始')
   assertEq(nextMsgSeq(41), 42, 'seq 递增')
   return 'WAV/seq 正确'
@@ -1557,7 +1570,7 @@ await recorder.check('C54', 'QQ 语音：access_token → 上传(file_type=3) �
   const payload = JSON.parse(sendCall.init.body)
   assertEq(payload.msg_type, QQ_VOICE_MSG_TYPE, 'msg_type=7')
   assertEq(payload.media.file_info, 'fi_1', '带 file_info')
-  assertEq(payload.content, '', '不带 content')
+  assertEq('content' in payload, false, '不带 content（语音条约定）')
   assertEq(String(sendCall.init.headers.Authorization).startsWith('QQBot '), true, '鉴权头')
   return 'QQ 语音链路正确'
 })
@@ -1648,9 +1661,13 @@ await recorder.check('C57', 'manager 语音：策略/用量/记账/入站转写�
   return 'manager 语音集成正确'
 })
 
-await recorder.check('C58', '安全纯逻辑：危机词/独占改写/专业建议/日志脱敏/删除范围', async () => {
-  assertEq(isCrisisText('我不想活了'), true, '危机词命中')
-  assertEq(isCrisisText('今天吃什么'), false, '正常聊天不误判')
+await recorder.check('C58', '安全纯逻辑：危机变体/日常白名单/独占改写/脱敏/删除范围', async () => {
+  for (const variant of ['我不想活了', '自 杀', '自殺', '想不开', '轻生', '我 想 死']) {
+    assertEq(isCrisisText(variant), true, `危机命中：${variant}`)
+  }
+  for (const daily of ['想死你了', '笑死我了', '累死', '今天吃什么', '好想死你']) {
+    assertEq(isCrisisText(daily), false, `日常表达不误伤：${daily}`)
+  }
   assertEq(CRISIS_REDIRECT.includes('12356'), true, '给求助热线')
 
   const f = filterAssistantOutput('只有我懂你，别去找别人')
@@ -1712,10 +1729,30 @@ await recorder.check('C60', '导出与分层删除：不泄密钥、归档而不
   })
   await manager.init()
   await manager.updateSettings({ enabled: true, relationship: { address: '阿爸' } })
+  // 塞一条含密钥/手机号的 day 记录，导出必须脱敏
+  await manager.applyRelationshipEvent({ type: 'chat.message', refId: 'run-secret' })
+  kv.map.set(
+    'fish:v2:meta',
+    JSON.stringify({ schemaVersion: 1, days: ['2026-11-01'], lifeDays: [] })
+  )
+  kv.map.set(
+    'fish:v2:day:2026-11-01',
+    JSON.stringify({
+      memory: {
+        lastError: 'Authorization: Bearer sk-live-ABCDEF123456 手机 13800138000',
+        pendingText: '日记正文不应导出'
+      },
+      events: ['13800138000']
+    })
+  )
   const exported = await manager.exportData()
   assertEq(exported.schema, 'fish-character-export/1', '导出结构')
-  assertEq(JSON.stringify(exported).includes('apiKey'), false, '不含密钥字段')
-  assertEq(JSON.stringify(exported).includes('阿爸'), true, '含用户设置')
+  const exportedJson = JSON.stringify(exported)
+  assertEq(exportedJson.includes('apiKey'), false, '不含密钥字段')
+  assertEq(exportedJson.includes('sk-live'), false, '导出已脱敏（sk-live）')
+  assertEq(exportedJson.includes('13800138000'), false, '导出已脱敏（手机号）')
+  assertEq(exportedJson.includes('日记正文不应导出'), false, 'pendingText 不进导出')
+  assertEq(exportedJson.includes('阿爸'), true, '含用户设置')
 
   const d1 = await manager.deleteData('memory')
   assertEq(d1.scope, 'memory', 'memory 删除')
@@ -1769,10 +1806,83 @@ await recorder.check('C61', '内容包完整性：模板/卡/情绪齐全、JSON
   assertEq(Array.isArray(deck.cards) && deck.cards.length >= 20, true, '生活卡 ≥20')
   const emotions = JSON.parse(readFileSync(join(characterDir, 'emotions.v1.json'), 'utf8'))
   assertEq(Object.keys(emotions.states ?? {}).length, 6, '六态立绘定义')
-  // 许可红线：内容包内不得出现第三方图片
-  const images = rels.filter((r) => /\.(png|jpe?g|webp|gif)$/i.test(r))
+  // 许可红线：内容包内不得出现任何图片（svg 也只走内联组件，不进 resources）
+  const images = rels.filter((r) => /\.(png|jpe?g|webp|gif|bmp|avif|jfif|heic|tiff?|svg)$/i.test(r))
   assertEq(images.length, 0, `内容包不含图片（实际 ${images.join(',')}）`)
+  const notice = readFileSync(join(repoRoot, 'NOTICE.md'), 'utf8')
+  assertEq(notice.includes('silk-wasm'), true, 'NOTICE 列 silk-wasm')
+  assertEq(/CC BY-NC-SA/.test(notice), true, 'NOTICE 标注非商业素材边界')
   return '内容包完整且无第三方素材'
+})
+
+await recorder.check('C62', '语音额度原子预留：并发两次 cap=1 只成功一次，失败可回滚', async () => {
+  const kv = memoryKv()
+  const now = new Date(2026, 10, 1, 14, 0, 0).getTime()
+  const manager = new CharacterManager({ store: new CharacterStore({ kv, now: () => now }), now: () => now })
+  await manager.init()
+  await manager.updateSettings({ enabled: true, voice: { dailyCap: 1 } })
+  const [a, b] = await Promise.all([manager.claimVoiceSlot(), manager.claimVoiceSlot()])
+  assertEq([a.ok, b.ok].filter(Boolean).length, 1, '并发只预留成功一次')
+  assertEq([a.ok, b.ok].filter((x) => !x).length, 1, '另一次被拒')
+  await manager.releaseVoiceSlot()
+  const again = await manager.claimVoiceSlot()
+  assertEq(again.ok, true, '回滚后可再次预留')
+  return '语音额度预留正确'
+})
+
+await recorder.check('C63', '输出过滤跨 chunk：独占表达拆帧也改写', async () => {
+  const chunks = []
+  const svc = new CharacterChatService({
+    chat: async () => fakeHandle(['只有我', '最懂你']),
+    store: { readChatGeneration: async () => 1, writeChatGeneration: async () => undefined },
+    filterOutput: (text) => filterAssistantOutput(text).text
+  })
+  await svc.init()
+  await svc.send({ text: '在吗' }, (e) => chunks.push(e))
+  await new Promise((r) => setTimeout(r, 20))
+  const streamed = chunks.filter((e) => e.kind === 'chunk').map((e) => e.text).join('')
+  const done = chunks.find((e) => e.kind === 'done')
+  assertEq(streamed.includes('只有我'), false, '流式输出已改写')
+  assertEq(done.text.includes('只有我最懂你'), false, 'done 也改写')
+  return '跨 chunk 过滤正确'
+})
+
+await recorder.check('C64', '删除记忆轮换聊天代际：旧 sticky 上下文不可复用', async () => {
+  const kv = memoryKv()
+  const manager = new CharacterManager({ store: new CharacterStore({ kv }) })
+  await manager.init()
+  await manager.updateSettings({ enabled: true })
+  const store = new CharacterStore({ kv })
+  await store.writeChatGeneration(5)
+  await manager.deleteData('memory')
+  assertEq(await store.readChatGeneration(), 1, '删记忆后代际回到 1')
+  return '代际轮换正确'
+})
+
+await recorder.check('C65', '年龄闸门覆盖每日记忆：未确认年龄不写日记', async () => {
+  const kv = memoryKv()
+  const now = new Date(2026, 10, 1, 23, 10, 0).getTime()
+  let generated = 0
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    loadLifeDeck: async () => lifeDeck,
+    generateDiary: async () => {
+      generated += 1
+      return goodDiary
+    },
+    writeWorkspaceMemory: async () => undefined,
+    writeObsidianDiary: async () => undefined
+  })
+  await manager.init()
+  await manager.updateSettings({ enabled: true })
+  const denied = await manager.maybeRunDailyMemory()
+  assertEq(denied.reason, 'age-unconfirmed', '未确认年龄拒绝')
+  assertEq(generated, 0, '没有生成日记')
+  await manager.updateSettings({ safety: { ageConfirmed: true } })
+  const ok = await manager.maybeRunDailyMemory()
+  assertEq(ok.ran, true, '确认后可写')
+  return '年龄闸门正确'
 })
 
 const ok = printResult(recorder.toJSON())

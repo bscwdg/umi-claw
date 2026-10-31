@@ -278,7 +278,7 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 > M1-A 落地时补的通道/错误码/数据结构，回写在此以维持「契约先于代码」；后续改动继续追加本节。
 
 - **IPC 通道**：`character:status:get`、`state:get`、`settings:get|set`、`interact`、`reset`、`bootstrap:run|status`、`window:pet`、`window:pet:pos`、`chat:send|cancel|clear`、`life:get`、`memory:runNow|status`、`voice:send`、`export`、`delete`；事件通道 `character:event`（state/settings/emotion/reset，C05 起含 bubble/解锁提示）、`character:stream:chunk|done|error`、`character:emotion`（桌宠）、`character:open-page`（右键菜单跳主窗）。
-- **安全与隐私（C09）**：危机词命中 → 不进模型、直接回求助资源（12356/120）；输出侧改写「只有我懂你/别去找别人」类独占表达；日志/导出前脱敏（sk-\*/Bearer/手机号/身份证）；D10 —— `safety.ageConfirmed` 默认 false，**未确认年龄前主动消息一律不发**（`age-unconfirmed`）；删除分三层（values/memory/all），日记归档到 `大肥鱼/归档/<时间戳>/` 而非硬删。
+- **安全与隐私（C09）**：危机词命中 → 不进模型、直接回求助资源（12356/120）；输入先做 NFKC+去空白/标点/emoji+简繁归一，日常表达（想死你了/笑死/累死）走反向白名单不误伤；输出侧滑窗过滤「只有我懂你/别去找别人」类独占表达（跨 chunk 也生效）；日志/导出前深度脱敏（sk-\*/Bearer/手机号/身份证）；D10 —— `safety.ageConfirmed` 默认 false，**未确认年龄前主动消息与每日记忆都不执行**；删除分三层（values/memory/all），all 额外摘除 openclaw.json 的 feiyu agent 条目，日记归档到 `大肥鱼/归档/<时间戳>/` 而非硬删；voice 额度发送前原子预留、失败回滚。
 - **语音条（C08）**：TTS 走 `voiceManager.speak({options:{format:'pcm',sampleRate:16000}})` → WAV 去头 → SILK → QQ `file_type=3`/`msg_type=7`；`silk-wasm` 为**可选依赖**（缺失时抛 `SILK_ENCODER_UNAVAILABLE` 并降级文字）；QQ `openid` 需运行期从会话发现（缺省降级文字，不报错）；入站 STT 通过注入的 `transcribe` 提供，未配置时回「还没学会听语音」。
 - **实现期修正**：主动消息加最小间隔 60min（防 tick 连发）；`silentUntil` 上界 14 天；记忆窗口 23:00–24:00 且 00:00–06:00 补写前一天；日记落盘前统一 `normalizeDiary`（frontmatter 白名单 + 密钥脱敏），密钥不落盘；未配置 Obsidian 时降级 workspace-only 并标完成；每日记忆单飞 + day 记录统一 patch（防覆盖 activeSent）。
 - **默认值修正（D10 合规）**：`proactive.enabled` 默认 **false**（未确认年龄前不主动打扰）；用户在设置里手动开启。
