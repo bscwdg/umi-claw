@@ -178,6 +178,7 @@ const allNavGroups = computed(() => [
 let cleanup: (() => void) | null = null
 let closeCleanup: (() => void) | null = null
 let autoSpeakCleanup: (() => void) | null = null
+let characterCleanup: (() => void) | null = null
 
 // 关闭确认对话框状态
 const showCloseConfirm = ref(false)
@@ -195,6 +196,12 @@ function onCloseConfirmTray() {
 }
 
 onMounted(async () => {
+  // 桌宠窗口走裸布局：主壳副作用（协议/向导/监听）一律不跑
+  if (isPetWindow.value) return
+  // 桌宠右键菜单「聊两句/设置」→ 主窗跳到大肥鱼页
+  characterCleanup = api.character.onOpenPage(() => {
+    void router.push('/character')
+  })
   // §八 Day1：首启先过用户协议（阻断式，只出现一次）。
   // 不 await：弹窗在状态回来后自己弹，绝不阻塞应用启动（硬规则 17）。
   void ensureFirstRunWizard()
@@ -225,6 +232,7 @@ onUnmounted(() => {
   cleanup?.()
   closeCleanup?.()
   autoSpeakCleanup?.()
+  characterCleanup?.()
 })
 
 /**

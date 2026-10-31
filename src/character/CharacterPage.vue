@@ -22,6 +22,11 @@
         <div><span class="k">亲密度</span><span class="v">{{ state.intimacy }} / 100</span></div>
         <div><span class="k">心情</span><span class="v">{{ state.mood || '平静' }}</span></div>
       </div>
+      <div class="row" style="margin-top: 10px">
+        <button class="btn" :disabled="busy || !status.enabled" @click="togglePetVisible">
+          {{ petVisible ? '收起桌宠' : '显示桌宠' }}
+        </button>
+      </div>
     </section>
 
     <section class="card">
@@ -44,8 +49,8 @@
       </div>
       <p class="hint">称呼只来自你；答「没有」或留空 = 空列表 = 什么都能叫（建议项不默认生效）。</p>
       <div class="row">
-        <button class="btn primary" :disabled="busy" @click="saveOnboarding">保存引导设置</button>
-        <button class="btn" :disabled="busy" @click="runBootstrap">一键初始化</button>
+        <button class="btn primary" :disabled="busy || !status.enabled" @click="saveOnboarding">保存引导设置</button>
+        <button class="btn" :disabled="busy || !status.enabled" @click="runBootstrap">一键初始化</button>
       </div>
       <ul v-if="bootstrapReport" class="steps">
         <li v-for="step in bootstrapReport.steps" :key="step.id" :class="{ bad: !step.ok }">
@@ -134,7 +139,8 @@ const status = ref({
   qqReady: false,
   ttsReady: false,
   sttReady: false,
-  memorySearchReady: false
+  memorySearchReady: false,
+  chatGen: 0
 })
 const state = ref({
   stage: 0,
@@ -147,10 +153,13 @@ const addressDraft = ref('')
 const modeDraft = ref<'companion' | 'sister' | 'lover'>('companion')
 const tabooDraft = ref('')
 const bootstrapReport = ref<BootstrapReport | null>(null)
+const petVisible = ref(false)
 const messages = ref<ChatBubble[]>([])
 const draft = ref('')
 const runId = ref('')
+const activeGen = ref(0)
 const streaming = computed(() => Boolean(runId.value))
+let cancelPending = false
 const busy = ref(false)
 const error = ref('')
 
@@ -179,11 +188,13 @@ onBeforeUnmount(() => {
 async function refresh(): Promise<void> {
   try {
     status.value = await window.api.character.status()
+    activeGen.value = status.value.chatGen ?? 0
     state.value = await window.api.character.state()
     const settings = await window.api.character.settings.get()
     addressDraft.value = settings.relationship?.address || '你'
     modeDraft.value = settings.relationship?.mode || 'companion'
     tabooDraft.value = (settings.relationship?.taboo ?? []).join('，')
+    petVisible.value = Boolean(settings.pet?.visible)
     bootstrapReport.value = await window.api.character.bootstrap.status()
   } catch (e) {
     error.value = (e as Error)?.message || '读取角色状态失败'
@@ -194,6 +205,15 @@ async function toggleEnabled(): Promise<void> {
   await run(async () => {
     const next = !status.value.enabled
     await window.api.character.settings.set({ enabled: next } as never)
+    await refresh()
+  })
+}
+
+async function togglePetVisible(): Promise<void> {
+  await run(async () => {
+    const next = !petVisible.value
+    await window.api.character.settings.set({ pet: { visible: next } } as never)
+    petVisible.value = next
     await refresh()
   })
 }
@@ -220,7 +240,12 @@ async function runBootstrap(): Promise<void> {
 }
 
 function onStreamEvent(event: CharacterChatStreamEvent): void {
-  if (runId.value && event.runId !== runId.value) return
+  // 旧代际的迟到事件（清空/重置后）一律丢弃
+  if (event.gen !== activeGen.value) return
+  const current = runId.value
+  // 清空/结束后旧 run 的迟到事件必须丢弃
+  if (!current) return
+  if (current !== 'pending' && event.runId !== current) return
   const last = messages.value[messages.value.length - 1]
   if (event.kind === 'chunk') {
     if (last && last.role === 'assistant') last.text += event.text ?? ''
@@ -242,23 +267,50 @@ function onStreamEvent(event: CharacterChatStreamEvent): void {
 async function sendMessage(): Promise<void> {
   const text = draft.value.trim()
   if (!text || streaming.value) return
-  await run(async () => {
-    draft.value = ''
-    messages.value.push({ role: 'user', text })
-    messages.value.push({ role: 'assistant', text: '', streaming: true })
+  busy.value = true
+  error.value = ''
+  draft.value = ''
+  messages.value.push({ role: 'user', text })
+  messages.value.push({ role: 'assistant', text: '', streaming: true })
+  // 先占位，避免首帧 delta 比 send 的返回值更快到达时被丢弃
+  runId.value = 'pending'
+  try {
     const result = await window.api.character.chat.send({ text })
+    activeGen.value = result.gen
     runId.value = result.runId
-  })
+    if (cancelPending) {
+      cancelPending = false
+      await window.api.character.chat.cancel(result.runId).catch(() => undefined)
+      markLastDone()
+    }
+  } catch (e) {
+    cancelPending = false
+    const last = messages.value[messages.value.length - 1]
+    if (last && last.role === 'assistant' && !last.text) messages.value.pop()
+    error.value = (e as Error)?.message || '发送失败'
+    runId.value = ''
+  } finally {
+    busy.value = false
+  }
 }
 
 async function stopStreaming(): Promise<void> {
   const current = runId.value
   if (!current) return
+  if (current === 'pending') {
+    cancelPending = true
+    markLastDone()
+    return
+  }
   try {
     await window.api.character.chat.cancel(current)
   } catch {
     /* 忽略：可能已自然结束 */
   }
+  markLastDone()
+}
+
+function markLastDone(): void {
   const last = messages.value[messages.value.length - 1]
   if (last && last.role === 'assistant') last.streaming = false
   runId.value = ''
@@ -266,7 +318,8 @@ async function stopStreaming(): Promise<void> {
 
 async function clearChat(): Promise<void> {
   await run(async () => {
-    await window.api.character.chat.clear()
+    const result = await window.api.character.chat.clear()
+    activeGen.value = result.gen
     messages.value = []
     runId.value = ''
   })

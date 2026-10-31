@@ -144,6 +144,8 @@ export interface CharacterState {
 export interface CharacterMeta {
   schemaVersion: number
   days: string[]
+  /** life:* 键的日期索引（与 day 分开保留 30 天） */
+  lifeDays: string[]
 }
 
 /** 宿主/依赖就绪情况（C01 只填 storeReady；C02 补 agent/obsidian/qq） */
@@ -158,6 +160,8 @@ export interface CharacterStatus {
   ttsReady: boolean
   sttReady: boolean
   memorySearchReady: boolean
+  /** 当前聊天会话代际（渲染端用它丢弃旧代际的迟到事件） */
+  chatGen?: number
 }
 
 export type CharacterInteractKind = 'pat' | 'feed'
@@ -178,6 +182,8 @@ export interface CharacterPetState {
   height: number
   clickThrough: boolean
   visible: boolean
+  /** 是否已保存过位置（区分「用户真的拖到 0,0」和「从未设置」） */
+  saved?: boolean
 }
 
 export function createDefaultPetState(): CharacterPetState {
@@ -219,11 +225,12 @@ export type CharacterEvent =
   | { type: 'settings'; payload: CharacterSettings; at: number }
   | { type: 'emotion'; payload: { emotion: string; visualState: string }; at: number }
   | { type: 'bubble'; payload: { text: string }; at: number }
+  | { type: 'reset'; payload: { scope: string }; at: number }
 
 export const DEFAULT_CHARACTER_SETTINGS: CharacterSettings = {
   enabled: false,
   proactive: {
-    enabled: true,
+    enabled: false,
     silenceDays: 3,
     dailyCap: 2,
     quietFrom: '23:30',
@@ -311,10 +318,14 @@ export function mergeCharacterSettings(
   if (rel && typeof rel === 'object') {
     const r = out.relationship
     if (rel.mode === 'companion' || rel.mode === 'sister' || rel.mode === 'lover') r.mode = rel.mode
-    if (typeof rel.userName === 'string') r.userName = rel.userName.slice(0, 40)
-    if (typeof rel.address === 'string' && rel.address.trim()) r.address = rel.address.trim().slice(0, 40)
+    if (typeof rel.userName === 'string') r.userName = cleanLabel(rel.userName)
+    if (typeof rel.address === 'string' && rel.address.trim()) r.address = cleanLabel(rel.address) || '你'
     if (Array.isArray(rel.taboo)) {
-      r.taboo = rel.taboo.filter((x): x is string => typeof x === 'string').map((x) => x.trim()).filter(Boolean).slice(0, 30)
+      r.taboo = rel.taboo
+        .filter((x): x is string => typeof x === 'string')
+        .map((x) => cleanLabel(x, 20))
+        .filter(Boolean)
+        .slice(0, 30)
     }
   }
 
@@ -322,8 +333,21 @@ export function mergeCharacterSettings(
 }
 
 function clamp(n: number, min: number, max: number): number {
+  if (Number.isNaN(n)) return min
+  if (n === Number.POSITIVE_INFINITY) return max
+  if (n === Number.NEGATIVE_INFINITY) return min
   if (!Number.isFinite(n)) return min
   return Math.min(max, Math.max(min, Math.round(n)))
+}
+
+/** 用户输入消毒：去换行/控制符/花括号（防模板占位符注入），避免把 markdown 结构注入提示词 */
+function cleanLabel(value: string, max = 40): string {
+  return value
+    .replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ')
+    .replace(/[{}#]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max)
 }
 
 function isHhMm(value: string): boolean {

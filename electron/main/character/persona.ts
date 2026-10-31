@@ -7,7 +7,7 @@
 // - 用户改过的文件不再覆盖（.fish-managed.json 记 hash）；STATE.md 例外（宿主持有）。
 
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, normalize, resolve } from 'node:path'
 import type { CharacterSettings, CharacterState } from './types'
 
@@ -31,21 +31,32 @@ export interface PersonaInputs {
   herName?: string
 }
 
+/** 变量消毒：称呼/禁忌来自用户输入，必须去掉换行、控制符与花括号，避免注入模板/markdown */
+export function sanitizeLabel(value: unknown, max = 40): string {
+  if (typeof value !== 'string') return ''
+  return value
+    .replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ')
+    .replace(/[{}#]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max)
+}
+
 /** 变量表：顺序有讲究 —— userName 先落 address，再算禁忌/模式 */
 export function buildPersonaVars(inputs: PersonaInputs): Record<string, string> {
   const { settings, state } = inputs
   const rel = settings.relationship
-  const userName = (rel.userName ?? '').trim()
-  const address = (rel.address ?? '').trim() || userName || '你'
+  const userName = sanitizeLabel(rel.userName)
+  const address = sanitizeLabel(rel.address) || userName || '你'
   return {
-    herName: inputs.herName?.trim() || CHARACTER_HER_NAME,
+    herName: sanitizeLabel(inputs.herName, 20) || CHARACTER_HER_NAME,
     address,
     userName,
     addressNext: '',
     petName: '',
     mode: rel.mode || 'companion',
     stage: String(state.stage ?? 0),
-    mood: state.mood || '平静'
+    mood: sanitizeLabel(state.mood, 20) || '平静'
   }
 }
 
@@ -60,13 +71,17 @@ export function applyTemplate(text: string, vars: Record<string, string>): strin
 }
 
 export function tabooRule(settings: CharacterSettings): string {
-  const taboo = (settings.relationship.taboo ?? []).map((t) => t.trim()).filter(Boolean)
+  const taboo = (settings.relationship.taboo ?? [])
+    .map((t) => sanitizeLabel(t, 20))
+    .filter(Boolean)
   if (taboo.length === 0) return '- 用户没有设置禁忌称呼：任何称呼都不拦截；但仍不要自己发明昵称。'
   return `- 不要叫这些称呼：${taboo.join('、')}（其余不限制；被叫到时回退「你」）。`
 }
 
 export function tabooListText(settings: CharacterSettings): string {
-  const taboo = (settings.relationship.taboo ?? []).map((t) => t.trim()).filter(Boolean)
+  const taboo = (settings.relationship.taboo ?? [])
+    .map((t) => sanitizeLabel(t, 20))
+    .filter(Boolean)
   return taboo.length === 0 ? '（无）' : taboo.join('、')
 }
 
@@ -95,14 +110,14 @@ export function composePersonaFiles(inputs: PersonaInputs): Record<string, strin
 /** STATE.md：宿主每次状态变更重写（固定键值行） */
 export function renderStateDoc(state: CharacterState, settings: CharacterSettings): string {
   const stageLabels = ['初识', '眼熟', '熟客', '自己人', '搭子以上']
-  const address = (settings.relationship.address ?? '').trim() || '你'
+  const address = sanitizeLabel(settings.relationship.address) || '你'
   return [
     '# 鱼的状态（宿主维护，勿改）',
     `- 阶段：${stageLabels[state.stage] ?? '初识'}（${state.stage}）`,
     `- 称呼：${address}`,
     `- 熟悉度：${state.familiarity} ｜ 亲密度：${state.intimacy} / 100`,
     `- 连续互动：${state.streakDays} 天`,
-    `- 她的心情：${state.mood || '平静'}`,
+    `- 她的心情：${sanitizeLabel(state.mood, 20) || '平静'}`,
     `- 关系模式：${settings.relationship.mode}`,
     ''
   ].join('\n')
@@ -132,6 +147,8 @@ export interface ManagedWriteOptions {
 
 /**
  * 受管写入：首次写；用户改过的不覆盖；没改过的跟随模板更新。
+ * 保守模式（manifest 缺失/损坏，或文件存在但没有记录 hash）：一律保留现存文件，
+ * 宁可少更新一次，也不能静默覆盖用户手改的人格文件（M0 手写 persona 的场景）。
  * 路径一律相对 rootDir，越界直接拒绝。
  */
 export function writeManagedFiles(
@@ -143,6 +160,8 @@ export function writeManagedFiles(
   const manifestName = options.manifestName ?? MANAGED_MANIFEST
   const manifestPath = join(rootDir, manifestName)
   const previous = readManifest(manifestPath)
+  const manifestExisted = existsSync(manifestPath)
+  const conservative = !manifestExisted || previous.corrupt
   const next: ManagedManifest = { version: 1, files: { ...previous.files } }
   const written: string[] = []
   const kept: string[] = []
@@ -153,26 +172,28 @@ export function writeManagedFiles(
     const previousHash = previous.files[rel]
     const currentHash = existed ? sha256(readFileSync(abs, 'utf8')) : ''
     const isHostOwned = hostOwned.has(rel)
-    const userModified = existed && previousHash !== undefined && currentHash !== previousHash
+    const noRecord = previousHash === undefined
+    const userModified = existed && (conservative || noRecord || currentHash !== previousHash)
     if (userModified && !isHostOwned) {
       kept.push(rel)
       continue
     }
     mkdirSync(dirname(abs), { recursive: true })
-    writeFileSync(abs, content, 'utf8')
+    writeAtomic(abs, content)
     written.push(rel)
     next.files[rel] = sha256(content)
   }
 
-  writeFileSync(manifestPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+  writeAtomic(manifestPath, `${JSON.stringify(next, null, 2)}\n`)
   return { written, kept, manifest: next }
 }
 
-export function readManifest(manifestPath: string): ManagedManifest {
+export function readManifest(manifestPath: string): ManagedManifest & { corrupt: boolean } {
   try {
     const raw = readFileSync(manifestPath, 'utf8')
     const parsed = JSON.parse(raw) as Partial<ManagedManifest>
     return {
+      corrupt: false,
       version: typeof parsed.version === 'number' ? parsed.version : 1,
       files:
         parsed.files && typeof parsed.files === 'object'
@@ -184,7 +205,23 @@ export function readManifest(manifestPath: string): ManagedManifest {
           : {}
     }
   } catch {
-    return { version: 1, files: {} }
+    return { corrupt: true, version: 1, files: {} }
+  }
+}
+
+/** 原子写：临时文件 + rename，避免半截写入把 manifest/文件写坏 */
+function writeAtomic(absPath: string, content: string): void {
+  const tmp = `${absPath}.tmp-${process.pid}-${Date.now()}`
+  writeFileSync(tmp, content, 'utf8')
+  try {
+    renameSync(tmp, absPath)
+  } catch {
+    try {
+      rmSync(tmp, { force: true })
+    } catch {
+      /* ignore */
+    }
+    writeFileSync(absPath, content, 'utf8')
   }
 }
 

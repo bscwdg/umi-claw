@@ -19,7 +19,9 @@ export const PERSONA_TEMPLATE_FILES = {
   agents: 'AGENTS.md.tpl',
   user: 'USER.md.tpl',
   core: 'core.md',
-  voice: 'voice.md'
+  // 只注入「规则」：禁用清单（banned.v1.json）与 few-shot（few-shots.v1.json）不进提示词，
+  // 否则会被模型复读（回声病）；完整 voice.md 仅作参考。
+  voice: 'voice-rules.md'
 } as const
 
 export interface BootstrapStep {
@@ -90,7 +92,20 @@ export async function runBootstrap(deps: BootstrapDeps): Promise<BootstrapReport
       ok: false,
       detail: (error as Error)?.message ?? String(error)
     })
-    return finish(steps, deps, now())
+    return {
+      ok: false,
+      at: now(),
+      workspaceDir: deps.workspaceDir,
+      steps,
+      status: {
+        agentReady: false,
+        gatewayReady: false,
+        obsidianReady: false,
+        qqReady: false,
+        ttsReady: false,
+        memorySearchReady: false
+      }
+    }
   }
 
   // 1) workspace 目录
@@ -175,11 +190,12 @@ export async function runBootstrap(deps: BootstrapDeps): Promise<BootstrapReport
     }
   }
 
-  // 5) 依赖自检
+  // 5) 依赖自检（obsidianReady 必须看真实目录，不能用「配置了 vault」冒充）
+  const vaultDir = vault ? join(vault, '大肥鱼') : ''
   const flags: BootstrapStatusFlags = {
     agentReady: safe(() => deps.agentConfigured(), false),
     gatewayReady: safe(() => deps.gatewayReady?.() ?? false, false),
-    obsidianReady: Boolean(vault) && existsSync(join(vault, '大肥鱼')),
+    obsidianReady: Boolean(vaultDir) && existsSync(vaultDir),
     qqReady: safe(() => deps.qqReady?.() ?? false, false),
     ttsReady: safe(() => deps.ttsReady?.() ?? false, false),
     memorySearchReady: safe(() => deps.memorySearchReady?.() ?? false, false)
@@ -194,23 +210,12 @@ export async function runBootstrap(deps: BootstrapDeps): Promise<BootstrapReport
   })
 
   log(`[character] bootstrap 完成：${steps.filter((s) => s.ok).length}/${steps.length} 步通过`)
-  return finish(steps, deps, now())
-}
-
-function finish(steps: BootstrapStep[], deps: BootstrapDeps, at: number): BootstrapReport {
   return {
     ok: steps.every((s) => s.ok),
-    at,
+    at: now(),
     workspaceDir: deps.workspaceDir,
     steps,
-    status: {
-      agentReady: safe(() => deps.agentConfigured(), false),
-      gatewayReady: safe(() => deps.gatewayReady?.() ?? false, false),
-      obsidianReady: Boolean((deps.obsidianVaultPath ?? '').trim()),
-      qqReady: safe(() => deps.qqReady?.() ?? false, false),
-      ttsReady: safe(() => deps.ttsReady?.() ?? false, false),
-      memorySearchReady: safe(() => deps.memorySearchReady?.() ?? false, false)
-    }
+    status: flags
   }
 }
 

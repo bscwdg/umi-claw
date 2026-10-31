@@ -1,5 +1,5 @@
 <template>
-  <div class="pet-root" :class="[`size-${size}`, { clickThrough }]">
+  <div class="pet-root" :class="{ clickThrough }">
     <div class="pet-drag drag-region">
       <FishState :state="visualState" class="fish-wrap" />
       <transition name="bubble">
@@ -93,9 +93,15 @@ async function onPat(): Promise<void> {
 
 async function onHide(): Promise<void> {
   try {
-    await window.api.character.pet.hide()
+    // 与右键菜单「收起」一致：持久化可见性，避免任意设置变更后弹回来
+    await window.api.character.settings.set({ pet: { visible: false } } as never)
   } catch {
     /* 忽略：窗口可能已销毁 */
+  }
+  try {
+    await window.api.character.pet.hide()
+  } catch {
+    /* 忽略 */
   }
 }
 

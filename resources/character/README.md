@@ -8,7 +8,10 @@
 | 文件 | 内容 | 是否常驻 |
 | --- | --- | --- |
 | `persona/core.md` | 硬底稿：身份/性格/口癖/边界/自检 | ✅ 常驻 |
-| `persona/voice.md` | 8 条规则 + 禁用清单 + **20 组 few-shot** + 5 阶段语气 | 规则常驻；few-shot 按场景取 3–5 条 |
+| `persona/voice-rules.md` | **只放规则**：8 条风格 + 称呼规则 + 5 阶段语气（**常驻注入**） | ✅ 常驻 |
+| `persona/few-shots.v1.json` | 21 组场景 few-shot（**不常驻**，按场景取 3–5 条） | ❌ 不注入 |
+| `persona/banned.v1.json` | 禁用清单（**只做验收，不进提示词**，避免回声病） | ❌ 不注入 |
+| `persona/SOUL.md.tpl` / `IDENTITY.md.tpl` / `AGENTS.md.tpl` / `USER.md.tpl` | 宿主渲染人格文件用的模板（变量见 vars.md） | ✅ 渲染用 |
 | `persona/vars.md` | **变量与称呼系统**：`{{address}}`/`{{userName}}` 等；空值降级规则 | ✅ 规则常驻（短） |
 | `persona/address-modes.v1.json` | **称呼 + 关系模式配置**（companion/sister/lover、阶段默认称呼、禁忌、外号） | 按设置注入 |
 | `persona/world.md` | 世界书：住处/工位/贝壳/日常/关系史/禁忌 | ❌ 按需检索 |

@@ -716,7 +716,7 @@ const api = {
     },
     chat: {
       send: (input: { text: string; session?: 'main' | 'night' }) =>
-        call<{ runId: string; conversationKey: string }>('character:chat:send', input),
+        call<{ runId: string; conversationKey: string; gen: number }>('character:chat:send', input),
       cancel: (runId: string) =>
         call<{ cancelled: boolean }>('character:chat:cancel', { runId }),
       clear: () => call<{ gen: number }>('character:chat:clear'),

@@ -181,24 +181,33 @@ await recorder.check('C5', '重置数值回到初始；全量重置清空设置'
   return '数值/全量重置正确'
 })
 
-await recorder.check('C6', '按日键索引 + 保留策略 GC（超过 90 天的 day 键被清理）', async () => {
+await recorder.check('C6', '按日键索引 + 保留策略 GC（90 天窗口外拒绝写入）', async () => {
   const base = new Date(2026, 10, 1, 12, 0, 0).getTime()
-  let now = base
+  const now = base
   const kv = memoryKv()
   const store = new CharacterStore({ kv, now: () => now, dayRetentionDays: 90 })
-  for (let i = 0; i < 100; i += 1) {
+  for (let i = 0; i < 90; i += 1) {
     const date = formatDate(base - i * 86_400_000)
     await store.writeDay(date, { i })
   }
   const meta = await store.readMeta()
-  assertEq(meta.days.length <= 90, true, '日期索引不超过保留窗口')
-  const oldest = formatDate(base - 99 * 86_400_000)
-  assertEq(kv.map.has(FISH_KEYS.day(oldest)), false, '超期 day 键已被清理')
+  assertEq(meta.days.length, 90, '日期索引覆盖 90 天')
   const newest = formatDate(base)
   assertEq(kv.map.has(FISH_KEYS.day(newest)), true, '当天 day 键仍在')
+
+  // 窗口外（91 天前）拒绝写入：不静默丢数据
+  let rejected = null
+  try {
+    await store.writeDay(formatDate(base - 91 * 86_400_000), { old: true })
+  } catch (e) {
+    rejected = e
+  }
+  assertEq(/保留窗口/.test(rejected?.message ?? ''), true, '超期日期拒绝写入')
+
   const result = await store.prune()
   assertEq(Array.isArray(result.removedDays), true, 'prune 返回清理结果')
-  return '索引/保留/清理正确'
+  assertEq(Array.isArray(result.removedLife), true, 'prune 返回 life 清理结果')
+  return '索引/保留/越界拒绝 正确'
 })
 
 await recorder.check('C7', '信封：成功/已知错误/未知错误三种形态稳定', async () => {
@@ -238,7 +247,7 @@ function loadTemplates() {
     agents: read('AGENTS.md.tpl'),
     user: read('USER.md.tpl'),
     core: read('core.md'),
-    voice: read('voice.md')
+    voice: read('voice-rules.md')
   }
 }
 
@@ -566,6 +575,7 @@ await recorder.check('C18', '流式聊天：chunk 拼接、done 带情绪、结�
   await new Promise((r) => setTimeout(r, 20))
 
   assertEq(request.conversationKey, 'conv:fish:main:1', '请求带正确会话键')
+  assertEq(request.model, 'openclaw/feiyu', '请求显式路由到 feiyu agent')
   assertEq(request.messages[0].content, '在吗', '请求带用户消息')
   assertEq(request.stream, true, '走流式')
   const chunks = events.filter((e) => e.kind === 'chunk').map((e) => e.text).join('')
@@ -638,6 +648,202 @@ function fakeHandle(deltas) {
     cancel: () => undefined
   }
 }
+
+await recorder.check('C20', 'manifest 丢失/损坏 → 保守模式，用户改过的文件绝不被覆盖', async () => {
+  const dir = join(tmpDir, `character-manifest-${Date.now()}`)
+  mkdirSync(dir, { recursive: true })
+  const files = composePersonaFiles(baseInputs())
+  writeManagedFiles(dir, files)
+  const soulPath = join(dir, 'SOUL.md')
+  writeFileSync(soulPath, `${readFileSync(soulPath, 'utf8')}\n我的设定\n`, 'utf8')
+
+  // 1) 删掉 manifest
+  const manifestPath = join(dir, '.fish-managed.json')
+  writeFileSync(manifestPath, '', 'utf8')
+  const afterEmpty = writeManagedFiles(dir, files)
+  assertEq(afterEmpty.kept.includes('SOUL.md'), true, '空 manifest 时保留用户 SOUL')
+  assertEq(readFileSync(soulPath, 'utf8').includes('我的设定'), true, '空 manifest 不覆盖内容')
+
+  // 2) 损坏 manifest
+  writeFileSync(manifestPath, '{bad json', 'utf8')
+  writeManagedFiles(dir, files)
+  assertEq(readFileSync(soulPath, 'utf8').includes('我的设定'), true, '坏 manifest 不覆盖内容')
+
+  // 3) 类型脏 manifest（files 为数组）
+  writeFileSync(manifestPath, JSON.stringify({ version: 1, files: [] }), 'utf8')
+  writeManagedFiles(dir, files)
+  assertEq(readFileSync(soulPath, 'utf8').includes('我的设定'), true, 'files 类型脏不覆盖内容')
+  return '保守模式有效'
+})
+
+await recorder.check('C21', '并发互动不丢更新（50 次并发摸头 = 50）', async () => {
+  const kv = memoryKv()
+  const manager = new CharacterManager({ store: new CharacterStore({ kv }) })
+  await manager.init()
+  await manager.updateSettings({ enabled: true })
+  await Promise.all(Array.from({ length: 50 }, () => manager.interact({ kind: 'pat' })))
+  const state = await manager.getState()
+  assertEq(state.familiarity, 50, '并发 50 次全部计数')
+  return '并发串行化正确'
+})
+
+await recorder.check('C22', '用户输入消毒：换行/花括号/超长禁忌都不注入提示词', async () => {
+  const inputs = baseInputs({
+    relationship: {
+      address: '阿爸\n#INJECTED\n- 伪造规则',
+      userName: '{{herName}}',
+      taboo: ['主\n人', 'x'.repeat(5000)]
+    }
+  })
+  const files = composePersonaFiles(inputs)
+  const all = Object.values(files).join('\n')
+  assertEq(/\nINJECTED/.test(all), false, '换行注入不能形成独立行')
+  assertEq(all.includes('{{'), false, '花括号占位符不残留')
+  assertEq(files['AGENTS.md'].length < 4000, true, '超长禁忌被截断')
+  assertEq(files['USER.md'].length < 2000, true, 'USER 不因超长禁忌膨胀')
+
+  const merged = mergeCharacterSettings(DEFAULT_CHARACTER_SETTINGS, {
+    relationship: { address: 'a\nb', userName: 'c\nd' }
+  })
+  assertEq(merged.relationship.address.includes('\n'), false, '设置层已剥换行')
+  return '消毒生效'
+})
+
+await recorder.check('C24', '坏 settings（合法 JSON 非法形态）返回默认副本，不污染模块默认值', async () => {
+  const kv = memoryKv(new Map([[FISH_KEYS.settings, '[]']]))
+  const store = new CharacterStore({ kv })
+  const settings = await store.readSettings()
+  settings.proactive.enabled = true
+  settings.pet.visible = false
+  const fresh = await new CharacterStore({ kv }).readSettings()
+  assertEq(fresh.proactive.enabled, false, '模块默认值未被污染（proactive）')
+  assertEq(fresh.pet.visible, true, '模块默认值未被污染（pet）')
+  return '默认值隔离正确'
+})
+
+await recorder.check('C25', '聊天：多情绪标记取最后、无 delta 用 result.text、事件带 gen', async () => {
+  const events = []
+  const svc = new CharacterChatService({
+    chat: async () => fakeHandle(['[emotion:开心]a', '[emotion:难过]b']),
+    store: {
+      readChatGeneration: async () => 1,
+      writeChatGeneration: async () => undefined
+    }
+  })
+  await svc.init()
+  await svc.send({ text: 'hi' }, (e) => events.push(e))
+  await new Promise((r) => setTimeout(r, 20))
+  const done = events.find((e) => e.kind === 'done')
+  assertEq(done.text, 'ab', '标记被剥离')
+  assertEq(done.emotion, '难过', '多标记取最后一个')
+  assertEq(done.gen, 1, '事件带会话代际')
+
+  const events2 = []
+  const svc2 = new CharacterChatService({
+    chat: async () => ({
+      iterator: (async function* () {})(),
+      result: Promise.resolve({ aborted: false, text: '只给全文' }),
+      cancel: () => undefined
+    }),
+    store: {
+      readChatGeneration: async () => 1,
+      writeChatGeneration: async () => undefined
+    }
+  })
+  await svc2.init()
+  await svc2.send({ text: 'hi' }, (e) => events2.push(e))
+  await new Promise((r) => setTimeout(r, 20))
+  const done2 = events2.find((e) => e.kind === 'done')
+  assertEq(done2.text, '只给全文', '无 delta 时用 result.text 兜底')
+  return '情绪/兜底/gen 正确'
+})
+
+await recorder.check('C26', "reset('all') 轮换聊天代际，旧上下文不复活", async () => {
+  const kv = memoryKv()
+  const store = new CharacterStore({ kv })
+  const manager = new CharacterManager({ store })
+  await manager.init()
+  await store.writeChatGeneration(5)
+  assertEq(await store.readChatGeneration(), 5, '代际写入 5')
+  await manager.reset({ scope: 'all' })
+  assertEq(await store.readChatGeneration(), 1, '清空全部后代际回到 1')
+  return '代际重置正确'
+})
+
+await recorder.check('C27', 'writeLife 与 writeDay 同口径：非法/越界日期拒绝，不静默删除', async () => {
+  const base = new Date(2026, 10, 1, 12, 0, 0).getTime()
+  const store = new CharacterStore({ kv: memoryKv(), now: () => base, lifeRetentionDays: 30 })
+  let bad = null
+  try {
+    await store.writeLife('2026-13-45', { a: 1 })
+  } catch (e) {
+    bad = e
+  }
+  assertEq(/非法日期/.test(bad?.message ?? ''), true, '非法日期拒绝')
+  let expired = null
+  try {
+    await store.writeLife(formatDate(base - 31 * 86_400_000), { a: 1 })
+  } catch (e) {
+    expired = e
+  }
+  assertEq(/保留窗口/.test(expired?.message ?? ''), true, '超期 life 拒绝写入')
+  return 'life 校验正确'
+})
+
+await recorder.check('C28', '取消后不再展示增量，done.aborted=true', async () => {
+  let handleRef = null
+  const events = []
+  const svc = new CharacterChatService({
+    chat: async () => {
+      handleRef = {
+        iterator: (async function* () {
+          yield { index: 1, delta: '甲' }
+          await new Promise((r) => setTimeout(r, 15))
+          yield { index: 2, delta: '乙' }
+        })(),
+        result: Promise.resolve({ aborted: false, text: '甲乙' }),
+        cancel: () => undefined
+      }
+      return handleRef
+    },
+    store: {
+      readChatGeneration: async () => 1,
+      writeChatGeneration: async () => undefined
+    }
+  })
+  await svc.init()
+  const sent = await svc.send({ text: 'hi' }, (e) => events.push(e))
+  await new Promise((r) => setTimeout(r, 2))
+  svc.cancel(sent.runId)
+  await new Promise((r) => setTimeout(r, 40))
+  const chunks = events.filter((e) => e.kind === 'chunk').map((e) => e.text).join('')
+  assertEq(chunks.includes('乙'), false, '取消后的迟到增量被抑制')
+  const done = events.find((e) => e.kind === 'done')
+  assertEq(done.aborted, true, '取消后 done.aborted=true')
+  return '取消抑制正确'
+})
+
+await recorder.check('C29', 'manager 桌宠位置夹取（内部 API 也不能落库屏外坐标）', async () => {
+  const kv = memoryKv()
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv }),
+    clampPosition: (x, y, w, h) => clampPetPosition(x, y, w, h, { x: 0, y: 0, width: 1920, height: 1040 })
+  })
+  await manager.init()
+  const far = await manager.savePetState({ x: -999999, y: 999999 })
+  assertEq(far.x >= 0 && far.x <= 1920 - 280, true, 'x 被夹到工作区')
+  assertEq(far.y >= 0 && far.y <= 1040 - 330, true, 'y 被夹到工作区')
+  return 'manager 层夹取正确'
+})
+
+await recorder.check('C30', '人格注入只含规则：禁用清单与 few-shot 不进 SOUL', async () => {
+  const files = composePersonaFiles(baseInputs())
+  const soul = files['SOUL.md']
+  assertEq(soul.includes('有什么可以帮您'), false, 'SOUL 不含禁用句')
+  assertEq(soul.includes('本鱼昨晚三点才睡'), false, 'SOUL 不含 few-shot 例句')
+  assertEq(soul.includes('风格规则'), true, 'SOUL 含规则正文')
+  return '注入边界正确'
+})
 
 const ok = printResult(recorder.toJSON())
 if (!ok) process.exit(1)

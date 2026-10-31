@@ -39,7 +39,15 @@ const router = createRouter({
 const app = createApp(App)
 app.use(createPinia())
 app.use(router)
-app.mount('#app')
+// 先等路由就绪再挂载：桌宠窗口按 #/character-pet 走裸布局，首帧不能闪主壳
+void (async () => {
+  try {
+    await router.isReady()
+  } catch {
+    /* 路由失败也要挂载，不能白屏 */
+  }
+  app.mount('#app')
+})()
 // ── 插件 UI 同步（构建期装配 + 运行期注册/注销）─────────────────────────────
 //
 // 只对「已启用且已激活」的插件安装 UI；停用后路由、导航组、插槽一起撤掉。
@@ -63,7 +71,11 @@ async function syncPluginUi(statuses: PluginStatus[]): Promise<void> {
   }
 }
 
+// 桌宠窗口（#/character-pet）不跑插件 UI 同步：那是主壳的事，且桌宠 preload 没有窗口间全量 API
+const isPetRoute = window.location.hash.startsWith('#/character-pet')
+
 void (async () => {
+  if (isPetRoute) return
   try {
     const statuses = await window.api.plugins.list()
     await syncPluginUi(statuses)

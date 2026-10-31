@@ -28,6 +28,8 @@ export class PetWindowController {
   private state: CharacterPetState
   private moveTimer: NodeJS.Timeout | null = null
   private destroyed = false
+  /** 用户手动隐藏（收起/关闭）后，设置同步不能把窗口再弹回来；直到显式 show 或用户重新开启可见 */
+  private userClosed = false
 
   constructor(private readonly options: PetWindowOptions) {
     this.state = options.initialState
@@ -50,6 +52,7 @@ export class PetWindowController {
   /** 首次显示；已存在则只 show/定位 */
   show(): void {
     if (this.destroyed) return
+    this.userClosed = false
     if (!this.win || this.win.isDestroyed()) {
       this.create()
     }
@@ -63,6 +66,7 @@ export class PetWindowController {
   }
 
   hide(): void {
+    this.userClosed = true
     if (this.win && !this.win.isDestroyed()) this.win.hide()
   }
 
@@ -80,6 +84,7 @@ export class PetWindowController {
 
   /** 设置变化（启用/可见/大小/穿透）时同步窗口 */
   applyState(next: Partial<CharacterPetState>): void {
+    const wasVisible = this.state.visible
     const merged: CharacterPetState = {
       ...this.state,
       ...next,
@@ -87,8 +92,10 @@ export class PetWindowController {
       height: next.height ?? this.state.height
     }
     this.state = merged
+    // 用户重新把「显示桌宠」打开（visible false→true）：清除手动关闭标记
+    if (merged.visible && !wasVisible) this.userClosed = false
     if (!this.win || this.win.isDestroyed()) {
-      if (merged.visible) this.show()
+      if (merged.visible && !this.userClosed) this.show()
       return
     }
     this.win.setBounds({
@@ -98,8 +105,20 @@ export class PetWindowController {
       height: merged.height
     })
     this.applyClickThrough(merged.clickThrough)
-    if (merged.visible && !this.win.isVisible()) this.win.showInactive()
-    if (!merged.visible && this.win.isVisible()) this.win.hide()
+    if (merged.visible && !this.win.isVisible() && !this.userClosed) this.win.showInactive()
+    if ((!merged.visible || this.userClosed) && this.win.isVisible()) this.win.hide()
+  }
+
+  /** 关闭窗口但保留控制器（停用角色时用；再次启用可重建） */
+  close(): void {
+    if (this.moveTimer) clearTimeout(this.moveTimer)
+    this.moveTimer = null
+    if (this.win && !this.win.isDestroyed()) {
+      const win = this.win
+      this.win = null
+      win.destroy()
+    }
+    this.win = null
   }
 
   destroy(): void {
@@ -195,7 +214,7 @@ export class PetWindowController {
         this.state.y < d.bounds.y + d.bounds.height
     )
     const workArea = (near ?? primary).workArea
-    const unset = this.state.x === 0 && this.state.y === 0
+    const unset = !this.state.saved
     const raw = unset
       ? {
           x: workArea.x + workArea.width - width - 24,

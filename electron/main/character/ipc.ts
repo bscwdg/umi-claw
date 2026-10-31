@@ -3,11 +3,12 @@
 // 统一信封 {ok:true,data} | {ok:false,error}，错误码见 types.ts。
 // 返回 disposer：停用/退出时摘除handler（与插件通道同口径）。
 
-import { ipcMain } from 'electron'
+import { ipcMain, screen } from 'electron'
 import {
   CHARACTER_CHANNELS,
   CharacterError,
   CHARACTER_ERROR_CODES,
+  clampPetPosition,
   toCharacterEnvelope,
   toCharacterErrorEnvelope,
   type CharacterInteractInput,
@@ -40,7 +41,10 @@ export function registerCharacterIpc(
     })
   }
 
-  handle(CHARACTER_CHANNELS.statusGet, () => manager.getStatus())
+  handle(CHARACTER_CHANNELS.statusGet, () => ({
+    ...manager.getStatus(),
+    chatGen: deps.chat?.getGeneration() ?? 0
+  }))
   handle(CHARACTER_CHANNELS.stateGet, () => manager.getState())
   handle(CHARACTER_CHANNELS.settingsGet, () => manager.getSettings())
   handle(CHARACTER_CHANNELS.settingsSet, (patch) => manager.updateSettings(patch))
@@ -50,19 +54,30 @@ export function registerCharacterIpc(
   handle(CHARACTER_CHANNELS.reset, (options) =>
     manager.reset((options ?? {}) as CharacterResetOptions)
   )
-  handle(CHARACTER_CHANNELS.bootstrapRun, () => manager.runBootstrap())
+  handle(CHARACTER_CHANNELS.bootstrapRun, async () => {
+    if (!manager.isEnabled()) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.DISABLED, '大肥鱼未启用')
+    }
+    return manager.runBootstrap()
+  })
   handle(CHARACTER_CHANNELS.bootstrapStatus, () => manager.getBootstrapStatus())
   handle(CHARACTER_CHANNELS.windowPet, async (payload) => {
     const pet = deps.pet
     if (!pet) throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '桌宠窗口尚未接线')
     const action = (payload as { action?: string } | undefined)?.action
+    // D8：未启用时整段不启动；只允许 hide 收尾，其他动作一律拒绝
+    if (!manager.isEnabled() && action !== 'hide') {
+      throw new CharacterError(CHARACTER_ERROR_CODES.DISABLED, '大肥鱼未启用')
+    }
     if (action === 'show') pet.show()
     else if (action === 'hide') pet.hide()
     else if (action === 'toggle') pet.toggle()
     else if (action === 'clickThrough') {
-      const on = Boolean((payload as { value?: unknown }).value)
-      pet.applyClickThrough(on)
+      // 严格布尔：字符串 'false' 不能变成 true
+      const on = (payload as { value?: unknown }).value === true
+      // 先落盘再应用：落盘失败时不会出现「已穿透但没有逃生热键」的死局
       await manager.updateSettings({ pet: { clickThrough: on } })
+      pet.applyClickThrough(on)
     } else {
       throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '未知的桌宠窗口动作')
     }
@@ -72,11 +87,39 @@ export function registerCharacterIpc(
   handle(CHARACTER_CHANNELS.windowPetPos, async (payload) => {
     const pet = deps.pet
     if (!pet) throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '桌宠窗口尚未接线')
-    const raw = (payload ?? {}) as { x?: unknown; y?: unknown }
-    if (typeof raw.x !== 'number' || typeof raw.y !== 'number') {
-      throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '位置需要 x/y 数字')
+    if (!manager.isEnabled()) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.DISABLED, '大肥鱼未启用')
     }
-    const next = await manager.savePetState({ x: raw.x, y: raw.y })
+    const raw = (payload ?? {}) as { x?: unknown; y?: unknown }
+    if (
+      typeof raw.x !== 'number' ||
+      typeof raw.y !== 'number' ||
+      !Number.isFinite(raw.x) ||
+      !Number.isFinite(raw.y)
+    ) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '位置需要有限数字 x/y')
+    }
+    const current = await manager.getPetState()
+    const x = raw.x
+    const y = raw.y
+    const displays = screen.getAllDisplays()
+    const primary = screen.getPrimaryDisplay()
+    const near = displays.find(
+      (d) =>
+        x >= d.bounds.x &&
+        x < d.bounds.x + d.bounds.width &&
+        y >= d.bounds.y &&
+        y < d.bounds.y + d.bounds.height
+    )
+    const workArea = (near ?? primary).workArea
+    const clamped = clampPetPosition(
+      Math.round(x),
+      Math.round(y),
+      current.width,
+      current.height,
+      workArea
+    )
+    const next = await manager.savePetState({ x: clamped.x, y: clamped.y })
     pet.applyState({ x: next.x, y: next.y })
     return next
   })

@@ -6,6 +6,8 @@
 import { readFileSync } from 'node:fs'
 
 export const CHARACTER_AGENT_ID = 'feiyu'
+/** 聊天必须显式路由到 feiyu agent，否则人格/记忆全部空转（审查 P0-1） */
+export const CHARACTER_AGENT_MODEL = `openclaw/${CHARACTER_AGENT_ID}`
 
 export interface AgentPatchPayload {
   agents: { entries: Record<string, { workspace: string }> }

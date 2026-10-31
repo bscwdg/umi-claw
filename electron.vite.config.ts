@@ -5,7 +5,7 @@ import vue from '@vitejs/plugin-vue'
 export default defineConfig({
   main: {
     build: {
-      outDir: 'dist-electron/main',  
+      outDir: 'dist-electron/main',
       lib: {
         entry: resolve(__dirname, 'electron/main/index.ts'),
         formats: ['cjs']
@@ -15,10 +15,17 @@ export default defineConfig({
 
   preload: {
     build: {
-      outDir: 'dist-electron/preload', 
-      lib: {
-        entry: resolve(__dirname, 'electron/preload/index.ts'),
-        formats: ['cjs']
+      outDir: 'dist-electron/preload',
+      // 双入口：主窗全量 preload + 桌宠窗口最小 preload（§13.1-2）
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'electron/preload/index.ts'),
+          pet: resolve(__dirname, 'electron/preload/pet.ts')
+        },
+        output: {
+          format: 'cjs',
+          entryFileNames: '[name].js'
+        }
       }
     }
   },
@@ -35,6 +42,6 @@ export default defineConfig({
         '@': resolve(__dirname, 'src')
       }
     },
-    plugins: [vue()]   
+    plugins: [vue()]
   }
 })

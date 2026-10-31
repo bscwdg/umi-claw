@@ -25,6 +25,8 @@ export interface CharacterManagerOptions {
   now?: () => number
   logger?: (message: string) => void
   onEvent?: (event: CharacterEvent) => void
+  /** 桌宠位置夹取（wiring 注入屏幕工作区；缺省不夹） */
+  clampPosition?: (x: number, y: number, width: number, height: number) => { x: number; y: number }
 }
 
 const FAMILIARITY_CAP = 100
@@ -35,12 +37,22 @@ export class CharacterManager {
   private readonly now: () => number
   private readonly logger: (message: string) => void
   private readonly onEvent?: (event: CharacterEvent) => void
+  private readonly clampPosition?: (
+    x: number,
+    y: number,
+    width: number,
+    height: number
+  ) => { x: number; y: number }
 
   private settings: CharacterSettings | null = null
   private state: CharacterState | null = null
   private initialized = false
   private bootstrapRunner: (() => Promise<BootstrapReport>) | null = null
   private lastBootstrap: BootstrapReport | null = null
+  private bootstrapInFlight: Promise<BootstrapReport> | null = null
+  private personaSyncRunner: (() => Promise<void>) | null = null
+  private personaSyncTimer: NodeJS.Timeout | null = null
+  private mutationQueue: Promise<void> = Promise.resolve()
   private dependencyStatus: Omit<
     CharacterStatus,
     'enabled' | 'ready' | 'storeReady'
@@ -59,6 +71,7 @@ export class CharacterManager {
     this.now = options.now ?? Date.now
     this.logger = options.logger ?? (() => undefined)
     this.onEvent = options.onEvent
+    this.clampPosition = options.clampPosition
   }
 
   async init(): Promise<void> {
@@ -127,6 +140,10 @@ export class CharacterManager {
   }
 
   async updateSettings(patch: unknown): Promise<CharacterSettings> {
+    return this.withMutation(() => this.updateSettingsImpl(patch))
+  }
+
+  private async updateSettingsImpl(patch: unknown): Promise<CharacterSettings> {
     this.assertInitialized()
     if (!this.settings) {
       throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '角色设置尚未加载')
@@ -142,10 +159,15 @@ export class CharacterManager {
       })
     }
     this.emit({ type: 'settings', payload: clone(next), at: this.now() })
+    this.schedulePersonaSync()
     return clone(next)
   }
 
   async interact(input: CharacterInteractInput): Promise<CharacterState> {
+    return this.withMutation(() => this.interactImpl(input))
+  }
+
+  private async interactImpl(input: CharacterInteractInput): Promise<CharacterState> {
     this.assertInitialized()
     if (!this.isEnabled()) {
       throw new CharacterError(CHARACTER_ERROR_CODES.DISABLED, '大肥鱼未启用')
@@ -158,18 +180,21 @@ export class CharacterManager {
     }
     if (kind === 'pat') state.familiarity = Math.min(FAMILIARITY_CAP, state.familiarity + 1)
     if (kind === 'feed') state.intimacy = Math.min(INTIMACY_CAP, state.intimacy + 1)
-    if (kind === 'pat' || kind === 'feed') {
-      state.lastInteractionAt = now
-      state.mood = kind === 'pat' ? '被摸头了' : '吃饱了'
-    }
+    if (kind === 'dismiss') return { ...state }
+    state.lastInteractionAt = now
     state.updatedAt = now
     await this.store.writeState(state)
     this.state = state
     this.emit({ type: 'state', payload: clone(state), at: now })
+    this.schedulePersonaSync()
     return { ...state }
   }
 
   async reset(options: CharacterResetOptions = {}): Promise<{ scope: string }> {
+    return this.withMutation(() => this.resetImpl(options))
+  }
+
+  private async resetImpl(options: CharacterResetOptions): Promise<{ scope: string }> {
     this.assertInitialized()
     const scope = options.scope ?? 'values'
     if (scope !== 'values' && scope !== 'memory' && scope !== 'all') {
@@ -182,6 +207,12 @@ export class CharacterManager {
     this.state = await this.store.readState()
     if (this.state.bornAt === 0) this.state = createDefaultCharacterState(this.now())
     this.emit({ type: 'state', payload: clone(this.state), at: this.now() })
+    this.emit({ type: 'reset', payload: { scope }, at: this.now() })
+    if (scope === 'all' && this.settings) {
+      // 全量重置读到的是默认设置：广播一次，桌宠/页面才能同步收起
+      this.emit({ type: 'settings', payload: clone(this.settings), at: this.now() })
+    }
+    this.schedulePersonaSync()
     return { scope }
   }
 
@@ -190,22 +221,42 @@ export class CharacterManager {
     this.bootstrapRunner = runner
   }
 
+  /** wiring 注入：轻量人格同步（只重写受管文件，不跑 CLI 引导） */
+  setPersonaSyncRunner(runner: () => Promise<void>): void {
+    this.personaSyncRunner = runner
+  }
+
+  /** 释放：清理防抖定时器 */
+  dispose(): void {
+    if (this.personaSyncTimer) clearTimeout(this.personaSyncTimer)
+    this.personaSyncTimer = null
+  }
+
   async runBootstrap(): Promise<BootstrapReport> {
     this.assertInitialized()
     if (!this.bootstrapRunner) {
       throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '角色引导尚未接线')
     }
-    const report = await this.bootstrapRunner()
-    this.lastBootstrap = report
-    this.setDependencyStatus({
-      agentReady: report.status.agentReady,
-      gatewayReady: report.status.gatewayReady,
-      obsidianReady: report.status.obsidianReady,
-      qqReady: report.status.qqReady,
-      ttsReady: report.status.ttsReady,
-      memorySearchReady: report.status.memorySearchReady
-    })
-    return report
+    // 并发引导会重复跑 config patch / 受管写入（manifest 竞态），同一时刻只允许一次
+    if (this.bootstrapInFlight) return this.bootstrapInFlight
+    const run = this.bootstrapRunner()
+      .then((report) => {
+        this.lastBootstrap = report
+        this.setDependencyStatus({
+          agentReady: report.status.agentReady,
+          gatewayReady: report.status.gatewayReady,
+          obsidianReady: report.status.obsidianReady,
+          qqReady: report.status.qqReady,
+          ttsReady: report.status.ttsReady,
+          memorySearchReady: report.status.memorySearchReady
+        })
+        return report
+      })
+      .finally(() => {
+        this.bootstrapInFlight = null
+      })
+    this.bootstrapInFlight = run
+    return run
   }
 
   getBootstrapStatus(): BootstrapReport | null {
@@ -225,23 +276,36 @@ export class CharacterManager {
       width: size.width,
       height: size.height,
       clickThrough: Boolean(settings.pet.clickThrough),
-      visible: Boolean(settings.enabled && settings.pet.visible)
+      visible: Boolean(settings.enabled && settings.pet.visible),
+      saved: Boolean(raw.saved)
     }
   }
 
   async savePetState(patch: Partial<CharacterPetState>): Promise<CharacterPetState> {
+    return this.withMutation(() => this.savePetStateImpl(patch))
+  }
+
+  private async savePetStateImpl(patch: Partial<CharacterPetState>): Promise<CharacterPetState> {
     this.assertInitialized()
     const current = await this.getPetState()
     const num = (v: unknown, fallback: number): number =>
       typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : fallback
+    let x = num(patch.x, current.x)
+    let y = num(patch.y, current.y)
+    if (this.clampPosition) {
+      const clamped = this.clampPosition(x, y, current.width, current.height)
+      x = clamped.x
+      y = clamped.y
+    }
     const next: CharacterPetState = {
-      x: num(patch.x, current.x),
-      y: num(patch.y, current.y),
+      x,
+      y,
       width: current.width,
       height: current.height,
       clickThrough:
         typeof patch.clickThrough === 'boolean' ? patch.clickThrough : current.clickThrough,
-      visible: typeof patch.visible === 'boolean' ? patch.visible : current.visible
+      visible: typeof patch.visible === 'boolean' ? patch.visible : current.visible,
+      saved: true
     }
     await this.store.writePet(next)
     return next
@@ -249,6 +313,13 @@ export class CharacterManager {
 
   /** 聊天情绪：更新心情并广播（桌宠换表情由渲染端消费） */
   async applyChatEmotion(emotion: string, visualState: string): Promise<CharacterState> {
+    return this.withMutation(() => this.applyChatEmotionImpl(emotion, visualState))
+  }
+
+  private async applyChatEmotionImpl(
+    emotion: string,
+    visualState: string
+  ): Promise<CharacterState> {
     this.assertInitialized()
     const state = await this.getState()
     state.mood = (emotion || '平静').slice(0, 40)
@@ -256,6 +327,8 @@ export class CharacterManager {
     await this.store.writeState(state)
     this.state = state
     this.emit({ type: 'emotion', payload: { emotion, visualState }, at: state.updatedAt })
+    // STATE.md 的「她的心情」是最高频变更，必须跟着重写
+    this.schedulePersonaSync()
     return { ...state }
   }
 
@@ -263,6 +336,32 @@ export class CharacterManager {
     if (!this.initialized) {
       throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '大肥鱼尚未初始化')
     }
+  }
+
+  /** 串行化状态写：并发 interact/savePetState 不会互相覆盖（桌宠连点） */
+  private async withMutation<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.mutationQueue.then(fn, fn)
+    this.mutationQueue = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
+  }
+
+  /** 状态/设置变化后 ≤300ms 合并重写人格受管文件（STATE.md 即时；SOUL/AGENTS 用户改过则保留） */
+  private schedulePersonaSync(): void {
+    if (!this.personaSyncRunner) return
+    // D8：未启用时不碰 workspace（避免「关着也在写人格文件」）
+    if (!this.isEnabled()) return
+    if (this.personaSyncTimer) clearTimeout(this.personaSyncTimer)
+    this.personaSyncTimer = setTimeout(() => {
+      this.personaSyncTimer = null
+      void this.personaSyncRunner?.().catch((error) => {
+        this.logger(
+          `[character] 人格文件同步失败: ${(error as Error)?.message ?? String(error)}`
+        )
+      })
+    }, 300)
   }
 
   private emit(event: CharacterEvent): void {

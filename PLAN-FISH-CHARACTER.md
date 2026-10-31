@@ -191,7 +191,7 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 
 ```json
 {
-  "proactive": { "enabled": true, "silenceDays": 3, "dailyCap": 2,
+  "proactive": { "enabled": false, "silenceDays": 3, "dailyCap": 2,
                  "quietFrom": "23:30", "quietTo": "08:00",
                  "contentTypes": ["morning","thinkingOfYou","herDay","anniversary"],
                  "channel": "qq", "silentUntil": 0 },
@@ -270,6 +270,21 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 ```
 
 规则：卡按 `stage/season/slot/weight` 抽取；同一张卡 7 天内不重复；新增卡只追加文件版本号。
+
+---
+
+### 4.7 实现期契约增补（v1.1 实现，2026-11-01）
+
+> M1-A 落地时补的通道/错误码/数据结构，回写在此以维持「契约先于代码」；后续改动继续追加本节。
+
+- **IPC 通道**：`character:status:get`、`state:get`、`settings:get|set`、`interact`、`reset`、`bootstrap:run|status`、`window:pet`、`window:pet:pos`、`chat:send|cancel|clear`；事件通道 `character:event`（state/settings/emotion/reset；**bubble 预留，C06 实装**）、`character:stream:chunk|done|error`、`character:emotion`（桌宠）、`character:open-page`（右键菜单跳主窗）。
+- **默认值修正（D10 合规）**：`proactive.enabled` 默认 **false**（未确认年龄前不主动打扰）；用户在设置里手动开启。
+- **错误码**：`CHARACTER_NOT_READY` / `CHARACTER_DISABLED` / `CHARACTER_STORE_IO` / `CHARACTER_BAD_PAYLOAD` / `CHARACTER_RESET_FORBIDDEN`（保留未用）。
+- **聊天**：会话键 `conv:fish:<main|night>:<gen>`，`gen` 落 `fish:v2:chatgen`；`chat:clear` 轮换代际（旧 run 事件带 `gen`，渲染端丢弃）；请求显式带 `model: openclaw/feiyu`（否则人格不生效）。
+- **设置树简化为单值称呼**：`relationship.address`（取代 `addressByStage`/`addressNext`/`allowFishNickname`）；阶段称呼表仍在 `resources/character/persona/address-modes.v1.json`，C05 用数据、不注入提示词。
+- **数据键补充**：`fish:v2:chatgen`；`fish:v2:meta` 增 `lifeDays` 索引（life:* 独立 GC）；`fish:v2:pet` 增 `saved`（区分「拖到 0,0」与「从未设置」）。
+- **受管写入保守模式**：`.fish-managed.json` 缺失/损坏/形态非法时，现存人格文件一律保留（不覆盖用户改动）；manifest 与文件均 tmp+rename 原子写。
+- **人格注入**：只注入 `voice-rules.md`；`banned.v1.json`（禁用清单）与 `few-shots.v1.json` 不常驻注入，仅供验收/按场景取用。
 
 ---
 

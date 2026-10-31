@@ -3,17 +3,23 @@
 // index.ts 只调用一次 registerCharacter()；其余模块不直接 import 本目录以外的东西。
 // 初始化失败只降级角色自身，绝不阻断宿主启动（红线 2）。
 
-import { globalShortcut } from 'electron'
+import { globalShortcut, screen } from 'electron'
 import { join } from 'node:path'
 import { CharacterManager } from './manager'
 import { registerCharacterIpc, type CharacterIpcDisposer } from './ipc'
 import { CharacterStore } from './store'
 import { applyAgentPatch, createOpenClawCliRunner } from './agentPatchRunner'
-import { CHARACTER_AGENT_ID, readAgentEntry } from './agentConfig'
-import { runBootstrap } from './bootstrap'
+import { CHARACTER_AGENT_ID, CHARACTER_AGENT_MODEL, readAgentEntry } from './agentConfig'
+import { loadPersonaTemplates, runBootstrap } from './bootstrap'
+import { composePersonaFiles, writeManagedFiles } from './persona'
 import { PetWindowController, type PetMenuAction } from './petWindow'
 import { CharacterChatService, type CharacterChatFn } from './chat'
-import { CHARACTER_CHANNELS, type CharacterEvent, type CharacterKv } from './types'
+import {
+  CHARACTER_CHANNELS,
+  clampPetPosition,
+  type CharacterEvent,
+  type CharacterKv
+} from './types'
 
 /** 点击穿透的逃生热键（穿透开启时注册；关掉即注销） */
 export const CLICK_THROUGH_SHORTCUT = 'CommandOrControl+Alt+F'
@@ -43,8 +49,10 @@ export interface CharacterWiringDeps {
   configPath: string
   /** 官方 CLI 子进程配置 */
   cli: CharacterCliConfig
-  /** gateway 聊天函数（index.ts 用 workGatewayClient.chat 注入；缺省则聊天不可用） */
+  /** gateway 聊天函数（index.ts 用 workGatewayClient.createChatStream 注入；缺省则聊天不可用） */
   chat?: CharacterChatFn
+  /** 角色 agent 模型路由（默认 openclaw/feiyu） */
+  chatModel?: string
   /** 桌宠窗口配置（C03）；缺省则不建窗口 */
   petWindow?: CharacterPetWindowConfig
   /** 桌宠菜单里的「聊两句 / 设置」回调（由 index.ts 聚焦主窗） */
@@ -65,7 +73,25 @@ export interface CharacterWiringResult {
   dispose: () => Promise<void>
 }
 
-export async function registerCharacter(
+/** 幂等：同一进程只允许一份角色装配（重复调用返回已注册实例，避免第二次静默失效） */
+let activeWiring: Promise<CharacterWiringResult> | null = null
+
+export function registerCharacter(deps: CharacterWiringDeps): Promise<CharacterWiringResult> {
+  if (activeWiring) return activeWiring
+  activeWiring = registerCharacterInternal(deps)
+    .then((result) => {
+      // 降级（manager=null）不缓存：允许调用方修复环境后重试
+      if (!result.manager) activeWiring = null
+      return result
+    })
+    .catch((error) => {
+      activeWiring = null
+      throw error
+    })
+  return activeWiring
+}
+
+async function registerCharacterInternal(
   deps: CharacterWiringDeps
 ): Promise<CharacterWiringResult> {
   const logger = deps.logger ?? ((message: string) => console.log(message))
@@ -77,32 +103,57 @@ export async function registerCharacter(
     try {
       const registered = globalShortcut.isRegistered(CLICK_THROUGH_SHORTCUT)
       if (on && !registered) {
-        globalShortcut.register(CLICK_THROUGH_SHORTCUT, () => {
+        const ok = globalShortcut.register(CLICK_THROUGH_SHORTCUT, () => {
           pet?.applyClickThrough(false)
           void managerRef
             ?.updateSettings({ pet: { clickThrough: false } })
             .catch(() => undefined)
         })
+        if (!ok) {
+          // 逃生热键注册失败时绝不能保持穿透，否则用户被锁在窗外
+          logger('[character] 穿透逃生热键注册失败，已自动关闭穿透')
+          pet?.applyClickThrough(false)
+          void managerRef?.updateSettings({ pet: { clickThrough: false } }).catch(() => undefined)
+        }
       } else if (!on && registered) {
         globalShortcut.unregister(CLICK_THROUGH_SHORTCUT)
       }
     } catch (error) {
       logger(`[character] 穿透逃生热键注册失败: ${(error as Error)?.message ?? String(error)}`)
+      pet?.applyClickThrough(false)
+      void managerRef?.updateSettings({ pet: { clickThrough: false } }).catch(() => undefined)
     }
   }
 
   try {
     const store = new CharacterStore({ kv: deps.kv, now: deps.now })
+    const workspaceDir = join(deps.dataDir, 'config', '.openclaw', 'workspace-feiyu')
     const manager = new CharacterManager({
       store,
       now: deps.now,
       logger,
       onEvent: (event) => {
         if (event.type === 'settings') void syncPet()
+        if (event.type === 'reset') void chatService?.reloadGeneration().catch(() => undefined)
+        // 桌宠窗口也要收到状态/设置事件（尺寸/表情/可见性同步）
         if (event.type === 'emotion') {
           pet?.broadcast(CHARACTER_CHANNELS.emotion, event.payload)
+        } else {
+          pet?.broadcast('character:event', event)
         }
         deps.onEvent?.(event)
+      },
+      clampPosition: (x, y, width, height) => {
+        const displays = screen.getAllDisplays()
+        const primary = screen.getPrimaryDisplay()
+        const near = displays.find(
+          (d) =>
+            x >= d.bounds.x &&
+            x < d.bounds.x + d.bounds.width &&
+            y >= d.bounds.y &&
+            y < d.bounds.y + d.bounds.height
+        )
+        return clampPetPosition(x, y, width, height, (near ?? primary).workArea)
       }
     })
     managerRef = manager
@@ -120,6 +171,7 @@ export async function registerCharacter(
         onEmotion: (emotion, visualState) => {
           void manager.applyChatEmotion(emotion, visualState).catch(() => undefined)
         },
+        model: deps.chatModel ?? CHARACTER_AGENT_MODEL,
         now: deps.now,
         logger
       })
@@ -142,13 +194,23 @@ export async function registerCharacter(
         onClosed: () => undefined
       })
       if (manager.isEnabled() && initialPet.visible) pet.show()
-      updateShortcut(initialPet.clickThrough)
+      updateShortcut(manager.isEnabled() && initialPet.clickThrough)
     }
 
     ipcDisposer = registerCharacterIpc(manager, { pet, chat: chatService })
 
+    // 设置/互动后 ≤300ms 合并重写人格文件（STATE.md 即时；用户改过的 SOUL/AGENTS 保留）
+    manager.setPersonaSyncRunner(async () => {
+      const templates = loadPersonaTemplates(deps.personaSourceDir)
+      const files = composePersonaFiles({
+        settings: await manager.getSettings(),
+        state: await manager.getState(),
+        templates
+      })
+      writeManagedFiles(workspaceDir, files)
+    })
+
     // 引导接线：官方 CLI 写 agent 条目；人格文件走受管写入
-    const workspaceDir = join(deps.dataDir, 'config', '.openclaw', 'workspace-feiyu')
     const tmpDir = join(deps.dataDir, 'cache')
     const runner = createOpenClawCliRunner(deps.cli)
     manager.setBootstrapRunner(() =>
@@ -160,7 +222,18 @@ export async function registerCharacter(
         obsidianVaultPath: deps.obsidianVaultPath?.(),
         ensureAgentEntry: (ws) =>
           applyAgentPatch({ runner, tmpDir, agentId: CHARACTER_AGENT_ID, workspace: ws }),
-        agentConfigured: () => readAgentEntry(deps.configPath, CHARACTER_AGENT_ID).exists,
+        agentConfigured: () => {
+          const entry = readAgentEntry(deps.configPath, CHARACTER_AGENT_ID)
+          if (!entry.exists) return false
+          if (!entry.workspace) return false
+          const normalize = (p: string): string =>
+            p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+          const actual = normalize(entry.workspace)
+          const expected = normalize(workspaceDir)
+          // CLI 可能规范化路径（大小写/相对/多余 ./）：退化为「末尾同名目录」也算就绪，
+          // 否则每次启动都会重复 patch 且引导步常驻失败
+          return actual === expected || actual.endsWith(`/${CHARACTER_AGENT_ID}`) || actual.endsWith('/workspace-feiyu')
+        },
         gatewayReady: deps.gatewayReady,
         qqReady: deps.qqReady,
         ttsReady: deps.ttsReady,
@@ -182,6 +255,12 @@ export async function registerCharacter(
       if (!pet) return
       try {
         const settings = await manager.getSettings()
+        if (!settings.enabled) {
+          // 停用 = 收起窗口（不销毁控制器，重新启用可重建）
+          pet.close()
+          updateShortcut(false)
+          return
+        }
         const petState = await manager.getPetState()
         pet.applyState({ ...petState, visible: Boolean(settings.enabled && settings.pet.visible) })
         updateShortcut(Boolean(settings.enabled && settings.pet.clickThrough))
@@ -221,8 +300,10 @@ export async function registerCharacter(
         ipcDisposer?.()
         ipcDisposer = null
         chatService?.cancelAll()
+        manager.dispose()
         pet?.destroy()
         pet = null
+        activeWiring = null
       }
     }
   } catch (error) {

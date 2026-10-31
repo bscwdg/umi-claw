@@ -87,10 +87,8 @@ export async function applyAgentPatch(
     writeFileSync(patchPath, `${JSON.stringify(buildAgentPatch(agentId, options.workspace))}\n`, 'utf8')
     const result = await options.runner.run(['config', 'patch', '--file', patchPath])
     if (result.code !== 0) {
-      return {
-        ok: false,
-        error: `config patch 失败（exit ${result.code}）：${tail(result.stderr || result.stdout)}`
-      }
+      // 只回退出码，不把 CLI stderr 原样带进 UI/日志（可能含路径/凭据片段）
+      return { ok: false, error: `config patch 失败（exit ${result.code}）` }
     }
     return { ok: true }
   } catch (error) {
@@ -104,7 +102,3 @@ export async function applyAgentPatch(
   }
 }
 
-function tail(text: string): string {
-  const trimmed = (text ?? '').trim()
-  return trimmed.length > 400 ? trimmed.slice(-400) : trimmed
-}

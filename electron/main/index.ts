@@ -2252,7 +2252,7 @@ app.whenReady().then(async () => {
       },
       obsidianVaultPath: () => configManager.getConfig().obsidian?.vaultPath,
       petWindow: {
-        preloadPath: join(__dirname, '../preload/index.js'),
+        preloadPath: join(__dirname, '../preload/pet.js'),
         devRendererUrl: process.env['ELECTRON_RENDERER_URL'],
         prodRendererUrl: 'app://renderer/index.html#/character-pet'
       },

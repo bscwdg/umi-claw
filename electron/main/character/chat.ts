@@ -4,7 +4,12 @@
 // 纯 Node（不 import electron），gateway 调用与事件通道都从外部注入，便于验收。
 // 不建本地消息表：上下文靠 OpenClaw sticky 会话，面板只保留本次会话气泡。
 
-import type { CharacterChatSession } from './types'
+import {
+  CHARACTER_ERROR_CODES,
+  CharacterError,
+  type CharacterChatSession
+} from './types'
+import { CHARACTER_AGENT_MODEL } from './agentConfig'
 
 export const CHAT_SESSIONS: CharacterChatSession[] = ['main', 'night']
 const MAX_INPUT_LENGTH = 4000
@@ -24,6 +29,8 @@ export interface CharacterChatRequest {
   conversationKey: string
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
   stream: true
+  /** 显式路由到角色 agent（openclaw/feiyu）；不传会落到默认模型，人格/记忆全部空转 */
+  model?: string
 }
 
 export type CharacterChatFn = (
@@ -32,6 +39,8 @@ export type CharacterChatFn = (
 
 export interface CharacterChatStreamEvent {
   runId: string
+  /** 会话代际：clear() 之后旧代际的事件必须被渲染端丢弃 */
+  gen: number
   kind: 'chunk' | 'done' | 'error'
   text?: string
   emotion?: string
@@ -45,13 +54,15 @@ export interface CharacterChatServiceOptions {
     readChatGeneration(): Promise<number>
     writeChatGeneration(gen: number): Promise<void>
   }
+  /** 角色 agent 的模型路由（缺省 openclaw/feiyu，由 wiring 注入） */
+  model?: string
   onEmotion?: (emotion: string, visualState: string) => void
   now?: () => number
   logger?: (message: string) => void
 }
 
 /** `[emotion:开心]` / `[emotion：开心]` 标记；模型输出里剥离后再展示 */
-const EMOTION_MARKER = /\[\s*emotion\s*[:：]\s*([^\]\s]{1,12})\s*\]/g
+const EMOTION_MARKER = /\[\s*emotion\s*[:：]\s*([^\]\n]{1,24})\s*\]/g
 
 /** 情绪 → 六态（与 resources/character/emotions.v1.json 对齐） */
 const EMOTION_TO_STATE: Record<string, string> = {
@@ -83,7 +94,8 @@ export function mapEmotionToState(emotion: string, text = ''): string {
 export function stripEmotionMarkers(text: string): { text: string; emotion?: string } {
   let emotion: string | undefined
   const cleaned = text.replace(EMOTION_MARKER, (_m, captured: string) => {
-    if (!emotion) emotion = captured
+    // 多个标记时取最后一个（模型常以后置标记为准）
+    emotion = String(captured ?? '').trim() || emotion
     return ''
   })
   return { text: cleaned, emotion }
@@ -105,7 +117,7 @@ export class EmotionStreamFilter {
       EMOTION_MARKER.lastIndex = 0
       const match = EMOTION_MARKER.exec(this.pending)
       if (!match || match.index === undefined) break
-      if (!this.emotion) this.emotion = match[1]
+      this.emotion = String(match[1] ?? '').trim() || this.emotion
       out += this.pending.slice(0, match.index)
       this.pending = this.pending.slice(match.index + match[0].length)
     }
@@ -139,6 +151,7 @@ export class CharacterChatService {
   private gen = 1
   private seq = 0
   private readonly active = new Map<string, CharacterChatHandle>()
+  private readonly cancelled = new Set<string>()
 
   constructor(private readonly options: CharacterChatServiceOptions) {}
 
@@ -158,27 +171,43 @@ export class CharacterChatService {
   async send(
     input: { text?: unknown; session?: unknown },
     emit: (event: CharacterChatStreamEvent) => void
-  ): Promise<{ runId: string; conversationKey: string }> {
+  ): Promise<{ runId: string; conversationKey: string; gen: number }> {
     const text = typeof input?.text === 'string' ? input.text.trim() : ''
-    if (!text) throw new Error('消息不能为空')
-    if (text.length > MAX_INPUT_LENGTH) throw new Error(`消息过长（上限 ${MAX_INPUT_LENGTH} 字）`)
+    if (!text) throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '消息不能为空')
+    if (text.length > MAX_INPUT_LENGTH) {
+      throw new CharacterError(
+        CHARACTER_ERROR_CODES.BAD_PAYLOAD,
+        `消息过长（上限 ${MAX_INPUT_LENGTH} 字）`
+      )
+    }
     const session = (input?.session as CharacterChatSession) ?? 'main'
     const conversationKey = this.conversationKey(session)
     const runId = `chat-${this.options.now?.() ?? Date.now()}-${(this.seq += 1)}`
 
-    const handle = await this.options.chat({
-      conversationKey,
-      messages: [{ role: 'user', content: text }],
-      stream: true
-    })
+    let handle: CharacterChatHandle
+    try {
+      handle = await this.options.chat({
+        conversationKey,
+        messages: [{ role: 'user', content: text }],
+        stream: true,
+        // 兜底路由到角色 agent：调用方忘传 model 也不能静默退回默认模型
+        model: this.options.model ?? CHARACTER_AGENT_MODEL
+      })
+    } catch (error) {
+      throw new CharacterError(
+        CHARACTER_ERROR_CODES.NOT_READY,
+        `聊天网关不可用：${(error as Error)?.message ?? String(error)}`
+      )
+    }
     this.active.set(runId, handle)
     void this.pump(runId, handle, emit)
-    return { runId, conversationKey }
+    return { runId, conversationKey, gen: this.gen }
   }
 
   cancel(runId: string): boolean {
     const handle = this.active.get(runId)
     if (!handle) return false
+    this.cancelled.add(runId)
     try {
       handle.cancel()
     } catch {
@@ -198,43 +227,72 @@ export class CharacterChatService {
     return { gen: this.gen }
   }
 
+  /** reset('all') 之后重新读取代际（旧上下文不得复活） */
+  async reloadGeneration(): Promise<number> {
+    this.gen = await this.options.store.readChatGeneration()
+    return this.gen
+  }
+
+  /** 事件推送不得抛错：窗口销毁竞态下 webContents.send 会抛，抛出去就是 unhandledRejection */
+  private safeEmit(
+    emit: (event: CharacterChatStreamEvent) => void,
+    event: CharacterChatStreamEvent
+  ): void {
+    try {
+      emit(event)
+    } catch (error) {
+      this.options.logger?.(`[character] 流事件推送失败: ${(error as Error)?.message ?? String(error)}`)
+    }
+  }
+
   private async pump(
     runId: string,
     handle: CharacterChatHandle,
     emit: (event: CharacterChatStreamEvent) => void
   ): Promise<void> {
     const filter = new EmotionStreamFilter()
+    const gen = this.gen
     let full = ''
     try {
       for await (const delta of handle.iterator) {
+        // 用户已取消：不再展示任何增量（上游可能还会吐几帧）
+        if (this.cancelled.has(runId)) break
         const part = filter.push(delta?.delta ?? '')
         if (part.text) {
           full += part.text
-          emit({ runId, kind: 'chunk', text: part.text })
+          this.safeEmit(emit, { runId, gen, kind: 'chunk', text: part.text })
         }
       }
-      const rest = filter.flush()
+      const cancelled = this.cancelled.has(runId)
+      const rest = cancelled ? { text: '', emotion: undefined } : filter.flush()
       if (rest.text) {
         full += rest.text
-        emit({ runId, kind: 'chunk', text: rest.text })
+        this.safeEmit(emit, { runId, gen, kind: 'chunk', text: rest.text })
       }
-      const result = await handle.result
+      const result = await handle.result.catch(() => null)
+      const fallbackText =
+        typeof result?.text === 'string' ? stripEmotionMarkers(result.text).text : ''
+      const finalText = cancelled ? full : full || fallbackText
       const emotion = rest.emotion ?? filter.currentEmotion()
-      const visualState = mapEmotionToState(emotion ?? '', full)
-      if (emotion) this.options.onEmotion?.(emotion, visualState)
-      emit({
+      const visualState = mapEmotionToState(emotion ?? '', finalText)
+      if (emotion && !cancelled) this.options.onEmotion?.(emotion, visualState)
+      this.safeEmit(emit, {
         runId,
+        gen,
         kind: 'done',
-        text: full,
+        text: finalText,
         emotion,
-        aborted: Boolean(result?.aborted)
+        aborted: cancelled || Boolean(result?.aborted)
       })
     } catch (error) {
-      const message = (error as Error)?.message ?? String(error)
-      this.options.logger?.(`[character] 聊天流失败: ${message}`)
-      emit({ runId, kind: 'error', error: message })
+      if (!this.cancelled.has(runId)) {
+        const message = (error as Error)?.message ?? String(error)
+        this.options.logger?.(`[character] 聊天流失败: ${message}`)
+        this.safeEmit(emit, { runId, gen, kind: 'error', error: message })
+      }
     } finally {
       this.active.delete(runId)
+      this.cancelled.delete(runId)
     }
   }
 }
