@@ -73,8 +73,8 @@
           <button class="btn btn-danger" @click="handleStop" :disabled="actionLoading">
             {{ actionLoading ? '停止中...' : '⏹ 停止' }}
           </button>
-          <button class="btn" @click="handleRestart" :disabled="actionLoading">
-            🔄 重启
+          <button class="btn" @click="handleRestart" :disabled="actionLoading || clawStore.starting">
+            {{ clawStore.starting ? '启动中…' : '🔄 重启' }}
           </button>
         </template>
       </div>

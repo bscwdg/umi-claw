@@ -40,6 +40,8 @@ export interface AppConfig {
   providers: ModelProvider[]
   port: number
   autoStart: boolean
+  /** 退出应用时保留网关（下次启动直接复用，跳过冷启动） */
+  keepGatewayOnQuit?: boolean
   launchOnBoot: boolean
   minimizeToTray: boolean
   closeAction: 'ask' | 'tray' | 'exit'

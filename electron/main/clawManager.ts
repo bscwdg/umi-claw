@@ -780,11 +780,12 @@ export class ClawManager extends EventEmitter {
           { file: gatewayErrFile, type: 'stderr' }
         ])
         this._writeGatewayRuntime(gatewayLogFile)
-        this._scheduleNodeCompileCacheCleanup(dataDir)
       } else {
         // 非保留模式：清掉可能遗留的陈旧运行时描述
         this._clearGatewayRuntime()
       }
+      // 不论是否 detached 都启用缓存清理（默认 keep=false 用户同样会写 NODE_COMPILE_CACHE）
+      this._scheduleNodeCompileCacheCleanup(dataDir)
       this._startReadyProbe()
       this._setupProcessEvents(this.process!)
       this.emit('statusChange', true, this.port)
@@ -914,8 +915,7 @@ export class ClawManager extends EventEmitter {
             startedAt: this.startedAt,
             detached: this.detachedChild,
             logFile,
-            // 3.0 适配：记录版本，让 adoptRunningGateway 的「跨版本不复用」校验真正生效
-            // （上游 4.0 只写了校验、描述文件里没写版本，校验实际是死代码）
+            // adoptRunningGateway 的「跨版本不复用」校验依赖该字段（4.0 8015a52 起也会写入）
             openclawVersion: this._readOpenClawVersion(this.configManager.getDataDir())
           },
           null,
@@ -1477,7 +1477,11 @@ export class ClawManager extends EventEmitter {
       ready: (!!this.process || this.adoptedPid !== undefined) && this.ready,
       readyAt: this.readyAt,
       startupMs:
-        this.startedAt && this.readyAt ? Math.max(0, this.readyAt - this.startedAt) : undefined,
+        this.adoptedPid !== undefined
+          ? undefined
+          : this.startedAt && this.readyAt
+            ? Math.max(0, this.readyAt - this.startedAt)
+            : undefined,
       bootPhase:
         this.process || this.adoptedPid !== undefined
           ? this.ready
