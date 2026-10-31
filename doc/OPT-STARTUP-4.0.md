@@ -279,3 +279,9 @@ Invoke-WebRequest -Uri 'http://127.0.0.1:3213/health' -UseBasicParsing | Select-
 - 热更文件仅 bridge 通道存在；`OPENCLAW_GATEWAY_STARTUP_TRACE` 默认关（`CLAW_OC_STARTUP_TRACE=1` 开启）；
   fs-safe 覆盖值白名单；V8 编译缓存 >512MB 后台清理。
 - 注：`tts-bridge.json` 的 POSIX 0600 在 Windows 不生效（文件不含 Key）。
+
+### 8.5 跨分支同步记录（2026-10-31）
+
+启动修复包已同步到 `release/3.0`（480fd60）、`release/2.0`（fabce3e）、`master`（815c984）、
+`release/1.0`（9b51b8b）；master/1.0 不含语音热更，1.0 保留原有鱼语音。4.0 审查后收尾见 9408ebc
+（adopt startupMs、编译缓存清理、串行队列 rejection、渲染端 AppConfig 字段）。

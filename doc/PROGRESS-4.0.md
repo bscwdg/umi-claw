@@ -600,3 +600,42 @@ deepseek-v4-flash. Use --replace-path models.providers.umiclaw-deepseek.models t
 - 325s 那轮（缓存已热、无并发测试）：feishu 物化 170s、weixin 32s、wecom 40s；
   剩余 ~80s 为 bootstrap/配置/状态；与 355/364s 对比说明 `NODE_COMPILE_CACHE` 有小幅正收益。
 - ETA 估算修正：样本 ≤2 次时用「最近一次」而不是中位数，避免 648s 这类一次性异常把预估拉高。
+
+## 2026-10-31 · 启动可靠性修复包跨分支同步（3.0 / 2.0 / master / 1.0）
+
+4.0 的启动慢优化（就绪态/阶段/ETA + webhook 迁移标记兜底 + 退出保留网关 + 日志 tail）已在 4.0 稳定，
+因 1.0/2.0/3.0 与本版本共用同一套 OpenClaw 网关启动链路，本日将修复包按功能簇移植到各发布线，
+并在各分支自己的测试体系下验证后合并、推送。
+
+### 同步内容（按分支适用范围）
+- **就绪态与阶段可视化**：`running`（进程）与 `ready`（/health 200）分离；点击启动即 preparing；
+  `claw:waitReady` IPC；`statusChange` 推送 `starting/ready/startedAt/startupMs/bootPhase/estimateStartupMs`；
+  Dashboard 显示阶段文案与 ETA、启动中禁用重启按钮
+- **webhook 迁移标记兜底**：仅当 telegram/feishu/msteams/nextcloud-talk 无 `legacyWebhook` 时补
+  `meta.migrations.webhookListeners=true`，避免每次启动重跑旧迁移（约 185s 级）；走官方写入串行队列，
+  备份 + 原子写回退 + BOM/CRLF 保留
+- **退出保留网关（可选，默认关）**：网关 detached + stdout/stderr 分文件；退出路径统一幂等 `handleAppQuit`；
+  下次启动 `adoptRunningGateway()` 校验端口 owner pid、openclaw 版本、进程存活后直接复用（跳过冷启动）
+- **启动 ETA**：记录最近 5 次 spawn→health，样本 ≤2 用最近一次、≥3 取最近 3 次中位数
+- **文件日志 tail**：stat+read(offset) 增量读、半行 carry、截断检测、stdout/stderr 分流、兼容 pino `msg`
+- **环境开关**：`OPENCLAW_GATEWAY_STARTUP_TRACE` 默认关（`CLAW_OC_STARTUP_TRACE=1` 开启）；
+  `OPENCLAW_FS_SAFE_NATIVE_MODE` 覆盖值白名单；`NODE_COMPILE_CACHE` 落 data/cache 并 >512MB 后台清理
+
+### 审查后收尾（合并前审查发现）
+- adopt 复用后台网关时 `startupMs` 置 undefined，避免 Dashboard 显示网关历史运行时长
+- 编译缓存清理移出 detached 分支（默认 keep=false 用户也需要）
+- `serializePatch` 改 `then(cleanup, cleanup)`，避免任务 reject 时 unhandledRejection
+- 渲染端 `AppConfig` 补 `keepGatewayOnQuit` 字段
+
+### 合并落点（2026-10-31，均已推送 origin）
+- `release/3.0` @ `480fd60`（启动修复包 + 语音音色热更，按 3.0 无插件体系适配）
+- `release/2.0` @ `fabce3e`（启动修复包 + 语音音色热更，保留营销卡）
+- `master` @ `815c984`（启动修复包，不含语音模块）
+- `release/1.0` @ `9b51b8b`（= master 修复包 + 原有鱼语音，未引入语音热更；顺带清理克隆轮询死代码）
+- `release/4.0` @ `9408ebc`（审查后收尾修复）
+
+### 灰度/冒烟建议
+- 开启保留网关 → 重启应用 → 退出 → 再开：应秒级复用且无异常「本次启动耗时」；关闭后退出应正常停网关
+- 升级核心包后旧后台网关应被拒绝复用并结束
+- 2.0/3.0：改音色不重启网关；改 Key/TTS 模式/通道仍需重启
+- master/1.0：托盘/关窗/系统退出三入口确认终端与网关按设置停止/保留
