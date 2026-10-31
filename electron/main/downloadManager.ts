@@ -9,6 +9,7 @@ import { pipeline } from 'stream/promises'
 import { ConfigManager } from './configManager'
 import { SkillSyncService } from './skillSyncService'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
+import { applyWebhookMigrationMarker, findLegacyWebhookChannels } from './openclawWebhookMarker'
 
 const execAsync = promisify(exec)
 const execFileAsync = promisify(execFile)
@@ -1806,7 +1807,7 @@ export class DownloadManager extends EventEmitter {
       if (!existsSync(configDir)) {
         mkdirSync(configDir, { recursive: true })
       }
-      // 仅承担全新安装时的「首文件创建」：不带任何 meta（lastTouchedVersion 等由
+      // 仅承担全新安装时的「首文件创建」：不带版本戳类 meta（lastTouchedVersion 等由
       // OpenClaw 官方写入器自动盖戳，显式写会被 config patch 拒绝），也不写已退役的
       // models.timeout（新版 provider 级超时是 timeoutSeconds，由 _syncOpenClawConfig 注入）。
       // 文件一旦存在，后续所有变更都走官方 config patch 通道，这里不再参与。
@@ -1836,6 +1837,11 @@ export class DownloadManager extends EventEmitter {
             "openclaw-weixin": { "enabled": true }
           }
         },
+      }
+      // 与 configManager 首文件分支同口径：没有 legacyWebhook 时带上 webhook 迁移完成标记，
+      // 否则装了历史渠道插件的用户每次启动都会重跑 OpenClaw 的 legacy webhook 迁移（约 3 分钟）。
+      if (findLegacyWebhookChannels(fullSecureConfig).length === 0) {
+        applyWebhookMigrationMarker(fullSecureConfig as unknown as Record<string, unknown>)
       }
       const configContent = JSON.stringify(fullSecureConfig, null, 2)
       const filePath = join(configDir, 'openclaw.json')
