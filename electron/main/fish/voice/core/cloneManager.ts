@@ -38,7 +38,6 @@ export interface VoiceCloneManagerOptions {
   fetchImpl?: FetchLike
   now?: () => number
   logger?: (message: string) => void
-  pollIntervalMs?: number
 }
 
 function formatOf(fileName: string): string {
@@ -99,7 +98,6 @@ export class VoiceCloneManager {
   private readonly fetchImpl: FetchLike
   private readonly now: () => number
   private readonly logger: (message: string) => void
-  private readonly pollIntervalMs: number
   private recordsCache: VoiceCloneRecord[] | null = null
   private readonly samples = new Map<string, SampleRegistration>()
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -114,7 +112,6 @@ export class VoiceCloneManager {
     this.provider = new VolcengineCloneProvider(this.fetchImpl)
     this.now = options.now ?? (() => Date.now())
     this.logger = options.logger ?? ((message) => console.log(message))
-    this.pollIntervalMs = options.pollIntervalMs ?? 2000
     this.voiceManager.setCloneGate(async (speaker) => {
       const record = await this.findRecord(speaker)
       if (!record) return { ok: false, message: '未知的克隆音色' }
@@ -409,20 +406,6 @@ export class VoiceCloneManager {
       }
     }
     return this.updateRecord(record.speakerId, { demos })
-  }
-
-  private schedulePoll(speakerId: string, delay: number, startedAt: number): void {
-    if (this.timers.has(speakerId)) return
-    if (this.now() - startedAt > 10 * 60 * 1000) return
-    const timer = setTimeout(() => {
-      this.timers.delete(speakerId)
-      void this.refresh(speakerId).catch((error) => {
-        this.logger(`[voice] 克隆轮询失败 ${speakerId}: ${safeError(error)}`)
-      })
-    }, delay)
-    const handle = timer as unknown as { unref?: () => void }
-    handle.unref?.()
-    this.timers.set(speakerId, timer)
   }
 
   async refresh(speakerId: string): Promise<VoiceCloneRecord> {
