@@ -85,12 +85,25 @@
             >
               🔗 前往终端配对审批
             </button>
+            <button
+              v-if="ch.key === 'qqbot'"
+              class="docs-btn"
+              :disabled="qqbotBusy"
+              @click="goToQQBotLogin"
+            >
+              {{ qqbotBusy ? "⏳ 正在准备…" : "📱 QQ 扫码登录" }}
+            </button>
           </div>
           <p v-if="ch.key === 'feishu'" class="form-hint">
             飞书采用长连接（WebSocket），无需公网回调。保存并重启后，陌生人首次私聊会生成配对码，
             在终端执行 <code>openclaw pairing list feishu</code> /
             <code>openclaw pairing approve feishu &lt;配对码&gt;</code> 审批即可。
           </p>
+          <p v-if="ch.key === 'qqbot'" class="form-hint">
+            推荐直接「QQ 扫码登录」：首次会自动安装官方插件并打开终端二维码，用手机 QQ 扫码即可完成绑定；
+            也可手动填写 AppID/AppSecret 后保存。修改后需重启 OpenClaw 生效。
+          </p>
+          <p v-if="ch.key === 'qqbot' && qqbotMsg" class="form-hint">{{ qqbotMsg }}</p>
         </div>
       </div>
     </div>
@@ -105,7 +118,7 @@
 
     <div class="tip-card">
       <p>
-        💻 其他渠道（QQ Bot、Telegram、Slack
+        💻 其他渠道（Telegram、Slack
         等）可在<strong>终端</strong>页面通过
         <code>openclaw channels setup</code> 命令添加。
       </p>
@@ -209,6 +222,8 @@ import type { ChannelStatus } from "../types/channels";
 
 const router = useRouter();
 const weixinMsg = ref("");
+const qqbotMsg = ref("");
+const qqbotBusy = ref(false);
 
 // ── 已接入渠道（依据网关真实配置，见 electron/main/channelManager.getChannelStatuses）──
 const channelStatuses = ref<Record<string, ChannelStatus>>({});
@@ -220,6 +235,7 @@ const STATUS_META: Record<string, { icon: string; label: string }> = {
   wecom: { icon: "💼", label: "企业微信" },
   dingtalk: { icon: "🔹", label: "钉钉机器人" },
   weixin: { icon: "💚", label: "微信（官方插件）" },
+  qqbot: { icon: "💬", label: "QQ 机器人（官方插件）" },
 };
 
 const configuredChannels = computed(() =>
@@ -256,7 +272,8 @@ function goToWeixinLogin() {
   // 直接通过内置路由对象，带着暗号跳转到终端控制台页面
   router.push({
     path: "/terminal", // 👈 如果你的终端控制台路由叫 /console，请改成 /console
-    query: { autoRun: "channels login --channel openclaw-weixin" },
+    // qr=1：微信扫码同样按二维码等比渲染
+    query: { autoRun: "channels login --channel openclaw-weixin", qr: "1" },
   });
 }
 
@@ -271,6 +288,36 @@ function goToWecomLogin() {
   });
 }
 
+// ── 2.2 QQ 机器人扫码登录（先确保官方插件已安装，再跳终端扫码）─────────────
+async function goToQQBotLogin() {
+  if (qqbotBusy.value) return;
+  qqbotBusy.value = true;
+  try {
+    if (window.api?.channels?.installPlugin && window.api?.channels?.isPluginInstalled) {
+      const installed = (await window.api.channels.isPluginInstalled("qqbot")) ?? false;
+      if (!installed) {
+        qqbotMsg.value = "⏳ 正在安装 QQ 机器人插件（首次约 1-2 分钟）...";
+        const res = await window.api.channels.installPlugin("@tencent-connect/openclaw-qqbot");
+        if (!res?.success) {
+          // 安装失败不阻断扫码页：终端里仍可手动安装/重试
+          qqbotMsg.value = `插件安装失败：${res?.error || "未知错误"}。已打开终端，可执行 plugins install @tencent-connect/openclaw-qqbot@latest 后重试扫码。`;
+        } else {
+          qqbotMsg.value = "✅ 插件已安装，正在打开扫码登录…";
+        }
+      }
+    }
+  } catch (e) {
+    qqbotMsg.value = `插件安装失败：${e}。已打开终端，可手动安装后重试。`;
+  } finally {
+    qqbotBusy.value = false;
+  }
+  router.push({
+    path: "/terminal",
+    // qr=1：终端页切到二维码等比渲染（行高/字号），否则二维码会被拉长
+    query: { autoRun: "channels login --channel qqbot", qr: "1" },
+  });
+}
+
 // 飞书配对审批：跳转终端并预填 pairing 列表命令
 function goToFeishuPairing() {
   router.push({
@@ -280,7 +327,7 @@ function goToFeishuPairing() {
 }
 
 // ── 3. 核心多渠道 Schema 配置（保持不变） ───────────────────────────────────
-type ChannelKey = "feishu" | "wechat_mp" | "wecom" | "dingtalk";
+type ChannelKey = "feishu" | "wechat_mp" | "wecom" | "dingtalk" | "qqbot";
 
 interface ChannelConfig {
   key: ChannelKey;
@@ -435,6 +482,45 @@ const CHANNELS: ChannelConfig[] = [
       },
     ],
   },
+  {
+    key: "qqbot",
+    icon: "💬",
+    label: "QQ 机器人（官方插件）",
+    desc: "腾讯官方 QQ Bot 插件：支持手机 QQ 扫码绑定，也可手动填写 AppID/AppSecret；支持私聊与群聊",
+    docsUrl: "https://github.com/tencent-connect/openclaw-qqbot",
+    fields: [
+      {
+        id: "appId",
+        label: "AppID",
+        placeholder: "QQ 机器人 AppID",
+        hint: "在 QQ 开放平台（q.qq.com）机器人页面获取；扫码绑定会自动写入，可留空",
+      },
+      {
+        id: "clientSecret",
+        label: "AppSecret",
+        placeholder: "QQ 机器人 AppSecret",
+        hint: "AppSecret 只显示一次，请妥善保存；扫码绑定会自动写入",
+      },
+      {
+        id: "groupPolicy",
+        label: "群聊策略",
+        type: "select",
+        default: "open",
+        options: [
+          { label: "允许所有群", value: "open" },
+          { label: "仅白名单群", value: "allowlist" },
+          { label: "禁用群聊", value: "disabled" },
+        ],
+        hint: "白名单群需在 openclaw.json 的 channels.qqbot.groupAllowFrom 中配置",
+      },
+      {
+        id: "requireMention",
+        label: "群聊中需要 @机器人 才响应",
+        type: "checkbox",
+        default: true,
+      },
+    ],
+  },
 ];
 
 const formValues = ref<Record<string, Record<string, string | boolean>>>({});
@@ -514,8 +600,11 @@ async function save() {
       const allFilled = ch.fields
         .filter(isRequiredText)
         .every((f) => !!String(vals[f.id] ?? "").trim());
+      // QQ 扫码绑定用户表单里没有 AppID/AppSecret，但仍需提交群策略类开关；
+      // 主进程会在「已有凭证」时保留凭证、只更新策略。
+      const policyOnly = ch.key === "qqbot" && statusConfigured("qqbot");
 
-      if (allFilled) {
+      if (allFilled || policyOnly) {
         const entry: Record<string, unknown> = { enabled: true };
         for (const f of ch.fields) {
           const v = vals[f.id];
@@ -543,8 +632,10 @@ async function save() {
         return;
       }
       // 网关配置可能因 schema 被官方拒绝（本地 app.json 已存，不丢设置）
+      let syncWarning = "";
       if (saveRes && saveRes.openClawSyncOk === false) {
-        savedMsg.value = `⚠️ 本地配置已保存，但同步到 OpenClaw 未通过校验：${saveRes.openClawSyncError || "未知错误"}。下次启动会自动尝试修复。`;
+        syncWarning = `⚠️ 本地配置已保存，但同步到 OpenClaw 未通过校验：${saveRes.openClawSyncError || "未知错误"}。下次启动会自动尝试修复。`;
+        savedMsg.value = syncWarning;
       } else {
         savedMsg.value = "✅ 已保存，重启 OpenClaw 后生效";
       }
@@ -559,18 +650,40 @@ async function save() {
           const installed =
             (await window.api.channels.isPluginInstalled?.("feishu")) ?? false;
           if (!installed) {
-            savedMsg.value = "⏳ 正在安装飞书插件（首次约 1-2 分钟）...";
+            if (!syncWarning) savedMsg.value = "⏳ 正在安装飞书插件（首次约 1-2 分钟）...";
             const res = await window.api.channels.installPlugin(
               "@openclaw/feishu"
             );
             if (res?.success) {
-              savedMsg.value = "✅ 飞书插件已安装，请重启 OpenClaw 生效";
+              if (!syncWarning) savedMsg.value = "✅ 飞书插件已安装，请重启 OpenClaw 生效";
             } else {
               savedMsg.value = `⚠️ 配置已保存，但插件安装失败：${res?.error || "未知错误"}`;
             }
           }
         } catch (e) {
           savedMsg.value = `⚠️ 配置已保存，但插件安装失败：${e}`;
+        }
+      }
+
+      // QQ 机器人：插件为受管安装（环境初始化/更新时自动装），缺失时保存时补装
+      const qqbotConfigured = !!channelConfigs["qqbot"];
+      if (qqbotConfigured && window.api?.channels?.installPlugin) {
+        try {
+          const installed =
+            (await window.api.channels.isPluginInstalled?.("qqbot")) ?? false;
+          if (!installed) {
+            if (!syncWarning) savedMsg.value = "⏳ 正在安装 QQ 机器人插件（首次约 1-2 分钟）...";
+            const res = await window.api.channels.installPlugin(
+              "@tencent-connect/openclaw-qqbot"
+            );
+            if (!syncWarning) {
+              savedMsg.value = res?.success
+                ? "✅ QQ 插件已安装，请重启 OpenClaw 生效"
+                : `⚠️ 配置已保存，但 QQ 插件安装失败：${res?.error || "未知错误"}`;
+            }
+          }
+        } catch (e) {
+          savedMsg.value = `⚠️ 配置已保存，但 QQ 插件安装失败：${e}`;
         }
       }
     } else {

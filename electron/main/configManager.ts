@@ -1243,6 +1243,66 @@ private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string; kind
       delete existingConfig.channels.feishu
     }
 
+    // QQ 机器人（官方插件 @tencent-connect/openclaw-qqbot）：
+    // 扫码登录由插件直接写 channels.qqbot；UI 表单有 AppID+AppSecret 时覆盖凭证，
+    // 表单为空（扫码用户）时仍允许只更新群策略，但绝不能删除已有绑定。
+    // 注意：插件未安装时不能写 channels.qqbot —— OpenClaw 会以「unknown channel id」拒绝整份配置，
+    // 进而导致网关不 spawn；此时只保存 app.json，等插件装好后的下次同步再注入。
+    const qqCfg = uiChannels.qqbot as Record<string, unknown> | undefined
+    const qqPluginInstalled = (() => {
+      try {
+        const projectsDir = join(dirname(this.openClawConfigPath), 'npm', 'projects')
+        if (!existsSync(projectsDir)) return false
+        return readdirSync(projectsDir).some((name) => name.startsWith('tencent-connect-openclaw-qqbot-'))
+      } catch {
+        return false
+      }
+    })()
+    if (qqCfg && qqCfg.enabled && qqPluginInstalled) {
+      const appId = String(qqCfg.appId ?? '').trim()
+      const clientSecret = String(qqCfg.clientSecret ?? '').trim()
+      const existingQQ = existingConfig.channels.qqbot as Record<string, unknown> | undefined
+      const nonEmpty = (v: unknown): boolean => typeof v === 'string' && v.trim() !== ''
+      const hasAccountCreds =
+        !!existingQQ &&
+        !!existingQQ.accounts &&
+        typeof existingQQ.accounts === 'object' &&
+        Object.values(existingQQ.accounts as Record<string, unknown>).some(
+          (acc) =>
+            !!acc &&
+            typeof acc === 'object' &&
+            (nonEmpty((acc as Record<string, unknown>).appId) ||
+              nonEmpty((acc as Record<string, unknown>).clientSecretFile))
+        )
+      const hasExistingCreds =
+        !!existingQQ &&
+        (nonEmpty(existingQQ.appId) || nonEmpty(existingQQ.clientSecretFile) || hasAccountCreds)
+      if ((appId && clientSecret) || hasExistingCreds) {
+        const qqbot: Record<string, unknown> = { ...(existingQQ || {}), enabled: true }
+        if (appId && clientSecret) {
+          qqbot.appId = appId
+          qqbot.clientSecret = clientSecret
+        }
+        if (qqCfg.groupPolicy) qqbot.groupPolicy = qqCfg.groupPolicy
+        const requireMention = qqCfg.requireMention ?? qqCfg.defaultRequireMention
+        if (requireMention !== undefined) qqbot.defaultRequireMention = Boolean(requireMention)
+        // OpenClaw 2026.10.9 的 qqbot channelHostConfig 要求 allowFrom 非空且不能是 "*"；
+        // 缺省用官方最小配置的 openclaw:approval-disabled（不放开陌生人私聊）。
+        if (!Array.isArray(qqbot.allowFrom) || qqbot.allowFrom.length === 0) {
+          qqbot.allowFrom = ['openclaw:approval-disabled']
+        }
+        if (!nonEmpty(qqbot.dmPolicy)) qqbot.dmPolicy = 'open'
+        existingConfig.channels.qqbot = qqbot
+
+        existingConfig.plugins = existingConfig.plugins || {}
+        existingConfig.plugins.entries = existingConfig.plugins.entries || {}
+        existingConfig.plugins.entries['openclaw-qqbot'] = {
+          ...(existingConfig.plugins.entries['openclaw-qqbot'] || {}),
+          enabled: true
+        }
+      }
+    }
+
     // meta 完全归官方写入器自动管理（lastTouchedVersion / migrations 钉）：
     // 显式写 lastTouchedVersion 会被 config patch 直接拒绝；lastTouchedAt 已在
     // v2026.10.x 退役（tier-eval tranche），残留即 exit 78。这里只剥离退役键，
