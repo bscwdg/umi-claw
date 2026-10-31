@@ -1,12 +1,20 @@
 # 🦞 Umi Claw
 
-> 3.0「工作版」：AI 工作记忆 + 每日工作闭环（今日待办 / 工作记录 / 日报周报 / 工作问答 / 工具箱 / 到点提醒），同时保留 OpenClaw 便携管理能力 — 基于 Electron + Vue3 + Vite 开发
+> 4.0「插件化宿主」：一套代码把 2.0 营销工作台、3.0 工作版作为**官方内置插件**集成，控制台 + 能力中心统一管理；同时保留 OpenClaw 便携管理能力 — 基于 Electron + Vue3 + Vite 开发
 >
 > 愿景：简单点，无需复杂安装即可让每个人享受 AI 带来的便利
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## 项目特性
+
+**4.0 插件化能力**
+
+- 🖥️ **控制台** — 网关状态、启动阶段与预计耗时、Token、日志、常用入口一屏掌握
+- 🧩 **能力中心** — 查看已安装插件，按需启用/禁用、懒加载；插件拥有独立路由、导航、IPC 与数据迁移
+- 🏪 **官方内置插件** — 营销工作台（marketing）与工作版（work）随宿主构建，启动期登记，不开放第三方安装
+- 🔌 **插件契约** — 插件能力统一经 `ctx` 注入；配置与密钥归宿主；插件失效不影响宿主启动
+- 🗂 **宿主壳能力保留** — 窗口/导航/设置/OpenClaw 管理/渠道/终端/Obsidian/技能/更新全部保留
 
 **3.0 工作版**
 
@@ -33,6 +41,8 @@
 - 📚 **Obsidian 知识库** — 笔记向量化语义检索，以 MCP 工具喂给模型，按需取片段省 token
 - 💾 **便携模式** — 可放置在 U 盘，数据随身带走
 - 🌐 **国内镜像加速** — npmmirror + GitHub 代理，无需翻墙
+- ⚡ **启动可靠性** — 网关就绪态与启动阶段/ETA；webhook 迁移标记兜底（避免每次启动重跑旧迁移）；可选「退出应用时保留网关」，下次启动直接复用（跳过冷启动）；网关日志文件 tail
+- 🎙 **语音** — 火山 TTS / 鱼语音音色与克隆；音色热更（改音色无需重启网关，Key/模式/通道变更仍需重启）
 
 ## 技术栈
 
@@ -49,6 +59,17 @@
 | Less | 4.6 | 样式预处理 |
 | mammoth / exceljs / docx / pdfjs-dist | — | Word / Excel / PDF 文档解析与生成 |
 | @vueuse/core | 10 | Vue 组合式工具库 |
+
+## 4.0 插件化宿主（控制台 / 能力中心）
+
+4.0 在合并后的单体上做插件化：宿主提供窗口、导航、设置、OpenClaw 管理、渠道、终端、Obsidian 等壳能力；
+2.0 营销域、3.0 工作域装箱为官方内置插件，运行期可启停。
+
+- **控制台（`/dashboard`）**：网关状态、启动阶段与 ETA、Token、日志、快速入口
+- **能力中心（`/skills`）**：插件列表、启用/禁用、懒加载；插件可注册独立路由/导航/IPC/插槽与数据迁移
+- **官方内置插件**：marketing（营销工作台）、work（工作版）；插件源码随宿主构建，`resources/plugins/` 只放 manifest 与 migrations
+- **宿主服务**：db / gateway / knowledge / context / voice 由宿主提供，插件通过 `ctx` 使用；配置与密钥不交给插件
+- 规划与边界见 [PLAN-4.0.md](PLAN-4.0.md)
 
 ## 3.0 工作版
 
@@ -173,7 +194,7 @@ umi-claw/
 │   └── installer.nsh           # NSIS 钩子：升级时自动搬迁旧版数据目录
 ├── scripts/
 │   └── run-all-accept.mjs      # 一键跑全部验收
-├── test/                       # 验收：12 套 accept + 一天 e2e + 打包态 smoke
+├── test/                       # 验收：28 套 accept + 一天 e2e + 打包态 smoke（合计 30 套）
 │   ├── _lib.mjs                # 验收公共库
 │   ├── _ui.mjs                 # UI 验收公共库
 │   └── fixtures/               # 验收夹具
@@ -189,9 +210,18 @@ umi-claw/
 | `master` | 稳定主分支（默认分支），只接收经过验证的发布内容，PR 的默认目标 |
 | `release/1.0` | 1.0 版本开发分支，日常开发在此进行，包含最新特性（Obsidian 知识库、企微官方插件、便携模式等），功能稳定后合入 `master` |
 | `release/2.0` | 2.0 版本分支：AI 助手能力与验收体系，3.0 的移植来源 |
-| `release/3.0` | 3.0「工作版」开发分支：AI 工作记忆 + 每日工作闭环，即当前版本 |
+| `release/3.0` | 3.0「工作版」：AI 工作记忆 + 每日工作闭环 |
+| `release/4.0` | 4.0「插件化宿主」：控制台 + 能力中心，集成营销/工作插件，**当前开发主线** |
 
-> 想体验最新工作版请切换到 `release/3.0`：`git checkout release/3.0`
+> 4.0 开发主线为 `release/4.0`；只想体验 3.0 工作版可切到 `release/3.0`（注意用对应 worktree 或先删除 worktree）。
+
+## 文档
+
+- [4.0 插件化架构规划](PLAN-4.0.md)
+- [4.0 启动优化与排障](doc/OPT-STARTUP-4.0.md)
+- [4.0 开发进度](doc/PROGRESS-4.0.md)
+- [4.0 运行手册](doc/RUNBOOK-4.0.md)
+- [语音接入指南](doc/voice/OPENCLAW-VOICE-GUIDE.md)
 
 ## 快速开始
 
@@ -216,7 +246,7 @@ npm run dev
 # 类型检查
 npm run typecheck
 
-# 一键跑全部验收（12 套 accept + e2e + smoke）
+# 一键跑全部验收（28 套 accept + e2e + smoke，合计 30 套）
 npm run accept
 ```
 

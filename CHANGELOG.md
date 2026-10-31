@@ -6,6 +6,39 @@
 
 ---
 
+## [4.0.0]（release/4.0，开发中）— 2026-10-31
+
+> 主题：**插件化宿主** + 启动可靠性/性能优化。一套代码通过官方内置插件组合出营销（2.0）/ 工作（3.0）能力。
+
+### 插件化
+- 控制台（`/dashboard`）与能力中心（`/skills`）导航；插件运行期启停、懒加载、独立路由/IPC/数据迁移
+- 2.0 营销域、3.0 工作域装箱为官方内置插件；宿主保留 OpenClaw 管理/渠道/终端/Obsidian/技能/更新等壳能力
+- 宿主服务下沉（db / gateway / knowledge / context / voice），插件通过 `ctx` 使用，配置与密钥归宿主
+
+### 启动可靠性与性能
+- **就绪态与阶段可视化**：`running`（进程）与 `ready`（/health 200）分离；点击启动即「启动中」；
+  Dashboard 展示 preparing/spawning/loading/ready 与预计剩余时间；`statusChange` 推送 `bootPhase/estimateStartupMs`
+- **webhook 迁移标记兜底**：无 `legacyWebhook` 时自动补 `meta.migrations.webhookListeners=true`，
+  避免每次启动重跑旧迁移（实测可省约 185s 级）；备份 + 原子写回退 + BOM/CRLF 保留，走官方写入串行队列
+- **退出应用时保留网关（可选，默认关）**：网关 detached + 日志文件；退出应用不停网关，
+  下次启动校验端口 owner / openclaw 版本 / 健康后直接复用（跳过数分钟冷启动）
+- **启动 ETA**：记录最近 5 次启动耗时，样本 ≤2 用最近一次、≥3 取最近 3 次中位数
+- **网关日志文件 tail**：增量读取、半行 carry、截断检测、stdout/stderr 分流、兼容 pino `msg`
+- **语音音色热更**：改音色无需重启网关（`data/voice/tts-bridge.json`，桥接脚本每次合成读取）；
+  Key / TTS 模式 / 通道变更仍需重启
+- 环境开关：`OPENCLAW_GATEWAY_STARTUP_TRACE` 默认关（`CLAW_OC_STARTUP_TRACE=1` 开启）、
+  `OPENCLAW_FS_SAFE_NATIVE_MODE` 覆盖值白名单、`NODE_COMPILE_CACHE` 落 data/cache 并 >512MB 后台清理
+
+### 修复
+- adopt 复用网关时不再显示异常的「本次启动耗时」
+- 编译缓存清理覆盖默认配置（keep=false 用户同样写缓存）
+- 串行配置写入避免任务 reject 时的 unhandledRejection
+- 渲染端 `AppConfig` 补 `keepGatewayOnQuit` 字段
+
+### 验收
+- 30 套（accept×28 + e2e + smoke）；双 typecheck 0 错、build 通过
+
+---
 ## [2.0.0]（release/2.0 分支，待发布）
 
 > 主题：从「OpenClaw 管理器」升级为「**AI 营销工作台**」。
