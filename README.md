@@ -593,6 +593,16 @@ window.api.work.stream       // 流式事件订阅
 > 企微 CLI 通过 npx 运行，会自动检测便携 Node.js 环境。国内用户默认走 npmmirror 镜像加速。
 > 安装过程中如遇问题，可在终端手动执行 `npx -y @wecom/wecom-openclaw-cli doctor` 诊断。
 
+### QQ 机器人（官方插件）
+
+QQ 机器人接入使用腾讯官方插件 `@tencent-connect/openclaw-qqbot`，支持**手机 QQ 扫码绑定**，也可手动填写 AppID/AppSecret；默认 WebSocket 长连接，无需公网 IP。
+
+- **前置**：在 [QQ 开放平台](https://q.qq.com/) 创建机器人并获取 AppID / AppSecret（AppSecret 只显示一次）；沙箱测试需把测试 QQ 加为沙箱成员，正式使用需按平台要求发布/审核
+- **应用内接入**：进入「渠道接入」页，找到「QQ 机器人（官方插件）」卡片
+  - 点「📱 QQ 扫码登录」：应用会先确认/补装官方插件，再跳终端执行 `channels login --channel qqbot`，用手机 QQ 扫码完成绑定
+  - 或直接填写 AppID / AppSecret，点「保存渠道配置」
+- **群聊**：默认只有 @机器人 才回复；可设置群聊策略（允许所有群 / 仅白名单群 / 禁用）。白名单群需在 `openclaw.json` 的 `channels.qqbot.groupAllowFrom` 中填写群 OpenID
+- **注意**：Windows 不支持插件 `/bot-upgrade` 热升级；升级请重新执行安装流程或在应用终端执行 `plugins install @tencent-connect/openclaw-qqbot@latest`（外部 shell 用 `openclaw plugins install ...`）。扫码/安装失败时也可在应用终端手动执行该命令（外部 shell 用 `openclaw plugins install ...`）
 ### 飞书（自建应用）
 
 飞书为**插件驱动**渠道（与微信一致），除填写凭证外还需安装官方插件 `@openclaw/feishu`，界面已将这一步自动化。

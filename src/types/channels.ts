@@ -7,7 +7,13 @@
  */
 
 /** 渠道标识。'weixin' 为官方插件渠道，不在表单 CHANNELS 集合内。 */
-export type ChannelStatusKey = 'feishu' | 'wechat_mp' | 'wecom' | 'dingtalk' | 'weixin'
+export type ChannelStatusKey =
+  | 'feishu'
+  | 'wechat_mp'
+  | 'wecom'
+  | 'dingtalk'
+  | 'weixin'
+  | 'qqbot'
 
 export interface ChannelStatus {
   key: ChannelStatusKey
