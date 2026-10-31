@@ -48,7 +48,12 @@ const QUIPS = {
 }
 
 onMounted(async () => {
-  offEvent = window.api.character.onEvent(async () => {
+  offEvent = window.api.character.onEvent(async (event) => {
+    // 主动消息/解锁提示：桌宠上冒泡
+    if (event && event.type === 'bubble') {
+      showBubble(event.payload?.text ?? '')
+      return
+    }
     await refresh()
   })
   offEmotion = window.api.character.onEmotion((payload) => {

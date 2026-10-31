@@ -277,7 +277,7 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 
 > M1-A 落地时补的通道/错误码/数据结构，回写在此以维持「契约先于代码」；后续改动继续追加本节。
 
-- **IPC 通道**：`character:status:get`、`state:get`、`settings:get|set`、`interact`、`reset`、`bootstrap:run|status`、`window:pet`、`window:pet:pos`、`chat:send|cancel|clear`；事件通道 `character:event`（state/settings/emotion/reset，C05 起含 bubble/解锁提示）、`character:stream:chunk|done|error`、`character:emotion`（桌宠）、`character:open-page`（右键菜单跳主窗）。
+- **IPC 通道**：`character:status:get`、`state:get`、`settings:get|set`、`interact`、`reset`、`bootstrap:run|status`、`window:pet`、`window:pet:pos`、`chat:send|cancel|clear`、`life:get`；事件通道 `character:event`（state/settings/emotion/reset，C05 起含 bubble/解锁提示）、`character:stream:chunk|done|error`、`character:emotion`（桌宠）、`character:open-page`（右键菜单跳主窗）。
 - **默认值修正（D10 合规）**：`proactive.enabled` 默认 **false**（未确认年龄前不主动打扰）；用户在设置里手动开启。
 - **错误码**：`CHARACTER_NOT_READY` / `CHARACTER_DISABLED` / `CHARACTER_STORE_IO` / `CHARACTER_BAD_PAYLOAD` / `CHARACTER_RESET_FORBIDDEN`（保留未用）。
 - **聊天**：会话键 `conv:fish:<main|night>:<gen>`，`gen` 落 `fish:v2:chatgen`；`chat:clear` 轮换代际（旧 run 事件带 `gen`，渲染端丢弃）；请求显式带 `model: openclaw/feiyu`（否则人格不生效）。

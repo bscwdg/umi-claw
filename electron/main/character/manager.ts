@@ -25,6 +25,9 @@ import {
   type RelationshipApplyResult,
   type RelationshipEvent
 } from './relationship'
+import { composeLifeDay, renderLifeDoc, type LifeDay } from './life'
+import type { LifeDeck } from './contentCards'
+import { decideProactive, type ProactiveDayState, type ProactiveDecision } from './proactive'
 
 export interface CharacterManagerOptions {
   store: CharacterStore
@@ -33,6 +36,12 @@ export interface CharacterManagerOptions {
   onEvent?: (event: CharacterEvent) => void
   /** 桌宠位置夹取（wiring 注入屏幕工作区；缺省不夹） */
   clampPosition?: (x: number, y: number, width: number, height: number) => { x: number; y: number }
+  /** 生活内容卡加载（resources/character/cards/life-cards.v1.json） */
+  loadLifeDeck?: () => Promise<LifeDeck>
+  /** 把「她的一天」写进 workspace（fish/LIFE.md） */
+  writeLifeDoc?: (text: string) => Promise<void>
+  /** 主动消息外发（C08 接 QQ；不提供则只做应用内气泡） */
+  sendProactive?: (message: { text: string; channel: 'qq' | 'app' }) => Promise<boolean>
 }
 
 export class CharacterManager {
@@ -46,6 +55,13 @@ export class CharacterManager {
     width: number,
     height: number
   ) => { x: number; y: number }
+  private readonly loadLifeDeck?: () => Promise<LifeDeck>
+  private readonly writeLifeDoc?: (text: string) => Promise<void>
+  private readonly sendProactive?: (message: {
+    text: string
+    channel: 'qq' | 'app'
+  }) => Promise<boolean>
+  private lifeDeckCache: LifeDeck | null = null
 
   private settings: CharacterSettings | null = null
   private state: CharacterState | null = null
@@ -75,6 +91,9 @@ export class CharacterManager {
     this.logger = options.logger ?? (() => undefined)
     this.onEvent = options.onEvent
     this.clampPosition = options.clampPosition
+    this.loadLifeDeck = options.loadLifeDeck
+    this.writeLifeDoc = options.writeLifeDoc
+    this.sendProactive = options.sendProactive
   }
 
   async init(): Promise<void> {
@@ -225,6 +244,153 @@ export class CharacterManager {
       kind === 'pat' ? '被摸头了' : '吃饱了'
     )
     return { ...result.state }
+  }
+
+  /** 确保当天「她的一天」已生成（幂等；错过不补多天） */
+  async ensureDailyLife(
+    now = this.now()
+  ): Promise<{ day: LifeDay; doc: string; generated: boolean }> {
+    this.assertInitialized()
+    return this.withMutation(() => this.ensureDailyLifeImpl(now))
+  }
+
+  private async ensureDailyLifeImpl(
+    now: number
+  ): Promise<{ day: LifeDay; doc: string; generated: boolean }> {
+    const date = toDateKey(now)
+    const existing = await this.store.readLife<LifeDay>(date)
+    const deck = await this.getLifeDeck()
+    if (existing && existing.date === date) {
+      return {
+        day: existing,
+        doc: renderLifeDoc(existing, this.cardsFor(deck, existing.cardIds ?? [])),
+        generated: false
+      }
+    }
+    const state = await this.getState()
+    const recent = await this.recentCardIds(date, now)
+    const composed = composeLifeDay({
+      deck,
+      // 初识（stage 0）还没有专属卡：用 stage 1 的日常卡兜底，别让她「没有生活」
+      stage: Math.max(1, state.stage),
+      date,
+      now,
+      recentIds: recent
+    })
+    await this.store.writeLife(date, composed.day)
+    if (this.writeLifeDoc) {
+      try {
+        await this.writeLifeDoc(composed.doc)
+      } catch (error) {
+        this.logger(`[character] LIFE.md 写入失败: ${(error as Error)?.message ?? String(error)}`)
+      }
+    }
+    return { day: composed.day, doc: composed.doc, generated: true }
+  }
+
+  /** 读某天「她的一天」（缺省今天） */
+  async getLife(
+    date?: string,
+    now = this.now()
+  ): Promise<{ day: LifeDay | null; doc: string | null }> {
+    this.assertInitialized()
+    const target = date ?? toDateKey(now)
+    const day = await this.store.readLife<LifeDay>(target)
+    if (!day) return { day: null, doc: null }
+    const deck = await this.getLifeDeck()
+    return { day, doc: renderLifeDoc(day, this.cardsFor(deck, day.cardIds)) }
+  }
+
+  /** 主动性判定（不发送）：返回决策 + 候选文案 */
+  async evaluateProactive(
+    now = this.now()
+  ): Promise<{ decision: ProactiveDecision; message: string; day: LifeDay | null }> {
+    this.assertInitialized()
+    const settings = await this.getSettings()
+    const state = await this.getState()
+    const date = toDateKey(now)
+    const day = (await this.store.readDay<ProactiveDayState>(date)) ?? {}
+    const decision = decideProactive({
+      settings,
+      state,
+      day,
+      now,
+      today: date,
+      fallbackStartAt: state.lastInteractionAt
+    })
+    if (!decision.send) return { decision, message: '', day: null }
+    const life = await this.ensureDailyLife(now)
+    const deck = await this.getLifeDeck()
+    const primary = deck.cards.find((c) => c.id === life.day.cardIds[0])
+    return { decision, message: primary?.hook ?? life.day.activity, day: life.day }
+  }
+
+  /** 记一次主动发送（含降级通道）；用于日上限与状态展示 */
+  async markProactiveSent(channel: 'qq' | 'app', now = this.now()): Promise<number> {
+    this.assertInitialized()
+    return this.withMutation(async () => {
+      const date = toDateKey(now)
+      const day = (await this.store.readDay<ProactiveDayState>(date)) ?? {}
+      const next: ProactiveDayState = {
+        ...day,
+        activeSent: (day.activeSent ?? 0) + 1,
+        events: [...(day.events ?? []), `${date}T${new Date(now).toTimeString().slice(0, 5)}:${channel}`]
+      }
+      await this.store.writeDay(date, next)
+      return next.activeSent ?? 0
+    })
+  }
+
+  /**
+   * 主动性 tick：判定 → 外发（可选）→ 应用内气泡兜底 → 记账。
+   * 不重试、不换通道；外发失败只降级到应用内气泡。
+   */
+  async runProactiveTick(
+    now = this.now()
+  ): Promise<{ decision: ProactiveDecision; message?: string; delivered?: boolean }> {
+    const { decision, message } = await this.evaluateProactive(now)
+    if (!decision.send || !message) return { decision }
+    let delivered = false
+    if (this.sendProactive) {
+      try {
+        delivered = await this.sendProactive({ text: message, channel: decision.channel })
+      } catch (error) {
+        this.logger(`[character] 主动消息外发失败: ${(error as Error)?.message ?? String(error)}`)
+      }
+    }
+    // 应用内气泡始终发（外部失败也不打扰用户操作）
+    this.emit({ type: 'bubble', payload: { text: message }, at: now })
+    await this.markProactiveSent(delivered ? decision.channel : 'app', now)
+    return { decision, message, delivered }
+  }
+
+  private async getLifeDeck(): Promise<LifeDeck> {
+    if (!this.lifeDeckCache) {
+      this.lifeDeckCache = this.loadLifeDeck
+        ? await this.loadLifeDeck()
+        : { schema: 'fish-life-cards/1', version: '0.0.0', cards: [] }
+    }
+    return this.lifeDeckCache
+  }
+
+  private cardsFor(deck: LifeDeck, ids: string[]) {
+    return ids
+      .map((id) => deck.cards.find((c) => c.id === id))
+      .filter((c): c is NonNullable<typeof c> => Boolean(c))
+  }
+
+  private async recentCardIds(date: string, now: number): Promise<string[]> {
+    const meta = await this.store.readMeta()
+    const cutoff = now - 7 * 86_400_000
+    const out: string[] = []
+    for (const day of meta.lifeDays) {
+      if (day === date) continue
+      const ts = new Date(`${day}T00:00:00`).getTime()
+      if (!Number.isFinite(ts) || ts < cutoff) continue
+      const life = await this.store.readLife<LifeDay>(day)
+      if (life?.cardIds) out.push(...life.cardIds)
+    }
+    return out
   }
 
   async reset(options: CharacterResetOptions = {}): Promise<{ scope: string }> {

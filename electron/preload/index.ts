@@ -699,6 +699,13 @@ const api = {
       run: () => call<BootstrapReport>('character:bootstrap:run'),
       status: () => call<BootstrapReport | null>('character:bootstrap:status')
     },
+    life: {
+      get: (date?: string) =>
+        call<{ day: { date: string; activity: string; mood: string; goal: string; progress: number; cardIds: string[] } | null; doc: string | null }>(
+          'character:life:get',
+          date ? { date } : {}
+        )
+    },
     pet: {
       show: () => call<{ visible: boolean; clickThrough: boolean }>('character:window:pet', { action: 'show' }),
       hide: () => call<{ visible: boolean; clickThrough: boolean }>('character:window:pet', { action: 'hide' }),

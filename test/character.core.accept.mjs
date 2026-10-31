@@ -20,12 +20,16 @@ const agentConfigMod = await import(pathToFileURL(bundleEntry('electron/main/cha
 const bootstrapMod = await import(pathToFileURL(bundleEntry('electron/main/character/bootstrap.ts', 'character-bootstrap.mjs')).href)
 const chatMod = await import(pathToFileURL(bundleEntry('electron/main/character/chat.ts', 'character-chat.mjs')).href)
 const relationshipMod = await import(pathToFileURL(bundleEntry('electron/main/character/relationship.ts', 'character-relationship.mjs')).href)
+const cardsMod = await import(pathToFileURL(bundleEntry('electron/main/character/contentCards.ts', 'character-cards.mjs')).href)
+const lifeMod = await import(pathToFileURL(bundleEntry('electron/main/character/life.ts', 'character-life.mjs')).href)
+const proactiveMod = await import(pathToFileURL(bundleEntry('electron/main/character/proactive.ts', 'character-proactive.mjs')).href)
 
 const {
   CHARACTER_ERROR_CODES,
   DEFAULT_CHARACTER_SETTINGS,
   FISH_KEYS,
   clampPetPosition,
+  createDefaultCharacterState,
   mergeCharacterSettings,
   toCharacterEnvelope,
   toCharacterErrorEnvelope
@@ -48,6 +52,9 @@ const {
   pruneDedup,
   toDateKey
 } = relationshipMod
+const { parseLifeDeck, drawLifeCards, slotForHour, seededRandom } = cardsMod
+const { composeLifeDay, renderLifeDoc } = lifeMod
+const { decideProactive, isQuietHours } = proactiveMod
 
 function memoryKv(initial = new Map()) {
   return {
@@ -993,6 +1000,158 @@ await recorder.check('C36', '关系事件信封与未知事件容错', async () 
   assertEq(r.reason, 'unknown-event', '未知事件有原因')
   return '容错正确'
 })
+
+const lifeDeckRaw = JSON.parse(
+  readFileSync(join(repoRoot, 'resources', 'character', 'cards', 'life-cards.v1.json'), 'utf8')
+)
+const lifeDeck = parseLifeDeck(lifeDeckRaw)
+
+await recorder.check('C37', '内容卡：确定性抽取、阶段过滤、7 天不重复', async () => {
+  const a = drawLifeCards(lifeDeck, { stage: 3, date: '2026-11-01', count: 3 })
+  const b = drawLifeCards(lifeDeck, { stage: 3, date: '2026-11-01', count: 3 })
+  assertEq(a.map((c) => c.id).join(','), b.map((c) => c.id).join(','), '同一天确定性抽取')
+  assertEq(a.length, 3, '抽 3 张')
+
+  const recent = lifeDeck.cards.slice(0, 10).map((c) => c.id)
+  const c = drawLifeCards(lifeDeck, { stage: 3, date: '2026-11-02', recentIds: recent, count: 3 })
+  assertEq(c.every((card) => !recent.includes(card.id)), true, '排除最近 7 天用过的卡')
+
+  const low = drawLifeCards(lifeDeck, { stage: 0, date: '2026-11-03', count: 10 })
+  assertEq(low.every((card) => card.minStage <= 0), true, '阶段不足的卡不出现')
+  assertEq(slotForHour(8), 'morning', '8 点 → 上午')
+  assertEq(slotForHour(23), 'night', '23 点 → 深夜')
+  return '抽卡规则正确'
+})
+
+await recorder.check('C38', '她的一天：LIFE 文档渲染（时段/小目标）', async () => {
+  const composed = composeLifeDay({
+    deck: lifeDeck,
+    stage: 3,
+    date: '2026-11-01',
+    now: new Date(2026, 10, 1, 9, 0, 0).getTime()
+  })
+  assertEq(composed.doc.includes('她的一天（2026-11-01）'), true, '含日期标题')
+  assertEq(composed.doc.includes('- 小目标：'), true, '含小目标行')
+  assertEq(composed.day.cardIds.length, 3, '记录 3 张卡')
+  const again = renderLifeDoc(composed.day, composed.cards)
+  assertEq(again, composed.doc, '渲染幂等')
+  return 'LIFE 渲染正确'
+})
+
+await recorder.check('C39', '免打扰时段：跨午夜 / 非跨 / 非法格式', async () => {
+  const at = (h, m) => new Date(2026, 10, 1, h, m, 0).getTime()
+  assertEq(isQuietHours(at(23, 40), '23:30', '08:00'), true, '23:40 在跨午夜免打扰内')
+  assertEq(isQuietHours(at(7, 59), '23:30', '08:00'), true, '07:59 在跨午夜免打扰内')
+  assertEq(isQuietHours(at(8, 1), '23:30', '08:00'), false, '08:01 已出免打扰')
+  assertEq(isQuietHours(at(13, 0), '12:00', '14:00'), true, '非跨段命中')
+  assertEq(isQuietHours(at(13, 0), 'bad', '14:00'), false, '非法格式不拦')
+  return '免打扰判定正确'
+})
+
+await recorder.check('C40', '主动性决策矩阵：开关/静默期/免打扰/日上限/安静几天', async () => {
+  const now = new Date(2026, 10, 1, 12, 0, 0).getTime()
+  const settings = (patch = {}) => ({
+    ...JSON.parse(JSON.stringify(DEFAULT_CHARACTER_SETTINGS)),
+    enabled: true,
+    proactive: {
+      ...JSON.parse(JSON.stringify(DEFAULT_CHARACTER_SETTINGS.proactive)),
+      enabled: true,
+      silenceDays: 0,
+      ...(patch.proactive ?? {})
+    }
+  })
+  const state = { ...createDefaultCharacterState(now), bornAt: now - 10 * 86_400_000 }
+  const ctx = (patch = {}, day = {}) => ({
+    settings: settings(patch),
+    state,
+    day,
+    now,
+    today: '2026-11-01'
+  })
+
+  assertEq(decideProactive(ctx()).send, true, '默认可发')
+  assertEq(decideProactive(ctx({ proactive: { enabled: false } })).reason, 'disabled', '开关关→disabled')
+  assertEq(decideProactive(ctx({ proactive: { channel: 'app' } })).channel, 'app', '通道 app')
+  assertEq(decideProactive(ctx({ proactive: { silentUntil: now + 1000 } })).reason, 'silent-until', '安静几天')
+  assertEq(decideProactive(ctx({ proactive: { dailyCap: 2 } }, { activeSent: 2 })).reason, 'daily-cap', '日上限')
+  assertEq(decideProactive(ctx({ proactive: { quietFrom: '11:00', quietTo: '13:00' } })).reason, 'quiet-hours', '免打扰')
+
+  const newborn = { ...state, bornAt: now - 1000 }
+  const newbornDecision = decideProactive({ ...ctx({ proactive: { silenceDays: 3 } }), state: newborn })
+  assertEq(newbornDecision.reason, 'silence-period', '新收养静默期')
+  return '决策矩阵正确'
+})
+
+await recorder.check('C41', 'manager：每日生活幂等 + 7 天不重复 + LIFE 落盘回调', async () => {
+  const kv = memoryKv()
+  let now = new Date(2026, 10, 1, 9, 0, 0).getTime()
+  const docs = []
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    loadLifeDeck: async () => lifeDeck,
+    writeLifeDoc: async (text) => docs.push(text)
+  })
+  await manager.init()
+  await manager.updateSettings({ enabled: true })
+
+  const first = await manager.ensureDailyLife()
+  assertEq(first.generated, true, '首次生成')
+  assertEq(docs.length, 1, 'LIFE.md 写一次')
+  const again = await manager.ensureDailyLife()
+  assertEq(again.generated, false, '同日不重复生成')
+  assertEq(docs.length, 1, '不重复写盘')
+
+  const life = await manager.getLife()
+  assertEq(life.day?.date, '2026-11-01', '读到今天')
+  assertEq(Boolean(life.doc), true, '有渲染文档')
+  return '每日生活幂等正确'
+})
+
+await recorder.check('C42', 'manager：主动性 tick 外发失败降级 + 日上限记账', async () => {
+  const kv = memoryKv()
+  let now = new Date(2026, 10, 1, 12, 0, 0).getTime()
+  const bubbles = []
+  const sentTo = []
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    loadLifeDeck: async () => lifeDeck,
+    sendProactive: async (msg) => {
+      sentTo.push(msg.channel)
+      return false // 模拟 QQ 不可用
+    },
+    onEvent: (event) => {
+      if (event.type === 'bubble') bubbles.push(event.payload.text)
+    }
+  })
+  await manager.init()
+  await manager.updateSettings({
+    enabled: true,
+    proactive: { enabled: true, silenceDays: 0, dailyCap: 1, quietFrom: '00:00', quietTo: '00:00' }
+  })
+  // bornAt 默认 now → 静默期；把出生时间往前推
+  const state = await manager.getState()
+  const kvState = JSON.parse(kv.map.get(FISH_KEYS.state))
+  kvState.bornAt = now - 10 * 86_400_000
+  kv.map.set(FISH_KEYS.state, JSON.stringify(kvState))
+
+  const tick1 = await manager.runProactiveTick()
+  assertEq(tick1.decision.send, true, '首次 tick 可发')
+  assertEq(tick1.delivered, false, '外发失败')
+  assertEq(sentTo[0], 'qq', '按设置首选 QQ')
+  assertEq(bubbles.length >= 1, true, '应用内气泡兜底')
+  assertEq((await manager.evaluateProactive()).decision.reason, 'daily-cap', '达到日上限')
+
+  const day = await storeDayRecord(kv)
+  assertEq(day.activeSent, 1, '日计数 +1（降级也记）')
+  return 'tick/降级/记账正确'
+})
+
+function storeDayRecord(kv) {
+  const key = [...kv.map.keys()].find((k) => k.startsWith('fish:v2:day:'))
+  return key ? JSON.parse(kv.map.get(key)) : {}
+}
 
 const ok = printResult(recorder.toJSON())
 if (!ok) process.exit(1)

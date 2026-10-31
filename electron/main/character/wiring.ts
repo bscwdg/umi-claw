@@ -4,13 +4,15 @@
 // 初始化失败只降级角色自身，绝不阻断宿主启动（红线 2）。
 
 import { globalShortcut, screen } from 'electron'
-import { join } from 'node:path'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { CharacterManager } from './manager'
 import { registerCharacterIpc, type CharacterIpcDisposer } from './ipc'
 import { CharacterStore } from './store'
 import { applyAgentPatch, createOpenClawCliRunner } from './agentPatchRunner'
 import { CHARACTER_AGENT_ID, CHARACTER_AGENT_MODEL, readAgentEntry } from './agentConfig'
 import { loadPersonaTemplates, runBootstrap } from './bootstrap'
+import { parseLifeDeck } from './contentCards'
 import { composePersonaFiles, writeManagedFiles } from './persona'
 import { PetWindowController, type PetMenuAction } from './petWindow'
 import { CharacterChatService, type CharacterChatFn } from './chat'
@@ -57,6 +59,8 @@ export interface CharacterWiringDeps {
   petWindow?: CharacterPetWindowConfig
   /** 桌宠菜单里的「聊两句 / 设置」回调（由 index.ts 聚焦主窗） */
   onPetAction?: (action: PetMenuAction) => void
+  /** 主动消息外发（C08 注入 QQ；缺省只发应用内气泡） */
+  sendProactive?: (message: { text: string; channel: 'qq' | 'app' }) => Promise<boolean>
   /** 既有 Obsidian vault 路径（只在其下建 `大肥鱼/`，不新增知识库） */
   obsidianVaultPath?: () => string | undefined
   gatewayReady?: () => boolean
@@ -154,7 +158,15 @@ async function registerCharacterInternal(
             y < d.bounds.y + d.bounds.height
         )
         return clampPetPosition(x, y, width, height, (near ?? primary).workArea)
-      }
+      },
+      loadLifeDeck: async () => {
+        const file = join(dirname(deps.personaSourceDir), 'cards', 'life-cards.v1.json')
+        return parseLifeDeck(JSON.parse(readFileSync(file, 'utf8')))
+      },
+      writeLifeDoc: async (text) => {
+        writeFileSync(join(workspaceDir, 'fish', 'LIFE.md'), text, 'utf8')
+      },
+      sendProactive: deps.sendProactive
     })
     managerRef = manager
     await manager.init()
@@ -250,11 +262,27 @@ async function registerCharacterInternal(
       })
     )
 
-    // 已启用（用户上次开着）：启动后静默补一次引导 + 校正桌宠可见性
+    let proactiveTimer: NodeJS.Timeout | null = null
+    const stopProactive = (): void => {
+      if (proactiveTimer) clearInterval(proactiveTimer)
+      proactiveTimer = null
+    }
+    const startProactive = (): void => {
+      if (proactiveTimer) return
+      proactiveTimer = setInterval(() => {
+        void manager.runProactiveTick().catch((error) => {
+          logger(`[character] 主动性 tick 失败: ${(error as Error)?.message ?? String(error)}`)
+        })
+      }, 30_000)
+    }
+
+    // 已启用（用户上次开着）：启动后静默补一次引导 + 校正桌宠可见性 + 生成今天的生活
     if (manager.isEnabled()) {
       void manager.runBootstrap().catch((error) => {
         logger(`[character] 启动引导失败（不影响主流程）: ${(error as Error)?.message ?? String(error)}`)
       })
+      void manager.ensureDailyLife().catch(() => undefined)
+      startProactive()
       await syncPet()
     }
 
@@ -266,11 +294,14 @@ async function registerCharacterInternal(
           // 停用 = 收起窗口（不销毁控制器，重新启用可重建）
           pet.close()
           updateShortcut(false)
+          stopProactive()
           return
         }
         const petState = await manager.getPetState()
         pet.applyState({ ...petState, visible: Boolean(settings.enabled && settings.pet.visible) })
         updateShortcut(Boolean(settings.enabled && settings.pet.clickThrough))
+        startProactive()
+        void manager.ensureDailyLife().catch(() => undefined)
       } catch (error) {
         logger(`[character] 桌宠状态同步失败: ${(error as Error)?.message ?? String(error)}`)
       }
@@ -307,6 +338,7 @@ async function registerCharacterInternal(
         ipcDisposer?.()
         ipcDisposer = null
         chatService?.cancelAll()
+        stopProactive()
         manager.dispose()
         pet?.destroy()
         pet = null

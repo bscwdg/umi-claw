@@ -171,6 +171,11 @@ export function registerCharacterIpc(
       return toCharacterErrorEnvelope(error)
     }
   })
+  // 「她的一天」：默认今天；只读，不触发外发
+  handle(CHARACTER_CHANNELS.lifeGet, (payload) => {
+    const date = (payload as { date?: unknown } | undefined)?.date
+    return manager.getLife(typeof date === 'string' ? date : undefined)
+  })
 
   return () => {
     for (const channel of channels) ipcMain.removeHandler(channel)

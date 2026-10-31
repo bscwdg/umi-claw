@@ -100,6 +100,19 @@
     </section>
 
     <section class="card">
+      <h3>她的一天</h3>
+      <pre v-if="lifeDoc" class="life-doc">{{ lifeDoc }}</pre>
+      <p v-else class="hint">还没生成。启用后她会每天写自己的一天。</p>
+      <div class="row" style="margin-top: 10px">
+        <button class="btn" :disabled="busy || !status.enabled" @click="toggleProactive">
+          {{ proactiveEnabled ? '关闭主动消息' : '开启主动消息' }}
+        </button>
+        <button class="btn ghost" :disabled="busy || !status.enabled" @click="quietDays">安静三天</button>
+      </div>
+      <p class="hint">安静期间不发主动消息，不影响聊天与好感；免打扰时段与每日上限在设置里改。</p>
+    </section>
+
+    <section class="card">
       <h3>互动</h3>
       <div class="row">
         <button class="btn" :disabled="busy || !status.enabled" @click="interact('pat')">摸摸头</button>
@@ -154,6 +167,8 @@ const modeDraft = ref<'companion' | 'sister' | 'lover'>('companion')
 const tabooDraft = ref('')
 const bootstrapReport = ref<BootstrapReport | null>(null)
 const petVisible = ref(false)
+const lifeDoc = ref('')
+const proactiveEnabled = ref(false)
 const messages = ref<ChatBubble[]>([])
 const draft = ref('')
 const runId = ref('')
@@ -195,6 +210,9 @@ async function refresh(): Promise<void> {
     modeDraft.value = settings.relationship?.mode || 'companion'
     tabooDraft.value = (settings.relationship?.taboo ?? []).join('，')
     petVisible.value = Boolean(settings.pet?.visible)
+    proactiveEnabled.value = Boolean(settings.proactive?.enabled)
+    const life = await window.api.character.life.get()
+    lifeDoc.value = life.doc ?? ''
     bootstrapReport.value = await window.api.character.bootstrap.status()
   } catch (e) {
     error.value = (e as Error)?.message || '读取角色状态失败'
@@ -214,6 +232,23 @@ async function togglePetVisible(): Promise<void> {
     const next = !petVisible.value
     await window.api.character.settings.set({ pet: { visible: next } } as never)
     petVisible.value = next
+    await refresh()
+  })
+}
+
+async function toggleProactive(): Promise<void> {
+  await run(async () => {
+    const next = !proactiveEnabled.value
+    await window.api.character.settings.set({ proactive: { enabled: next } } as never)
+    proactiveEnabled.value = next
+    await refresh()
+  })
+}
+
+async function quietDays(): Promise<void> {
+  await run(async () => {
+    const until = Date.now() + 3 * 86_400_000
+    await window.api.character.settings.set({ proactive: { silentUntil: until } } as never)
     await refresh()
   })
 }
@@ -447,6 +482,17 @@ select {
   margin: 10px 0 0;
   font-size: 12px;
   color: var(--text-secondary, #9aa4b8);
+}
+.life-doc {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-primary, #0d121c);
+  color: var(--text-primary, #e8ecf4);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .err {
   margin: 0 0 12px;
