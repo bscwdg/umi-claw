@@ -192,12 +192,13 @@ function runExclusiveEnvTask<T>(
 }
 
 /**
- * 统一的应用退出流程：标记退出、清理终端会话并停止 OpenClaw
+ * 统一的应用退出流程：标记退出、清理终端会话并停止/保留 OpenClaw
  */
 function quitApp(): void {
   ;(app as any).isQuiting = true
   killAllTerminalSessions()
-  clawManager.stop().finally(() => app.quit())
+  // 按设置决定「停止网关」还是「保留网关后台运行」（保留时下次启动直接复用，跳过冷启动）
+  clawManager.handleAppQuit().finally(() => app.quit())
 }
 
 /**
@@ -377,7 +378,8 @@ function createTray(): void {
         label: '退出',
         click: () => {
           ; (app as any).isQuiting = true
-          clawManager.stop().finally(() => app.quit())
+          // 与 quitApp / before-quit 共用同一幂等入口：开启「退出保留网关」时不杀网关
+          clawManager.handleAppQuit().finally(() => app.quit())
         }
       }
     ])
@@ -1172,7 +1174,7 @@ async function triggerVoiceAutoSpeak(text: string): Promise<void> {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.clawdesktop.app')
   protocol.handle('app', async (request) => {
     let urlPath = request.url.replace('app://', '')
@@ -1284,12 +1286,16 @@ app.whenReady().then(() => {
   createTray()
   setupLogForwarding()
 
+  // 若上次退出时按设置保留了网关（keepGatewayOnQuit），这里直接复用：跳过冷启动。
+  // 必须 await 后再决定 autoStart，否则会与 adopt 竞态（双网关 / ghost 清理误杀被复用的网关）。
+  const adoptedGateway = await clawManager.adoptRunningGateway().catch(() => false)
+
   // 启动时同步开机自启项，保证与配置一致
   const startupConfig = configManager.getConfig()
   applyLoginItemSettings(startupConfig.launchOnBoot)
 
   // 自动启动服务：应用启动时自动运行 OpenClaw
-  if (startupConfig.autoStart) {
+  if (startupConfig.autoStart && !adoptedGateway) {
     clawManager.start().catch((err) => {
       console.error('[Main] 自动启动 OpenClaw 失败:', err)
     })
@@ -1305,12 +1311,39 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('before-quit', async () => {
+let quitCleanupDone = false
+let quitCleanupRunning = false
+
+/**
+ * 退出清理。
+ *
+ * Electron **不 await** before-quit 的 async 监听器，所以必须 preventDefault 后自己做
+ * 清理，完成后再 app.quit() 一次。否则真实异步（停止/保留网关的 taskkill/等待）会丢。
+ * handleAppQuit 幂等：quitApp / 托盘退出 / 这里三路共用。
+ */
+app.on('before-quit', (event) => {
+  if (quitCleanupDone) return
+  event.preventDefault()
+  if (quitCleanupRunning) return
+  quitCleanupRunning = true
   ; (app as any).isQuiting = true
+  void runQuitCleanup()
+})
+
+async function runQuitCleanup(): Promise<void> {
   // 确保在退出前杀死所有子进程，防止孤儿进程
   killAllTerminalSessions()
-  await clawManager.stop()
-})
+  try {
+    await Promise.race([
+      Promise.resolve(clawManager.handleAppQuit()),
+      new Promise((resolve) => setTimeout(resolve, 8000))
+    ])
+  } catch (e) {
+    console.error('[Main] 退出清理「停止或保留 OpenClaw」失败（继续退出）:', e)
+  }
+  quitCleanupDone = true
+  app.quit()
+}
 
 // 类型扩展
 declare global {

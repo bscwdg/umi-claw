@@ -222,6 +222,18 @@
           </div>
           <div class="setting-row">
             <div>
+              <div class="setting-name">退出应用时保留网关</div>
+              <div class="text-sm text-muted">
+                退出后网关继续在后台运行，下次启动直接复用（跳过冷启动）
+              </div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" v-model="config.keepGatewayOnQuit" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div>
               <div class="setting-name">关闭窗口时</div>
               <div class="text-sm text-muted">点击右上角 X 时的行为</div>
             </div>
