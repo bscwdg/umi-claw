@@ -183,6 +183,23 @@ export class CharacterStore {
     await this.kv.set(FISH_KEYS.chatGen, JSON.stringify({ gen: safe }))
   }
 
+  /** 关系事件幂等表（refId → 时间戳） */
+  async readDedup(): Promise<Record<string, number>> {
+    const raw = await this.readJson<Record<string, unknown>>(FISH_KEYS.dedup)
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+    const out: Record<string, number> = {}
+    for (const [key, value] of Object.entries(raw)) {
+      if (typeof key === 'string' && typeof value === 'number' && Number.isFinite(value)) {
+        out[key] = value
+      }
+    }
+    return out
+  }
+
+  async writeDedup(dedup: Record<string, number>): Promise<void> {
+    await this.kv.set(FISH_KEYS.dedup, JSON.stringify(dedup))
+  }
+
   /** 清理角色数据（scope 语义见 CharacterResetOptions；agent/Obsidian 由 C09 处理） */
   async reset(scope: 'values' | 'memory' | 'all' = 'values'): Promise<void> {
     const meta = await this.readMeta()
@@ -268,8 +285,24 @@ function sanitizeState(raw: Partial<CharacterState>, base: CharacterState): Char
     lastInteractionAt: Math.max(0, n(raw.lastInteractionAt, 0)),
     addressForm: typeof raw.addressForm === 'string' && raw.addressForm.trim() ? raw.addressForm.trim().slice(0, 40) : base.addressForm,
     mood: typeof raw.mood === 'string' ? raw.mood.slice(0, 40) : base.mood,
-    updatedAt: n(raw.updatedAt, base.updatedAt)
+    updatedAt: n(raw.updatedAt, base.updatedAt),
+    dayKey:
+      typeof raw.dayKey === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw.dayKey)
+        ? raw.dayKey
+        : base.dayKey,
+    dayCounters: sanitizeCounters(raw.dayCounters)
   }
+}
+
+function sanitizeCounters(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const out: Record<string, number> = {}
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof key !== 'string' || key.length > 40) continue
+    const n = typeof raw === 'number' && Number.isFinite(raw) ? Math.floor(raw) : 0
+    if (n > 0) out[key] = Math.min(n, 1000)
+  }
+  return out
 }
 
 function clone<T>(value: T): T {

@@ -19,6 +19,12 @@ import {
 } from './types'
 import type { CharacterStore } from './store'
 import type { BootstrapReport } from './bootstrap'
+import {
+  applyRelationshipEvent,
+  toDateKey,
+  type RelationshipApplyResult,
+  type RelationshipEvent
+} from './relationship'
 
 export interface CharacterManagerOptions {
   store: CharacterStore
@@ -28,9 +34,6 @@ export interface CharacterManagerOptions {
   /** 桌宠位置夹取（wiring 注入屏幕工作区；缺省不夹） */
   clampPosition?: (x: number, y: number, width: number, height: number) => { x: number; y: number }
 }
-
-const FAMILIARITY_CAP = 100
-const INTIMACY_CAP = 100
 
 export class CharacterManager {
   private readonly store: CharacterStore
@@ -163,6 +166,45 @@ export class CharacterManager {
     return clone(next)
   }
 
+  /** 关系事件入口（聊天/语音/里程碑等；每日上限与幂等在引擎里） */
+  async applyRelationshipEvent(event: RelationshipEvent): Promise<RelationshipApplyResult> {
+    return this.withMutation(() => this.applyRelationshipEventImpl(event))
+  }
+
+  private async applyRelationshipEventImpl(
+    event: RelationshipEvent,
+    mood?: string
+  ): Promise<RelationshipApplyResult> {
+    this.assertInitialized()
+    if (!this.isEnabled()) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.DISABLED, '大肥鱼未启用')
+    }
+    const state = await this.getState()
+    const now = this.now()
+    const dedup = await this.store.readDedup()
+    const result = applyRelationshipEvent(
+      state,
+      { ...event, at: event.at ?? now },
+      { now, today: toDateKey(now), dedup }
+    )
+    if (!result.applied) return result
+    const next = result.state
+    if (mood) next.mood = mood
+    await this.store.writeState(next)
+    await this.store.writeDedup(result.dedup)
+    this.state = next
+    this.emit({ type: 'state', payload: clone(next), at: now })
+    if (result.unlocked.length > 0) {
+      this.emit({
+        type: 'bubble',
+        payload: { text: `解锁：${result.unlocked.join('、')}` },
+        at: now
+      })
+    }
+    this.schedulePersonaSync()
+    return result
+  }
+
   async interact(input: CharacterInteractInput): Promise<CharacterState> {
     return this.withMutation(() => this.interactImpl(input))
   }
@@ -173,21 +215,16 @@ export class CharacterManager {
       throw new CharacterError(CHARACTER_ERROR_CODES.DISABLED, '大肥鱼未启用')
     }
     const state = await this.getState()
-    const now = this.now()
     const kind = input?.kind
     if (kind !== 'pat' && kind !== 'feed' && kind !== 'dismiss') {
       throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '未知的互动类型')
     }
-    if (kind === 'pat') state.familiarity = Math.min(FAMILIARITY_CAP, state.familiarity + 1)
-    if (kind === 'feed') state.intimacy = Math.min(INTIMACY_CAP, state.intimacy + 1)
     if (kind === 'dismiss') return { ...state }
-    state.lastInteractionAt = now
-    state.updatedAt = now
-    await this.store.writeState(state)
-    this.state = state
-    this.emit({ type: 'state', payload: clone(state), at: now })
-    this.schedulePersonaSync()
-    return { ...state }
+    const result = await this.applyRelationshipEventImpl(
+      { type: kind === 'pat' ? 'interact.pat' : 'interact.feed' },
+      kind === 'pat' ? '被摸头了' : '吃饱了'
+    )
+    return { ...result.state }
   }
 
   async reset(options: CharacterResetOptions = {}): Promise<{ scope: string }> {

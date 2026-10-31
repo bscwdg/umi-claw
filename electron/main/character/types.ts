@@ -139,6 +139,9 @@ export interface CharacterState {
   addressForm: string
   mood: string
   updatedAt: number
+  /** 关系日计数：日期键 + 各事件当天已用次数（C05） */
+  dayKey?: string
+  dayCounters?: Record<string, number>
 }
 
 export interface CharacterMeta {

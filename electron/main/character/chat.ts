@@ -56,6 +56,8 @@ export interface CharacterChatServiceOptions {
   }
   /** 角色 agent 的模型路由（缺省 openclaw/feiyu，由 wiring 注入） */
   model?: string
+  /** 一轮聊天成功结束：交给关系引擎记账（refId=runId 保证幂等） */
+  onMessage?: (text: string, refId: string) => void
   onEmotion?: (emotion: string, visualState: string) => void
   now?: () => number
   logger?: (message: string) => void
@@ -284,6 +286,15 @@ export class CharacterChatService {
         emotion,
         aborted: cancelled || Boolean(result?.aborted)
       })
+      if (!cancelled) {
+        try {
+          this.options.onMessage?.(finalText, runId)
+        } catch (error) {
+          this.options.logger?.(
+            `[character] 关系记账失败: ${(error as Error)?.message ?? String(error)}`
+          )
+        }
+      }
     } catch (error) {
       if (!this.cancelled.has(runId)) {
         const message = (error as Error)?.message ?? String(error)

@@ -19,6 +19,7 @@ const personaMod = await import(pathToFileURL(bundleEntry('electron/main/charact
 const agentConfigMod = await import(pathToFileURL(bundleEntry('electron/main/character/agentConfig.ts', 'character-agent-config.mjs')).href)
 const bootstrapMod = await import(pathToFileURL(bundleEntry('electron/main/character/bootstrap.ts', 'character-bootstrap.mjs')).href)
 const chatMod = await import(pathToFileURL(bundleEntry('electron/main/character/chat.ts', 'character-chat.mjs')).href)
+const relationshipMod = await import(pathToFileURL(bundleEntry('electron/main/character/relationship.ts', 'character-relationship.mjs')).href)
 
 const {
   CHARACTER_ERROR_CODES,
@@ -40,6 +41,13 @@ const {
   mapEmotionToState,
   stripEmotionMarkers
 } = chatMod
+const {
+  RELATIONSHIP_RULES,
+  applyRelationshipEvent,
+  stageForFamiliarity,
+  pruneDedup,
+  toDateKey
+} = relationshipMod
 
 function memoryKv(initial = new Map()) {
   return {
@@ -156,7 +164,7 @@ await recorder.check('C4', '启用后互动累计、上限封顶、事件可订�
 
   for (let i = 0; i < 120; i += 1) await manager.interact({ kind: 'pat' })
   const capped = await manager.getState()
-  assertEq(capped.familiarity, 100, '熟悉度封顶 100')
+  assertEq(capped.familiarity, 10, '摸头按日上限封顶 10（C05 规则）')
   return '启用 / 累计 / 上限 / 事件 正确'
 })
 
@@ -676,14 +684,14 @@ await recorder.check('C20', 'manifest 丢失/损坏 → 保守模式，用户改
   return '保守模式有效'
 })
 
-await recorder.check('C21', '并发互动不丢更新（50 次并发摸头 = 50）', async () => {
+await recorder.check('C21', '并发互动不丢更新（50 次并发摸头命中每日上限 10，一次不多一次不少）', async () => {
   const kv = memoryKv()
   const manager = new CharacterManager({ store: new CharacterStore({ kv }) })
   await manager.init()
   await manager.updateSettings({ enabled: true })
   await Promise.all(Array.from({ length: 50 }, () => manager.interact({ kind: 'pat' })))
   const state = await manager.getState()
-  assertEq(state.familiarity, 50, '并发 50 次全部计数')
+  assertEq(state.familiarity, 10, '并发 50 次 → 精确命中每日上限 10')
   return '并发串行化正确'
 })
 
@@ -843,6 +851,147 @@ await recorder.check('C30', '人格注入只含规则：禁用清单与 few-shot
   assertEq(soul.includes('本鱼昨晚三点才睡'), false, 'SOUL 不含 few-shot 例句')
   assertEq(soul.includes('风格规则'), true, 'SOUL 含规则正文')
   return '注入边界正确'
+})
+
+function relState(overrides = {}) {
+  return {
+    bornAt: 1,
+    stage: 0,
+    familiarity: 0,
+    intimacy: 0,
+    streakDays: 0,
+    lastInteractionAt: 0,
+    addressForm: '你',
+    mood: '平静',
+    updatedAt: 1,
+    ...overrides
+  }
+}
+
+await recorder.check('C31', '关系事件：增量、每日上限、超限不写', async () => {
+  const now = new Date(2026, 10, 1, 10, 0, 0).getTime()
+  const ctx = { now, today: toDateKey(now), dedup: {} }
+  let state = relState()
+  let applied = 0
+  let capped = 0
+  for (let i = 0; i < 12; i += 1) {
+    const r = applyRelationshipEvent(state, { type: 'interact.pat' }, ctx)
+    state = r.state
+    ctx.dedup = r.dedup
+    if (r.applied) applied += 1
+    if (r.reason === 'daily-cap') capped += 1
+  }
+  assertEq(applied, RELATIONSHIP_RULES['interact.pat'].dailyCap, '摸头按日上限生效')
+  assertEq(capped, 2, '超限次数被拒绝')
+  assertEq(state.familiarity, RELATIONSHIP_RULES['interact.pat'].dailyCap, '熟悉度=上限×1')
+  return '每日上限正确'
+})
+
+await recorder.check('C32', '阶段只升不降 + 解锁列表', async () => {
+  const now = new Date(2026, 10, 1, 10, 0, 0).getTime()
+  const ctx = { now, today: toDateKey(now), dedup: {} }
+  const r1 = applyRelationshipEvent(relState({ familiarity: 59, stage: 2 }), { type: 'chat.message' }, ctx)
+  assertEq(r1.state.familiarity, 60, '熟悉度到 60')
+  assertEq(r1.state.stage, 3, '升到阶段 3')
+  assertEq(r1.stageChanged, true, 'stageChanged=true')
+  assertEq(r1.unlocked.includes('一个秘密'), true, '解锁项返回')
+
+  const r2 = applyRelationshipEvent(relState({ familiarity: 5, stage: 3 }), { type: 'chat.message' }, ctx)
+  assertEq(r2.state.stage, 3, '阶段不因熟悉度低而下降')
+
+  assertEq(stageForFamiliarity(0), 0, '阈值 0')
+  assertEq(stageForFamiliarity(30), 2, '阈值 30')
+  assertEq(stageForFamiliarity(100), 4, '阈值 100')
+  return '阶段规则正确'
+})
+
+await recorder.check('C33', 'refId 幂等 + 7 天窗口过期', async () => {
+  const now = new Date(2026, 10, 1, 10, 0, 0).getTime()
+  const ctx = { now, today: toDateKey(now), dedup: {} }
+  const first = applyRelationshipEvent(relState(), { type: 'milestone', refId: 'm-1' }, ctx)
+  assertEq(first.applied, true, '首次应用')
+  const again = applyRelationshipEvent(first.state, { type: 'milestone', refId: 'm-1' }, {
+    ...ctx,
+    dedup: first.dedup
+  })
+  assertEq(again.applied, false, '同 refId 不重复计')
+  assertEq(again.reason, 'duplicate', '标记 duplicate')
+
+  const later = now + 8 * 86_400_000
+  const expired = applyRelationshipEvent(first.state, { type: 'milestone', refId: 'm-1' }, {
+    now: later,
+    today: toDateKey(later),
+    dedup: first.dedup
+  })
+  assertEq(expired.applied, true, '过期后可再次计')
+  const pruned = pruneDedup({ a: now, b: later - 1000 }, later)
+  assertEq('a' in pruned, false, '过期 refId 被剪枝')
+  return '幂等/过期正确'
+})
+
+await recorder.check('C34', '跨天：日计数重置 + 连续天数累计', async () => {
+  const day1 = new Date(2026, 10, 1, 10, 0, 0).getTime()
+  const day2 = day1 + 86_400_000
+  const ctx1 = { now: day1, today: toDateKey(day1), dedup: {} }
+  const r1 = applyRelationshipEvent(relState(), { type: 'interact.pat' }, ctx1)
+  assertEq(r1.state.dayCounters?.['interact.pat'], 1, '首日计数 1')
+  assertEq(r1.state.streakDays >= 1, true, '首日连击至少 1')
+
+  const ctx2 = { now: day2, today: toDateKey(day2), dedup: r1.dedup }
+  const r2 = applyRelationshipEvent(r1.state, { type: 'interact.pat' }, ctx2)
+  assertEq(r2.state.dayCounters?.['interact.pat'], 1, '次日计数重置')
+  assertEq(r2.state.streakDays, 2, '连续天数 +1')
+
+  const day5 = day1 + 4 * 86_400_000
+  const r3 = applyRelationshipEvent(r2.state, { type: 'interact.pat' }, {
+    now: day5,
+    today: toDateKey(day5),
+    dedup: r2.dedup
+  })
+  assertEq(r3.state.streakDays, 1, '断档后连击重置')
+  return '跨天/连击正确'
+})
+
+await recorder.check('C35', 'manager 集成：聊天记账幂等 + 互动走上限', async () => {
+  const kv = memoryKv()
+  let now = new Date(2026, 10, 1, 10, 0, 0).getTime()
+  const manager = new CharacterManager({ store: new CharacterStore({ kv, now: () => now }), now: () => now })
+  await manager.init()
+  await manager.updateSettings({ enabled: true })
+
+  const r1 = await manager.applyRelationshipEvent({ type: 'chat.message', refId: 'run-1' })
+  assertEq(r1.applied, true, '首次聊天记账')
+  assertEq(r1.delta.familiarity, 1, '聊天 +1 熟悉')
+  const r2 = await manager.applyRelationshipEvent({ type: 'chat.message', refId: 'run-1' })
+  assertEq(r2.applied, false, '同 runId 不重复计')
+
+  for (let i = 0; i < 12; i += 1) await manager.interact({ kind: 'pat' })
+  const state = await manager.getState()
+  assertEq(state.familiarity, 1 + RELATIONSHIP_RULES['interact.pat'].dailyCap, '互动按上限累计')
+  assertEq(state.mood, '被摸头了', '互动更新心情')
+
+  // 未启用时拒绝
+  await manager.updateSettings({ enabled: false })
+  let disabled = null
+  try {
+    await manager.applyRelationshipEvent({ type: 'chat.message' })
+  } catch (e) {
+    disabled = e
+  }
+  assertEq(disabled?.code, CHARACTER_ERROR_CODES.DISABLED, '未启用拒绝记账')
+  return '集成正确'
+})
+
+await recorder.check('C36', '关系事件信封与未知事件容错', async () => {
+  const now = Date.now()
+  const r = applyRelationshipEvent(relState(), { type: 'no.such.event' }, {
+    now,
+    today: toDateKey(now),
+    dedup: {}
+  })
+  assertEq(r.applied, false, '未知事件不应用')
+  assertEq(r.reason, 'unknown-event', '未知事件有原因')
+  return '容错正确'
 })
 
 const ok = printResult(recorder.toJSON())

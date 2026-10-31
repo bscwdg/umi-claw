@@ -171,6 +171,13 @@ async function registerCharacterInternal(
         onEmotion: (emotion, visualState) => {
           void manager.applyChatEmotion(emotion, visualState).catch(() => undefined)
         },
+        onMessage: (_text, refId) => {
+          void manager
+            .applyRelationshipEvent({ type: 'chat.message', refId })
+            .catch((error) =>
+              logger(`[character] 聊天记账失败: ${(error as Error)?.message ?? String(error)}`)
+            )
+        },
         model: deps.chatModel ?? CHARACTER_AGENT_MODEL,
         now: deps.now,
         logger
