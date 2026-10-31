@@ -570,3 +570,25 @@ deepseek-v4-flash. Use --replace-path models.providers.umiclaw-deepseek.models t
      `clawManager` 记录最近几次 spawn→health 并暴露 `estimateStartupMs`；
      store `etaRemainingSeconds`，Dashboard 启动中显示「预计还需约 N」。
    - 验收：`stats-pure`、`eta-wiring` 用例。
+
+### 2026-10-31（续）· 子代理审查后的阻断/重要问题修复
+
+针对「退出保留网关未接线（阻断）／阶段与 ETA 未推送／preparing 状态矛盾／adopt 竞态与身份校验／日志 tail 全量读」逐条修复：
+
+- **退出路径接线**：`quitApp`、托盘「退出」、`before-quit` 统一走 `clawManager.handleAppQuit()`（幂等）；
+  开启保留时不再杀网关，关闭时照常停止。
+- **statusChange 推送**：payload 补 `bootPhase` / `estimateStartupMs`；U18 增加「statusChange → phase/ETA」行为断言。
+- **preparing 状态**：`getStatus` 把 `startInFlight` 纳入 starting，bootPhase 返回 `preparing`（刷新窗口不再显示已停止）。
+- **adopt 加固**：启动时 `await adopt` 后再决定 autoStart；`start()` 优先识别 adoptedPid；
+  复用前校验「端口 owner pid == 记录 pid」「openclaw 版本一致」；允许等待 loading 中的网关（≤3 分钟），
+  超时/taskkill 失败返回错误；taskkill 后回读存活；adopt 后 30s 健康巡检，失联自动置 idle。
+- **文件日志 tail**：改为 `stat + read(offset)` 增量读（不再整文件 readFileSync）、保留半行 carry、
+  截断检测、stdout/stderr 分开（`.err.log`）、兼容 pino `msg`；adopt 从末尾 64KB 开始。
+- **其它**：热更文件只在 bridge 通道存在（其它通道清理）；rename 失败清 tmp；Dashboard ETA/preparing 改为独立 v-if；
+  ETA 以 spawn 时刻为基准且只在 spawning/loading 显示；runtime 描述仅在 detached 模式写、含 openclawVersion；
+  `OPENCLAW_GATEWAY_STARTUP_TRACE` 改为默认关（`CLAW_OC_STARTUP_TRACE=1` 打开）；fs-safe 覆盖值白名单；
+  V8 编译缓存 >512MB 后台清理。
+- **测试**：maintenance 增加「端口 owner 不一致拒绝复用」「生产退出接线/推送接线」断言；voice 增加「非 bridge 清理热更文件」断言。
+- **说明**：`tts-bridge.json` 在 Windows 上 POSIX `0600` 不生效（mode 位被忽略），文件本身不含 Key；
+  上一版文档「0600」表述已修正。
+- **既有 flaky**：`shooting.accept` 的并发请求顺序断言偶发（`['0','2','1']`），与本轮改动无关，重跑通过。

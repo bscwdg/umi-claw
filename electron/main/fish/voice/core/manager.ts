@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { mkdir, rename, writeFile } from 'fs/promises'
+import { mkdir, rename, unlink, writeFile } from 'fs/promises'
 import { dirname } from 'path'
 import { VOICE_ERROR_CODES, VoiceError } from './errors'
 import { wrapPcmAsWav } from './audio'
@@ -161,7 +161,6 @@ export class VoiceManager {
     this.controllers.delete(jobId)
   }
 
-  /** 刷新同步快照（设置与 tts Key 状态）。 */
   /**
    * 刷新同步快照。
    *
@@ -182,8 +181,13 @@ export class VoiceManager {
     }
     const previous = this.openClawTtsSnapshot
     this.openClawTtsSnapshot = { settings, hasTtsKey, hasCloneKey }
-    // 每次设置快照刷新都同步热更文件（幂等、原子写），保证 bridge 下次合成即用新音色
-    void this.writeBridgeSettingsFile(settings)
+    // 只有真正会走 bridge 的配置才需要热更文件；其它情况清掉，避免留下误导性的陈旧音色
+    const hotResolved = this.resolveConversationChannel({ settings, hasTtsKey, hasCloneKey })
+    if (hotResolved.channel === 'bridge') {
+      void this.writeBridgeSettingsFile(settings)
+    } else {
+      void this.clearBridgeSettingsFile()
+    }
     if (!notify) return
     // 内容没变就不必惊动配置写入（重复 sync 会拖慢且可能撞上 CLI 争用）。
     if (previous && JSON.stringify(previous) === JSON.stringify(this.openClawTtsSnapshot)) {
@@ -197,11 +201,6 @@ export class VoiceManager {
   }
 
   /**
-   * 供 configManager 在写 openclaw.json 时**同步**取 tts 块。
-   * 返回 null 表示「不要在配置里留 tts 段」（关闭或没密钥时整体下线）。
-   * 注意：不含 apiKey —— 密钥只走网关启动时的环境变量。
-   */
-  /**
    * 写「bridge 热更设置」文件：音色 / 资源 ID 每次合成时由 volc-tts.mjs 重新读取，
    * 因此改音色无需重启网关（密钥仍只走网关进程环境变量；Key 变更仍需重启）。
    * 失败只记日志，不影响语音本身（bridge 会回退到环境变量）。
@@ -209,6 +208,7 @@ export class VoiceManager {
   private async writeBridgeSettingsFile(settings: VoiceSettings): Promise<void> {
     const target = this.bridgeSettingsPath
     if (!target) return
+    const tmp = `${target}.tmp-${process.pid}`
     try {
       const payload = {
         version: 1,
@@ -217,11 +217,28 @@ export class VoiceManager {
         updatedAt: new Date(this.now()).toISOString()
       }
       await mkdir(dirname(target), { recursive: true })
-      const tmp = `${target}.tmp-${process.pid}`
       await writeFile(tmp, JSON.stringify(payload, null, 2), { encoding: 'utf-8', mode: 0o600 })
       await rename(tmp, target)
     } catch (e) {
       this.logger(`[voice] 写 bridge 热更设置失败（回退环境变量）: ${(e as Error)?.message || e}`)
+    } finally {
+      // rename 成功时 tmp 已不存在；失败/并发时清掉，避免长期留垃圾
+      try {
+        await unlink(tmp)
+      } catch {
+        /* 已不存在即预期 */
+      }
+    }
+  }
+
+  /** 当前不走 bridge：清掉热更文件，避免 volc-tts.mjs 读到过期音色 */
+  private async clearBridgeSettingsFile(): Promise<void> {
+    const target = this.bridgeSettingsPath
+    if (!target) return
+    try {
+      await unlink(target)
+    } catch {
+      /* 不存在即预期 */
     }
   }
   /**
@@ -277,6 +294,11 @@ export class VoiceManager {
     return { channel: null, reason: '没有可用 Key：需要 Agent Plan Key 或语音控制台 Key' }
   }
 
+  /**
+   * 供 configManager 在写 openclaw.json 时**同步**取 tts 块。
+   * 返回 null 表示「不要在配置里留 tts 段」（关闭或没密钥时整体下线）。
+   * 注意：不含 apiKey —— 密钥只走网关启动时的环境变量。
+   */
   buildOpenClawTtsConfigSync(): Record<string, unknown> | null | undefined {
     const snap = this.openClawTtsSnapshot
     // 快照还没加载：状态未知，调用方必须原样不动（不能当成「关闭」去删配置）。
@@ -299,14 +321,18 @@ export class VoiceManager {
   /** 供网关启动时注入的 TTS 环境变量（密钥只在这里出现）。 */
   async buildOpenClawTtsEnv(): Promise<Record<string, string>> {
     const settings = await this.loadSettings()
-    // 网关启动前确保热更文件存在且是最新音色（bridge 每次合成都会读它）
-    await this.writeBridgeSettingsFile(settings)
     const status = await this.secrets.status()
     const resolved = this.resolveConversationChannel({
       settings,
       hasTtsKey: status.tts.hasKey,
       hasCloneKey: status.clone.hasKey
     })
+    // 网关启动前确保热更文件存在且是最新音色（仅 bridge 需要；其它情况清掉，避免读到过期音色）
+    if (resolved.channel === 'bridge') {
+      await this.writeBridgeSettingsFile(settings)
+    } else {
+      await this.clearBridgeSettingsFile()
+    }
     if (!resolved.channel) return {}
     const key = await this.secrets.get(resolved.channel === 'bridge' ? 'tts' : 'clone')
     return buildOpenClawTtsEnv(

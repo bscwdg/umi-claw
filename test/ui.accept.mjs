@@ -929,11 +929,30 @@ await r.check('U18', 'claw store：spawn 前即显示「启动中」，就绪/�
     await startPromise
     assertEq(store.ready, false, '未就绪前 ready 必须为 false（关键：不能拿 running 当可用）')
     assertEq(store.starting, true, 'spawn 后、/health 前仍是启动中')
+    // 主进程推送：spawn 时刻 + 历史估算 → 阶段/ETA 必须跟着 statusChange 实时更新
+    store.setupListeners()
+    statusHandler?.({
+      running: true,
+      starting: true,
+      ready: false,
+      bootPhase: 'loading',
+      startedAt: Date.now(),
+      estimateStartupMs: 600_000
+    })
+    assertEq(store.phase, 'loading', '端口监听后阶段=加载渠道插件')
+    assertEq(store.phaseLabel, '加载渠道插件', '加载阶段文案')
+    assertEq(store.estimatedStartupMs, 600_000, 'statusChange 同步估算值')
+    assert(store.spawnedAt > 0, 'statusChange 同步 spawn 时刻（ETA 基准）')
+    assert(
+      store.etaRemainingSeconds !== undefined && store.etaRemainingSeconds > 0,
+      '加载阶段应显示「预计还需约 N」'
+    )
     resolveReady?.({ ready: true, elapsedMs: 1234 })
     await new Promise((resolve) => setTimeout(resolve, 0))
     assertEq(store.ready, true, 'waitReady 成功后 ready=true')
     assertEq(store.starting, false, '就绪后不再显示启动中')
     assertEq(store.startupMs, 1234, '记录启动耗时')
+    assertEq(store.phase, 'ready', '就绪后阶段=ready')
     // 场景 B：启动中用户主动停止 → 旧的 waitReady 结果必须作废，不能弹「启动失败」
     setActivePinia(createPinia())
     // 场景 A 的 start 桩是「手动 resolve」的一次性 promise，这里换成即成功（否则会复用未决 promise 挂死）

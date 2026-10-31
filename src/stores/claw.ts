@@ -32,9 +32,14 @@ export const useClawStore = defineStore('claw', () => {
   /** 预计剩余秒数（只在启动中且有历史时有效） */
   const etaRemainingSeconds = computed(() => {
     const est = estimatedStartupMs.value
-    if (!est || !starting.value) return undefined
-    return Math.max(0, Math.ceil((est - startingSeconds.value * 1000) / 1000))
+    const spawnAt = spawnedAt.value
+    // 估算的是 spawn→health；准备阶段（还没 spawn）不显示，避免把准备时间重复计入
+    if (!est || !starting.value || !spawnAt) return undefined
+    if (phase.value !== 'spawning' && phase.value !== 'loading') return undefined
+    return Math.max(0, Math.ceil((est - (now.value - spawnAt)) / 1000))
   })
+  /** main 侧记录的 spawn 时刻（ETA 基准：估算的是 spawn→health） */
+  const spawnedAt = ref<number | undefined>()
   /** 启动失败/超时原因（就绪探测结束后仍失败时给出） */
   const startupError = ref('')
   /** doctor --fix / 状态库迁移进行中（网关未起但非静止）：前端据此显示「正在修复配置…」 */
@@ -129,6 +134,7 @@ export const useClawStore = defineStore('claw', () => {
     starting.value = !!status.starting
     startupMs.value = status.startupMs
     if (status.bootPhase) phase.value = status.bootPhase
+    if (status.running && typeof status.startedAt === 'number') spawnedAt.value = status.startedAt
     if (typeof status.estimateStartupMs === 'number') estimatedStartupMs.value = status.estimateStartupMs
     if (!status.running) {
       resetReady()
@@ -177,6 +183,7 @@ export const useClawStore = defineStore('claw', () => {
   function beginStarting(): number {
     readyEpoch += 1
     phase.value = 'preparing'
+    spawnedAt.value = undefined
     running.value = true
     startedAt.value = Date.now()
     starting.value = true
@@ -242,6 +249,7 @@ export const useClawStore = defineStore('claw', () => {
       if (typeof data.starting === 'boolean') starting.value = data.starting
       if (typeof data.startupMs === 'number') startupMs.value = data.startupMs
       if (data.bootPhase) phase.value = data.bootPhase
+      if (starting.value && typeof data.startedAt === 'number') spawnedAt.value = data.startedAt
       if (typeof data.estimateStartupMs === 'number') estimatedStartupMs.value = data.estimateStartupMs
       // 启动中不要把计时基准换成 main 的 spawn 时间：否则「已等 N 秒」会在 spawn 时被清零
       if (typeof data.startedAt === 'number' && !starting.value) startedAt.value = data.startedAt
@@ -264,7 +272,7 @@ export const useClawStore = defineStore('claw', () => {
 
   return {
     running, pid, port, startedAt, ready, starting, startupMs, startupError, phase, phaseLabel,
-    estimatedStartupMs, etaRemainingSeconds,
+    estimatedStartupMs, etaRemainingSeconds, spawnedAt,
     maintenance, logs, uptime, startingSeconds,
     addLog, clearLogs, fetchStatus,
     start, stop, restart, trackReady, setupListeners

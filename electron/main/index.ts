@@ -1076,7 +1076,8 @@ function runExclusiveEnvTask<T>(
 function quitApp(): void {
   ;(app as any).isQuiting = true
   killAllTerminalSessions()
-  clawManager.stop().finally(() => app.quit())
+  // 按设置决定「停止网关」还是「保留网关后台运行」（保留时下次启动直接复用，跳过冷启动）
+  clawManager.handleAppQuit().finally(() => app.quit())
 }
 
 /**
@@ -1262,7 +1263,7 @@ function createTray(): void {
         label: '退出',
         click: () => {
           ; (app as any).isQuiting = true
-          clawManager.stop().finally(() => app.quit())
+          clawManager.handleAppQuit().finally(() => app.quit())
         }
       }
     ])
@@ -1995,7 +1996,9 @@ function setupLogForwarding(): void {
         ready: full.ready,
         starting: full.starting,
         startedAt: full.startedAt,
-        startupMs: full.startupMs
+        startupMs: full.startupMs,
+        bootPhase: full.bootPhase,
+        estimateStartupMs: full.estimateStartupMs
       })
       // 2.0 营销域：网关停止时播一句提示（eventId 可省，见 triggerVoiceAutoSpeak 签名）
       if (!running) void triggerVoiceAutoSpeak('OpenClaw 已停止')
@@ -2219,15 +2222,15 @@ app.whenReady().then(async () => {
   setupLogForwarding()
 
   // 若上次退出时按设置保留了网关（keepGatewayOnQuit），这里直接复用：跳过冷启动。
-  // 不满足条件（设置关闭 / 进程不在 / /health 不通）时静默返回，走正常启动流程。
-  void clawManager.adoptRunningGateway().catch(() => undefined)
+  // 必须 await 后再决定 autoStart，否则会与 adopt 竞态（双网关 / ghost 清理误杀被复用的网关）。
+  const adoptedGateway = await clawManager.adoptRunningGateway().catch(() => false)
 
   // 启动时同步开机自启项，保证与配置一致
   const startupConfig = configManager.getConfig()
   applyLoginItemSettings(startupConfig.launchOnBoot)
 
   // 自动启动服务：应用启动时自动运行 OpenClaw（同样受用户协议闸门约束）
-  if (startupConfig.autoStart) {
+  if (startupConfig.autoStart && !adoptedGateway) {
     assertConsent()
       .then(() => clawManager.start())
       .catch((err) => {
@@ -2320,7 +2323,8 @@ async function runQuitCleanup(): Promise<void> {
   } catch (e) {
     console.error('[Main] 停止注册表子进程失败:', e)
   }
-  await step('停止 OpenClaw', () => clawManager.stop(), 5000)
+  // 与 quitApp/托盘退出共用同一幂等入口：开启「退出保留网关」时这里不会杀网关
+  await step('停止或保留 OpenClaw', () => clawManager.handleAppQuit(), 8000)
 
   quitCleanupDone = true
   app.quit()

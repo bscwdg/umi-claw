@@ -269,3 +269,13 @@ Invoke-WebRequest -Uri 'http://127.0.0.1:3213/health' -UseBasicParsing | Select-
   Key/tts 模式/通道变更仍需重启（Key 不落盘）。
 - **退出保留网关（默认关）**：开启后网关 detached + 文件日志，退出不停；下次启动检测 `/health` 直接复用。
 - **启动 ETA**：记录最近 5 次 spawn→health，取最近 3 次中位数，Dashboard 显示「预计还需约 N」。
+
+### 8.4 审查后修正（2026-10-31）
+
+- 退出保留网关：三条退出路径统一走 `handleAppQuit()`（此前是死代码）；开启保留时退出不停网关。
+- statusChange 真正广播 `bootPhase` / `estimateStartupMs`；preparing 阶段 `getStatus` 不再显示 idle。
+- adopt 加固：端口 owner pid 校验、openclaw 版本校验、加载中网关最多等 3 分钟、健康巡检、taskkill 后回读存活。
+- 日志 tail 改增量读 + 半行 carry + 截断检测 + stdout/stderr 分开；adopt 从末尾 64KB 开始。
+- 热更文件仅 bridge 通道存在；`OPENCLAW_GATEWAY_STARTUP_TRACE` 默认关（`CLAW_OC_STARTUP_TRACE=1` 开启）；
+  fs-safe 覆盖值白名单；V8 编译缓存 >512MB 后台清理。
+- 注：`tts-bridge.json` 的 POSIX 0600 在 Windows 不生效（文件不含 Key）。

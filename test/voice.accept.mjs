@@ -1148,6 +1148,7 @@ await recorder.check('hot-speaker', 'bridge 热更：环境变量带设置文件
     now: () => new Date('2026-10-29T10:00:00+08:00').getTime(),
     logger: () => undefined
   })
+  await manager.updateSettings({ conversationTts: 'always', conversationChannel: 'bridge' })
   await manager.buildOpenClawTtsEnv()
   const raw = readFileSync(settingsFile, 'utf-8')
   const hot = JSON.parse(raw)
@@ -1160,6 +1161,17 @@ await recorder.check('hot-speaker', 'bridge 热更：环境变量带设置文件
   await manager.buildOpenClawTtsEnv()
   const hot2 = JSON.parse(readFileSync(settingsFile, 'utf-8'))
   assertEq(hot2.speaker, 'zh_male_sunwukong_uranus_bigtts', '保存后热更文件立即更新')
+
+  // 切到 volcengine 通道后：bridge 热更文件应被清掉（避免 bridge 读到过期音色）
+  await manager.updateSettings({ conversationChannel: 'volcengine' })
+  await manager.buildOpenClawTtsEnv()
+  let stillThere = true
+  try {
+    readFileSync(settingsFile)
+  } catch {
+    stillThere = false
+  }
+  assertEq(stillThere, false, '非 bridge 通道应清理热更文件')
 
   // bridge 脚本必须读该文件（否则热更无效）
   const bridgeSrc = readFileSync(join(repoRoot, 'resources/voice/volc-tts.mjs'), 'utf-8')

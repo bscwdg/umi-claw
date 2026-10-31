@@ -732,9 +732,12 @@ await rec.check('keep-gateway', '保留网关：复用健康的后台网关 + �
   const cm = makeCm(true)
   cm._fetchHealthOk = async () => true
   cm._isPidAlive = () => true
-  cm._startGatewayLogTail = () => undefined
-  cm._stopGatewayLogTail = () => undefined
-  cm._killAdoptedProcess = async () => undefined
+  cm._findPidListeningOnPort = async () => 4321
+  cm._startGatewayLogTails = () => undefined
+  cm._stopGatewayLogTails = () => undefined
+  cm._startAdoptedHealthWatch = () => undefined
+  cm._stopAdoptedHealthWatch = () => undefined
+  cm._killAdoptedProcess = async () => true
   const adopted = await cm.adoptRunningGateway()
   assertEq(adopted, true, '应成功复用后台网关')
   const st = cm.getStatus()
@@ -750,6 +753,14 @@ await rec.check('keep-gateway', '保留网关：复用健康的后台网关 + �
   const cmOff = makeCm(false)
   cmOff._fetchHealthOk = async () => true
   assertEq(await cmOff.adoptRunningGateway(), false, '设置关闭时绝不复用')
+
+  // 2b) 端口 owner pid 与记录不一致 → 拒绝复用（防 pid 复用误杀）
+  const cmMismatch = makeCm(true)
+  cmMismatch._fetchHealthOk = async () => true
+  cmMismatch._isPidAlive = () => true
+  cmMismatch._findPidListeningOnPort = async () => 9999
+  cmMismatch._clearGatewayRuntime = () => undefined
+  assertEq(await cmMismatch.adoptRunningGateway(), false, '端口 owner 不一致时不得复用')
 
   // 3) 退出：开启保留时不停网关；关闭时照常 stop
   const cmKeep = makeCm(true)
@@ -785,6 +796,12 @@ await rec.check('eta-wiring', 'ETA 接线：状态里有估算值、store/Dashbo
   assert(/etaRemainingSeconds/.test(dashSrc), 'Dashboard 展示预计剩余')
   assert(/keepGatewayOnQuit/.test(cfgView), '设置页提供「退出保留网关」开关')
   assert(/adoptRunningGateway/.test(clawSrc), '启动时复用后台网关')
+  // 生产接线：所有退出路径必须走 handleAppQuit（否则保留网关是死代码）
+  const idxSrc = readFileSync(join(process.cwd(), 'electron', 'main', 'index.ts'), 'utf-8')
+  const quitCalls = (idxSrc.match(/clawManager\.handleAppQuit\(\)/g) || []).length
+  assert(quitCalls >= 3, `quitApp/托盘/before-quit 都要走 handleAppQuit（实际 ${quitCalls} 处）`)
+  assert(/bootPhase: full\.bootPhase/.test(idxSrc), 'statusChange 必须推送 bootPhase')
+  assert(/estimateStartupMs: full\.estimateStartupMs/.test(idxSrc), 'statusChange 必须推送 estimateStartupMs')
   return '估算值/展示/开关/复用 接线齐全'
 })
 // ── 结果 ─────────────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import {
   rmSync,
   readFileSync,
   readdirSync,
+  statSync,
   writeFileSync,
   openSync,
   readSync,
@@ -214,10 +215,18 @@ export class ClawManager extends EventEmitter {
   private adoptedPid?: number
   /** 本次实例是否以 detached + 文件日志方式启动（退出保留网关的前提） */
   private detachedChild = false
-  /** 文件日志 tail（detached 模式下子进程 stdout/stderr 写文件，面板从文件取日志） */
+  /** 文件日志 tail（detached 模式下 stdout/stderr 分别写文件，面板从文件取日志） */
   private logTailTimer?: ReturnType<typeof setInterval>
-  private logTailPath?: string
-  private logTailOffset = 0
+  private logTails: Array<{
+    file: string
+    type: 'stdout' | 'stderr'
+    offset: number
+    carry: string
+  }> = []
+  /** 复用后台网关后的低频健康巡检 */
+  private adoptedHealthTimer?: ReturnType<typeof setInterval>
+  /** 退出处理幂等标记（quitApp 与 before-quit 都会调用 handleAppQuit） */
+  private quitHandled = false
   private configManager: ConfigManager
   private isStopping = false
   // 网关退出码 78（状态库需要 schema 迁移）时的自动修复状态
@@ -476,6 +485,10 @@ export class ClawManager extends EventEmitter {
    * 真正的 spawn 在 _spawnGateway，同一时刻只允许一个 in-flight。
    */
   async start(): Promise<{ success: boolean; error?: string; warning?: string }> {
+    // 复用中的后台网关已就绪：不再 spawn（否则会撞端口/被 ghost 清理误杀）
+    if (this.adoptedPid !== undefined) {
+      return { success: true }
+    }
     if (this.process) {
       return { success: false, error: 'OpenClaw 已在运行中' }
     }
@@ -664,12 +677,19 @@ export class ClawManager extends EventEmitter {
       // 官方启动阶段 trace：在日志里给出 plugins.gateway-load.plugin.<id> 的
       // configValidation / artifactPreparation / source-capture+load / register 分项耗时，
       // 用于定位「插件物化慢」的确切环节（只写日志，不改变行为）。
-      OPENCLAW_GATEWAY_STARTUP_TRACE: '1',
+      // 官方启动 trace：默认关闭（日志量大）；排障时用 CLAW_OC_STARTUP_TRACE=1 打开
+      ...(process.env.CLAW_OC_STARTUP_TRACE === '1' ? { OPENCLAW_GATEWAY_STARTUP_TRACE: '1' } : {}),
       // 实验开关：fs-safe 走 JS 兜底（native 会对每次文件操作做 identity/ACL 校验，
       // 官方文档说 strict-mode 的额外校验 "can be slower"）。用 per-plugin trace 对比
       // feishu 的 loadMs 是否下降；默认写 'auto'，实验期间用 'off'。
       // 注：off 会让 Windows 安全凭证读取（SecretRef/GitHub 身份）不可用——本应用当前不依赖。
-      OPENCLAW_FS_SAFE_NATIVE_MODE: process.env.CLAW_FS_SAFE_NATIVE_MODE ?? 'auto',
+      // 覆盖值必须白名单，避免非法值让网关启动失败
+      OPENCLAW_FS_SAFE_NATIVE_MODE: (() => {
+        const override = process.env.CLAW_FS_SAFE_NATIVE_MODE
+        return override === 'auto' || override === 'off' || override === 'require'
+          ? override
+          : 'auto'
+      })(),
       GATEWAY_MODE: 'local',
       gateway__mode: 'local',
       NODE_CONFIG_DIR: targetConfigDir
@@ -704,17 +724,22 @@ export class ClawManager extends EventEmitter {
     // 否则 App 退出后管道关闭，网关写日志会中断/崩溃。默认关闭，行为与原来完全一致。
     const keepOnQuit = this.configManager.getConfig().keepGatewayOnQuit === true
     const gatewayLogFile = join(dataDir, 'logs', 'openclaw-gateway.log')
+    const gatewayErrFile = join(dataDir, 'logs', 'openclaw-gateway.err.log')
     let gatewayLogFd: number | undefined
+    let gatewayErrFd: number | undefined
     if (keepOnQuit) {
       try {
         mkdirSync(dirname(gatewayLogFile), { recursive: true })
         writeFileSync(gatewayLogFile, '')
+        writeFileSync(gatewayErrFile, '')
         gatewayLogFd = openSync(gatewayLogFile, 'a')
+        gatewayErrFd = openSync(gatewayErrFile, 'a')
       } catch {
         gatewayLogFd = undefined
+        gatewayErrFd = undefined
       }
     }
-    const detached = keepOnQuit && gatewayLogFd !== undefined
+    const detached = keepOnQuit && gatewayLogFd !== undefined && gatewayErrFd !== undefined
 
     try {
       this.process = spawn(nodePath, [
@@ -727,16 +752,21 @@ export class ClawManager extends EventEmitter {
         cwd: openClawPaths.installDir(dataDir),
         shell: false,
         detached,
-        stdio: detached ? ['ignore', gatewayLogFd!, gatewayLogFd!] : ['pipe', 'pipe', 'pipe']
+        stdio: detached
+          ? ['ignore', gatewayLogFd!, gatewayErrFd!]
+          : ['pipe', 'pipe', 'pipe']
       })
-      if (gatewayLogFd !== undefined) {
+      // 父进程只需要自己的副本；子进程已继承句柄。
+      for (const fd of [gatewayLogFd, gatewayErrFd]) {
+        if (fd === undefined) continue
         try {
-          closeSync(gatewayLogFd)
+          closeSync(fd)
         } catch {
           /* ignore */
         }
-        gatewayLogFd = undefined
       }
+      gatewayLogFd = undefined
+      gatewayErrFd = undefined
       this.detachedChild = detached
 
       this.startedAt = Date.now()
@@ -745,11 +775,18 @@ export class ClawManager extends EventEmitter {
       if (detached) {
         // 让 App 退出时不再阻塞；日志改从文件 tail（面板照常有输出）
         this.process.unref()
-        this._startGatewayLogTail(gatewayLogFile)
+        this._startGatewayLogTails([
+          { file: gatewayLogFile, type: 'stdout' },
+          { file: gatewayErrFile, type: 'stderr' }
+        ])
+        this._writeGatewayRuntime(gatewayLogFile)
+        this._scheduleNodeCompileCacheCleanup(dataDir)
+      } else {
+        // 非保留模式：清掉可能遗留的陈旧运行时描述
+        this._clearGatewayRuntime()
       }
       this._startReadyProbe()
       this._setupProcessEvents(this.process!)
-      this._writeGatewayRuntime(gatewayLogFile)
       this.emit('statusChange', true, this.port)
       if (this.healthyResetTimer) clearTimeout(this.healthyResetTimer)
       this.healthyResetTimer = setTimeout(() => {
@@ -759,9 +796,10 @@ export class ClawManager extends EventEmitter {
       const warning = [peerLinkWarning, syncTransientWarning].filter(Boolean).join('；') || undefined
       return { success: true, warning }
     } catch (err: any) {
-      if (gatewayLogFd !== undefined) {
+      for (const fd of [gatewayLogFd, gatewayErrFd]) {
+        if (fd === undefined) continue
         try {
-          closeSync(gatewayLogFd)
+          closeSync(fd)
         } catch {
           /* ignore */
         }
@@ -783,15 +821,20 @@ export class ClawManager extends EventEmitter {
       const pid = this.adoptedPid
       this.adoptedPid = undefined
       this.isStopping = true
-      await this._killAdoptedProcess(pid)
+      this._stopAdoptedHealthWatch()
+      const killed = await this._killAdoptedProcess(pid)
       this._clearGatewayRuntime()
-      this._stopGatewayLogTail()
+      this._stopGatewayLogTails()
       this.ready = false
       this.readyAt = undefined
       this.bootPhase = 'idle'
       this.startedAt = undefined
       this.isStopping = false
       this.emit('statusChange', false)
+      if (!killed) {
+        this._addLog(`停止复用的后台网关失败（PID ${pid} 仍存活）`, 'stderr')
+        return { success: false }
+      }
       this._addLog('已停止复用的后台网关', 'system')
       return { success: true }
     }
@@ -890,30 +933,41 @@ export class ClawManager extends EventEmitter {
     }
   }
 
-  /** detached 模式下从文件 tail 网关日志（子进程 stdout/stderr 不再走管道） */
-  private _startGatewayLogTail(file: string): void {
-    this._stopGatewayLogTail()
-    this.logTailPath = file
-    this.logTailOffset = 0
-    this._drainGatewayLogTail()
-    this.logTailTimer = setInterval(() => this._drainGatewayLogTail(), 400)
+  /** detached 模式下从文件 tail 网关日志（stdout/stderr 分开；保留半行 carry、检测截断） */
+  private _startGatewayLogTails(
+    tails: Array<{ file: string; type: 'stdout' | 'stderr' }>,
+    fromEndBytes = 0
+  ): void {
+    this._stopGatewayLogTails()
+    this.logTails = tails.map(({ file, type }) => {
+      let offset = 0
+      try {
+        const size = statSync(file).size
+        offset = fromEndBytes > 0 ? Math.max(0, size - fromEndBytes) : 0
+      } catch {
+        offset = 0
+      }
+      return { file, type, offset, carry: '' }
+    })
+    this._drainGatewayLogTails()
+    this.logTailTimer = setInterval(() => this._drainGatewayLogTails(), 400)
   }
 
-  private _stopGatewayLogTail(): void {
+  private _stopGatewayLogTails(): void {
     if (this.logTailTimer) {
       clearInterval(this.logTailTimer)
       this.logTailTimer = undefined
     }
-    this.logTailPath = undefined
+    this.logTails = []
   }
 
-  /** 把 pino JSON 行还原成可读文本（解析失败就原样输出） */
+  /** 把 pino JSON 行还原成可读文本（兼容 msg 字段；解析失败原样输出） */
   private _formatGatewayLogLine(line: string): string {
     const text = line.trim()
     if (!text.startsWith('{')) return text
     try {
       const parsed = JSON.parse(text) as Record<string, unknown>
-      const msg = parsed['1']
+      const msg = parsed['1'] ?? parsed.msg
       if (typeof msg === 'string') return msg
       if (msg && typeof msg === 'object') return JSON.stringify(msg)
       return text
@@ -922,32 +976,80 @@ export class ClawManager extends EventEmitter {
     }
   }
 
-  private _drainGatewayLogTail(): void {
-    const file = this.logTailPath
-    if (!file) return
-    try {
-      const buf = readFileSync(file)
-      if (buf.length <= this.logTailOffset) return
-      const chunk = buf.subarray(this.logTailOffset).toString('utf-8')
-      this.logTailOffset = buf.length
-      for (const line of chunk.split('\n')) {
-        if (!line.trim()) continue
-        const text = this._formatGatewayLogLine(line)
-        this._addLog(text, 'stdout')
-        this.emit('log', text, 'stdout')
+  /** 增量读取（stat 判增长 + read(offset)，不再整文件 readFileSync） */
+  private _drainGatewayLogTails(): void {
+    for (const tail of this.logTails) {
+      try {
+        const size = statSync(tail.file).size
+        // 文件被截断/轮转：从头重读，丢弃半个旧行
+        if (size < tail.offset) {
+          tail.offset = 0
+          tail.carry = ''
+        }
+        if (size <= tail.offset) continue
+        const want = Math.min(size - tail.offset, 1024 * 1024)
+        const fd = openSync(tail.file, 'r')
+        try {
+          const buf = Buffer.alloc(want)
+          const read = readSync(fd, buf, 0, want, tail.offset)
+          tail.offset += read
+          const chunk = tail.carry + buf.subarray(0, read).toString('utf-8')
+          const lines = chunk.split('\n')
+          tail.carry = lines.pop() ?? ''
+          for (const line of lines) {
+            if (!line.trim()) continue
+            const text = this._formatGatewayLogLine(line)
+            this._addLog(text, tail.type)
+            this.emit('log', text, tail.type)
+          }
+        } finally {
+          closeSync(fd)
+        }
+      } catch {
+        /* 文件暂不可读：下个 tick 继续 */
       }
-    } catch {
-      /* 文件被轮转/删除时忽略，下个 tick 继续 */
     }
   }
 
-  /** 结束复用的后台网关（独立方法便于验收里打桩） */
-  private async _killAdoptedProcess(pid: number): Promise<void> {
+  /** V8 编译缓存无上限；启动后后台做一次上限清理（超过 512MB 清空） */
+  private _scheduleNodeCompileCacheCleanup(dataDir: string): void {
+    const timer = setTimeout(() => {
+      try {
+        const dir = join(dataDir, 'cache', 'node-compile')
+        let total = 0
+        const walk = (p: string, depth: number): void => {
+          if (depth > 6) return
+          for (const entry of readdirSync(p, { withFileTypes: true })) {
+            const full = join(p, entry.name)
+            if (entry.isDirectory()) walk(full, depth + 1)
+            else {
+              try {
+                total += statSync(full).size
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        }
+        walk(dir, 0)
+        if (total > 512 * 1024 * 1024) {
+          rmSync(dir, { recursive: true, force: true })
+          this._addLog(`[gateway] 已清理过大的 V8 编译缓存（${Math.round(total / 1024 / 1024)}MB）`, 'system')
+        }
+      } catch {
+        /* 清理 best-effort */
+      }
+    }, 5000)
+    ;(timer as { unref?: () => void }).unref?.()
+  }
+  /** 结束复用的后台网关（独立方法便于验收里打桩）；返回是否已确认退出 */
+  private async _killAdoptedProcess(pid: number): Promise<boolean> {
     try {
       await execFileAsync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true })
     } catch {
-      /* 进程可能已退出 */
+      /* 进程可能已退出，下面用存活检测判定 */
     }
+    return !this._isPidAlive(pid)
   }
 
   private _isPidAlive(pid: number): boolean {
@@ -959,9 +1061,77 @@ export class ClawManager extends EventEmitter {
     }
   }
 
+  /** 读取当前安装的 openclaw 版本（用于拒绝跨版本复用旧后台网关） */
+  private _readOpenClawVersion(dataDir: string): string | undefined {
+    try {
+      const pkg = join(dataDir, 'openclaw', 'node_modules', 'openclaw', 'package.json')
+      const version = JSON.parse(readFileSync(pkg, 'utf-8')).version
+      return typeof version === 'string' ? version : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /** 端口当前被哪个 PID 监听（复用前身份校验，避免 pid 复用误认/误杀） */
+  private async _findPidListeningOnPort(port: number): Promise<number | undefined> {
+    try {
+      if (process.platform === 'win32') {
+        const { stdout } = await execFileAsync('netstat', ['-ano', '-p', 'tcp'], { windowsHide: true })
+        for (const line of stdout.split('\n')) {
+          if (!/LISTENING/i.test(line)) continue
+          const cols = line.trim().split(/\s+/)
+          const local = cols[1] ?? ''
+          const pid = Number(cols[cols.length - 1])
+          if (!local.endsWith(`:${port}`)) continue
+          if (Number.isFinite(pid) && pid > 0) return pid
+        }
+        return undefined
+      }
+      const { stdout } = await execFileAsync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], {
+        windowsHide: true
+      })
+      const pid = Number(stdout.split('\n').find((v) => v.trim()))
+      return Number.isFinite(pid) && pid > 0 ? pid : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  private _startAdoptedHealthWatch(): void {
+    this._stopAdoptedHealthWatch()
+    this.adoptedHealthTimer = setInterval(() => {
+      if (this.adoptedPid === undefined) return
+      void this._fetchHealthOk(1500).then((ok) => {
+        if (!ok && this.adoptedPid !== undefined) {
+          this._addLog('[gateway] 复用的后台网关失去响应，已标记为未运行（可重新启动）', 'stderr')
+          this.adoptedPid = undefined
+          this.ready = false
+          this.readyAt = undefined
+          this.bootPhase = 'idle'
+          this.startedAt = undefined
+          this._clearGatewayRuntime()
+          this._stopGatewayLogTails()
+          this._stopAdoptedHealthWatch()
+          this.emit('statusChange', false)
+        }
+      })
+    }, 30_000)
+    ;(this.adoptedHealthTimer as { unref?: () => void }).unref?.()
+  }
+
+  private _stopAdoptedHealthWatch(): void {
+    if (this.adoptedHealthTimer) {
+      clearInterval(this.adoptedHealthTimer)
+      this.adoptedHealthTimer = undefined
+    }
+  }
+
   /**
-   * 启动时复用「上次退出时保留的网关」：设置开启 + 进程还活着 + /health 200 才接管，
-   * 直接跳过冷启动（渠道插件物化等）。接管后 stop() 用 taskkill 结束它。
+   * 启动时复用「上次退出时保留的网关」。
+   *
+   * 安全前置：设置开启 + 描述 pid 存活 + **端口 owner pid 与描述一致**
+   * （防 pid 被系统复用后误认 / taskkill 误杀）+ openclaw 版本一致；
+   * 若网关仍在 loading（pid 活但 /health 未通），最多等 3 分钟，超时才杀掉冷启动。
    */
   async adoptRunningGateway(): Promise<boolean> {
     try {
@@ -970,22 +1140,75 @@ export class ClawManager extends EventEmitter {
       this.port = Number(cfg.port) > 0 ? Number(cfg.port) : 3213
       const desc = JSON.parse(readFileSync(this._gatewayRuntimePath, 'utf-8')) as {
         pid?: number
+        port?: number
         startedAt?: number
         logFile?: string
+        openclawVersion?: string
       }
       if (!desc || typeof desc.pid !== 'number') return false
-      if (!this._isPidAlive(desc.pid)) {
+      if (Number(desc.port) !== this.port) {
+        this._addLog('[gateway] 陈旧的后台网关描述（端口不一致），已清理', 'stderr')
         this._clearGatewayRuntime()
         return false
       }
-      if (!(await this._fetchHealthOk(1500))) return false
+      const currentVersion = this._readOpenClawVersion(this.configManager.getDataDir())
+      if (desc.openclawVersion && currentVersion && desc.openclawVersion !== currentVersion) {
+        this._addLog(
+          `[gateway] 后台网关版本不一致（${desc.openclawVersion} → ${currentVersion}），不复用`,
+          'stderr'
+        )
+        if (this._isPidAlive(desc.pid)) await this._killAdoptedProcess(desc.pid)
+        this._clearGatewayRuntime()
+        return false
+      }
+      if (!this._isPidAlive(desc.pid)) {
+        this._addLog('[gateway] 上次保留的网关进程已不在，走冷启动', 'system')
+        this._clearGatewayRuntime()
+        return false
+      }
+      const ownerPid = await this._findPidListeningOnPort(this.port)
+      if (ownerPid !== undefined && ownerPid !== desc.pid) {
+        this._addLog(
+          `[gateway] 端口 ${this.port} 的监听进程与记录不一致（${ownerPid} ≠ ${desc.pid}），不复用`,
+          'stderr'
+        )
+        this._clearGatewayRuntime()
+        return false
+      }
+
+      const deadline = Date.now() + 3 * 60_000
+      let ok = await this._fetchHealthOk(1500)
+      while (!ok && Date.now() < deadline) {
+        if (!this._isPidAlive(desc.pid)) break
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+        ok = await this._fetchHealthOk(1500)
+      }
+      if (!ok) {
+        this._addLog('[gateway] 保留的网关未在预期时间内就绪，将停止它并冷启动', 'stderr')
+        await this._killAdoptedProcess(desc.pid)
+        this._clearGatewayRuntime()
+        return false
+      }
+
       this.adoptedPid = desc.pid
       this.startedAt = typeof desc.startedAt === 'number' ? desc.startedAt : Date.now()
       this.ready = true
       this.readyAt = Date.now()
       this.bootPhase = 'ready'
       this.startupDurationRecorded = true
-      if (typeof desc.logFile === 'string') this._startGatewayLogTail(desc.logFile)
+      if (typeof desc.logFile === 'string') {
+        const errFile = desc.logFile.endsWith('.log')
+          ? `${desc.logFile.slice(0, -4)}.err.log`
+          : `${desc.logFile}.err`
+        this._startGatewayLogTails(
+          [
+            { file: desc.logFile, type: 'stdout' },
+            { file: errFile, type: 'stderr' }
+          ],
+          64 * 1024
+        )
+      }
+      this._startAdoptedHealthWatch()
       this._addLog('[gateway] 检测到上次退出时保留的网关，已直接复用（跳过冷启动）', 'system')
       this.emit('statusChange', true, this.port)
       return true
@@ -996,14 +1219,17 @@ export class ClawManager extends EventEmitter {
 
   /**
    * App 退出前的网关处理：开启「退出保留网关」时让 detached 子进程继续跑
-   * （下次启动由 adoptRunningGateway 复用）；否则照旧停止。
+   * （下次启动由 adoptRunningGateway 复用）；否则照旧停止。幂等：quitApp 与 before-quit 都会调。
    */
   async handleAppQuit(): Promise<void> {
+    if (this.quitHandled) return
+    this.quitHandled = true
     const keep = this.configManager.getConfig().keepGatewayOnQuit === true
     const canKeep = keep && (this.adoptedPid !== undefined || (this.detachedChild && !!this.process))
     if (canKeep) {
       this._addLog('[gateway] 已按设置保留网关在后台运行（下次启动直接复用，跳过冷启动）', 'system')
-      this._stopGatewayLogTail()
+      this._stopGatewayLogTails()
+      this._stopAdoptedHealthWatch()
       try {
         this.process?.unref()
       } catch {
@@ -1240,12 +1466,22 @@ export class ClawManager extends EventEmitter {
       // doctor --fix / 状态库迁移进行中：网关虽未起，但也不是静止，
       // 前端据此把「启动中」细化为「正在修复配置…」，避免用户以为卡死重复点击。
       maintenance: this.maintenanceActive,
-      starting: (!!this.process || this.adoptedPid !== undefined) && !this.ready,
+      // spawn 前的准备阶段（startInFlight 在途）同样算「启动中」，避免刷新窗口显示已停止
+      starting:
+        ((!!this.process || this.adoptedPid !== undefined) && !this.ready) ||
+        (this.startInFlight !== null && !this.ready),
       ready: (!!this.process || this.adoptedPid !== undefined) && this.ready,
       readyAt: this.readyAt,
       startupMs:
         this.startedAt && this.readyAt ? Math.max(0, this.readyAt - this.startedAt) : undefined,
-      bootPhase: this.process || this.adoptedPid !== undefined ? (this.ready ? 'ready' : this.bootPhase) : 'idle',
+      bootPhase:
+        this.process || this.adoptedPid !== undefined
+          ? this.ready
+            ? 'ready'
+            : this.bootPhase
+          : this.startInFlight !== null
+            ? 'preparing'
+            : 'idle',
       estimateStartupMs: this._estimateStartupMs()
     }
   }
@@ -1817,7 +2053,8 @@ export class ClawManager extends EventEmitter {
         this.detachedChild = false
         this.startedAt = undefined
         this._clearGatewayRuntime()
-        this._stopGatewayLogTail()
+        this._stopGatewayLogTails()
+        this._stopAdoptedHealthWatch()
         this._markNotReady()
         this.emit('statusChange', false)
       }
