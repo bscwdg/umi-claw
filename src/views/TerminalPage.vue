@@ -99,6 +99,9 @@ const sessionId = ref<string | null>(null);
 const cmdHistory = ref<string[]>([]);
 const inputEl = ref<HTMLInputElement | null>(null);
 
+// 扫码登录（渠道页带 qr=1）时用等比字号/行高，避免二维码被终端行高拉长
+const qrMode = route.query.qr === "1";
+
 function initTerm() {
   if (!termEl.value || term) return;
   term = new Terminal({

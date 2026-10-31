@@ -30,7 +30,8 @@ const ACCEPT = [
   ['knowledge', 'test/knowledge.accept.mjs'],
   ['wizard', 'test/wizard.accept.mjs'],
   ['voice', 'test/voice.accept.mjs'],
-  ['ui', 'test/ui.accept.mjs']
+  ['ui', 'test/ui.accept.mjs'],
+  ['qqbot', 'test/qqbot-channel.accept.mjs']
 ]
 // 全部单模块绿后
 const E2E = ['one-day e2e', 'test/one-day.e2e.mjs']
