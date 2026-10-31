@@ -1,6 +1,6 @@
-# Umi Claw 4.0 插件化架构规划（PLAN-4.0 v1.1）
+# Umi Claw 4.0 插件化架构规划（PLAN-4.0 v1.2）
 
-> 状态：v1.1 修订（2026-10-30）｜基线：**改为 `release/3.0`（`5f578e3`）合并 `release/2.0`（`4410888`）后的单体**，见 §〇.5；v1.0 的「以 1.0 为基线、分别迁 2.0/3.0」作废
+> 状态：v1.1 修订（2026-10-30）｜**v1.2 增补（2026-11-01）：见 §十八**（正文契约不改，只做状态校准、勘误与欠账登记）｜基线：**改为 `release/3.0`（`5f578e3`）合并 `release/2.0`（`4410888`）后的单体**，见 §〇.5；v1.0 的「以 1.0 为基线、分别迁 2.0/3.0」作废
 > 定位：以「合并后的单体」为宿主（Host），把 2.0 营销域、3.0 工作域做成**官方内置插件**，运行期启停，但**不开放第三方插件安装**。
 > 配套：冲突清单与仲裁依据 `doc/MERGE-INVENTORY.md`；v1.1 变更说明见 §十六
 > 关联：`PLAN-2.0.md`、`PLAN-3.0.md`、`PLAN-VOICE.md`
@@ -464,6 +464,82 @@ umi-claw/                       # 保持单个 package.json（延续 1.0/2.0/3.0
 3. **渲染端插件 UI 必须构建期装配**：禁止运行时从磁盘/网络加载可执行模块。
 4. **同名能力第二次出现即下沉**：第二个域需要同一能力时，先提升为 `services/*`，禁止复制（`contextEngine` / `knowledgeManager` 已各存在两份，是反面样本）。
 5. **契约先于代码**（继承 `PLAN-3.0.md` 硬规则 11）：新增 IPC 通道、插件贡献点，先改本文再动实现。
+
+---
+
+## 十八、v1.2 增补（2026-11-01）：状态校准、勘误与欠账登记
+
+> 本节是 v1.1 正文的**增补与勘误**，不修改既有契约条款；冲突时以本节记录为准，并回写正文（正文不动，保持冻结）。
+> 版本号统一：`package.json` / `package-lock.json` / `CHANGELOG.md` 均为 **4.0.0**（不再拆 4.1 等版本号，后续按工作包编号）。
+
+### 18.1 状态校准
+
+Phase 0.5 / 0 / 1 / 2 / 3 / 4 全部完成；此外有**三块计划外已落地**能力必须计入 4.0：
+
+| 工作流 | 落点 | 证据 |
+| --- | --- | --- |
+| 启动可靠性与性能（就绪态/阶段/ETA/webhook 标记/adopt 保留网关/日志 tail） | 宿主 | `doc/OPT-STARTUP-4.0.md`、`doc/PROGRESS-4.0.md` |
+| 语音（TTS / 复刻 / 预算 / 缓存 / 音色热更） | 宿主 `fish/voice` + `/voice` 页 | `PLAN-VOICE.md`、`voice.accept` |
+| QQ 机器人渠道（扫码/手填/群策略/受管安装） | 宿主渠道 | `doc/PROGRESS-4.0.md`（2026-11-01 条） |
+
+验收数字：`accept` 28 套 + e2e 11 + smoke 6 = **30 套**；`plugin.accept` **61 项**；双 typecheck 0 错、`npm run build` 通过。
+
+### 18.2 勘误（按此执行，正文暂不改）
+
+| 位置 | 原文 | 更正 |
+| --- | --- | --- |
+| §十三 第 6 条 | 「插件 renderer **动态加载**」 | 改为「**构建期装配**」，与 §5.2 / §十七 第 3 条一致；实际实现见 `scripts/gen-plugin-entries.mjs` |
+| §十一 Phase 4 | 「✅ 自动化完成」 | 自动化部分完成；**NSIS 真机安装/卸载仍未执行**（`doc/RUNBOOK-4.0.md` §6） |
+| §十二 成本表 | 35–47 人天 / 1250–2500 万 token | 为原估口径；启动优化、语音、QQ 三块为追加投入，实际成本复盘待补 |
+| §十五 开放问题 | 5 项 | 结论仍有效；新增问题见 §18.5 |
+
+### 18.3 承诺未落地 / 真欠账（登记，后续工作包处理）
+
+| 承诺（出处） | 现状证据 | 处理 |
+| --- | --- | --- |
+| knowledge / context 下沉为宿主服务（§〇.8、§十七 第 4 条） | **两份独立实现**：`electron/main/work/contextEngine.ts`(761 行)+`knowledgeManager.ts`(490 行)；`electron/main/marketing/contextEngine.ts`(776 行)+`knowledgeManager.ts`(807 行) | Phase 6 下沉，或明确修订 §〇.8 |
+| 类型化 IPC 生成（§5.3、WP3） | 未做；实际用 `manifest.channels` 租约 + 手写 preload | 明确延后（不阻塞后续） |
+| `ctx.secrets`（§4.2 / §8.2） | `kernel/services.ts` 的 `SERVICE_NAMES` 无 `secrets` | Phase 6 实现，或改契约 |
+| `contributes.settings` / `commands`（§7） | manifest 校验了，但无消费方 | 补实现或移除校验 |
+| 插件只经 `ctx`（§十七 第 2 条） | `plugins/work/main.ts`、`plugins/marketing/main.ts` 直接 import 宿主域模块；无 lint 兜底 | 加 lint 门禁 + 域代码迁 `plugins/<id>/main` |
+| 停用即中止在途 SSE（PROGRESS 记录） | marketing 已修；**work 未修**（只 `reminder.stop()`） | 4.0.x 修 |
+| 旧库导入失败可见 + 重试（PROGRESS 记录） | 只有 `ctx.logger`，插件管理页无入口 | 4.0.x 修 |
+| work 知识库原件写全局 `<dataDir>/knowledge` | 未迁移；RUNBOOK 未登记该目录 | 4.0.x 或文档登记 |
+
+### 18.4 发布工程清单（打 tag 前必须完成）
+
+1. 版本元数据对齐：`package.json` / `package-lock.json` / `CHANGELOG.md`（本次已完成 4.0.0）。
+2. 未提交文件入库：`PLAN-FISH-CHARACTER.md`、`doc/FEASIBILITY-FISH.md`、`doc/research/`、`resources/character/`（本次已完成）。
+3. 重新打包：`npm run build` → `electron-builder --win` 产出 **NSIS Setup**，并刷新 `release/win-unpacked`（否则 `packaged.smoke` S6 校验的是旧产物）。
+4. 四件套留档（结果必须晚于 HEAD）：双 typecheck / build / `npm run accept`（28 + e2e + smoke）/ `shooting` 复验。
+5. Windows NSIS 真机 7 步：干净目录安装、首启、启停插件、覆盖升级、卸载残留（`RUNBOOK-4.0.md` §6）。
+6. 文档同步：RUNBOOK 数字与「能力中心」措辞、README 4.0 章节、本文件 §十三/§十四。
+7. CI 门禁：`.github/workflows/release.yml` 目前只有 `npm ci` + build，**须补 typecheck + accept**，否则打 tag 无门禁。
+
+### 18.5 新增风险（并入 §十四）
+
+| 风险 | 等级 | 说明与对策 |
+| --- | --- | --- |
+| Windows 文件权限触发 OpenClaw 安全预检 | 高 | OpenClaw ≥ 2026.10.9 对 state 目录做安全预检，`data` 继承 `Authenticated Users:(M)` 时判为 untrusted staging → 网关启动失败（1.0 已实际发生）。4.0 的 `data` 已加固；**新装/便携目录需首启自检或给出明确修复指引** |
+| OpenClaw 版本漂移 | 中高 | 近两月约 20 个 patch，启动链路与插件契约都可能变；锁版本 + 升级前跑 accept |
+| 渠道插件被物化两次 | 中 | `channels.*` 与 `plugins.entries.*` 双写可能重复物化（实测部分启动 7 个 build）；沿 `OPT-STARTUP-4.0.md` §8.2 第 1 条验证，可能省约 1.5 分钟 |
+| `extraResources` 整目录带包 | 中 | `resources/` 下任何草稿/参考资源都会进安装包；内容包必须按版本管理（本次已把 `resources/character/` 入库） |
+| 验收留档时效 | 中 | accept 结果若早于 HEAD，「全绿」即假象；打 tag 前重跑留档 |
+
+### 18.6 新增开放问题与当前决定
+
+| # | 问题 | 当前处理 |
+| --- | --- | --- |
+| 6 | 大肥鱼角色工作流归属 | 单独立计划 `PLAN-FISH-CHARACTER.md`；目标 4.0 主线、**随宿主版本**、不单独发版；默认关闭 + dogfood |
+| 7 | macOS 签名 / 公证 | 4.0.0 只保构建通过，签名与公证另行评估 |
+| 8 | 自动更新通道 | 沿用宿主壳能力，本版不改 |
+| 9 | 文档职责 | 本文件=架构契约；`doc/PROGRESS-4.0.md`=施工日志；`doc/RUNBOOK-4.0.md`=运维手册；`doc/research/`=外部参考（不参与构建） |
+
+### 18.7 后续工作包（按能力编号，不再改版本号）
+
+- **Phase 5 · 角色工作流**：按 `PLAN-FISH-CHARACTER.md`（M0 验证 → C00b/C01–C10），宿主模块、默认关、失败只降级自身。
+- **Phase 6 · 架构欠账**：knowledge/context 下沉、插件域代码迁 `plugins/<id>/main`、lint 边界门禁、`ctx.secrets`、WP3 类型化 IPC、hostOps 拆细。
+- **Phase 7 · 后置能力**：M2（Live2D / 内容库 / 多端）与 M3（直播展示页），不阻塞主线。
 
 ---
 

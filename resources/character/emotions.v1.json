@@ -1,0 +1,73 @@
+{
+  "schema": "fish-emotion-kb/1",
+  "version": "1.0.0",
+  "note": "只标注本项目原创六态立绘；字段借鉴通用表情知识库结构。禁止填入第三方素材。",
+  "emotions": [
+    "开心", "喜欢", "害羞", "得意", "疑惑", "无语",
+    "难过", "生气", "疲惫", "搞怪", "拒绝", "打招呼", "卖萌", "其他"
+  ],
+  "states": {
+    "idle": { "label": "空闲", "file": "art/fish-idle.svg" },
+    "happy": { "label": "开心", "file": "art/fish-happy.svg" },
+    "sleepy": { "label": "犯困", "file": "art/fish-sleepy.svg" },
+    "sulk": { "label": "委屈", "file": "art/fish-sulk.svg" },
+    "eat": { "label": "吃白饭", "file": "art/fish-eat.svg" },
+    "caught": { "label": "被抓", "file": "art/fish-caught.svg" }
+  },
+  "actions": [
+    {
+      "id": "fish/idle-01",
+      "state": "idle",
+      "emotion": "其他",
+      "tags": ["发呆", "摸鱼", "待机"],
+      "use": "什么都没发生、她在发呆时",
+      "desc": "本鱼晃着尾巴，眼睛半睁，桌上的杯子冒着热气",
+      "unlockStage": 0
+    },
+    {
+      "id": "fish/happy-01",
+      "state": "happy",
+      "emotion": "开心",
+      "tags": ["高兴", "被夸", "好消息"],
+      "use": "被夸、拿到鱼干、听到好消息时",
+      "desc": "本鱼尾巴拍桌子，眯眼笑，头发跟着晃",
+      "unlockStage": 0
+    },
+    {
+      "id": "fish/sleepy-01",
+      "state": "sleepy",
+      "emotion": "疲惫",
+      "tags": ["困", "熬夜", "不想动"],
+      "use": "深夜、加班、她犯困时",
+      "desc": "本鱼托着腮，眼皮往下掉，脑袋一点一点",
+      "unlockStage": 0
+    },
+    {
+      "id": "fish/sulk-01",
+      "state": "sulk",
+      "emotion": "难过",
+      "tags": ["委屈", "被冷落", "求哄"],
+      "use": "被晾着、被凶了、想被哄时",
+      "desc": "本鱼把脸埋进胳膊里，只露出一点眼睛",
+      "unlockStage": 0
+    },
+    {
+      "id": "fish/eat-01",
+      "state": "eat",
+      "emotion": "开心",
+      "tags": ["吃白饭", "开饭", "满足"],
+      "use": "吃饭、投喂、聊到吃的时",
+      "desc": "本鱼端着比脸还大的饭碗，扒得很快",
+      "unlockStage": 0
+    },
+    {
+      "id": "fish/caught-01",
+      "state": "caught",
+      "emotion": "惊",
+      "tags": ["被抓", "摸鱼被拆穿", "心虚"],
+      "use": "摸鱼被拆穿、查岗时",
+      "desc": "本鱼猛地坐直，屏幕往旁边一挡，眼神乱飘",
+      "unlockStage": 0
+    }
+  ]
+}

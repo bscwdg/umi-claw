@@ -1,0 +1,59 @@
+{
+  "$comment": "把本文件复制为 config.json，并按需填写。只含占位符，不含任何真实密钥。",
+  "apiKey": "",
+  "balanceUrl": "",
+  "label": "大肥鱼",
+  "refreshSec": 30,
+  "scale": 1,
+  "snap": false,
+  "lowBalanceAlert": true,
+  "lowThreshold": 5,
+  "autoStart": false,
+  "idleTransparency": true,
+  "idleSec": 5,
+  "trackStats": true,
+  "mood": true,
+  "bounceAnim": true,
+  "sound": true,
+  "quotesEnabled": false,
+  "customImage": false,
+  "hotkey": true,
+  "trayIcon": true,
+  "showTime": true,
+  "displayMode": "all",
+  "alwaysOnTop": true,
+  "clickThrough": false,
+  "clickThroughOpacity": 0.6,
+  "chatHotkey": "Alt+Q",
+  "chatCodexPath": "",
+  "chatDir": "",
+  "chatModel": "",
+  "lookScreen": false,
+
+  "chatProvider": "codex",
+  "chatForceVision": null,
+  "chatThinking": true,
+  "chatLocalRoute": false,
+  "chatMcp": false,
+  "mcps": [
+    { "id": "web-search", "name": "网络搜索", "command": "COM:NODE_BIN", "args": ["COM:WEB_SEARCH_MCP"], "env": {}, "localReadOnly": false }
+    ,{ "id": "playwright", "name": "浏览器", "command": "npx", "args": ["@playwright/mcp@latest"], "env": {}, "localReadOnly": false }
+    ,{ "id": "windows-mcp", "name": "Windows 操控", "command": "COM:UVX_BIN", "args": ["windows-mcp", "serve"], "env": {}, "localReadOnly": false }
+    ,{ "id": "mysql", "name": "MySQL", "command": "npx", "args": ["-y", "@benborla29/mcp-server-mysql"], "env": { "MYSQL_HOST": "localhost", "MYSQL_PORT": "3306", "MYSQL_USER": "root", "MYSQL_PASS": "你的密码", "MYSQL_DB": "库名", "ALLOW_INSERT_OPERATION": "true", "ALLOW_UPDATE_OPERATION": "true", "ALLOW_DELETE_OPERATION": "true", "ALLOW_DDL_OPERATION": "true" }, "localReadOnly": false }
+  ],
+  "mcpServersOn": { "web-search": true, "playwright": true, "windows-mcp": true, "mysql": false },
+
+  "llmBaseUrl": "",
+  "llmApiKey": "",
+  "llmModel": "",
+  "localBaseUrl": "",
+
+  "localModelDir": "",
+  "localModelFilter": "qwen",
+  "localModelId": "ai model/ai models/qwen3.5-9b-q4_k_m.gguf",
+  "localModelPath": "COM:QWEN_MODEL",
+  "localModelMmproj": "COM:QWEN_MMPROJ",
+
+  "workspaceDir": "COM:WORKSPACE",
+  "localWhitelist": ["COM:WORKSPACE", "COM:USERHOME\\Documents", "COM:USERHOME\\Desktop"]
+}
