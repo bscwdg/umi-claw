@@ -745,6 +745,9 @@ await rec.check('keep-gateway', '保留网关：复用健康的后台网关 + �
   assertEq(st.running, true, '复用后 running=true')
   assertEq(st.ready, true, '复用后 ready=true')
   assertEq(st.pid, 4321, 'pid 来自运行时描述')
+  // 复用状态下 waitReady 必须也认「在运行」（4.0 已修，2.0 同步）
+  const readyWait = await cm.waitReady(1000)
+  assertEq(readyWait.ready, true, '复用状态下 waitReady 应返回就绪')
   await cm.stop()
   assertEq(cm.getStatus().running, false, 'stop 后不再运行')
   assert(!existsSync(runtimeFile), 'stop 后运行时描述应清理')

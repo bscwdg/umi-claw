@@ -1406,7 +1406,8 @@ export class ClawManager extends EventEmitter {
     timeoutMs = 15 * 60_000
   ): Promise<{ ready: boolean; elapsedMs: number; error?: string }> {
     const startAt = this.startedAt ?? Date.now()
-    if (!this.process) {
+    // 复用的后台网关（adoptedPid）不是本实例子进程，但同样算「在运行」。
+    if (!this.process && this.adoptedPid === undefined) {
       return { ready: false, elapsedMs: 0, error: 'OpenClaw 未在运行' }
     }
     if (this.ready) {
@@ -1414,7 +1415,7 @@ export class ClawManager extends EventEmitter {
     }
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
-      if (!this.process) {
+      if (!this.process && this.adoptedPid === undefined) {
         return {
           ready: false,
           elapsedMs: Date.now() - startAt,
