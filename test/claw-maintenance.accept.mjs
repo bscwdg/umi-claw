@@ -703,6 +703,7 @@ await rec.check('stats-pure', '启动耗时统计：追加/上限/中位数/估�
   assertEq(stats.medianOf([100, 300, 200]), 200, '奇数中位数')
   assertEq(stats.medianOf([100, 200]), 150, '偶数中位数取均值')
   assertEq(stats.estimateStartupMs([1000, 2000, 3000, 4000]), 3000, '取最近 3 次中位数')
+  assertEq(stats.estimateStartupMs([648404, 325047]), 325047, '样本不足 3 次时用最近一次（避免异常值带偏 ETA）')
   assertEq(stats.estimateStartupMs([]), undefined)
   const roundTrip = stats.parseStartupStats(stats.serializeStartupStats([1234, 5678]))
   assertDeepEq(roundTrip, [1234, 5678], '序列化/回读一致')

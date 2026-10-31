@@ -592,3 +592,11 @@ deepseek-v4-flash. Use --replace-path models.providers.umiclaw-deepseek.models t
 - **说明**：`tts-bridge.json` 在 Windows 上 POSIX `0600` 不生效（mode 位被忽略），文件本身不含 Key；
   上一版文档「0600」表述已修正。
 - **既有 flaky**：`shooting.accept` 的并发请求顺序断言偶发（`['0','2','1']`），与本轮改动无关，重跑通过。
+
+### 2026-10-31（续 2）· 启动耗时实测收敛：648s 为一次异常，325s 为当前最佳
+
+- 648s 那轮：`process.bootstrap` 184s、`main-session-recovery` 463s、feishu 物化 295s（≈15 文件/s）；
+  同时段机器在跑 typecheck/构建/全量验收，且是首次写 V8 编译缓存（2,264 文件/10.9MB）→ 整机争用。
+- 325s 那轮（缓存已热、无并发测试）：feishu 物化 170s、weixin 32s、wecom 40s；
+  剩余 ~80s 为 bootstrap/配置/状态；与 355/364s 对比说明 `NODE_COMPILE_CACHE` 有小幅正收益。
+- ETA 估算修正：样本 ≤2 次时用「最近一次」而不是中位数，避免 648s 这类一次性异常把预估拉高。

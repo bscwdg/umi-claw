@@ -37,12 +37,14 @@ export function medianOf(values: number[]): number | undefined {
 }
 
 /**
- * 估算本次启动总耗时：取最近 ESTIMATE_WINDOW 次的中位数。
- * 样本不足 2 次时返回单次值（1 次也给出参考，不更差）。
+ * 估算本次启动总耗时。
+ * - 样本 ≤2 次：用「最近一次」（机器状态可能刚变化，避免被一次异常值带偏）；
+ * - 样本 ≥3 次：取最近 ESTIMATE_WINDOW 次的中位数。
  */
 export function estimateStartupMs(durations: number[]): number | undefined {
   const normalized = normalizeStartupDurations(durations)
   if (!normalized.length) return undefined
+  if (normalized.length <= 2) return normalized[normalized.length - 1]
   return medianOf(normalized.slice(-ESTIMATE_WINDOW))
 }
 
