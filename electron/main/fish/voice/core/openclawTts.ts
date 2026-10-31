@@ -44,6 +44,8 @@ export interface OpenClawTtsInput {
   speakerVoice: string
   /** bridge 模式下的内置脚本绝对路径。 */
   bridgeScriptPath?: string
+  /** bridge 模式下「运行时热更设置」文件路径（音色/资源 ID 每次合成时读取）。 */
+  bridgeSettingsPath?: string
 }
 
 export function buildOpenClawTtsBlock(input: OpenClawTtsInput): OpenClawTtsBlock {
@@ -91,7 +93,9 @@ export function buildOpenClawTtsEnv(
     return {
       UMI_VOICE_PLAN_KEY: apiKey,
       UMI_VOICE_RESOURCE_ID: input.resourceId,
-      UMI_VOICE_SPEAKER: input.speakerVoice
+      UMI_VOICE_SPEAKER: input.speakerVoice,
+      // 音色/资源 ID 的热更文件：bridge 每次合成时重新读取（改音色不必重启网关）
+      ...(input.bridgeSettingsPath ? { UMI_VOICE_SETTINGS_FILE: input.bridgeSettingsPath } : {})
     }
   }
   return {
