@@ -548,6 +548,8 @@ unlocks = { address: 2, habit: ['摸鱼','讨Token'], room: 1, secret: 0 }
 
 ### 10.1 拍板项
 
+> **2026-11-01 已定**：以下 8 项均由用户确认，按 `PLAN-FISH-CHARACTER.md` §十（D1–D10）执行——QQ 按普通功能处理（不做资质闸门）、入站语音 STT 支持、上游开源素材按许可入包 + 支持用户导入、知识库只用既有 Obsidian（不新增）。
+
 1. **她是什么关系？** 陪伴（朋友/妹妹/恋人倾向）——决定 SOUL.md 的边界与主动性尺度。建议首发「嘴硬心软的搭子以上、恋人未满」，不做强恋爱线。
 2. **独立 agent 还是复用 `main`？** 推荐独立 `feiyu`（人格/记忆隔离）；多 agent 需配 dreaming 执行 owner（`docs/concepts/dreaming.md:216-222`）。
 3. **形象路线**：MVP 六态立绘（快）还是直接 Live2D（贵但质变）？建议六态先行。

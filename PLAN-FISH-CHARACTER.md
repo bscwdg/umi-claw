@@ -1,7 +1,8 @@
 # PLAN-FISH-CHARACTER（v1.1 草案）— 大肥鱼虚拟角色开发计划
 
-> 状态：**待拍板**（§10 决策 D1–D10 未签之前只冻结契约、不写业务代码）｜日期：2026-11-01
+> 状态：**已定稿**（2026-11-01 用户确认 D1–D10 按建议值；可进 M0）｜日期：2026-11-01
 > v1.1：按 2026-11-01 评审增补 §十三（18 条契约/依赖/排序增补 + 上游接入），并修订 §〇 红线、§十 决策、§十一 M0
+> 已定边界（2026-11-01）：QQ 按普通功能处理（不做资质闸门）；**支持入站语音 STT**；上游开源素材可按许可入包 + 支持用户导入；**知识库只用既有 Obsidian，不新增知识库**
 > 目标分支：**4.0 主线（当前仓库 claw-desktop），随宿主版本发布，不单独发版**；1.0 不在本计划内（见 D1）
 > 上游依据：`doc/FEASIBILITY-FISH.md`（v2 虚拟角色版）+ 本轮代码/OpenClaw 审计
 > 外部参考：`doc/research/README.md`、`doc/research/DAFEIYU-ECOSYSTEM.md`、`doc/research/KNOWLEDGE-AND-MEMORY-PATTERNS.md`、`doc/research/LIVE-STAGE-SPEC.md`、**`doc/research/upstream/README.md`（4 个上游仓库的原样知识库备份 + 许可矩阵）**
@@ -13,7 +14,7 @@
 
 **目标**：在 4.0 里养一只「有形象、会聊天、记得住、会成长、每天写日记」的大肥鱼；M1 结束时可日常使用（应用内 + QQ）。
 
-**范围**：M1 = C00b + C01–C10（30 人天 + buffer ≈ 31–38 人天，约 7 周单人）；M3 = 直播展示页（14 人天，规格见 `doc/research/LIVE-STAGE-SPEC.md`，M1 后做）。
+**范围**：M1 = C00b + C01–C10（含入站 STT 与平台前置修复，**37–44 人天 + buffer ≈ 39–46 人天**，约 8 周单人）；M3 = 直播展示页（14 人天，规格见 `doc/research/LIVE-STAGE-SPEC.md`，M1 后做）。
 **不做**：Live2D（M2）、内容库 100+、多 agent 市场、公共平台自动互动、付费/商业化。
 
 **关键路径**：
@@ -35,7 +36,8 @@ M0（手工验证 3–5d）
 5. 所有新数据走 `app_meta` 的 `fish:v2:*` 键，**不新增表**（沿用 1.0/语音先例）；数据必须带 `schemaVersion` 与清理策略（§十三.1）。
 6. **动态注入通道必须先定义**（STATE/LIFE/few-shot 如何进模型上下文），否则 C04–C07 全部不成立（§十三.1）。
 7. **禁用清单/禁词示例只做验收，不进提示词**——写进提示词会被模型复读（上游「回声病」实证，§十三.5）。
-8. **第三方图片/贴纸/立绘一律不进 `resources/`、不进安装包**（许可边界见 `doc/research/upstream/README.md` §二）。
+8. **素材按许可使用**：MIT / CC0 / 署名许可的素材可按其许可入包并署名；CC BY-NC-SA 等非商业素材**只能用户导入**（许可边界见 `doc/research/upstream/README.md` §二）。
+9. **不新增知识库**：角色问答、世界书、热梗、日记一律走**既有 Obsidian 知识库**（MCP 检索）；宿主不新增 KB 服务、表或索引。
 
 ---
 
@@ -304,10 +306,11 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 - 校验：日记非空、frontmatter 合法、路径在 `大肥鱼/日记/`；失败保留错误给设置页。
 - 顺手修索引缺陷（删除清理 / 增量参数 / status.json），否则「幽灵记忆」。
 
-### 5.7 VoicePolicy + QqVoiceSender（C08）
+### 5.7 VoicePolicy + QqVoiceSender + 入站 STT（C08）
 - `voicePolicy.evaluate({stage, textLen, requested, quiet, usedToday})` → `{send, reason}`；优先级：用户要求 > 阶段解锁 > 内容适配 > 免打扰。
 - 要求识别：正则预筛 + 模型二次判定（命中 `voice.request` 事件，日限 3）。
-- `qqVoice.ts`：复用 `voiceManager.speak()` 得 mp3 → 解码/转 16k WAV → `silk-wasm` → 上传 `file_type=3` → 发 `msg_type=7`（不带 content/msg_id，`msg_seq` 递增）；失败降级文字。
+- **出站 TTS**：`voiceManager.speak({format:'pcm', sampleRate:16000})` → 包 16k WAV → `silk-wasm` → 上传 `file_type=3` → 发 `msg_type=7`（不带 content/msg_id，`msg_seq` 递增）；失败降级文字。**不做 mp3 解码**（仓库无解码/ffmpeg 依赖，直出 PCM 少一个 native 依赖）。
+- **入站语音（已定支持）**：QQ 语音条（`.amr/.silk`）→ 下载 → 复用现有 STT 模型转写 → 按文本进对话；转写失败诚实回「没听清」并提示改文字，不假装听懂。
 - 凭据：读 `channels.qqbot` + 32 位备份凭据；**不覆盖**已有可用凭据；写入前长度校验。
 - 新增依赖：`silk-wasm`（MIT，纯 wasm；打包需确认 cli 资源路径）。
 
@@ -345,7 +348,7 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 | C05 | 关系引擎 + 事件 + 阶段 + 解锁 + 防刷 | `relationship.ts`、`STATE.md` 渲染 | core accept 全绿；阶段/上限/幂等用例 | 3 | C01 |
 | C06 | 生活系统 + 主动性（含 QQ 首选/降级） | `contentCards.ts`、`life.ts`、`proactive.ts` | 静默期 0/3/7、上限、免打扰、安静几天、失败降级 | 3 | C03,C05 |
 | C07 | 每日记忆 + 双写 + Obsidian 索引修复 + 密钥过滤/出处强制/检索预算 | `memoryJob.ts`、`redact.ts`、`mcp-server` 修复 | 幂等/重试/路径校验；删除清理用例；密钥不落盘；来源可核对 | 2.5 | C05 |
-| C08 | 语音策略 + QQ 语音条 + 凭据防护 | `voicePolicy.ts`、`qqVoice.ts`、`package.json` | mock 单测 + 真机语音条；失败降级 | 2.5 | C04,C02 |
+| C08 | 语音策略 + QQ 语音条 + **入站 STT** + 凭据防护 | `voicePolicy.ts`、`qqVoice.ts`、`stt.ts`、`package.json` | mock 单测 + 真机语音条/语音转写；失败降级 | 3 | C04,C02 |
 | C09 | 安全与隐私（明示/危机/过滤/更正流程/公私有隔离/删除导出） | `safety.ts`、设置页隐私区 | 红队 20 条；更正保留审计；日志脱敏 | 2 | C04,C05 |
 | C10 | 内容扩充（台词/生活卡/解锁/表情知识库/回复标记）+ 验收注册 + 打包冒烟 + 文档 | `resources/character/**`、`test/*`、README | accept 全绿；打包版桌宠/日记可用；`[emotion:*]` 标记可解析 | 3 | C03–C09 |
 
@@ -363,7 +366,7 @@ Live2D、内容库 100+、教她（主动学习）、多端（飞书）、memory
 | `test/character.core.accept.mjs` | 纯逻辑：关系三轴/阶段/日上限/幂等/dedup/日切/静默期计算/内容卡抽取/语音策略 |
 | `test/character.store.accept.mjs` | `fish:v2:*` 读写、坏值回落、重置、迁移 |
 | `test/character.memory.accept.mjs` | 假 gateway + 假 MCP：双写顺序、幂等、重试、路径校验、frontmatter |
-| `test/character.voice.accept.mjs` | 语音优先级、要求识别（mock）、SILK 发送（mock fetch）、凭据不回显 |
+| `test/character.voice.accept.mjs` | 语音优先级、要求识别（mock）、SILK 发送（mock fetch）、**入站语音转写（成功/失败降级）**、凭据不回显 |
 | `test/character.ui.accept.mjs` | 挂件/桌宠/聊天/设置组件（stub harness，同 `test/ui.accept.mjs` 模式） |
 
 **手工验收（M1 退出条件）**：QQ 语音条真机、QQ 主动消息窗口、次日记忆抽查 20 条、重启后状态不丢、断网/网关未起降级、打包版桌宠透明与位置记忆。
@@ -384,7 +387,9 @@ Live2D、内容库 100+、教她（主动学习）、多端（飞书）、memory
 
 ---
 
-## 十、待拍板决策
+## 十、决策（2026-11-01 已定）
+
+> 2026-11-01 用户确认：D1–D10 全部按「建议」列执行；QQ 按普通功能处理（不设资质闸门）；入站语音 STT 支持；上游开源素材按许可入包 + 支持用户导入；知识库只用既有 Obsidian。
 
 | # | 决策 | 选项 | 建议 |
 | --- | --- | --- | --- |
@@ -399,7 +404,7 @@ Live2D、内容库 100+、教她（主动学习）、多端（飞书）、memory
 | D9 | 内容可覆盖 | 内置内容只读 / 允许用户覆盖 | **允许覆盖**：`<dataDir>/character/**` 优先于 `resources/character/**`，升级不覆盖用户改动（§十三.1） |
 | D10 | 合规底线 | 按普通软件 / 按陪伴型加保护 | **加保护**：首启年龄确认、内容分级、免责声明、危机求助资源带版本号；未确认年龄时主动消息默认关（§十三.5） |
 
-**签完 D1–D10，C00 结束，直接进 C01。**
+**以上 D1–D10 已于 2026-11-01 按建议值定稿；C00 结束，直接进 M0 → C01。**
 
 ---
 
@@ -472,7 +477,7 @@ Live2D、内容库 100+、教她（主动学习）、多端（飞书）、memory
 
 | # | 缺陷（证据） | 修法 | 验收 |
 | --- | --- | --- | --- |
-| 9 | **Obsidian 检索无目录隔离**：`search_notes` 无目录过滤、MCP 全 agent 共享 → 角色会读到工作知识库 | 角色用独立 MCP（`--vault` 角色专属目录）或 tag/目录白名单 | 工作笔记内容不出现在角色回复 |
+| 9 | **Obsidian 检索无目录隔离**：`search_notes` 无目录过滤、MCP 全 agent 共享 → 角色会读到工作知识库 | **仍用既有 Obsidian 知识库**（不新增 KB 服务/表/索引），只加目录/tag 白名单：角色 MCP 指向 `大肥鱼/` 子目录或只索引该 tag | 工作笔记内容不出现在角色回复 |
 | 10 | **QQ 凭据写入无校验**：一次保存可写坏在用通道 | 优先级「32 位 backup > clientSecretFile > clientSecret(仅 32 位)」，只读不写；长度校验、不覆盖可用凭据 | 填 16 位保存后配置不变且 UI 报错 |
 | 11 | **语音链缺一环**：仓库无 mp3 解码/ffmpeg，`VoiceSpeakInput` 无法指定 format | TTS 直出 **16k PCM** → 包 WAV → `silk-wasm`；`VoiceSpeakInput` 增 `format/sampleRate` 并回写 `PLAN-VOICE` §7.2 | mock 断言请求 `format=pcm`、输出 RIFF 16kHz |
 | 12 | **成本不可见**：`usage` 恒 0，估算器在 work 插件内 | 角色自建每日四类调用计数（聊天/记忆/信号/语音判定）+ token 估算 + 超限告警一次，落 `fish:v2:*` | 设置页显示计数、重启不清零 |
@@ -481,12 +486,12 @@ Live2D、内容库 100+、教她（主动学习）、多端（飞书）、memory
 
 ### 13.3 人天与排序校准（P1）
 
-- **C00b 3 → 4–5 人天**（78 条素材 + 盲测 + 无硬编码称呼验收）；**C03 3 → 4 人天**（行为仲裁/DIP clamp/命中掩码才是主复杂度，窗口物理不是 M1 目标）。
+- **C00b 3 → 4–5 人天**（78 条素材 + 盲测 + 无硬编码称呼验收）；**C03 3 → 4 人天**（行为仲裁/DIP clamp/命中掩码才是主复杂度，窗口物理不是 M1 目标）；**C08 2.5 → 3 人天**（入站 STT）。
 - **平台前置修复（13.2）单列 3–4 人天**，不计入 C 包。
-- **M1 合计**：30 → **36–43 人天**（含 buffer 38–45），与 `FEASIBILITY-FISH.md` 的 36–53 对齐口径。
+- **M1 合计**：30 → **37–44 人天**（含 buffer 39–46），与 `FEASIBILITY-FISH.md` 的 36–53 对齐口径。
 - **排序优化**：C06 不依赖 C03（气泡只需主窗）→ 与 C03 并行，省约 3 人天；AI 明示进 C00b + C02（不等 C09）；C07 紧跟 C05；打包冒烟前移到 C03 之后；C10 新内容一律加版本号文件（`topics.v2.json`），不改旧结构。
 
-### 13.4 上游接入（P1，只借结构不借图）
+### 13.4 上游接入（P1，可按许可取用）
 
 | 上游文件（已入库） | 用于 | 具体做法 |
 | --- | --- | --- |
@@ -498,13 +503,16 @@ Live2D、内容库 100+、教她（主动学习）、多端（飞书）、memory
 | `upstream/codex-deepseek-pet/docs/动画与窗口物理.md`、`2D角色与动作规范.md` | C03 | 行为仲裁（专注/聊天/拖拽 > 自主动作）、有限动作播完释放、待机 3 分钟入睡、位置按 DIP clamp |
 | `upstream/blue-whale-agent/chat-workspace/AGENTS.md` | 成本 P2 | 本地小模型分流**只列 P2**，M1 只做持久化计数（第 12 条） |
 
-**许可红线**：`codex-deepseek-pet` 材料引用须署名「作者 YunYueSama + 仓库地址」并说明修改；`PhotoStickers` 的 CC BY-NC-SA 素材只能用户自行导入；**`git ls-files resources/character` 不得出现 png/webp/jpg**；NOTICE 至少列 `silk-wasm`。
+**素材策略（2026-11-01 已定）**：上游素材都是开源的，**可以拿**——按各自许可入包并署名即可（MIT / CC0 / 署名许可 1.0）；`PhotoStickers` 这类 **CC BY-NC-SA 非商业**素材不进安装包，改为**支持用户导入**（`<dataDir>/character/stickers/`，导入时校验格式 + 记录许可自证）；上线物料写全「作者 YunYueSama + 仓库地址」及修改说明；NOTICE 至少列 `silk-wasm` 与所用素材来源。
 
 ### 13.5 验收与发布（P1）
 
 - 5 个角色 accept 脚本**注册进** `scripts/run-all-accept.mjs` 与 `package.json`（现在不注册 = 不跑）。
 - 默认关 + dogfood 一周；`enabled` 落 `fish:v2:settings`，**不进 AppConfig**（`app.json` 保存会触发 config patch）。
 - `extraResources` 整目录：`resources/character/**` 已入库并按版本管理，避免「草稿随包」；升级不得覆盖 `<dataDir>/character/**`（D9）。
+- **素材与导入**：开源素材按许可入包并署名（`NOTICE`）；CC BY-NC-SA 素材只支持**用户导入**（`<dataDir>/character/stickers/`）；打包冒烟断言安装包内无 NC 素材。
+- **知识库边界**：不新增 KB 服务/表/索引；角色只有既有 Obsidian（目录/标签白名单）；验收断言「停用角色后工作知识库无新增索引」。
+- **入站 STT**：QQ 语音条转写成功 / 转写失败降级 各一条用例（`character.voice.accept`）。
 - 合规：首启年龄确认、内容分级、免责声明、危机求助资源带版本号；未确认年龄时主动消息默认关（D10）。
 
 ---

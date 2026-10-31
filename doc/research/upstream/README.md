@@ -1,6 +1,7 @@
 # 上游仓库知识库备份（upstream）
 
 > 建立日期：2026-11-01 ｜ 用途：**开发参考与知识库备份，不参与构建、不进安装包、不进 `resources/`**。
+> 边界：**产品内不新增知识库**——角色的问答/世界书/热梗/日记一律走既有 Obsidian 知识库（MCP 检索）；本目录只作参考与素材来源，不构成独立 KB 服务或索引。
 > 原则：只搬**文本/JSON 知识**（人格、设定、词典、方案、清单、manifest）；图片/整包等二进制素材不复制进仓库，完整克隆留在本机备份目录。
 > 上游原始克隆位置（本机，不入库）：`D:\work2026\files\upstream-refs\{dafeiyu-astrbot,codex-deepseek-pet,dafeiyu-bot,blue-whale-agent}`
 
@@ -19,7 +20,7 @@
 2. **大肥鱼项目署名许可 1.0**（codex-deepseek-pet 的代码/文档/动画，以及 dafeiyu-bot 的 QQStickers 贴纸）：允许商用，但**必须标注「作者：YunYueSama / 仓库：https://github.com/YunYueSama/codex-deepseek-pet」**，分发时保留完整许可；修改需说明经过修改。**不得暗示原作者或 DeepSeek 官方认可**。
 3. **CC BY-NC-SA 4.0 图片**（dafeiyu-bot `PhotoStickers/` 中的 B 站二创）：**非商业**，且角色原作「上善无形」、二创「ZipZipPipe」有独立权利。**只能用户自行导入，不得进安装包/公开构建**。
 4. **CC0** 图片（dafeiyu-bot QQStickers 四张原创示例）：可自由使用，但底层角色仍有 CC BY-NC-SA 边界。
-5. 通用红线（与 `doc/research/README.md` 一致）：**我们的产品形象一律原创**（PLAN-FISH-CHARACTER D5 六态 SVG），本目录素材只作参考；**任何第三方图片、贴纸原图不进 `resources/`、不进 `resources/character/`、不进安装包**。
+5. 通用红线（与 `doc/research/README.md` 一致）：产品形象仍走原创六态（PLAN-FISH-CHARACTER D5）；**素材按许可使用**——MIT / CC0 / 署名许可素材可按许可入包并保留署名，**CC BY-NC-SA 等非商业素材只能用户自行导入，不进安装包**；`codex-deepseek-pet` 的材料引用须标「作者 YunYueSama + 仓库地址」并说明修改。
 
 ## 三、已搬进来的知识与对应工作包
 
