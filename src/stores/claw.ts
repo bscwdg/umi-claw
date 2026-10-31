@@ -27,6 +27,14 @@ export const useClawStore = defineStore('claw', () => {
   const startupMs = ref<number | undefined>()
   /** 启动阶段：preparing=准备配置 / spawning=已拉起进程 / loading=端口已监听、插件渠道加载中 / ready=已就绪 */
   const phase = ref<'idle' | 'preparing' | 'spawning' | 'loading' | 'ready'>('idle')
+  /** 历史估算的总启动耗时（毫秒）：用于「预计还需 N 秒」 */
+  const estimatedStartupMs = ref<number | undefined>()
+  /** 预计剩余秒数（只在启动中且有历史时有效） */
+  const etaRemainingSeconds = computed(() => {
+    const est = estimatedStartupMs.value
+    if (!est || !starting.value) return undefined
+    return Math.max(0, Math.ceil((est - startingSeconds.value * 1000) / 1000))
+  })
   /** 启动失败/超时原因（就绪探测结束后仍失败时给出） */
   const startupError = ref('')
   /** doctor --fix / 状态库迁移进行中（网关未起但非静止）：前端据此显示「正在修复配置…」 */
@@ -121,6 +129,7 @@ export const useClawStore = defineStore('claw', () => {
     starting.value = !!status.starting
     startupMs.value = status.startupMs
     if (status.bootPhase) phase.value = status.bootPhase
+    if (typeof status.estimateStartupMs === 'number') estimatedStartupMs.value = status.estimateStartupMs
     if (!status.running) {
       resetReady()
       phase.value = 'idle'
@@ -233,6 +242,7 @@ export const useClawStore = defineStore('claw', () => {
       if (typeof data.starting === 'boolean') starting.value = data.starting
       if (typeof data.startupMs === 'number') startupMs.value = data.startupMs
       if (data.bootPhase) phase.value = data.bootPhase
+      if (typeof data.estimateStartupMs === 'number') estimatedStartupMs.value = data.estimateStartupMs
       // 启动中不要把计时基准换成 main 的 spawn 时间：否则「已等 N 秒」会在 spawn 时被清零
       if (typeof data.startedAt === 'number' && !starting.value) startedAt.value = data.startedAt
       if (data.running) {
@@ -254,6 +264,7 @@ export const useClawStore = defineStore('claw', () => {
 
   return {
     running, pid, port, startedAt, ready, starting, startupMs, startupError, phase, phaseLabel,
+    estimatedStartupMs, etaRemainingSeconds,
     maintenance, logs, uptime, startingSeconds,
     addLog, clearLogs, fetchStatus,
     start, stop, restart, trackReady, setupListeners

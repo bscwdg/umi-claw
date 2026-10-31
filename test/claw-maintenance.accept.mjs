@@ -687,6 +687,106 @@ await rec.check('marker-wiring', '接线：config 同步之后、spawn 之前补
   return '顺序、串行队列、两处首文件骨架接线正确'
 })
 
+// ── 启动耗时统计 / 保留网关（2026-10-31）───────────────────────────────────────
+const statsPath = bundleEntry('electron/main/startupStats.ts', 'claw-startup-stats.mjs')
+const stats = await import(pathToFileURL(statsPath).href)
+
+await rec.check('stats-pure', '启动耗时统计：追加/上限/中位数/估算/序列化回读', async () => {
+  assertDeepEq(stats.appendStartupDuration([1000, 2000], 3000), [1000, 2000, 3000])
+  assertDeepEq(
+    stats.appendStartupDuration([1, 2, 3, 4, 5], 6),
+    [2, 3, 4, 5, 6],
+    '只保留最近 5 次'
+  )
+  assertEq(stats.appendStartupDuration([], -1).length, 0, '非法耗时不入样本')
+  assertEq(stats.medianOf([], undefined), undefined)
+  assertEq(stats.medianOf([100, 300, 200]), 200, '奇数中位数')
+  assertEq(stats.medianOf([100, 200]), 150, '偶数中位数取均值')
+  assertEq(stats.estimateStartupMs([1000, 2000, 3000, 4000]), 3000, '取最近 3 次中位数')
+  assertEq(stats.estimateStartupMs([]), undefined)
+  const roundTrip = stats.parseStartupStats(stats.serializeStartupStats([1234, 5678]))
+  assertDeepEq(roundTrip, [1234, 5678], '序列化/回读一致')
+  assertDeepEq(stats.parseStartupStats('not-json'), [], '坏文件按空处理')
+  return '追加/上限/中位数/估算/回读/坏文件'
+})
+
+await rec.check('keep-gateway', '保留网关：复用健康的后台网关 + 退出时按设置保留/停止', async () => {
+  const { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import('node:fs')
+  const os = await import('node:os')
+  const sandbox = mkdtempSync(join(os.tmpdir(), 'umi-keep-gw-'))
+  const runtimeDir = join(sandbox, 'cache')
+  mkdirSync(runtimeDir, { recursive: true })
+  const runtimeFile = join(runtimeDir, 'gateway-runtime.json')
+  writeFileSync(
+    runtimeFile,
+    JSON.stringify({ version: 1, pid: 4321, port: 3213, startedAt: Date.now(), detached: true, logFile: join(sandbox, 'gw.log') })
+  )
+  const makeCm = (keep) =>
+    new ClawManager({
+      getDataDir: () => sandbox,
+      getNodePath: () => process.execPath,
+      getConfig: () => ({ port: 3213, keepGatewayOnQuit: keep })
+    })
+
+  // 1) 复用：健康 + 进程存活 → 直接 running/ready，不 spawn
+  const cm = makeCm(true)
+  cm._fetchHealthOk = async () => true
+  cm._isPidAlive = () => true
+  cm._startGatewayLogTail = () => undefined
+  cm._stopGatewayLogTail = () => undefined
+  cm._killAdoptedProcess = async () => undefined
+  const adopted = await cm.adoptRunningGateway()
+  assertEq(adopted, true, '应成功复用后台网关')
+  const st = cm.getStatus()
+  assertEq(st.running, true, '复用后 running=true')
+  assertEq(st.ready, true, '复用后 ready=true')
+  assertEq(st.pid, 4321, 'pid 来自运行时描述')
+  await cm.stop()
+  assertEq(cm.getStatus().running, false, 'stop 后不再运行')
+  assert(!existsSync(runtimeFile), 'stop 后运行时描述应清理')
+
+  // 2) 设置关闭时不复用
+  writeFileSync(runtimeFile, JSON.stringify({ pid: 4321, port: 3213 }))
+  const cmOff = makeCm(false)
+  cmOff._fetchHealthOk = async () => true
+  assertEq(await cmOff.adoptRunningGateway(), false, '设置关闭时绝不复用')
+
+  // 3) 退出：开启保留时不停网关；关闭时照常 stop
+  const cmKeep = makeCm(true)
+  cmKeep.detachedChild = true
+  cmKeep.process = { unref: () => undefined }
+  let keptStopCalled = false
+  cmKeep.stop = async () => { keptStopCalled = true; return { success: true } }
+  await cmKeep.handleAppQuit()
+  assertEq(keptStopCalled, false, '开启保留时退出不应停止网关')
+  assertEq(cmKeep.process, null, '退出后不再持有子进程句柄')
+
+  const cmStop = makeCm(false)
+  cmStop.detachedChild = true
+  cmStop.process = { unref: () => undefined }
+  let stopCalled = false
+  cmStop.stop = async () => { stopCalled = true; return { success: true } }
+  await cmStop.handleAppQuit()
+  assertEq(stopCalled, true, '关闭保留时退出照常停止网关')
+
+  rmSync(sandbox, { recursive: true, force: true })
+  return '复用/清理/设置关闭不复用/退出保留与停止'
+})
+
+await rec.check('eta-wiring', 'ETA 接线：状态里有估算值、store/Dashboard 展示', async () => {
+  const { readFileSync } = await import('node:fs')
+  const clawSrc = readFileSync(join(process.cwd(), 'electron', 'main', 'clawManager.ts'), 'utf-8')
+  const storeSrc = readFileSync(join(process.cwd(), 'src', 'stores', 'claw.ts'), 'utf-8')
+  const dashSrc = readFileSync(join(process.cwd(), 'src', 'views', 'Dashboard.vue'), 'utf-8')
+  const cfgView = readFileSync(join(process.cwd(), 'src', 'views', 'Config.vue'), 'utf-8')
+  assert(/startup-stats\.json/.test(clawSrc), '耗时样本落盘')
+  assert(/estimateStartupMs/.test(clawSrc), '状态里暴露估算值')
+  assert(/etaRemainingSeconds/.test(storeSrc), 'store 计算剩余秒数')
+  assert(/etaRemainingSeconds/.test(dashSrc), 'Dashboard 展示预计剩余')
+  assert(/keepGatewayOnQuit/.test(cfgView), '设置页提供「退出保留网关」开关')
+  assert(/adoptRunningGateway/.test(clawSrc), '启动时复用后台网关')
+  return '估算值/展示/开关/复用 接线齐全'
+})
 // ── 结果 ─────────────────────────────────────────────────────────────────────
 
 const result = rec.toJSON({ entry: clawPath })

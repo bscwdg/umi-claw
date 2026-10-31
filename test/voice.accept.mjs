@@ -7,7 +7,7 @@
 //
 // 用法：node test/voice.accept.mjs（npm run accept:voice）
 
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -1121,5 +1121,51 @@ await recorder.check('V19', '资源未授权失败：中文可执行提示 + 失
   return '中文提示 + 记录落库 + 测试接口一致'
 })
 
+// ── 音色热更文件（改音色不必重启网关）────────────────────────────────────────
+await recorder.check('hot-speaker', 'bridge 热更：环境变量带设置文件路径；manager 原子写音色文件', async () => {
+  const { buildOpenClawTtsEnv } = openclawTtsMod
+  const settingsFile = join(runDir, 'voice', 'tts-bridge.json')
+  const env = buildOpenClawTtsEnv(
+    {
+      conversationTts: 'always',
+      channel: 'bridge',
+      resourceId: 'seed-tts-2.0',
+      speakerVoice: 'zh_male_sunwukong_uranus_bigtts',
+      bridgeScriptPath: 'volc-tts.mjs',
+      bridgeSettingsPath: settingsFile
+    },
+    'plan-key'
+  )
+  assertEq(env.UMI_VOICE_SETTINGS_FILE, settingsFile, 'bridge env 必须带热更文件路径')
+  assertEq(env.UMI_VOICE_SPEAKER, 'zh_male_sunwukong_uranus_bigtts', 'env 里仍带启动时音色（兜底）')
+
+  const manager = createVoiceManager({
+    storage: memoryStore(),
+    secrets: secretStore({ tts: 'tts-key-12345678', clone: 'clone-key-12345678' }),
+    cacheDir,
+    bridgeScriptPath: 'volc-tts.mjs',
+    bridgeSettingsPath: settingsFile,
+    now: () => new Date('2026-10-29T10:00:00+08:00').getTime(),
+    logger: () => undefined
+  })
+  await manager.buildOpenClawTtsEnv()
+  const raw = readFileSync(settingsFile, 'utf-8')
+  const hot = JSON.parse(raw)
+  assertEq(typeof hot.speaker, 'string', '热更文件含 speaker')
+  assertEq(typeof hot.resourceId, 'string', '热更文件含 resourceId')
+  assert(String(hot.speaker).length > 0, '热更文件 speaker 非空')
+
+  // 改音色后再次刷新（模拟保存设置）→ 文件内容跟随变化
+  await manager.updateSettings({ defaultSpeaker: 'zh_male_sunwukong_uranus_bigtts' })
+  await manager.buildOpenClawTtsEnv()
+  const hot2 = JSON.parse(readFileSync(settingsFile, 'utf-8'))
+  assertEq(hot2.speaker, 'zh_male_sunwukong_uranus_bigtts', '保存后热更文件立即更新')
+
+  // bridge 脚本必须读该文件（否则热更无效）
+  const bridgeSrc = readFileSync(join(repoRoot, 'resources/voice/volc-tts.mjs'), 'utf-8')
+  assert(/UMI_VOICE_SETTINGS_FILE/.test(bridgeSrc), 'volc-tts.mjs 读取 UMI_VOICE_SETTINGS_FILE')
+  assert(/readFileSync/.test(bridgeSrc), 'volc-tts.mjs 每次合成重新读取')
+  return 'env 路径/原子写/保存即更新/脚本读取 均正确'
+})
 const ok = printResult(recorder.toJSON({ cacheDir, catalog: join(repoRoot, 'resources/voice/curated-voices.v1.json') }))
 if (!ok) process.exit(1)

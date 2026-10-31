@@ -5,10 +5,31 @@
 // 音色：VOLC_TTS_SPEAKER，默认 zh_female_vv_uranus_bigtts（可换成复刻 SpeakerID）
 
 import { writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 
+// 热更设置：应用保存音色时写 UMI_VOICE_SETTINGS_FILE（speaker/resourceId）。
+// 每次合成都会重新读，因此改音色不需要重启网关；密钥仍只用环境变量（Key 变更才需重启）。
+function readHotSettings() {
+  const file = process.env.UMI_VOICE_SETTINGS_FILE
+  if (!file) return null
+  try {
+    return JSON.parse(readFileSync(file, 'utf-8'))
+  } catch {
+    return null
+  }
+}
+const HOT = readHotSettings()
 const ENDPOINT = process.env.VOLC_TTS_ENDPOINT || 'https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional'
-const RESOURCE_ID = process.env.UMI_VOICE_RESOURCE_ID || process.env.VOLC_TTS_RESOURCE_ID || 'seed-tts-2.0'
-const SPEAKER = process.env.UMI_VOICE_SPEAKER || process.env.VOLC_TTS_SPEAKER || 'zh_female_vv_uranus_bigtts'
+const RESOURCE_ID =
+  (HOT && typeof HOT.resourceId === 'string' && HOT.resourceId) ||
+  process.env.UMI_VOICE_RESOURCE_ID ||
+  process.env.VOLC_TTS_RESOURCE_ID ||
+  'seed-tts-2.0'
+const SPEAKER =
+  (HOT && typeof HOT.speaker === 'string' && HOT.speaker) ||
+  process.env.UMI_VOICE_SPEAKER ||
+  process.env.VOLC_TTS_SPEAKER ||
+  'zh_female_vv_uranus_bigtts'
 const KEY = process.env.UMI_VOICE_PLAN_KEY || process.env.VOLCENGINE_TTS_API_KEY || process.env.OPENAI_API_KEY
 
 const [text, outPath] = process.argv.slice(2)

@@ -1,20 +1,28 @@
 import { EventEmitter } from 'events'
 import { ChildProcess, spawn, exec, execFile } from 'child_process'
-import { join, relative, resolve, sep } from 'path'
+import { dirname, join, relative, resolve, sep } from 'path'
 import {
   existsSync,
   mkdirSync,
   rmSync,
   readFileSync,
   readdirSync,
+  writeFileSync,
   openSync,
   readSync,
-  closeSync
+  closeSync,
+  unlinkSync
 } from 'fs'
 import { promises as fs } from "fs";
 import { ConfigManager } from './configManager'
 import { promisify } from "util";
 import { get as httpGet } from 'node:http'
+import {
+  appendStartupDuration,
+  estimateStartupMs,
+  parseStartupStats,
+  serializeStartupStats
+} from './startupStats'
 import { connect as netConnect } from 'node:net'
 import { toOpenClawProviderKey } from './modelConfig'
 import { openClawPaths, toPosix, buildOpenClawEnv } from './openClawPaths'
@@ -37,6 +45,8 @@ export interface ClawStatus {
   startupMs?: number
   /** 启动阶段（前端展示「现在在等什么」）：preparing/spawning/loading/ready */
   bootPhase?: BootPhase
+  /** 依据最近几次启动历史估算的总耗时（毫秒），用于 UI「预计还需 N 秒」 */
+  estimateStartupMs?: number
 }
 
 /** 启动阶段：preparing=主进程准备（清理/patch/doctor）；spawning=已拉起进程；loading=端口已监听、插件/渠道加载中 */
@@ -195,6 +205,19 @@ export class ClawManager extends EventEmitter {
   private readyProbeSeq = 0
   /** 当前启动阶段（见 BootPhase） */
   private bootPhase: BootPhase = 'idle'
+  /** 最近几次「spawn→health」耗时（毫秒），用于估算 ETA */
+  private startupDurations: number[] = []
+  private startupStatsLoaded = false
+  /** 本次 spawn 是否已记过耗时（探针与 waitReady 可能同时完成，避免重复记录） */
+  private startupDurationRecorded = false
+  /** 上次退出时留在后台的网关 PID（非本实例子进程，停止用 taskkill） */
+  private adoptedPid?: number
+  /** 本次实例是否以 detached + 文件日志方式启动（退出保留网关的前提） */
+  private detachedChild = false
+  /** 文件日志 tail（detached 模式下子进程 stdout/stderr 写文件，面板从文件取日志） */
+  private logTailTimer?: ReturnType<typeof setInterval>
+  private logTailPath?: string
+  private logTailOffset = 0
   private configManager: ConfigManager
   private isStopping = false
   // 网关退出码 78（状态库需要 schema 迁移）时的自动修复状态
@@ -621,15 +644,32 @@ export class ClawManager extends EventEmitter {
       }
     }
 
+    // V8 编译缓存：渠道插件包很大（feishu 73MB），每次冷启动都要重新编译 JS。
+    // NODE_COMPILE_CACHE 让 Node 把编译产物缓存到磁盘，后续启动复用（Node 22+ 支持）。
+    // 缓存放 data 目录内，不把任何数据迁出用户既有的数据盘。
+    let nodeCompileCacheDir = ''
+    try {
+      nodeCompileCacheDir = join(dataDir, 'cache', 'node-compile')
+      mkdirSync(nodeCompileCacheDir, { recursive: true })
+    } catch {
+      nodeCompileCacheDir = ''
+    }
+
     const commonEnv = buildOpenClawEnv(dataDir, nodePath, {
       PORT: String(this.port),
       OPENCLAW_DISABLE_BONJOUR: '1',
       BONJOUR_DISABLE: '1',
+      ...(nodeCompileCacheDir ? { NODE_COMPILE_CACHE: nodeCompileCacheDir } : {}),
       OPENCLAW_GATEWAY_MODE: 'local',
       // 官方启动阶段 trace：在日志里给出 plugins.gateway-load.plugin.<id> 的
       // configValidation / artifactPreparation / source-capture+load / register 分项耗时，
       // 用于定位「插件物化慢」的确切环节（只写日志，不改变行为）。
       OPENCLAW_GATEWAY_STARTUP_TRACE: '1',
+      // 实验开关：fs-safe 走 JS 兜底（native 会对每次文件操作做 identity/ACL 校验，
+      // 官方文档说 strict-mode 的额外校验 "can be slower"）。用 per-plugin trace 对比
+      // feishu 的 loadMs 是否下降；默认写 'auto'，实验期间用 'off'。
+      // 注：off 会让 Windows 安全凭证读取（SecretRef/GitHub 身份）不可用——本应用当前不依赖。
+      OPENCLAW_FS_SAFE_NATIVE_MODE: process.env.CLAW_FS_SAFE_NATIVE_MODE ?? 'auto',
       GATEWAY_MODE: 'local',
       gateway__mode: 'local',
       NODE_CONFIG_DIR: targetConfigDir
@@ -660,6 +700,22 @@ export class ClawManager extends EventEmitter {
 
     this._addLog(`正在启动 OpenClaw (端口 ${this.port})...`, 'system')
 
+    // 「退出应用保留网关」需要子进程脱离本实例：detached + 把 stdout/stderr 写文件，
+    // 否则 App 退出后管道关闭，网关写日志会中断/崩溃。默认关闭，行为与原来完全一致。
+    const keepOnQuit = this.configManager.getConfig().keepGatewayOnQuit === true
+    const gatewayLogFile = join(dataDir, 'logs', 'openclaw-gateway.log')
+    let gatewayLogFd: number | undefined
+    if (keepOnQuit) {
+      try {
+        mkdirSync(dirname(gatewayLogFile), { recursive: true })
+        writeFileSync(gatewayLogFile, '')
+        gatewayLogFd = openSync(gatewayLogFile, 'a')
+      } catch {
+        gatewayLogFd = undefined
+      }
+    }
+    const detached = keepOnQuit && gatewayLogFd !== undefined
+
     try {
       this.process = spawn(nodePath, [
         clawJsPath,
@@ -670,14 +726,30 @@ export class ClawManager extends EventEmitter {
         env,
         cwd: openClawPaths.installDir(dataDir),
         shell: false,
-        detached: false,
-        stdio: ['pipe', 'pipe', 'pipe']
+        detached,
+        stdio: detached ? ['ignore', gatewayLogFd!, gatewayLogFd!] : ['pipe', 'pipe', 'pipe']
       })
+      if (gatewayLogFd !== undefined) {
+        try {
+          closeSync(gatewayLogFd)
+        } catch {
+          /* ignore */
+        }
+        gatewayLogFd = undefined
+      }
+      this.detachedChild = detached
 
       this.startedAt = Date.now()
+      this.startupDurationRecorded = false
       this._setBootPhase('spawning', '[gateway] 网关进程已拉起，等待 HTTP 端口监听…')
+      if (detached) {
+        // 让 App 退出时不再阻塞；日志改从文件 tail（面板照常有输出）
+        this.process.unref()
+        this._startGatewayLogTail(gatewayLogFile)
+      }
       this._startReadyProbe()
       this._setupProcessEvents(this.process!)
+      this._writeGatewayRuntime(gatewayLogFile)
       this.emit('statusChange', true, this.port)
       if (this.healthyResetTimer) clearTimeout(this.healthyResetTimer)
       this.healthyResetTimer = setTimeout(() => {
@@ -687,7 +759,15 @@ export class ClawManager extends EventEmitter {
       const warning = [peerLinkWarning, syncTransientWarning].filter(Boolean).join('；') || undefined
       return { success: true, warning }
     } catch (err: any) {
+      if (gatewayLogFd !== undefined) {
+        try {
+          closeSync(gatewayLogFd)
+        } catch {
+          /* ignore */
+        }
+      }
       this.process = null
+      this.detachedChild = false
       this._setBootPhase('idle')
       return { success: false, error: err.message }
     }
@@ -698,6 +778,24 @@ export class ClawManager extends EventEmitter {
       clearTimeout(this.healthyResetTimer)
       this.healthyResetTimer = undefined
     }
+    // 复用的后台网关不是本实例子进程：用 taskkill 结束并按停止语义清状态。
+    if (this.adoptedPid !== undefined) {
+      const pid = this.adoptedPid
+      this.adoptedPid = undefined
+      this.isStopping = true
+      await this._killAdoptedProcess(pid)
+      this._clearGatewayRuntime()
+      this._stopGatewayLogTail()
+      this.ready = false
+      this.readyAt = undefined
+      this.bootPhase = 'idle'
+      this.startedAt = undefined
+      this.isStopping = false
+      this.emit('statusChange', false)
+      this._addLog('已停止复用的后台网关', 'system')
+      return { success: true }
+    }
+
     // 启动在途（ghost 清理 / 配置同步的 await 窗口）时先等它落定，
     // 否则会漏掉刚 spawn 的网关，留下占用状态目录的孤儿。
     if (this.startInFlight) {
@@ -754,6 +852,204 @@ export class ClawManager extends EventEmitter {
     })
   }
 
+  private get _gatewayRuntimePath(): string {
+    return join(this.configManager.getDataDir(), 'cache', 'gateway-runtime.json')
+  }
+
+  /** 记录「后台网关」描述（供下次启动复用）；普通模式下写了也无害 */
+  private _writeGatewayRuntime(logFile: string): void {
+    try {
+      const file = this._gatewayRuntimePath
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(
+        file,
+        `${JSON.stringify(
+          {
+            version: 1,
+            pid: this.process?.pid,
+            port: this.port,
+            startedAt: this.startedAt,
+            detached: this.detachedChild,
+            logFile
+          },
+          null,
+          2
+        )}\n`,
+        'utf-8'
+      )
+    } catch {
+      /* 运行时描述只是便利文件，失败不影响启动 */
+    }
+  }
+
+  private _clearGatewayRuntime(): void {
+    try {
+      unlinkSync(this._gatewayRuntimePath)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** detached 模式下从文件 tail 网关日志（子进程 stdout/stderr 不再走管道） */
+  private _startGatewayLogTail(file: string): void {
+    this._stopGatewayLogTail()
+    this.logTailPath = file
+    this.logTailOffset = 0
+    this._drainGatewayLogTail()
+    this.logTailTimer = setInterval(() => this._drainGatewayLogTail(), 400)
+  }
+
+  private _stopGatewayLogTail(): void {
+    if (this.logTailTimer) {
+      clearInterval(this.logTailTimer)
+      this.logTailTimer = undefined
+    }
+    this.logTailPath = undefined
+  }
+
+  /** 把 pino JSON 行还原成可读文本（解析失败就原样输出） */
+  private _formatGatewayLogLine(line: string): string {
+    const text = line.trim()
+    if (!text.startsWith('{')) return text
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>
+      const msg = parsed['1']
+      if (typeof msg === 'string') return msg
+      if (msg && typeof msg === 'object') return JSON.stringify(msg)
+      return text
+    } catch {
+      return text
+    }
+  }
+
+  private _drainGatewayLogTail(): void {
+    const file = this.logTailPath
+    if (!file) return
+    try {
+      const buf = readFileSync(file)
+      if (buf.length <= this.logTailOffset) return
+      const chunk = buf.subarray(this.logTailOffset).toString('utf-8')
+      this.logTailOffset = buf.length
+      for (const line of chunk.split('\n')) {
+        if (!line.trim()) continue
+        const text = this._formatGatewayLogLine(line)
+        this._addLog(text, 'stdout')
+        this.emit('log', text, 'stdout')
+      }
+    } catch {
+      /* 文件被轮转/删除时忽略，下个 tick 继续 */
+    }
+  }
+
+  /** 结束复用的后台网关（独立方法便于验收里打桩） */
+  private async _killAdoptedProcess(pid: number): Promise<void> {
+    try {
+      await execFileAsync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true })
+    } catch {
+      /* 进程可能已退出 */
+    }
+  }
+
+  private _isPidAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 启动时复用「上次退出时保留的网关」：设置开启 + 进程还活着 + /health 200 才接管，
+   * 直接跳过冷启动（渠道插件物化等）。接管后 stop() 用 taskkill 结束它。
+   */
+  async adoptRunningGateway(): Promise<boolean> {
+    try {
+      const cfg = this.configManager.getConfig()
+      if (cfg.keepGatewayOnQuit !== true) return false
+      this.port = Number(cfg.port) > 0 ? Number(cfg.port) : 3213
+      const desc = JSON.parse(readFileSync(this._gatewayRuntimePath, 'utf-8')) as {
+        pid?: number
+        startedAt?: number
+        logFile?: string
+      }
+      if (!desc || typeof desc.pid !== 'number') return false
+      if (!this._isPidAlive(desc.pid)) {
+        this._clearGatewayRuntime()
+        return false
+      }
+      if (!(await this._fetchHealthOk(1500))) return false
+      this.adoptedPid = desc.pid
+      this.startedAt = typeof desc.startedAt === 'number' ? desc.startedAt : Date.now()
+      this.ready = true
+      this.readyAt = Date.now()
+      this.bootPhase = 'ready'
+      this.startupDurationRecorded = true
+      if (typeof desc.logFile === 'string') this._startGatewayLogTail(desc.logFile)
+      this._addLog('[gateway] 检测到上次退出时保留的网关，已直接复用（跳过冷启动）', 'system')
+      this.emit('statusChange', true, this.port)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * App 退出前的网关处理：开启「退出保留网关」时让 detached 子进程继续跑
+   * （下次启动由 adoptRunningGateway 复用）；否则照旧停止。
+   */
+  async handleAppQuit(): Promise<void> {
+    const keep = this.configManager.getConfig().keepGatewayOnQuit === true
+    const canKeep = keep && (this.adoptedPid !== undefined || (this.detachedChild && !!this.process))
+    if (canKeep) {
+      this._addLog('[gateway] 已按设置保留网关在后台运行（下次启动直接复用，跳过冷启动）', 'system')
+      this._stopGatewayLogTail()
+      try {
+        this.process?.unref()
+      } catch {
+        /* ignore */
+      }
+      this.process = null
+      this.detachedChild = false
+      return
+    }
+    await this.stop()
+  }
+  private get _startupStatsPath(): string {
+    return join(this.configManager.getDataDir(), 'cache', 'startup-stats.json')
+  }
+
+  /** 懒加载历史启动耗时（读失败一律当空，不影响启动） */
+  private _ensureStartupStatsLoaded(): void {
+    if (this.startupStatsLoaded) return
+    this.startupStatsLoaded = true
+    try {
+      this.startupDurations = parseStartupStats(readFileSync(this._startupStatsPath, 'utf-8'))
+    } catch {
+      this.startupDurations = []
+    }
+  }
+
+  /** 记录一次「spawn→health」耗时（同一次 spawn 只记一次），并落盘供 ETA 估算 */
+  private _recordStartupDuration(durationMs: number): void {
+    if (this.startupDurationRecorded) return
+    this.startupDurationRecorded = true
+    this._ensureStartupStatsLoaded()
+    this.startupDurations = appendStartupDuration(this.startupDurations, durationMs)
+    try {
+      const file = this._startupStatsPath
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, serializeStartupStats(this.startupDurations), 'utf-8')
+    } catch {
+      // 统计写盘失败不影响启动
+    }
+  }
+
+  /** 估算总启动耗时（最近几次中位数）；没有历史时 undefined */
+  private _estimateStartupMs(): number | undefined {
+    this._ensureStartupStatsLoaded()
+    return estimateStartupMs(this.startupDurations)
+  }
   /** 更新启动阶段并推送（阶段变化才推送，避免事件/日志刷屏） */
   private _setBootPhase(phase: BootPhase, logLine?: string): void {
     if (this.bootPhase === phase) return
@@ -851,6 +1147,7 @@ export class ClawManager extends EventEmitter {
         this.ready = true
         this.readyAt = Date.now()
         this._setBootPhase('ready')
+        this._recordStartupDuration(this.readyAt - spawnAt)
         this._addLog(
           `[gateway] 启动耗时 ${((this.readyAt - spawnAt) / 1000).toFixed(1)}s（spawn→health）`,
           'system'
@@ -904,6 +1201,7 @@ export class ClawManager extends EventEmitter {
           this.ready = true
           this.readyAt = Date.now()
           this._setBootPhase('ready')
+          this._recordStartupDuration(this.readyAt - startAt)
           this._addLog(
             `[gateway] 启动耗时 ${((this.readyAt - startAt) / 1000).toFixed(1)}s（spawn→health）`,
             'system'
@@ -934,20 +1232,21 @@ export class ClawManager extends EventEmitter {
       ? Number(this.configManager.getConfig().port)
       : this.port
     return {
-      running: !!this.process,
-      pid: this.process?.pid,
+      running: !!this.process || this.adoptedPid !== undefined,
+      pid: this.process?.pid ?? this.adoptedPid,
       port: currentPort,
       uptime: this.startedAt ? Date.now() - this.startedAt : undefined,
       startedAt: this.startedAt,
       // doctor --fix / 状态库迁移进行中：网关虽未起，但也不是静止，
       // 前端据此把「启动中」细化为「正在修复配置…」，避免用户以为卡死重复点击。
       maintenance: this.maintenanceActive,
-      starting: !!this.process && !this.ready,
-      ready: !!this.process && this.ready,
+      starting: (!!this.process || this.adoptedPid !== undefined) && !this.ready,
+      ready: (!!this.process || this.adoptedPid !== undefined) && this.ready,
       readyAt: this.readyAt,
       startupMs:
         this.startedAt && this.readyAt ? Math.max(0, this.readyAt - this.startedAt) : undefined,
-      bootPhase: this.process ? (this.ready ? 'ready' : this.bootPhase) : 'idle'
+      bootPhase: this.process || this.adoptedPid !== undefined ? (this.ready ? 'ready' : this.bootPhase) : 'idle',
+      estimateStartupMs: this._estimateStartupMs()
     }
   }
 
@@ -1515,7 +1814,10 @@ export class ClawManager extends EventEmitter {
       )
       if (isTracked) {
         this.process = null
+        this.detachedChild = false
         this.startedAt = undefined
+        this._clearGatewayRuntime()
+        this._stopGatewayLogTail()
         this._markNotReady()
         this.emit('statusChange', false)
       }

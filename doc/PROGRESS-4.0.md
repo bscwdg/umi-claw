@@ -548,3 +548,25 @@ deepseek-v4-flash. Use --replace-path models.providers.umiclaw-deepseek.models t
   含 7 条后续优化项（渠道插件双重物化验证、fs-safe native 模式对照、agent 会话裁剪、
   插件包瘦身、workspace 体检、健康复查、更细阶段可视化）。
 - **验收**：ui 19/19（U18 增阶段断言、U19 增阶段与 trace 接线断言）；全量 30 套通过；双 typecheck 0 错；build 通过。
+
+### 2026-10-31 · 不迁数据前提下的三项优化（语音热更 / 退出保留网关 / 启动 ETA）
+
+约束：用户明确「不迁任何数据」→ 放弃 SSD 迁移方案，改为纯代码侧优化。
+
+1. **语音音色热更（减少重启次数）**
+   - 新增 `data/voice/tts-bridge.json`（应用原子写：speaker/resourceId 0600）；`volc-tts.mjs` 每次合成时读取，
+     env 只做兜底。→ 改音色立即生效、**无需重启网关**；Key / tts 模式 / 通道变更仍需重启（Key 仍只走进程 env，不落盘）。
+   - `openclawTts.buildOpenClawTtsEnv` 增加 `UMI_VOICE_SETTINGS_FILE`；语音页保存提示同步更新。
+   - 验收：`voice.accept` 新增 `hot-speaker`（env 路径 / 原子写 / 保存即更新 / 脚本确实读取）→ 20/20。
+
+2. **退出应用时保留网关（可选开关，默认关）**
+   - `AppConfig.keepGatewayOnQuit`（Config.vue 开关）；开启后网关以 `detached + 日志写文件` 方式启动，
+     退出不再停网关；下次启动 `adoptRunningGateway()` 检测「进程存活 + /health 200」直接复用（跳过冷启动）。
+   - 复用的网关 stop 用 taskkill 结束；运行时描述 `data/cache/gateway-runtime.json`。
+   - 验收：`claw-maintenance` 新增 `keep-gateway`（复用/清理/设置关闭不复用/退出保留与停止）→ 28/28。
+
+3. **启动 ETA**
+   - 新增 `electron/main/startupStats.ts`（纯函数：追加/上限 5/中位数/估算/序列化），
+     `clawManager` 记录最近几次 spawn→health 并暴露 `estimateStartupMs`；
+     store `etaRemainingSeconds`，Dashboard 启动中显示「预计还需约 N」。
+   - 验收：`stats-pure`、`eta-wiring` 用例。

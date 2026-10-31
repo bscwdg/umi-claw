@@ -262,3 +262,10 @@ Invoke-WebRequest -Uri 'http://127.0.0.1:3213/health' -UseBasicParsing | Select-
    gateway 存活但假死时 `ready` 不更新；可在页面 focus 时低频复查一次健康。
 7. **更细的阶段可视化（低风险，需解析日志）**
    日志里已有 `startup phase:` 行；可按行解析出「正在物化哪个插件」，把 UI 阶段再细化。
+
+### 8.3 已实施（不迁数据前提下的三项）
+
+- **语音音色热更**：`data/voice/tts-bridge.json` + `volc-tts.mjs` 每次合成读取 → 改音色无需重启网关；
+  Key/tts 模式/通道变更仍需重启（Key 不落盘）。
+- **退出保留网关（默认关）**：开启后网关 detached + 文件日志，退出不停；下次启动检测 `/health` 直接复用。
+- **启动 ETA**：记录最近 5 次 spawn→health，取最近 3 次中位数，Dashboard 显示「预计还需约 N」。

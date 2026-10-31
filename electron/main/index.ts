@@ -2168,6 +2168,8 @@ app.whenReady().then(async () => {
       bridgeScriptPath: app.isPackaged
         ? join(process.resourcesPath, 'resources', 'voice', 'volc-tts.mjs')
         : join(app.getAppPath(), 'resources', 'voice', 'volc-tts.mjs'),
+      // bridge 热更文件：音色/资源 ID 每次合成时读取（改音色不必重启网关）
+      bridgeSettingsPath: join(configManager.getDataDir(), 'voice', 'tts-bridge.json'),
       logger: (message) => console.log(message),
       onSettingsChanged: () => {
         // tts 块写入 openclaw.json；环境变量部分由网关下次启动生效。
@@ -2215,6 +2217,10 @@ app.whenReady().then(async () => {
   createWindow()
   createTray()
   setupLogForwarding()
+
+  // 若上次退出时按设置保留了网关（keepGatewayOnQuit），这里直接复用：跳过冷启动。
+  // 不满足条件（设置关闭 / 进程不在 / /health 不通）时静默返回，走正常启动流程。
+  void clawManager.adoptRunningGateway().catch(() => undefined)
 
   // 启动时同步开机自启项，保证与配置一致
   const startupConfig = configManager.getConfig()

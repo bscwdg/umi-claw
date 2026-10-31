@@ -36,6 +36,9 @@
               <span v-if="clawStore.phase === 'loading'">
                 · 正在物化/加载渠道插件，首次启动或升级后可能需要数分钟（详见下方日志）
               </span>
+              <span v-if="clawStore.etaRemainingSeconds !== undefined" class="text-muted">
+                · 预计还需约 {{ clawStore.etaRemainingSeconds >= 60 ? Math.ceil(clawStore.etaRemainingSeconds / 60) + ' 分钟' : clawStore.etaRemainingSeconds + ' 秒' }}
+              </span>
               <span v-else-if="clawStore.phase === 'preparing'">
                 · 正在清理残留 / 同步配置 / 检查插件，请稍候
               </span>
