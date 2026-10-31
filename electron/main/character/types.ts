@@ -25,6 +25,8 @@ export const CHARACTER_CHANNELS = {
   memoryRunNow: 'character:memory:runNow',
   memoryStatus: 'character:memory:status',
   voiceSend: 'character:voice:send',
+  exportData: 'character:export',
+  deleteData: 'character:delete',
   streamChunk: 'character:stream:chunk',
   streamDone: 'character:stream:done',
   streamError: 'character:stream:error',

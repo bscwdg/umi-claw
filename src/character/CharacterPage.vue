@@ -133,6 +133,20 @@
     </section>
 
     <section class="card">
+      <h3>隐私与安全</h3>
+      <label class="check-row">
+        <input v-model="ageConfirmed" type="checkbox" @change="saveAgeConfirm" />
+        <span>我已满 18 岁（未确认前她不会主动发消息）</span>
+      </label>
+      <div class="row" style="margin-top: 10px">
+        <button class="btn" :disabled="busy" @click="exportData">导出她的档案</button>
+        <button class="btn ghost" :disabled="busy" @click="deleteMemory">删除日记与关系</button>
+        <button class="btn ghost" :disabled="busy" @click="deleteAll">删除全部</button>
+      </div>
+      <p class="hint">导出不含密钥；日记会归档到 Obsidian 的「大肥鱼/归档」，不会直接删除你的笔记。</p>
+    </section>
+
+    <section class="card">
       <h3>数据</h3>
       <div class="row">
         <button class="btn ghost" :disabled="busy" @click="resetValues">重置数值</button>
@@ -181,6 +195,7 @@ const petVisible = ref(false)
 const lifeDoc = ref('')
 const proactiveEnabled = ref(false)
 const memoryStatus = ref({ done: false, attempts: 0, lastError: '' })
+const ageConfirmed = ref(false)
 const memoryText = computed(() => {
   if (memoryStatus.value.done) return '今天已经写好了。'
   if (memoryStatus.value.lastError) {
@@ -230,6 +245,7 @@ async function refresh(): Promise<void> {
     tabooDraft.value = (settings.relationship?.taboo ?? []).join('，')
     petVisible.value = Boolean(settings.pet?.visible)
     proactiveEnabled.value = Boolean(settings.proactive?.enabled)
+    ageConfirmed.value = Boolean(settings.safety?.ageConfirmed)
     const life = await window.api.character.life.get()
     lifeDoc.value = life.doc ?? ''
     const memory = await window.api.character.memory.status()
@@ -303,6 +319,44 @@ async function runMemory(): Promise<void> {
 async function cancelQuiet(): Promise<void> {
   await run(async () => {
     await window.api.character.settings.set({ proactive: { silentUntil: 0 } } as never)
+    await refresh()
+  })
+}
+
+async function saveAgeConfirm(): Promise<void> {
+  await run(async () => {
+    await window.api.character.settings.set({
+      safety: { ageConfirmed: ageConfirmed.value }
+    } as never)
+    await refresh()
+  })
+}
+
+async function exportData(): Promise<void> {
+  await run(async () => {
+    const data = await window.api.character.safety.exportData()
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `fish-character-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  })
+}
+
+async function deleteMemory(): Promise<void> {
+  if (!window.confirm('删除日记与关系记忆？日记会归档到 Obsidian「大肥鱼/归档」，可手动找回。')) return
+  await run(async () => {
+    await window.api.character.safety.deleteData('memory')
+    await refresh()
+  })
+}
+
+async function deleteAll(): Promise<void> {
+  if (!window.confirm('删除全部角色数据（含设置与人格文件）？此操作不可撤销。')) return
+  await run(async () => {
+    await window.api.character.safety.deleteData('all')
     await refresh()
   })
 }
@@ -547,6 +601,18 @@ select {
   line-height: 1.7;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.check-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-primary, #e8ecf4);
+}
+.check-row input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
 }
 .err {
   margin: 0 0 12px;

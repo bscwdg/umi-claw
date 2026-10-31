@@ -101,6 +101,33 @@ try {
     assert(!asarText.includes('plugins/work/migrations'), 'asar 不应打包插件 migrations')
     return '打包产物结构正确 ✓'
   })
+  // ── S7 角色内容包与桌宠 preload（C10）──
+  await r.check('S7', '角色内容包随包（persona/cards/emotions）且桌宠独立 preload 进 asar', async () => {
+    const unpacked = join(repoRoot, 'release', 'win-unpacked')
+    if (!existsSync(unpacked)) {
+      return '跳过（未构建 release/win-unpacked）'
+    }
+    const resRoot = join(unpacked, 'resources', 'resources')
+    const character = join(resRoot, 'character')
+    for (const rel of [
+      'persona/SOUL.md.tpl',
+      'persona/AGENTS.md.tpl',
+      'persona/voice-rules.md',
+      'persona/few-shots.v1.json',
+      'persona/banned.v1.json',
+      'cards/life-cards.v1.json',
+      'cards/topics.v1.json',
+      'cards/lines.v1.json',
+      'emotions.v1.json'
+    ]) {
+      assert(existsSync(join(character, rel)), `包内角色内容 ${rel}`)
+    }
+    const asarText = readFileSync(join(unpacked, 'resources', 'app.asar')).toString('utf8')
+    assert(asarText.includes('"pet.js"'), 'asar 含桌宠独立 preload（pet.js）')
+    assert(asarText.includes('character:window:pet'), 'asar 含角色通道代码')
+    assert(!asarText.includes('doc/research/upstream'), 'asar 不含上游参考库')
+    return '角色资源/桌宠 preload ✓'
+  })
 } catch (e) {
   console.error('smoke 自身异常:', e)
 }

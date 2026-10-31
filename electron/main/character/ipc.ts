@@ -206,6 +206,10 @@ export function registerCharacterIpc(
     if (result.delivered) await manager.markVoiceSent()
     return { ...result, reason: decision.reason }
   })
+  handle(CHARACTER_CHANNELS.exportData, () => manager.exportData())
+  handle(CHARACTER_CHANNELS.deleteData, (payload) =>
+    manager.deleteData((payload as { scope?: unknown } | undefined)?.scope)
+  )
 
   return () => {
     for (const channel of channels) ipcMain.removeHandler(channel)

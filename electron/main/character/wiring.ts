@@ -4,7 +4,7 @@
 // 初始化失败只降级角色自身，绝不阻断宿主启动（红线 2）。
 
 import { globalShortcut, screen } from 'electron'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { CharacterManager } from './manager'
 import { registerCharacterIpc, type CharacterIpcDisposer } from './ipc'
@@ -197,7 +197,43 @@ async function registerCharacterInternal(
         mkdirSync(dirname(target), { recursive: true })
         writeFileSync(target, text, 'utf8')
       },
-      obsidianAvailable: () => Boolean(deps.obsidianVaultPath?.()?.trim())
+      obsidianAvailable: () => Boolean(deps.obsidianVaultPath?.()?.trim()),
+      deleteWorkspaceFiles: async (scope) => {
+        if (scope === 'values') return
+        // 日记：从 Obsidian 日记目录移到 归档/<时间戳>，不直接删用户笔记
+        const vault = deps.obsidianVaultPath?.()?.trim()
+        if (vault) {
+          const diaryDir = join(vault, '大肥鱼', '日记')
+          if (existsSync(diaryDir)) {
+            const archiveDir = join(vault, '大肥鱼', '归档', String(Date.now()))
+            try {
+              mkdirSync(archiveDir, { recursive: true })
+              for (const file of readdirSync(diaryDir)) {
+                renameSync(join(diaryDir, file), join(archiveDir, file))
+              }
+            } catch (error) {
+              logger(`[character] 日记归档失败: ${(error as Error)?.message ?? String(error)}`)
+            }
+          }
+        }
+        // workspace：STATE/LIFE/memory 一定清；全量删除才动人格文件
+        const removeSafe = (path: string): void => {
+          try {
+            rmSync(path, { force: true, recursive: true })
+          } catch {
+            /* ignore */
+          }
+        }
+        removeSafe(join(workspaceDir, 'fish', 'STATE.md'))
+        removeSafe(join(workspaceDir, 'fish', 'LIFE.md'))
+        removeSafe(join(workspaceDir, 'memory'))
+        if (scope === 'all') {
+          for (const file of ['SOUL.md', 'IDENTITY.md', 'AGENTS.md', 'USER.md']) {
+            removeSafe(join(workspaceDir, file))
+          }
+          removeSafe(join(workspaceDir, '.fish-managed.json'))
+        }
+      }
     })
     managerRef = manager
     await manager.init()
@@ -266,6 +302,9 @@ async function registerCharacterInternal(
             })()
           }
         },
+        // 安全闸门：危机词不进模型；输出侧改写独占/卖惨表达
+        screenInput: (text) => manager.screenInbound(text),
+        filterOutput: (text) => manager.filterAssistantText(text),
         contextProvider: async () => {
           // 每轮注入的短上下文：称呼 + 阶段 + 今日活动（≤300 字，让 C05/C06 对对话可见）
           try {

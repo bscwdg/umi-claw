@@ -47,6 +47,15 @@ import {
 import { renderStateDoc } from './persona'
 import { decideVoice, type VoiceDecision } from './voicePolicy'
 import { isQuietHours } from './proactive'
+import {
+  buildExportPayload,
+  CRISIS_REDIRECT,
+  filterAssistantOutput,
+  isCrisisText,
+  normalizeDeleteScope,
+  type CharacterExport,
+  type DeleteScope
+} from './safety'
 
 export interface CharacterManagerOptions {
   store: CharacterStore
@@ -68,6 +77,8 @@ export interface CharacterManagerOptions {
   writeObsidianDiary?: (relPath: string, text: string) => Promise<void>
   /** Obsidian vault 是否可用（缺失时日记降级 workspace-only，不判失败） */
   obsidianAvailable?: () => boolean
+  /** 删除/重置时清理 workspace 与 Obsidian 日记（归档而非硬删） */
+  deleteWorkspaceFiles?: (scope: DeleteScope) => Promise<void>
 }
 
 export class CharacterManager {
@@ -92,6 +103,7 @@ export class CharacterManager {
   private readonly writeWorkspaceMemory?: (date: string, text: string) => Promise<void>
   private readonly writeObsidianDiary?: (relPath: string, text: string) => Promise<void>
   private readonly obsidianAvailable?: () => boolean
+  private readonly deleteWorkspaceFiles?: (scope: DeleteScope) => Promise<void>
   private lifeDeckCache: LifeDeck | null = null
   private memoryInFlight: Promise<{ ran: boolean; reason: MemoryGateReason; errors?: string[] }> | null =
     null
@@ -134,6 +146,7 @@ export class CharacterManager {
     this.writeWorkspaceMemory = options.writeWorkspaceMemory
     this.writeObsidianDiary = options.writeObsidianDiary
     this.obsidianAvailable = options.obsidianAvailable
+    this.deleteWorkspaceFiles = options.deleteWorkspaceFiles
   }
 
   async init(): Promise<void> {
@@ -692,6 +705,67 @@ export class CharacterManager {
   async recordSttInbound(text: string, now = this.now()): Promise<RelationshipApplyResult> {
     const refId = `stt:${toDateKey(now)}:${String(text ?? '').slice(0, 24)}`
     return this.applyRelationshipEvent({ type: 'voice.listen', refId })
+  }
+
+  /** 输入侧安全检查：危机词命中 → 不走模型，直接给求助资源 */
+  screenInbound(text: string): { blocked: boolean; reply?: string } {
+    if (isCrisisText(text)) return { blocked: true, reply: CRISIS_REDIRECT }
+    return { blocked: false }
+  }
+
+  /** 输出侧过滤：独占/卖惨表达改写 */
+  filterAssistantText(text: string): string {
+    return filterAssistantOutput(text).text
+  }
+
+  /** 导出角色档案（不含密钥；密钥从不入库，这里再兜一层结构约束） */
+  async exportData(now = this.now()): Promise<CharacterExport> {
+    this.assertInitialized()
+    const settings = await this.getSettings()
+    const state = await this.getState()
+    const meta = await this.store.readMeta()
+    const life: Record<string, unknown> = {}
+    for (const day of meta.lifeDays.slice(-60)) {
+      const record = await this.store.readLife(day)
+      if (record) life[day] = record
+    }
+    const days: Record<string, unknown> = {}
+    for (const day of meta.days.slice(-90)) {
+      const record = await this.store.readDay(day)
+      if (record) days[day] = record
+    }
+    return buildExportPayload({
+      exportedAt: now,
+      settings,
+      state,
+      life,
+      days,
+      unlocks: await this.store.readUnlocks()
+    })
+  }
+
+  /** 分层删除：values 只清数值；memory 清日记/关系；all 连设置与人格文件（归档） */
+  async deleteData(scopeInput: unknown): Promise<{ scope: DeleteScope }> {
+    this.assertInitialized()
+    const scope = normalizeDeleteScope(scopeInput)
+    return this.withMutation(async () => {
+      await this.store.reset(scope)
+      if (this.deleteWorkspaceFiles) {
+        try {
+          await this.deleteWorkspaceFiles(scope)
+        } catch (error) {
+          this.logger(`[character] 清理文件失败: ${(error as Error)?.message ?? String(error)}`)
+        }
+      }
+      if (scope === 'all') this.settings = await this.store.readSettings()
+      this.state = await this.store.readState()
+      this.emit({ type: 'state', payload: clone(this.state), at: this.now() })
+      this.emit({ type: 'reset', payload: { scope }, at: this.now() })
+      if (scope === 'all' && this.settings) {
+        this.emit({ type: 'settings', payload: clone(this.settings), at: this.now() })
+      }
+      return { scope }
+    })
   }
 
   async reset(options: CharacterResetOptions = {}): Promise<{ scope: string }> {

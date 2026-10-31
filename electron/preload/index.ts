@@ -721,6 +721,20 @@ const api = {
           text ? { text } : {}
         )
     },
+    safety: {
+      exportData: () =>
+        call<{
+          schema: string
+          exportedAt: number
+          settings: unknown
+          state: unknown
+          life: unknown
+          days: unknown
+          unlocks: string[]
+        }>('character:export'),
+      deleteData: (scope: 'values' | 'memory' | 'all') =>
+        call<{ scope: string }>('character:delete', { scope })
+    },
     pet: {
       show: () => call<{ visible: boolean; clickThrough: boolean }>('character:window:pet', { action: 'show' }),
       hide: () => call<{ visible: boolean; clickThrough: boolean }>('character:window:pet', { action: 'hide' }),

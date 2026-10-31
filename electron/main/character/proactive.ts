@@ -13,6 +13,7 @@ export type ProactiveReason =
   | 'daily-cap'
   | 'silent-until'
   | 'min-interval'
+  | 'age-unconfirmed'
   | 'ok'
 
 export interface ProactiveDayState {
@@ -72,6 +73,8 @@ export function decideProactive(ctx: ProactiveContext): ProactiveDecision {
 
   if (!settings.enabled) return deny('disabled')
   if (!settings.proactive.enabled) return deny('disabled')
+  // D10：未确认年龄前不主动打扰
+  if (!settings.safety.ageConfirmed) return deny('age-unconfirmed')
 
   // 安静几天
   if (settings.proactive.silentUntil > now) return deny('silent-until')

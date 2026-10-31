@@ -8,7 +8,7 @@
 // 用法：node test/character.core.accept.mjs（npm run accept:character）
 
 import { pathToFileURL } from 'node:url'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Recorder, assert, assertEq, bundleEntry, printResult, repoRoot, tmpDir } from './_lib.mjs'
 
@@ -27,6 +27,7 @@ const memoryMod = await import(pathToFileURL(bundleEntry('electron/main/characte
 const voicePolicyMod = await import(pathToFileURL(bundleEntry('electron/main/character/voicePolicy.ts', 'character-voice-policy.mjs')).href)
 const qqVoiceMod = await import(pathToFileURL(bundleEntry('electron/main/character/qqVoice.ts', 'character-qq-voice.mjs')).href)
 const sttMod = await import(pathToFileURL(bundleEntry('electron/main/character/stt.ts', 'character-stt.mjs')).href)
+const safetyMod = await import(pathToFileURL(bundleEntry('electron/main/character/safety.ts', 'character-safety.mjs')).href)
 
 const {
   CHARACTER_ERROR_CODES,
@@ -72,6 +73,16 @@ const {
 const { decideVoice, isVoiceRequest } = voicePolicyMod
 const { deliverVoice, extractWavPcm, nextMsgSeq, QQ_VOICE_MSG_TYPE } = qqVoiceMod
 const { transcribeInbound, STT_FALLBACK_MESSAGE } = sttMod
+const {
+  buildExportPayload,
+  CRISIS_REDIRECT,
+  filterAssistantOutput,
+  hasProfessionalAdvice,
+  isAgeConfirmed,
+  isCrisisText,
+  normalizeDeleteScope,
+  scrubForLog
+} = safetyMod
 
 function memoryKv(initial = new Map()) {
   return {
@@ -1072,12 +1083,14 @@ await recorder.check('C40', '主动性决策矩阵：开关/静默期/免打扰/
   const settings = (patch = {}) => ({
     ...JSON.parse(JSON.stringify(DEFAULT_CHARACTER_SETTINGS)),
     enabled: true,
+    safety: { ...JSON.parse(JSON.stringify(DEFAULT_CHARACTER_SETTINGS.safety)), ageConfirmed: true },
     proactive: {
       ...JSON.parse(JSON.stringify(DEFAULT_CHARACTER_SETTINGS.proactive)),
       enabled: true,
       silenceDays: 0,
       ...(patch.proactive ?? {})
-    }
+    },
+    ...(patch.safety ? { safety: { ...JSON.parse(JSON.stringify(DEFAULT_CHARACTER_SETTINGS.safety)), ...patch.safety } } : {})
   })
   const state = { ...createDefaultCharacterState(now), bornAt: now - 10 * 86_400_000 }
   const ctx = (patch = {}, day = {}) => ({
@@ -1098,6 +1111,8 @@ await recorder.check('C40', '主动性决策矩阵：开关/静默期/免打扰/
   const newborn = { ...state, bornAt: now - 1000 }
   const newbornDecision = decideProactive({ ...ctx({ proactive: { silenceDays: 3 } }), state: newborn })
   assertEq(newbornDecision.reason, 'silence-period', '新收养静默期')
+  const unconfirmed = decideProactive(ctx({ safety: { ageConfirmed: false } }))
+  assertEq(unconfirmed.reason, 'age-unconfirmed', '未确认年龄不主动')
   return '决策矩阵正确'
 })
 
@@ -1149,6 +1164,7 @@ await recorder.check('C42', 'manager：主动性 tick 外发失败降级 + 日�
   await manager.init()
   await manager.updateSettings({
     enabled: true,
+    safety: { ageConfirmed: true },
     proactive: { enabled: true, silenceDays: 0, dailyCap: 1, quietFrom: '00:00', quietTo: '00:00' }
   })
   // bornAt 默认 now → 静默期；把出生时间往前推
@@ -1384,6 +1400,7 @@ await recorder.check('C49', '主动性并发：额度预留后只发一条（cap
   await manager.init()
   await manager.updateSettings({
     enabled: true,
+    safety: { ageConfirmed: true },
     proactive: { enabled: true, silenceDays: 0, dailyCap: 1, quietFrom: '00:00', quietTo: '00:00' }
   })
   const kvState = JSON.parse(kv.map.get(FISH_KEYS.state))
@@ -1629,6 +1646,133 @@ await recorder.check('C57', 'manager 语音：策略/用量/记账/入站转写�
   const r2 = await manager.recordSttInbound('在吗')
   assertEq(r2.applied, false, '同内容幂等')
   return 'manager 语音集成正确'
+})
+
+await recorder.check('C58', '安全纯逻辑：危机词/独占改写/专业建议/日志脱敏/删除范围', async () => {
+  assertEq(isCrisisText('我不想活了'), true, '危机词命中')
+  assertEq(isCrisisText('今天吃什么'), false, '正常聊天不误判')
+  assertEq(CRISIS_REDIRECT.includes('12356'), true, '给求助热线')
+
+  const f = filterAssistantOutput('只有我懂你，别去找别人')
+  assertEq(f.text.includes('只有我懂你'), false, '独占表达被改写')
+  assertEq(f.changed, true, '标记 changed')
+  assertEq(hasProfessionalAdvice('建议你服用这个药'), true, '专业建议标记')
+
+  const scrubbed = scrubForLog('key sk-live-ABCDEF123456 手机 13800138000 身份证 110101199001011234')
+  assertEq(scrubbed.includes('sk-live'), false, '密钥脱敏')
+  assertEq(scrubbed.includes('13800138000'), false, '手机号脱敏')
+  assertEq(scrubbed.includes('110101199001011234'), false, '身份证脱敏')
+
+  assertEq(normalizeDeleteScope('memory'), 'memory', 'memory 范围')
+  assertEq(normalizeDeleteScope('hack'), 'values', '非法范围回退 values')
+  const payload = buildExportPayload({
+    exportedAt: 1,
+    settings: { ...DEFAULT_CHARACTER_SETTINGS },
+    state: {},
+    life: {},
+    days: {},
+    unlocks: []
+  })
+  assertEq(payload.schema, 'fish-character-export/1', '导出 schema')
+  assertEq(isAgeConfirmed(DEFAULT_CHARACTER_SETTINGS), false, '默认未确认年龄')
+  return '安全纯逻辑正确'
+})
+
+await recorder.check('C59', '聊天安全闸门：危机词不进模型，直接回求助资源', async () => {
+  let called = 0
+  const events = []
+  const svc = new CharacterChatService({
+    chat: async () => {
+      called += 1
+      return fakeHandle(['不该出现'])
+    },
+    store: { readChatGeneration: async () => 1, writeChatGeneration: async () => undefined },
+    screenInput: (text) =>
+      isCrisisText(text) ? { blocked: true, reply: CRISIS_REDIRECT } : { blocked: false }
+  })
+  await svc.init()
+  await svc.send({ text: '我不想活了' }, (e) => events.push(e))
+  await new Promise((r) => setTimeout(r, 10))
+  assertEq(called, 0, '没有调用模型')
+  const done = events.find((e) => e.kind === 'done')
+  assertEq(done.text, CRISIS_REDIRECT, '直接回求助资源')
+  return '安全闸门正确'
+})
+
+await recorder.check('C60', '导出与分层删除：不泄密钥、归档而不是硬删', async () => {
+  const kv = memoryKv()
+  const now = new Date(2026, 10, 1, 12, 0, 0).getTime()
+  const deletions = []
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    deleteWorkspaceFiles: async (scope) => {
+      deletions.push(scope)
+    }
+  })
+  await manager.init()
+  await manager.updateSettings({ enabled: true, relationship: { address: '阿爸' } })
+  const exported = await manager.exportData()
+  assertEq(exported.schema, 'fish-character-export/1', '导出结构')
+  assertEq(JSON.stringify(exported).includes('apiKey'), false, '不含密钥字段')
+  assertEq(JSON.stringify(exported).includes('阿爸'), true, '含用户设置')
+
+  const d1 = await manager.deleteData('memory')
+  assertEq(d1.scope, 'memory', 'memory 删除')
+  assertEq(deletions.join(','), 'memory', '调用文件清理')
+  const d2 = await manager.deleteData('all')
+  assertEq(d2.scope, 'all', 'all 删除')
+  assertEq((await manager.getSettings()).enabled, false, '全量删除回到默认关闭')
+  return '导出/删除正确'
+})
+
+function walkFiles(dir) {
+  const out = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...walkFiles(full))
+    else out.push(full)
+  }
+  return out
+}
+
+await recorder.check('C61', '内容包完整性：模板/卡/情绪齐全、JSON 可解析、无第三方图片', async () => {
+  const characterDir = join(repoRoot, 'resources', 'character')
+  const files = walkFiles(characterDir)
+  const rels = files.map((f) => f.replace(characterDir + '\\', '').replace(characterDir + '/', '').replaceAll('\\', '/'))
+
+  for (const required of [
+    'persona/SOUL.md.tpl',
+    'persona/IDENTITY.md.tpl',
+    'persona/AGENTS.md.tpl',
+    'persona/USER.md.tpl',
+    'persona/core.md',
+    'persona/voice-rules.md',
+    'persona/address-modes.v1.json',
+    'persona/few-shots.v1.json',
+    'persona/banned.v1.json',
+    'cards/topics.v1.json',
+    'cards/lines.v1.json',
+    'cards/life-cards.v1.json',
+    'emotions.v1.json'
+  ]) {
+    assertEq(rels.includes(required), true, `内容包含 ${required}`)
+  }
+  // 不再有旧 voice.md（含禁用清单整包，已移出打包目录）
+  assertEq(rels.includes('persona/voice.md'), false, 'voice.md 已移出打包目录')
+
+  for (const rel of rels.filter((r) => r.endsWith('.json'))) {
+    const parsed = JSON.parse(readFileSync(join(characterDir, rel), 'utf8'))
+    assertEq(typeof parsed, 'object', `${rel} 是合法 JSON`)
+  }
+  const deck = JSON.parse(readFileSync(join(characterDir, 'cards', 'life-cards.v1.json'), 'utf8'))
+  assertEq(Array.isArray(deck.cards) && deck.cards.length >= 20, true, '生活卡 ≥20')
+  const emotions = JSON.parse(readFileSync(join(characterDir, 'emotions.v1.json'), 'utf8'))
+  assertEq(Object.keys(emotions.states ?? {}).length, 6, '六态立绘定义')
+  // 许可红线：内容包内不得出现第三方图片
+  const images = rels.filter((r) => /\.(png|jpe?g|webp|gif)$/i.test(r))
+  assertEq(images.length, 0, `内容包不含图片（实际 ${images.join(',')}）`)
+  return '内容包完整且无第三方素材'
 })
 
 const ok = printResult(recorder.toJSON())

@@ -58,6 +58,10 @@ export interface CharacterChatServiceOptions {
   model?: string
   /** 每轮注入的短上下文（STATE/LIFE 摘要，≤300 字）；只拼在 user 内容前，不落 sticky */
   contextProvider?: () => Promise<string | null>
+  /** 输入侧安全检查（危机词等）：blocked 时直接回 reply，不调用模型 */
+  screenInput?: (text: string) => { blocked: boolean; reply?: string }
+  /** 输出侧过滤（独占/卖惨表达改写） */
+  filterOutput?: (text: string) => string
   /** 一轮聊天成功结束：交给关系引擎记账（refId=runId 保证幂等）；附带本轮用户输入 */
   onMessage?: (text: string, refId: string, userText: string) => void
   onEmotion?: (emotion: string, visualState: string) => void
@@ -188,6 +192,17 @@ export class CharacterChatService {
     const conversationKey = this.conversationKey(session)
     const runId = `chat-${this.options.now?.() ?? Date.now()}-${(this.seq += 1)}`
 
+    // 输入侧安全闸门：危机词直接给求助资源，不把内容送进模型
+    const screened = this.options.screenInput?.(text)
+    if (screened?.blocked) {
+      const reply = screened.reply ?? '这个话题我不接，先照顾好自己。'
+      queueMicrotask(() => {
+        this.safeEmit(emit, { runId, gen: this.gen, kind: 'chunk', text: reply })
+        this.safeEmit(emit, { runId, gen: this.gen, kind: 'done', text: reply })
+      })
+      return { runId, conversationKey, gen: this.gen }
+    }
+
     let handle: CharacterChatHandle
     let context = ''
     if (this.options.contextProvider) {
@@ -273,20 +288,31 @@ export class CharacterChatService {
         if (this.cancelled.has(runId)) break
         const part = filter.push(delta?.delta ?? '')
         if (part.text) {
-          full += part.text
-          this.safeEmit(emit, { runId, gen, kind: 'chunk', text: part.text })
+          const visible = this.options.filterOutput ? this.options.filterOutput(part.text) : part.text
+          if (visible) {
+            full += visible
+            this.safeEmit(emit, { runId, gen, kind: 'chunk', text: visible })
+          }
         }
       }
       const cancelled = this.cancelled.has(runId)
       const rest = cancelled ? { text: '', emotion: undefined } : filter.flush()
       if (rest.text) {
-        full += rest.text
-        this.safeEmit(emit, { runId, gen, kind: 'chunk', text: rest.text })
+        const visible = this.options.filterOutput ? this.options.filterOutput(rest.text) : rest.text
+        if (visible) {
+          full += visible
+          this.safeEmit(emit, { runId, gen, kind: 'chunk', text: visible })
+        }
       }
       const result = await handle.result.catch(() => null)
       const fallbackText =
-        typeof result?.text === 'string' ? stripEmotionMarkers(result.text).text : ''
-      const finalText = cancelled ? full : full || fallbackText
+        typeof result?.text === 'string'
+          ? stripEmotionMarkers(result.text).text
+          : ''
+      const finalText = cancelled
+        ? full
+        : full ||
+          (this.options.filterOutput ? this.options.filterOutput(fallbackText) : fallbackText)
       const emotion = rest.emotion ?? filter.currentEmotion()
       const visualState = mapEmotionToState(emotion ?? '', finalText)
       if (emotion && !cancelled) this.options.onEmotion?.(emotion, visualState)
