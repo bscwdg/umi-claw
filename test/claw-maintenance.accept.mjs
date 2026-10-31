@@ -745,6 +745,17 @@ await rec.check('keep-gateway', '保留网关：复用健康的后台网关 + �
   assertEq(st.running, true, '复用后 running=true')
   assertEq(st.ready, true, '复用后 ready=true')
   assertEq(st.pid, 4321, 'pid 来自运行时描述')
+  // 复用状态下 waitReady 必须也认「在运行」（4.0 曾只看 process 导致误报未运行）
+  const readyWait = await cm.waitReady(1000)
+  assertEq(readyWait.ready, true, '复用状态下 waitReady 应返回就绪')
+  // 运行时描述要带 openclawVersion（adopt 的跨版本校验依赖它）
+  cm.detachedChild = true
+  cm._readOpenClawVersion = () => '2026.test.1'
+  cm._writeGatewayRuntime(join(sandbox, 'gw.log'))
+  const runtime = JSON.parse(
+    (await import('node:fs')).readFileSync(join(sandbox, 'cache', 'gateway-runtime.json'), 'utf-8')
+  )
+  assertEq(runtime.openclawVersion, '2026.test.1', '运行时描述必须写 openclawVersion')
   await cm.stop()
   assertEq(cm.getStatus().running, false, 'stop 后不再运行')
   assert(!existsSync(runtimeFile), 'stop 后运行时描述应清理')
