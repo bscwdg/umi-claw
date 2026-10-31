@@ -994,7 +994,7 @@ async function saveVoiceSettings(): Promise<void> {
     showNotice(
       voiceForm.conversationTts === 'off'
         ? '语音设置已保存'
-        : '已保存；对话内语音需重启网关生效'
+        : '已保存；音色已即时生效，Key/TTS 模式或通道变更需重启网关'
     )
   } catch (e) {
     showError(e)
