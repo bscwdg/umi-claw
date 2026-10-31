@@ -639,3 +639,15 @@ deepseek-v4-flash. Use --replace-path models.providers.umiclaw-deepseek.models t
 - 升级核心包后旧后台网关应被拒绝复用并结束
 - 2.0/3.0：改音色不重启网关；改 Key/TTS 模式/通道仍需重启
 - master/1.0：托盘/关窗/系统退出三入口确认终端与网关按设置停止/保留
+
+### 2026-11-01 · 1.0 启动失败排查：Windows ACL 触发 OpenClaw state 安全预检
+
+1.0 dev（`claw-1.0`）首次初始化时 OpenClaw 自动升级 2026.10.5 → 2026.10.9；新版对 SQLite
+状态目录做安全预检，`data`（及 `data/config`）继承了 `Authenticated Users:(M)`（S-1-5-11），
+被判定为 untrusted staging → `state capture unavailable` → `openclaw.sqlite` 进入
+offline maintenance → `openclaw.json` 读取失败 → 网关启动失败。
+
+4.0 的 `data` 之前已加固（SYSTEM + 当前用户），故未受影响。修复：
+`icacls data /inheritance:r /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /grant "<user>:(OI)(CI)F"`，
+之后 1.0 网关正常启动（/health 200）。已同步加固 `claw-master\data`，并把排查步骤写进
+各分支 README 的「常见问题」章节（影响所有 OpenClaw ≥ 2026.10.9 的 dev/便携/普通目录安装）。
