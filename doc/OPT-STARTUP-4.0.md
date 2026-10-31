@@ -175,3 +175,31 @@ Get-ChildItem $caps -Directory | ForEach-Object {
 # 当前是否就绪
 Invoke-WebRequest -Uri 'http://127.0.0.1:3213/health' -UseBasicParsing | Select-Object -Expand StatusCode
 ```
+---
+
+## 7. 实施记录（2026-10-31，环境无关的代码侧修复）
+
+对照实验（同机手动起网关，真实配置）证明启动慢主因不是磁盘/杀软，而是两处代码路径：
+
+| 实验 | 启动到 /health 200 |
+|---|---|
+| 全新空配置（无渠道/无历史） | 45s |
+| 真实配置（基线） | 415–522s |
+| 真实配置 + 移走 139MB agent 历史库 | 522s（无改善） |
+| 真实配置 + `meta.migrations.webhookListeners=true` | 329s（`process.bootstrap` 259s→77s） |
+| 真实配置 + 再关 3 个渠道插件 | 96s（`main-session-recovery` 240s→秒级） |
+
+**已实现的代码兜底（不依赖用户环境/权限）**
+1. `openclawWebhookMarker.ts` + `ConfigManager.ensureWebhookMigrationMarker()`：
+   每次启动网关前（`syncOpenClawConfig` 之后、`spawn` 之前）补齐
+   `meta.migrations.webhookListeners=true`；先备份、原子写、幂等；坏文件不动作。
+   首文件骨架也直接带标记（新装用户首启不重跑迁移）。→ 每次启动省 ~185s 的重复迁移。
+2. `_repairManagedPluginPeerLinks` 修复链接后等 realpath 稳定（最多 3s）再 spawn，
+   避免与 OpenClaw 插件复制/审计撞上 `copy path changed during operation`。
+3. 启动耗时已在上一次提交里埋点（`[gateway] 启动耗时 xxs（spawn→health）`），
+   后续可直接用日志验证收益。
+
+**仍待观察（上游/环境相关，不再动用户环境）**
+- 渠道插件加载（`main-session-recovery`）在 Windows 无符号链接权限时仍可能慢；
+  本次已把与其关联的迁移标记问题修掉，需实测该段是否随之改善。
+- 若仍慢，下一步方向是减少启动期工作（渠道插件预构建缓存/延迟加载），或整理日志反馈 OpenClaw 上游。

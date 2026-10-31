@@ -466,3 +466,44 @@ deepseek-v4-flash. Use --replace-path models.providers.umiclaw-deepseek.models t
 **验收**：全量 19 套 **370/370**；ui **19/19**；e2e 11/11；smoke 6/6；双 typecheck 0 错；build 通过。
 **人工验证**：点重启 → 状态卡出现「启动中（已等 xx s）」→ 就绪后 toast「启动耗时 xx s」，日志面板有
 `[gateway] 启动耗时`；就绪前「打开网页」禁用。
+
+### 2026-10-31 · 启动慢专项：应用侧兜底（环境无关代码修复）
+
+用「同机手动起网关 + 真实配置」做了对照实验，把 415–522s 的启动拆开：
+
+| 配置 | 启动到 /health 200 |
+|---|---|
+| 全新空配置（无渠道/无历史） | 45s |
+| 真实配置 | 415–522s |
+| 真实配置 + 移走 139MB agent 历史库 | 522s（无改善 → 不是历史库） |
+| 真实配置 + 补 `meta.migrations.webhookListeners=true` | 329s（`process.bootstrap` 259s→77s） |
+| 真实配置 + 再关 3 个渠道插件 | 96s（`main-session-recovery` 240s→秒级） |
+
+定位到两处**代码问题**（不改环境，全部在应用侧兜底）：
+
+1. **legacy webhook 迁移每次重跑（~185s/次）**
+   - OpenClaw 只在迁移「无 warning」时记录 `meta.migrations.webhookListeners`；迁移要动态加载
+     telegram/feishu/msteams/nextcloud-talk 的插件 doctor 契约，Windows 上可能因符号链接权限 /
+     复制期文件变化失败（`EPERM symlink` / `copy path changed during operation`）→ 标记永远写不进去。
+   - 官方对「外部管理的配置」明确要求由外部程序写入该标记；本应用就是 openclaw.json 的外部管理者。
+
+2. **启动前改插件链接与 OpenClaw 插件复制抢时序**
+   - `_repairManagedPluginPeerLinks` 重建 junction 后立即 spawn，OpenClaw 马上复制/审计插件文件，
+     容易撞上 `copy path changed during operation`，进一步让 webhook 迁移反复失败。
+
+**实现**
+- 新增 `electron/main/openclawWebhookMarker.ts`：`hasWebhookMigrationMarker` /
+  `applyWebhookMigrationMarker`（纯函数、幂等）/ `ensureWebhookMigrationMarkerFile`（先备份
+  `openclaw.json.webhook-marker-bak.<时间戳>`，再「临时文件 + rename」原子写回；坏 JSON 不动）。
+- `configManager`：首文件骨架带上该标记（新装用户第一次启动就不重跑迁移）；
+  新增 `ensureWebhookMigrationMarker()` 供启动前调用。
+- `clawManager._spawnGateway`：在 `syncOpenClawConfig()` **之后**、`spawn` **之前**补齐标记
+  （官方 patch 可能重写文件，标记必须最后落盘），改动时写日志面板。
+- `clawManager._repairManagedPluginPeerLinks`：记录本轮重建的链接，修复后 `_waitPluginLinksSettled`
+  等 realpath 稳定（最多 3s）再返回，避免和 OpenClaw 的插件复制/审计抢时序。
+
+**验收**
+- `claw-maintenance.accept` 新增 3 项：`marker-pure`（补齐/保留其它迁移键/幂等）、
+  `marker-file`（备份/原子写/坏文件保护）、`marker-wiring`（顺序 + 首文件骨架接线）→ 24/24。
+- 全量 `npm run accept`：**30 套全部通过**（accept×28 + e2e 11/11 + smoke 6/6）；
+  双 typecheck 0 错；`npm run build` 通过。

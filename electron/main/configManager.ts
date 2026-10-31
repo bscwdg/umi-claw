@@ -6,6 +6,7 @@ import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawPro
 import { ModelPresetService, type PresetInfo, type RefreshResult } from './modelPresets'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
 import { applyOpenClawConfigPatch, buildJsonMergePatch, collectLossyIdArrayReplacePaths, type OpenClawPatchResult } from './openClawConfigWriter'
+import { applyWebhookMigrationMarker, ensureWebhookMigrationMarkerFile, type EnsureWebhookMarkerResult } from './openclawWebhookMarker'
 import type { ObsidianConfig } from './obsidian/types'
 
 /**
@@ -375,6 +376,21 @@ export class ConfigManager {
 
   getDataDir(): string {
     return this.dataDir
+  }
+
+  /**
+   * 启动网关前兜底补齐 legacy webhook 迁移完成标记（OpenClaw 对外部管理配置的官方要求）。
+   *
+   * 为什么应用要自己写：OpenClaw 只在迁移**无 warning** 时记录
+   * `meta.migrations.webhookListeners`；而迁移需要动态加载 telegram/feishu/msteams/
+   * nextcloud-talk 的插件 doctor 契约，在 Windows 上可能因符号链接权限/文件占用失败
+   * （EPERM symlink / copy path changed）→ 标记永远写不进去 → 每次启动重跑约 3 分钟。
+   *
+   * 幂等 + 可回滚：已带标记时零写入；需要补写时先备份原文件
+   * （`openclaw.json.webhook-marker-bak.<时间戳>`），再临时文件原子替换。
+   */
+  ensureWebhookMigrationMarker(): EnsureWebhookMarkerResult {
+    return ensureWebhookMigrationMarkerFile(this.openClawConfigPath)
   }
 
   /**
@@ -1258,10 +1274,12 @@ private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string; kind
     this._injectOpenClawTts(existingConfig)
 
     if (!parsedExisting) {
-      // 全新安装、文件尚不存在：state 库可能还没初始化，官方 CLI 在空环境无法 patch 建库，
-      // 仅此处承担「首文件创建」（与 downloadManager._ensureOpenClawConfig 同口径）。
-      // 不带任何 meta——官方写入器下次写时自动盖戳。
+      // 首文件骨架只带必要的 meta：剔除退役键/版本戳（官方写入器会自动盖），
+      // 但保留 legacy webhook 迁移完成标记——否则装了 telegram/feishu/msteams/
+      // nextcloud-talk 渠道的用户每次启动都会重跑官方迁移（插件 doctor 契约在
+      // Windows 上可能因符号链接权限/文件占用加载失败，实测单次约 3 分钟）。
       delete existingConfig.meta
+      applyWebhookMigrationMarker(existingConfig)
       const content = JSON.stringify(existingConfig, null, 2)
       this._atomicWriteFileSync(this.openClawConfigPath, content)
       console.log('[ConfigManager] openclaw.json 首文件骨架已创建，后续同步走官方 config patch。')
