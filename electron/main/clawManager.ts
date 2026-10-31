@@ -592,6 +592,36 @@ export class ClawManager extends EventEmitter {
       }
     }
 
+    // 兜底补齐 legacy webhook 迁移完成标记（详见 openclawWebhookMarker.ts 顶部说明）。
+    //
+    // OpenClaw 只在迁移「无 warning」时才写入 meta.migrations.webhookListeners；插件
+    // doctor 契约在 Windows 上加载失败（符号链接权限/文件占用）会让它每次启动重跑
+    // 该迁移（实测 185s）。官方对「外部管理的配置」明确要求由外部程序写入标记。
+    //
+    // 必须放在 syncOpenClawConfig 之后：官方 patch 可能重写 openclaw.json，标记要最后落盘。
+    try {
+      const marker = await this.configManager.ensureWebhookMigrationMarker()
+      const legacy = marker.skippedLegacyChannels ?? []
+      if (marker.changed) {
+        this._addLog(
+          '[gateway] 已补齐 legacy webhook 迁移完成标记（避免每次启动重复迁移，实测约 3 分钟）' +
+            (marker.backupPath ? `；原文件备份：${marker.backupPath}` : ''),
+          'system'
+        )
+      } else if (legacy.length > 0) {
+        // 有 legacyWebhook 端点：官方要求「补端点 + 补标记」双管齐下，我们只负责标记这一半，
+        // 所以这里交回 OpenClaw 官方迁移，不强行标记完成。
+        this._addLog(
+          `[gateway] 检测到 legacyWebhook 配置（${legacy.join(' / ')}），保留 OpenClaw 官方迁移、不补完成标记`,
+          'stderr'
+        )
+      } else if (marker.error) {
+        this._addLog(`[gateway] webhook 迁移标记补齐跳过：${marker.error}`, 'stderr')
+      }
+    } catch (e: any) {
+      this._addLog(`[gateway] webhook 迁移标记补齐异常：${e?.message || e}`, 'stderr')
+    }
+
     // 对话内语音：密钥只以环境变量注入，绝不写进 openclaw.json。
     let voiceTtsEnv: Record<string, string> = {}
     if (this.voiceTtsEnvProvider) {

@@ -9,6 +9,7 @@ import { pipeline } from 'stream/promises'
 import { ConfigManager } from './configManager'
 import { SkillSyncService } from './skillSyncService'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
+import { applyWebhookMigrationMarker, findLegacyWebhookChannels } from './openclawWebhookMarker'
 import { subprocessRegistry } from './subprocessRegistry'
 
 const execAsync = promisify(exec)
@@ -1852,6 +1853,11 @@ export class DownloadManager extends EventEmitter {
             "openclaw-weixin": { "enabled": true }
           }
         },
+      }
+      // 与 configManager 首文件分支同口径：没有 legacyWebhook 时带上 webhook 迁移完成标记，
+      // 否则装了历史渠道插件的用户每次启动都会重跑 OpenClaw 的 legacy webhook 迁移（约 3 分钟）。
+      if (findLegacyWebhookChannels(fullSecureConfig).length === 0) {
+        applyWebhookMigrationMarker(fullSecureConfig as unknown as Record<string, unknown>)
       }
       const configContent = JSON.stringify(fullSecureConfig, null, 2)
       const filePath = join(configDir, 'openclaw.json')

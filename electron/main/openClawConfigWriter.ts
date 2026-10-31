@@ -61,6 +61,20 @@ function serializePatch<T>(configPath: string, task: () => Promise<T>): Promise<
   return current
 }
 
+/**
+ * 在「同一 openclaw.json 路径」的官方写入串行队列里执行一次任务。
+ *
+ * 官方 patch 已用 serializePatch 串行化；任何**必须直接改 openclaw.json** 的维护动作
+ * （例如补齐 meta 迁移标记）也必须进同一队列，否则会与 config patch 的
+ * read→modify→write 形成 lost update：patch 可能覆盖标记，或标记覆盖用户刚保存的配置。
+ */
+export function runSerializedOpenClawConfigWrite<T>(
+  configPath: string,
+  task: () => Promise<T> | T
+): Promise<T> {
+  return serializePatch(configPath, async () => task())
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
