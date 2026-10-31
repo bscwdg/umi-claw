@@ -18,23 +18,26 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import FishState from './art/FishState.vue'
 
-type FishVisualState = 'idle' | 'happy' | 'sad' | 'sleepy' | 'thinking' | 'surprised'
+type FishVisualState = 'idle' | 'happy' | 'sleepy' | 'sulk' | 'eat' | 'caught'
 
 const state = ref({ mood: '', familiarity: 0, intimacy: 0 })
+const emotionState = ref<FishVisualState | ''>('')
 const size = ref<'small' | 'medium' | 'large'>('medium')
 const clickThrough = ref(false)
 const bubble = ref('')
 let bubbleTimer: ReturnType<typeof setTimeout> | null = null
+let emotionTimer: ReturnType<typeof setTimeout> | null = null
 let offEvent: (() => void) | null = null
+let offEmotion: (() => void) | null = null
 
 const visualState = computed<FishVisualState>(() => {
+  if (emotionState.value) return emotionState.value
   const mood = state.value.mood || ''
-  if (mood.includes('头')) return 'happy'
-  if (mood.includes('饱')) return 'happy'
-  if (mood.includes('困') || mood.includes('睡')) return 'sleepy'
-  if (mood.includes('想')) return 'thinking'
-  if (mood.includes('难过') || mood.includes('委屈')) return 'sad'
-  if (mood.includes('惊')) return 'surprised'
+  if (/饭|吃|饱|投喂/.test(mood)) return 'eat'
+  if (/头|开心|喜欢|得意/.test(mood)) return 'happy'
+  if (/困|睡|疲惫/.test(mood)) return 'sleepy'
+  if (/难|委屈|生气|拒绝/.test(mood)) return 'sulk'
+  if (/惊|抓|搞怪/.test(mood)) return 'caught'
   return 'idle'
 })
 
@@ -48,13 +51,24 @@ onMounted(async () => {
   offEvent = window.api.character.onEvent(async () => {
     await refresh()
   })
+  offEmotion = window.api.character.onEmotion((payload) => {
+    emotionState.value = (payload.visualState as FishVisualState) || ''
+    if (emotionTimer) clearTimeout(emotionTimer)
+    emotionTimer = setTimeout(() => {
+      emotionState.value = ''
+      emotionTimer = null
+    }, 8000)
+  })
   await refresh()
 })
 
 onBeforeUnmount(() => {
   offEvent?.()
   offEvent = null
+  offEmotion?.()
+  offEmotion = null
   if (bubbleTimer) clearTimeout(bubbleTimer)
+  if (emotionTimer) clearTimeout(emotionTimer)
 })
 
 async function refresh(): Promise<void> {

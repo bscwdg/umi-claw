@@ -12,7 +12,8 @@ import { applyAgentPatch, createOpenClawCliRunner } from './agentPatchRunner'
 import { CHARACTER_AGENT_ID, readAgentEntry } from './agentConfig'
 import { runBootstrap } from './bootstrap'
 import { PetWindowController, type PetMenuAction } from './petWindow'
-import type { CharacterEvent, CharacterKv } from './types'
+import { CharacterChatService, type CharacterChatFn } from './chat'
+import { CHARACTER_CHANNELS, type CharacterEvent, type CharacterKv } from './types'
 
 /** 点击穿透的逃生热键（穿透开启时注册；关掉即注销） */
 export const CLICK_THROUGH_SHORTCUT = 'CommandOrControl+Alt+F'
@@ -42,6 +43,8 @@ export interface CharacterWiringDeps {
   configPath: string
   /** 官方 CLI 子进程配置 */
   cli: CharacterCliConfig
+  /** gateway 聊天函数（index.ts 用 workGatewayClient.chat 注入；缺省则聊天不可用） */
+  chat?: CharacterChatFn
   /** 桌宠窗口配置（C03）；缺省则不建窗口 */
   petWindow?: CharacterPetWindowConfig
   /** 桌宠菜单里的「聊两句 / 设置」回调（由 index.ts 聚焦主窗） */
@@ -96,11 +99,33 @@ export async function registerCharacter(
       logger,
       onEvent: (event) => {
         if (event.type === 'settings') void syncPet()
+        if (event.type === 'emotion') {
+          pet?.broadcast(CHARACTER_CHANNELS.emotion, event.payload)
+        }
         deps.onEvent?.(event)
       }
     })
     managerRef = manager
     await manager.init()
+
+    // 聊天（C04）：会话键 conv:fish:<session>:<gen>；清空 = 轮换代际
+    let chat: CharacterChatService | null = null
+    if (deps.chat) {
+      chat = new CharacterChatService({
+        chat: deps.chat,
+        store: {
+          readChatGeneration: () => store.readChatGeneration(),
+          writeChatGeneration: (gen) => store.writeChatGeneration(gen)
+        },
+        onEmotion: (emotion, visualState) => {
+          void manager.applyChatEmotion(emotion, visualState).catch(() => undefined)
+        },
+        now: deps.now,
+        logger
+      })
+      await chat.init()
+    }
+    const chatService = chat
 
     // 桌宠窗口（C03）：单例、透明置顶、位置记忆；停用时销毁
     if (deps.petWindow) {
@@ -120,7 +145,7 @@ export async function registerCharacter(
       updateShortcut(initialPet.clickThrough)
     }
 
-    ipcDisposer = registerCharacterIpc(manager, { pet })
+    ipcDisposer = registerCharacterIpc(manager, { pet, chat: chatService })
 
     // 引导接线：官方 CLI 写 agent 条目；人格文件走受管写入
     const workspaceDir = join(deps.dataDir, 'config', '.openclaw', 'workspace-feiyu')
@@ -195,6 +220,7 @@ export async function registerCharacter(
         }
         ipcDisposer?.()
         ipcDisposer = null
+        chatService?.cancelAll()
         pet?.destroy()
         pet = null
       }

@@ -15,11 +15,13 @@ import {
 } from './types'
 import type { CharacterManager } from './manager'
 import type { PetWindowController } from './petWindow'
+import type { CharacterChatService } from './chat'
 
 export type CharacterIpcDisposer = () => void
 
 export interface CharacterIpcDeps {
   pet?: PetWindowController | null
+  chat?: CharacterChatService | null
 }
 
 export function registerCharacterIpc(
@@ -77,6 +79,54 @@ export function registerCharacterIpc(
     const next = await manager.savePetState({ x: raw.x, y: raw.y })
     pet.applyState({ x: next.x, y: next.y })
     return next
+  })
+  // 聊天：send 需要拿到调用方 webContents 才能推流式事件，所以不走通用 handle 包装
+  ipcMain.handle(CHARACTER_CHANNELS.chatSend, async (event, payload) => {
+    try {
+      if (!manager.isEnabled()) {
+        throw new CharacterError(CHARACTER_ERROR_CODES.DISABLED, '大肥鱼未启用')
+      }
+      const chat = deps.chat
+      if (!chat) throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '聊天尚未接线')
+      const result = await chat.send(
+        (payload ?? {}) as { text?: unknown; session?: unknown },
+        (streamEvent) => {
+          if (event.sender.isDestroyed()) return
+          const channel =
+            streamEvent.kind === 'chunk'
+              ? CHARACTER_CHANNELS.streamChunk
+              : streamEvent.kind === 'done'
+                ? CHARACTER_CHANNELS.streamDone
+                : CHARACTER_CHANNELS.streamError
+          event.sender.send(channel, streamEvent)
+        }
+      )
+      return toCharacterEnvelope(result)
+    } catch (error) {
+      return toCharacterErrorEnvelope(error)
+    }
+  })
+  ipcMain.handle(CHARACTER_CHANNELS.chatCancel, async (_event, payload) => {
+    try {
+      const chat = deps.chat
+      if (!chat) throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '聊天尚未接线')
+      const runId = (payload as { runId?: unknown } | undefined)?.runId
+      if (typeof runId !== 'string' || !runId) {
+        throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '缺少 runId')
+      }
+      return toCharacterEnvelope({ cancelled: chat.cancel(runId) })
+    } catch (error) {
+      return toCharacterErrorEnvelope(error)
+    }
+  })
+  ipcMain.handle(CHARACTER_CHANNELS.chatClear, async () => {
+    try {
+      const chat = deps.chat
+      if (!chat) throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '聊天尚未接线')
+      return toCharacterEnvelope(await chat.clear())
+    } catch (error) {
+      return toCharacterErrorEnvelope(error)
+    }
   })
 
   return () => {

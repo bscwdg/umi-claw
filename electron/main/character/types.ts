@@ -17,7 +17,14 @@ export const CHARACTER_CHANNELS = {
   bootstrapRun: 'character:bootstrap:run',
   bootstrapStatus: 'character:bootstrap:status',
   windowPet: 'character:window:pet',
-  windowPetPos: 'character:window:pet:pos'
+  windowPetPos: 'character:window:pet:pos',
+  chatSend: 'character:chat:send',
+  chatCancel: 'character:chat:cancel',
+  chatClear: 'character:chat:clear',
+  streamChunk: 'character:stream:chunk',
+  streamDone: 'character:stream:done',
+  streamError: 'character:stream:error',
+  emotion: 'character:emotion'
 } as const
 
 /** 错误码（渲染端按 code 分支，不读 message） */
@@ -70,6 +77,7 @@ export const FISH_KEYS = {
   unlocks: `${FISH_KEY_PREFIX}unlocks`,
   dedup: `${FISH_KEY_PREFIX}dedup`,
   pet: `${FISH_KEY_PREFIX}pet`,
+  chatGen: `${FISH_KEY_PREFIX}chatgen`,
   day: (date: string) => `${FISH_KEY_PREFIX}day:${date}`,
   life: (date: string) => `${FISH_KEY_PREFIX}life:${date}`
 } as const
@@ -153,6 +161,7 @@ export interface CharacterStatus {
 }
 
 export type CharacterInteractKind = 'pat' | 'feed'
+export type CharacterChatSession = 'main' | 'night'
 export type CharacterInteractInput = { kind: CharacterInteractKind } | { kind: 'dismiss'; bubbleId: string }
 
 /** 桌宠窗口尺寸（DIP）；大小档位来自设置 pet.size */
@@ -208,6 +217,8 @@ export interface CharacterResetOptions {
 export type CharacterEvent =
   | { type: 'state'; payload: CharacterState; at: number }
   | { type: 'settings'; payload: CharacterSettings; at: number }
+  | { type: 'emotion'; payload: { emotion: string; visualState: string }; at: number }
+  | { type: 'bubble'; payload: { text: string }; at: number }
 
 export const DEFAULT_CHARACTER_SETTINGS: CharacterSettings = {
   enabled: false,

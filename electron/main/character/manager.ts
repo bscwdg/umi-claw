@@ -247,6 +247,18 @@ export class CharacterManager {
     return next
   }
 
+  /** 聊天情绪：更新心情并广播（桌宠换表情由渲染端消费） */
+  async applyChatEmotion(emotion: string, visualState: string): Promise<CharacterState> {
+    this.assertInitialized()
+    const state = await this.getState()
+    state.mood = (emotion || '平静').slice(0, 40)
+    state.updatedAt = this.now()
+    await this.store.writeState(state)
+    this.state = state
+    this.emit({ type: 'emotion', payload: { emotion, visualState }, at: state.updatedAt })
+    return { ...state }
+  }
+
   private assertInitialized(): void {
     if (!this.initialized) {
       throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '大肥鱼尚未初始化')

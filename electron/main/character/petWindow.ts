@@ -37,6 +37,12 @@ export class PetWindowController {
     return this.win !== null && !this.win.isDestroyed()
   }
 
+  /** 向桌宠渲染端广播事件（情绪/气泡等） */
+  broadcast(channel: string, payload: unknown): void {
+    if (!this.win || this.win.isDestroyed()) return
+    this.win.webContents.send(channel, payload)
+  }
+
   getState(): CharacterPetState {
     return { ...this.state }
   }

@@ -70,6 +70,31 @@
     </section>
 
     <section class="card">
+      <h3>聊两句</h3>
+      <div class="chat-log">
+        <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
+          <span class="who">{{ m.role === 'user' ? '你' : '她' }}</span>
+          <span class="text">{{ m.text }}<span v-if="m.streaming" class="cursor">▍</span></span>
+        </div>
+        <p v-if="!messages.length" class="hint">还没聊过。说句话试试。</p>
+      </div>
+      <div class="row">
+        <input
+          v-model="draft"
+          :disabled="streaming"
+          placeholder="跟她说点什么（Enter 发送）"
+          @keydown.enter="sendMessage"
+        />
+        <button class="btn primary" :disabled="!draft.trim() || streaming || !status.enabled" @click="sendMessage">
+          发送
+        </button>
+        <button class="btn" :disabled="!streaming" @click="stopStreaming">停止</button>
+        <button class="btn ghost" @click="clearChat">清空</button>
+      </div>
+      <p class="hint">清空只轮换会话上下文；日记与关系记忆不受影响。</p>
+    </section>
+
+    <section class="card">
       <h3>互动</h3>
       <div class="row">
         <button class="btn" :disabled="busy || !status.enabled" @click="interact('pat')">摸摸头</button>
@@ -91,6 +116,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { BootstrapReport } from '../../electron/main/character/bootstrap'
+import type { CharacterChatStreamEvent } from '../../electron/main/character/chat'
+
+interface ChatBubble {
+  role: 'user' | 'assistant'
+  text: string
+  streaming?: boolean
+}
 
 const status = ref({
   enabled: false,
@@ -115,6 +147,10 @@ const addressDraft = ref('')
 const modeDraft = ref<'companion' | 'sister' | 'lover'>('companion')
 const tabooDraft = ref('')
 const bootstrapReport = ref<BootstrapReport | null>(null)
+const messages = ref<ChatBubble[]>([])
+const draft = ref('')
+const runId = ref('')
+const streaming = computed(() => Boolean(runId.value))
 const busy = ref(false)
 const error = ref('')
 
@@ -123,17 +159,21 @@ const stageLabel = computed(() => STAGE_LABELS[state.value.stage] ?? '初识')
 const flag = (v: boolean): string => (v ? '✓ 就绪' : '× 未就绪')
 
 let offEvent: (() => void) | null = null
+let offStream: (() => void) | null = null
 
 onMounted(async () => {
   offEvent = window.api.character.onEvent(() => {
     void refresh()
   })
+  offStream = window.api.character.chat.onStream(onStreamEvent)
   await refresh()
 })
 
 onBeforeUnmount(() => {
   offEvent?.()
   offEvent = null
+  offStream?.()
+  offStream = null
 })
 
 async function refresh(): Promise<void> {
@@ -179,8 +219,60 @@ async function runBootstrap(): Promise<void> {
   })
 }
 
-async function interact(kind: 'pat' | 'feed'): Promise<void> {
+function onStreamEvent(event: CharacterChatStreamEvent): void {
+  if (runId.value && event.runId !== runId.value) return
+  const last = messages.value[messages.value.length - 1]
+  if (event.kind === 'chunk') {
+    if (last && last.role === 'assistant') last.text += event.text ?? ''
+    return
+  }
+  if (event.kind === 'done') {
+    if (last && last.role === 'assistant') {
+      last.streaming = false
+      if (!last.text) last.text = '……'
+    }
+    runId.value = ''
+    return
+  }
+  if (last && last.role === 'assistant') last.streaming = false
+  error.value = event.error || '聊天出错了'
+  runId.value = ''
+}
+
+async function sendMessage(): Promise<void> {
+  const text = draft.value.trim()
+  if (!text || streaming.value) return
   await run(async () => {
+    draft.value = ''
+    messages.value.push({ role: 'user', text })
+    messages.value.push({ role: 'assistant', text: '', streaming: true })
+    const result = await window.api.character.chat.send({ text })
+    runId.value = result.runId
+  })
+}
+
+async function stopStreaming(): Promise<void> {
+  const current = runId.value
+  if (!current) return
+  try {
+    await window.api.character.chat.cancel(current)
+  } catch {
+    /* 忽略：可能已自然结束 */
+  }
+  const last = messages.value[messages.value.length - 1]
+  if (last && last.role === 'assistant') last.streaming = false
+  runId.value = ''
+}
+
+async function clearChat(): Promise<void> {
+  await run(async () => {
+    await window.api.character.chat.clear()
+    messages.value = []
+    runId.value = ''
+  })
+}
+
+async function interact(kind: 'pat' | 'feed'): Promise<void> {  await run(async () => {
     state.value = await window.api.character.interact({ kind })
   })
 }
@@ -335,5 +427,39 @@ select {
 .steps .detail {
   flex: 1;
   word-break: break-all;
+}
+.chat-log {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.msg {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.msg .who {
+  flex: 0 0 34px;
+  color: var(--text-secondary, #9aa4b8);
+}
+.msg.user .text {
+  color: #cfe0ff;
+}
+.msg.assistant .text {
+  color: var(--text-primary, #e8ecf4);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cursor {
+  animation: blink 1s step-end infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
 }
 </style>

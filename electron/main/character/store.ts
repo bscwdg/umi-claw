@@ -139,6 +139,18 @@ export class CharacterStore {
     await this.kv.set(FISH_KEYS.pet, JSON.stringify(value))
   }
 
+  /** 聊天会话代际：清空聊天 = 轮换代际（旧上下文自然失效，日记/记忆不受影响） */
+  async readChatGeneration(): Promise<number> {
+    const raw = await this.readJson<{ gen?: number }>(FISH_KEYS.chatGen)
+    const gen = typeof raw?.gen === 'number' && Number.isFinite(raw.gen) ? Math.floor(raw.gen) : 1
+    return gen >= 1 ? gen : 1
+  }
+
+  async writeChatGeneration(gen: number): Promise<void> {
+    const safe = Number.isFinite(gen) && gen >= 1 ? Math.floor(gen) : 1
+    await this.kv.set(FISH_KEYS.chatGen, JSON.stringify({ gen: safe }))
+  }
+
   /** 清理角色数据（scope 语义见 CharacterResetOptions；agent/Obsidian 由 C09 处理） */
   async reset(scope: 'values' | 'memory' | 'all' = 'values'): Promise<void> {
     const meta = await this.readMeta()

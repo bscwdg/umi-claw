@@ -2246,6 +2246,10 @@ app.whenReady().then(async () => {
         }),
         cwd: openClawPaths.installDir(characterDataDir)
       },
+      chat: (input) => {
+        if (!workGatewayClient) throw new Error('gateway 客户端尚未初始化')
+        return workGatewayClient.createChatStream(input as never)
+      },
       obsidianVaultPath: () => configManager.getConfig().obsidian?.vaultPath,
       petWindow: {
         preloadPath: join(__dirname, '../preload/index.js'),

@@ -18,6 +18,7 @@ const managerMod = await import(pathToFileURL(bundleEntry('electron/main/charact
 const personaMod = await import(pathToFileURL(bundleEntry('electron/main/character/persona.ts', 'character-persona.mjs')).href)
 const agentConfigMod = await import(pathToFileURL(bundleEntry('electron/main/character/agentConfig.ts', 'character-agent-config.mjs')).href)
 const bootstrapMod = await import(pathToFileURL(bundleEntry('electron/main/character/bootstrap.ts', 'character-bootstrap.mjs')).href)
+const chatMod = await import(pathToFileURL(bundleEntry('electron/main/character/chat.ts', 'character-chat.mjs')).href)
 
 const {
   CHARACTER_ERROR_CODES,
@@ -33,6 +34,12 @@ const { CharacterManager } = managerMod
 const { applyTemplate, buildPersonaVars, composePersonaFiles, writeManagedFiles, safeJoin } = personaMod
 const { buildAgentPatch, readAgentEntry } = agentConfigMod
 const { runBootstrap } = bootstrapMod
+const {
+  CharacterChatService,
+  EmotionStreamFilter,
+  mapEmotionToState,
+  stripEmotionMarkers
+} = chatMod
 
 function memoryKv(initial = new Map()) {
   return {
@@ -471,6 +478,166 @@ await recorder.check('C15', '桌宠位置脏值防御：NaN/字符串被忽略�
   assertEq(dirty.visible, true, '合法 visible 仍生效')
   return '脏值防御正确'
 })
+
+await recorder.check('C16', '情绪标记：完整/全角/跨 chunk 拆分都被剥离，情绪映射到六态', async () => {
+  const a = stripEmotionMarkers('你好[emotion:开心]呀')
+  assertEq(a.text, '你好呀', '完整标记被剥离')
+  assertEq(a.emotion, '开心', '捕捉到情绪')
+  const b = stripEmotionMarkers('早[emotion：疲惫]')
+  assertEq(b.text, '早', '全角冒号也识别')
+  assertEq(b.emotion, '疲惫', '全角标记情绪')
+
+  const f = new EmotionStreamFilter()
+  const first = f.push('你好[emo')
+  assertEq(first.text, '你好', '半截标记挂起')
+  const second = f.push('tion:难过]呀')
+  assertEq(second.text, '呀', '跨块标记不泄漏')
+  assertEq(second.emotion, '难过', '跨块情绪被捕获')
+  assertEq(f.flush().text, '', '无残留')
+
+  const f2 = new EmotionStreamFilter()
+  assertEq(f2.push('普通').text, '普通', '普通文本原样')
+  assertEq(f2.push('[emotion:开心]').text, '', '只有标记时无文本')
+  assertEq(f2.currentEmotion(), '开心', 'currentEmotion 可读')
+
+  assertEq(mapEmotionToState('开心'), 'happy', '开心→happy')
+  assertEq(mapEmotionToState('疲惫'), 'sleepy', '疲惫→sleepy')
+  assertEq(mapEmotionToState('生气'), 'sulk', '生气→sulk')
+  assertEq(mapEmotionToState('惊'), 'caught', '惊→caught')
+  assertEq(mapEmotionToState('开心', '今天吃白饭'), 'eat', '吃白饭语境→eat')
+  assertEq(mapEmotionToState('未知情绪'), 'idle', '未知→idle')
+  return '标记剥离/跨块/映射 正确'
+})
+
+await recorder.check('C17', '会话键与代际：main/night + 清空轮换 + 输入校验', async () => {
+  let gen = 2
+  const svc = new CharacterChatService({
+    chat: async () => fakeHandle([]),
+    store: {
+      readChatGeneration: async () => gen,
+      writeChatGeneration: async (g) => {
+        gen = g
+      }
+    }
+  })
+  await svc.init()
+  assertEq(svc.conversationKey('main'), 'conv:fish:main:2', '主会话键带代际')
+  assertEq(svc.conversationKey('night'), 'conv:fish:night:2', '夜间会话键')
+  assertEq(svc.conversationKey('nope'), 'conv:fish:main:2', '未知 session 回落 main')
+
+  const cleared = await svc.clear()
+  assertEq(cleared.gen, 3, '清空后代际 +1')
+  assertEq(gen, 3, '代际已落库')
+  assertEq(svc.conversationKey('main'), 'conv:fish:main:3', '新会话键')
+
+  let empty = null
+  try {
+    await svc.send({ text: '   ' }, () => undefined)
+  } catch (e) {
+    empty = e
+  }
+  assertEq(/不能为空/.test(empty?.message ?? ''), true, '空消息被拒')
+  let tooLong = null
+  try {
+    await svc.send({ text: 'x'.repeat(4001) }, () => undefined)
+  } catch (e) {
+    tooLong = e
+  }
+  assertEq(/过长/.test(tooLong?.message ?? ''), true, '超长消息被拒')
+  return '会话键/代际/校验 正确'
+})
+
+await recorder.check('C18', '流式聊天：chunk 拼接、done 带情绪、结束后不可取消', async () => {
+  const events = []
+  let request = null
+  const svc = new CharacterChatService({
+    chat: async (input) => {
+      request = input
+      return fakeHandle(['你', '好呀[emotion:开心]'])
+    },
+    store: {
+      readChatGeneration: async () => 1,
+      writeChatGeneration: async () => undefined
+    },
+    onEmotion: (emotion, state) => events.push({ type: 'emotion', emotion, state })
+  })
+  await svc.init()
+  const sent = await svc.send({ text: '在吗' }, (e) => events.push(e))
+  await new Promise((r) => setTimeout(r, 20))
+
+  assertEq(request.conversationKey, 'conv:fish:main:1', '请求带正确会话键')
+  assertEq(request.messages[0].content, '在吗', '请求带用户消息')
+  assertEq(request.stream, true, '走流式')
+  const chunks = events.filter((e) => e.kind === 'chunk').map((e) => e.text).join('')
+  assertEq(chunks, '你好呀', 'chunk 拼接无标记')
+  const done = events.find((e) => e.kind === 'done')
+  assertEq(Boolean(done), true, '收到 done')
+  assertEq(done.text, '你好呀', 'done 带全文')
+  assertEq(done.emotion, '开心', 'done 带情绪')
+  assertEq(done.aborted, false, '正常完成 aborted=false')
+  assertEq(events.some((e) => e.type === 'emotion' && e.emotion === '开心'), true, '情绪回调')
+  assertEq(svc.cancel(sent.runId), false, '结束后取消返回 false')
+  return '流式/情绪/结束状态 正确'
+})
+
+await recorder.check('C19', '取消与失败：cancel 透传、错误事件不吞', async () => {
+  let cancelled = false
+  const svc = new CharacterChatService({
+    chat: async () => ({
+      iterator: (async function* () {
+        // 永不结束，等待取消
+        await new Promise(() => undefined)
+      })(),
+      result: new Promise(() => undefined),
+      cancel: () => {
+        cancelled = true
+      }
+    }),
+    store: {
+      readChatGeneration: async () => 1,
+      writeChatGeneration: async () => undefined
+    }
+  })
+  await svc.init()
+  const sent = await svc.send({ text: 'hi' }, () => undefined)
+  assertEq(svc.cancel(sent.runId), true, '进行中取消返回 true')
+  assertEq(cancelled, true, 'cancel 透传到 gateway handle')
+
+  const errors = []
+  const svc2 = new CharacterChatService({
+    chat: async () => ({
+      iterator: (async function* () {
+        yield { index: 1, delta: '半句' }
+        throw new Error('upstream boom')
+      })(),
+      result: Promise.resolve({ aborted: false, text: '' }),
+      cancel: () => undefined
+    }),
+    store: {
+      readChatGeneration: async () => 1,
+      writeChatGeneration: async () => undefined
+    }
+  })
+  await svc2.init()
+  await svc2.send({ text: 'hi' }, (e) => errors.push(e))
+  await new Promise((r) => setTimeout(r, 20))
+  const err = errors.find((e) => e.kind === 'error')
+  assertEq(Boolean(err), true, '错误事件已发')
+  assertEq(/boom/.test(err.error), true, '错误信息保留')
+  return '取消/错误 正确'
+})
+
+function fakeHandle(deltas) {
+  return {
+    iterator: (async function* () {
+      for (let i = 0; i < deltas.length; i += 1) {
+        yield { index: i + 1, delta: deltas[i] }
+      }
+    })(),
+    result: Promise.resolve({ aborted: false, text: deltas.join('') }),
+    cancel: () => undefined
+  }
+}
 
 const ok = printResult(recorder.toJSON())
 if (!ok) process.exit(1)

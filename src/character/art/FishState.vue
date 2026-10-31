@@ -14,33 +14,50 @@
     <path class="hair" d="M116 48 C112 34, 122 26, 132 28 C126 34, 124 40, 126 48 Z" />
     <!-- 鳍 -->
     <path class="fin" d="M64 118 C52 122, 48 134, 54 146 C64 138, 70 130, 70 124 Z" />
-    <!-- 眼睛 -->
+
+    <!-- 眼睛：sleepy 闭眼、happy 弯眼、caught 瞪大、其余正常 -->
     <template v-if="state === 'sleepy'">
-      <path class="eye-line" d="M96 112 C102 118, 110 118, 116 112" />
-      <path class="eye-line" d="M132 112 C138 118, 146 118, 152 112" />
+      <path class="eye-line" d="M96 114 C102 120, 110 120, 116 114" />
+      <path class="eye-line" d="M132 114 C138 120, 146 120, 152 114" />
     </template>
     <template v-else-if="state === 'happy'">
       <path class="eye-line" d="M96 116 C102 108, 110 108, 116 116" />
       <path class="eye-line" d="M132 116 C138 108, 146 108, 152 116" />
     </template>
-    <template v-else>
-      <circle class="eye" :r="state === 'surprised' ? 9 : 7" cx="106" cy="114" />
-      <circle class="eye" :r="state === 'surprised' ? 9 : 7" cx="142" cy="114" />
-      <circle class="pupil" :r="state === 'surprised' ? 4 : 3" cx="108" cy="116" />
-      <circle class="pupil" :r="state === 'surprised' ? 4 : 3" cx="144" cy="116" />
+    <template v-else-if="state === 'caught'">
+      <circle class="eye" r="10" cx="106" cy="112" />
+      <circle class="eye" r="10" cx="142" cy="112" />
+      <circle class="pupil" r="4" cx="106" cy="112" />
+      <circle class="pupil" r="4" cx="142" cy="112" />
+      <text class="mark" x="168" y="70">!</text>
+      <text class="mark small" x="180" y="92">!</text>
     </template>
+    <template v-else>
+      <circle class="eye" r="7" cx="106" cy="114" />
+      <circle class="eye" r="7" cx="142" cy="114" />
+      <circle class="pupil" r="3" cx="108" cy="116" />
+      <circle class="pupil" r="3" cx="144" cy="116" />
+    </template>
+
     <!-- 嘴 -->
-    <path v-if="state === 'sad'" class="mouth" d="M116 138 C122 132, 132 132, 138 138" />
-    <path v-else-if="state === 'surprised'" class="mouth" d="M124 138 a6 8 0 1 0 0.1 0" />
+    <path v-if="state === 'sulk'" class="mouth" d="M116 140 C122 134, 132 134, 138 140" />
+    <ellipse v-else-if="state === 'eat' || state === 'caught'" class="mouth-open" cx="127" cy="138" rx="7" ry="9" />
     <path v-else class="mouth" d="M118 136 C124 144, 132 144, 138 136" />
+
+    <!-- 饭碗（吃白饭态） -->
+    <g v-if="state === 'eat'" class="bowl">
+      <path d="M92 170 L164 170 C160 186, 148 196, 128 196 C108 196, 96 186, 92 170 Z" />
+      <ellipse cx="128" cy="170" rx="36" ry="7" />
+    </g>
+
     <!-- 腮红 -->
     <ellipse class="blush" cx="92" cy="132" rx="10" ry="5" />
     <ellipse class="blush" cx="156" cy="132" rx="10" ry="5" />
-    <!-- 思考泡泡 -->
-    <g v-if="state === 'thinking'" class="think">
-      <circle cx="168" cy="70" r="4" />
-      <circle cx="176" cy="58" r="6" />
-      <circle cx="186" cy="42" r="9" />
+
+    <!-- 困了：Z -->
+    <g v-if="state === 'sleepy'" class="zzz">
+      <text x="164" y="66">z</text>
+      <text x="176" y="50" class="small">z</text>
     </g>
   </svg>
 </template>
@@ -48,7 +65,7 @@
 <script setup lang="ts">
 import type { PropType } from 'vue'
 
-type FishVisualState = 'idle' | 'happy' | 'sad' | 'sleepy' | 'thinking' | 'surprised'
+type FishVisualState = 'idle' | 'happy' | 'sleepy' | 'sulk' | 'eat' | 'caught'
 
 defineProps({
   state: { type: String as PropType<FishVisualState>, default: 'idle' }
@@ -106,13 +123,34 @@ defineProps({
   stroke-width: 4;
   stroke-linecap: round;
 }
+.mouth-open {
+  fill: #17233d;
+}
 .blush {
   fill: #ff9fb5;
   opacity: 0.55;
 }
-.think circle {
+.mark {
+  fill: #ff6b6b;
+  font-size: 26px;
+  font-weight: 700;
+}
+.mark.small,
+.zzz text {
+  font-size: 18px;
+}
+.zzz text {
   fill: #cfe0ff;
+  font-weight: 600;
+}
+.bowl path {
+  fill: #dbe7ff;
   stroke: #24478f;
-  stroke-width: 2;
+  stroke-width: 3;
+}
+.bowl ellipse {
+  fill: #ffffff;
+  stroke: #24478f;
+  stroke-width: 3;
 }
 </style>

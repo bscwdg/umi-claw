@@ -31,6 +31,7 @@ import type {
   CharacterStatus
 } from '../main/character/types'
 import type { BootstrapReport } from '../main/character/bootstrap'
+import type { CharacterChatStreamEvent } from '../main/character/chat'
 console.log('✅ preload loaded')
 
 // ── work 域信封解包：IPC 返回 {ok,data} / {ok,error} ────────────────────────
@@ -712,6 +713,35 @@ const api = {
           'character:window:pet:pos',
           { x, y }
         )
+    },
+    chat: {
+      send: (input: { text: string; session?: 'main' | 'night' }) =>
+        call<{ runId: string; conversationKey: string }>('character:chat:send', input),
+      cancel: (runId: string) =>
+        call<{ cancelled: boolean }>('character:chat:cancel', { runId }),
+      clear: () => call<{ gen: number }>('character:chat:clear'),
+      onStream: (cb: (event: CharacterChatStreamEvent) => void) => {
+        const subscribe = (channel: string, kind: 'chunk' | 'done' | 'error') => {
+          const handler = (_event: unknown, data: Omit<CharacterChatStreamEvent, 'kind'>) =>
+            cb({ ...data, kind })
+          ipcRenderer.on(channel, handler)
+          return () => ipcRenderer.off(channel, handler)
+        }
+        const offs = [
+          subscribe('character:stream:chunk', 'chunk'),
+          subscribe('character:stream:done', 'done'),
+          subscribe('character:stream:error', 'error')
+        ]
+        return () => {
+          for (const off of offs) off()
+        }
+      }
+    },
+    onEmotion: (cb: (payload: { emotion: string; visualState: string }) => void) => {
+      const handler = (_event: unknown, payload: { emotion: string; visualState: string }) =>
+        cb(payload)
+      ipcRenderer.on('character:emotion', handler)
+      return () => ipcRenderer.off('character:emotion', handler)
     },
     onOpenPage: (cb: (page: 'chat' | 'settings') => void) => {
       const handler = (_event: unknown, page: 'chat' | 'settings') => cb(page)
