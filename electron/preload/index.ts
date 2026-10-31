@@ -29,6 +29,8 @@ const api = {
     stop: () => ipcRenderer.invoke('claw:stop'),
     restart: () => ipcRenderer.invoke('claw:restart'),
     status: () => ipcRenderer.invoke('claw:status'),
+    // 等待网关真正就绪（/health 200）；只读探测，不启动
+    waitReady: (timeoutMs?: number) => ipcRenderer.invoke('claw:waitReady', timeoutMs),
     openWeb: () => ipcRenderer.invoke('claw:openWeb'),
     // 事件监听
     onLog: (cb: (data: { line: string; type: string; time: number }) => void) => {
@@ -36,7 +38,17 @@ const api = {
       ipcRenderer.on('claw:log', handler)
       return () => ipcRenderer.off('claw:log', handler)
     },
-    onStatusChange: (cb: (data: { running: boolean; port?: number; maintenance?: boolean }) => void) => {
+    onStatusChange: (cb: (data: {
+      running: boolean
+      port?: number
+      maintenance?: boolean
+      ready?: boolean
+      starting?: boolean
+      startedAt?: number
+      startupMs?: number
+      bootPhase?: 'idle' | 'preparing' | 'spawning' | 'loading' | 'ready'
+      estimateStartupMs?: number
+    }) => void) => {
       const handler = (_: unknown, data: any) => cb(data)
       ipcRenderer.on('claw:statusChange', handler)
       return () => ipcRenderer.off('claw:statusChange', handler)
