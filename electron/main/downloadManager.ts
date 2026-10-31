@@ -77,6 +77,8 @@ export const NODE_VERSION = 'v24.22.1'
 
 // OpenClaw 微信渠道插件的 npm 包名，也是 openclaw plugins install 的目标 spec。
 const WEIXIN_PLUGIN_PACKAGE = '@tencent-weixin/openclaw-weixin'
+// QQ 机器人官方插件（腾讯 connect 团队维护）；同样通过 openclaw plugins install 装入受管目录。
+const QQBOT_PLUGIN_PACKAGE = '@tencent-connect/openclaw-qqbot'
 
 /**
  * OpenClaw 更新前的回滚快照描述：live 为当前路径，backup 为同卷改名后的快照路径。
@@ -380,6 +382,21 @@ export class DownloadManager extends EventEmitter {
     )
   }
 
+  /** 计算 OpenClaw 受管 QQ 机器人插件目录（规则同微信：包名哈希 + node_modules/<pkg>）。 */
+  private _getQQBotManagedPluginDir(): string {
+    const dataDir = this.configManager.getDataDir()
+    const configDir = openClawPaths.configDir(dataDir)
+    const projectDirName = safePathSegmentHashed(QQBOT_PLUGIN_PACKAGE)
+    return join(
+      configDir,
+      'npm',
+      'projects',
+      projectDirName,
+      'node_modules',
+      ...QQBOT_PLUGIN_PACKAGE.split('/')
+    )
+  }
+
   /**
    * 通过 OpenClaw 自身的 `plugins install` 把微信渠道插件装进受管目录，
    * 这样 `channels login` 才会识别为“已安装”。
@@ -466,6 +483,76 @@ export class DownloadManager extends EventEmitter {
     // 仍失败：不中断初始化。点击“扫码登录”时 channels login 交互流会再次引导下载插件作为兜底。
     this._writeDebugLog('[InstallWeixinPlugin] 手动组装亦未成功，已跳过（登录时可再引导安装）')
     this._progress('装配渠道', '微信渠道插件将在首次扫码登录时自动补装', 90)
+    return false
+  }
+
+  /**
+   * 安装/刷新 QQ 机器人官方插件到 OpenClaw 受管目录。
+   *
+   * 与微信插件同一条受管安装通道；区别是 QQ 插件依赖较多、没有手动拷贝兜底，
+   * 安装失败只记录日志并在 UI 提示“扫码登录时可再补装”，不阻断环境初始化。
+   */
+  private async _installQQBotChannelPlugin(useMirror: boolean, force = false): Promise<boolean> {
+    const dataDir = this.configManager.getDataDir()
+    const nodePath = this.configManager.getNodePath()
+    const clawJsPath = openClawPaths.clawJs(dataDir)
+
+    if (!existsSync(nodePath) || !existsSync(clawJsPath)) {
+      this._writeDebugLog('[InstallQQBotPlugin] Node 或 OpenClaw 尚未就绪，跳过受管插件安装')
+      return false
+    }
+
+    const managedDir = this._getQQBotManagedPluginDir()
+    if (force) {
+      const projectDir = join(managedDir, '..', '..', '..')
+      try {
+        if (existsSync(projectDir)) rmSync(projectDir, { recursive: true, force: true })
+      } catch (e: any) {
+        this._writeDebugLog(`[InstallQQBotPlugin] 清理旧受管插件目录失败: ${e.message}`)
+      }
+    } else if (existsSync(managedDir)) {
+      this._writeDebugLog('[InstallQQBotPlugin] 受管 QQ 机器人插件已存在，跳过安装')
+      return true
+    }
+
+    const nodeBinDir = dirname(nodePath)
+    const configDir = join(dataDir, 'config')
+    const registries = useMirror
+      ? [...DOMESTIC_MIRRORS.map((m) => m.url), OFFICIAL_REGISTRY.url]
+      : [OFFICIAL_REGISTRY.url]
+
+    this._progress('装配渠道', '正在将 QQ 机器人插件安装到 OpenClaw 受管目录...', 89)
+
+    for (const registry of registries) {
+      const env = {
+        ...process.env,
+        PATH: `${nodeBinDir}${pathDelimiter}${process.env.PATH || ''}`,
+        HOME: configDir,
+        USERPROFILE: configDir,
+        OPENCLAW_CONFIG_DIR: join(configDir, '.openclaw'),
+        OPENCLAW_DATA_DIR: join(dataDir, 'data'),
+        npm_config_registry: registry,
+        NODE_ENV: 'production'
+      }
+
+      const cmd = `"${nodePath}" "${clawJsPath}" plugins install "${QQBOT_PLUGIN_PACKAGE}@latest"`
+      this._writeDebugLog(`[InstallQQBotPlugin] 执行受管插件安装 (registry=${registry}): ${cmd}`)
+
+      try {
+        await execAsync(cmd, { cwd: join(dataDir, 'openclaw'), env, maxBuffer: 1024 * 1024 * 64 })
+      } catch (err: any) {
+        this._writeDebugLog(`[InstallQQBotPlugin] plugins install 返回异常 (registry=${registry}): ${err.message}`)
+      }
+
+      if (existsSync(this._getQQBotManagedPluginDir())) {
+        this._writeDebugLog(`[InstallQQBotPlugin] 受管 QQ 机器人插件安装成功 (registry=${registry})`)
+        return true
+      }
+      this._writeDebugLog('[InstallQQBotPlugin] 该镜像源未生成受管目录，尝试下一个源')
+    }
+
+    this._writeDebugLog('[InstallQQBotPlugin] 插件安装未完成，已跳过（首次扫码登录时可再补装）')
+    this._progress('装配渠道', 'QQ 机器人插件将在首次扫码登录时自动补装', 90)
     return false
   }
 
@@ -606,6 +693,8 @@ export class DownloadManager extends EventEmitter {
       // 无论核心是否重装，只要受管微信插件缺失就补装（核心已装、仅缺插件时也能命中）。
       // 该方法内部会判断插件是否已存在，存在则直接跳过。
       await this._installWeixinChannelPlugin(useMirror)
+      // QQ 机器人插件：非阻断，失败时登录阶段可再补装
+      await this._installQQBotChannelPlugin(useMirror)
 
       await this._installBuiltinSkills()
       this._progress('完成', '恭喜，全套环境初始化部署成功！', 100, true)
@@ -696,6 +785,10 @@ export class DownloadManager extends EventEmitter {
 
       // 更新核心后同步刷新受管微信插件，保证渠道登录持续可用。
       const pluginReady = await this._installWeixinChannelPlugin(useMirror, true)
+      // 更新核心后补装缺失的受管 QQ 机器人插件（不 force 删除，失败不阻断更新）
+      // 不 force 删除旧插件：更新失败/registry 抖动时不至于把已可用的 QQ 插件弄丢；
+      // 版本收敛交给 openclaw update repair。
+      const qqbotReady = await this._installQQBotChannelPlugin(useMirror)
       await this._installBuiltinSkills()
 
       // 冒烟与插件装配均通过，候选版本可用；快照暂不删除——
@@ -707,6 +800,9 @@ export class DownloadManager extends EventEmitter {
       const warnings: string[] = []
       if (!pluginReady) {
         warnings.push('微信渠道插件刷新未完成，将在首次扫码登录时自动补装')
+      }
+      if (!qqbotReady) {
+        warnings.push('QQ 机器人插件刷新未完成，将在首次扫码登录时自动补装')
       }
       if (!repairReady) {
         warnings.push(

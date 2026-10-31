@@ -816,6 +816,74 @@ await rec.check('eta-wiring', 'ETA 接线：状态里有估算值、store/Dashbo
   assert(/estimateStartupMs: full\.estimateStartupMs/.test(idxSrc), 'statusChange 必须推送 estimateStartupMs')
   return '估算值/展示/开关/复用 接线齐全'
 })
+
+// ── QQ 机器人渠道（2026-11-01）────────────────────────────────────────────────
+await rec.check('qqbot-channel', 'QQ 机器人：渠道状态识别 + 应用侧接线（安装/扫码/配置）', async () => {
+  const { mkdtempSync, rmSync, mkdirSync } = await import('node:fs')
+  const os = await import('node:os')
+  const sandbox = mkdtempSync(join(os.tmpdir(), 'umi-qqbot-'))
+  const cmPath = bundleEntry('electron/main/channelManager.ts', 'claw-channel-manager.mjs')
+  const { ChannelManager } = await import(pathToFileURL(cmPath).href)
+  const fakeConfig = (channels) => ({
+    getDataDir: () => sandbox,
+    getNodePath: () => process.execPath,
+    getOpenClawChannels: () => channels
+  })
+
+  // 1) 未配置
+  const cm0 = new ChannelManager(fakeConfig({}))
+  const st0 = cm0.getChannelStatuses()
+  assertEq(st0.length, 6, '渠道状态应包含 6 个 key（新增 qqbot）')
+  assertEq(st0.find((s) => s.key === 'qqbot')?.configured, false, '无配置时 qqbot=false')
+
+  // 2) appId + clientSecret（扫码/手填后插件写入的形态）
+  const cm1 = new ChannelManager(
+    fakeConfig({ qqbot: { appId: '102030405', clientSecret: 'secret-xyz' } })
+  )
+  const qq1 = cm1.getChannelStatuses().find((s) => s.key === 'qqbot')
+  assertEq(qq1?.configured, true, 'appId+clientSecret 视为已配置')
+  assert(String(qq1?.detail || '').includes('102030405'), 'detail 带 AppID 前缀')
+
+  // 3) 多账号形态 channels.qqbot.accounts.*
+  const cm2 = new ChannelManager(
+    fakeConfig({ qqbot: { accounts: { bot2: { appId: '2', clientSecret: 's2' } } } })
+  )
+  assertEq(
+    cm2.getChannelStatuses().find((s) => s.key === 'qqbot')?.configured,
+    true,
+    'accounts.* 里有凭证也算已配置'
+  )
+
+  // 4) 受管插件目录识别：QQ 项目目录名是 tencent-connect-openclaw-qqbot-<hash>
+  const projectsDir = join(sandbox, 'config', '.openclaw', 'npm', 'projects')
+  mkdirSync(join(projectsDir, 'tencent-connect-openclaw-qqbot-a7ec020d86'), { recursive: true })
+  mkdirSync(join(projectsDir, 'openclaw-feishu-deadbeef'), { recursive: true })
+  const cm3 = new ChannelManager(fakeConfig({}))
+  assertEq(cm3.isPluginInstalled('qqbot'), true, '受管 QQ 插件目录应被识别（scope 扁平化 + 哈希）')
+  assertEq(cm3.isPluginInstalled('feishu'), true, '飞书受管目录识别不回归')
+  assertEq(cm3.isPluginInstalled('wecom'), false, '未安装的插件不误判')
+
+  // 5) 应用侧接线（安装/扫码/配置注入）静态核对
+  const { readFileSync } = await import('node:fs')
+  const dm = readFileSync(join(process.cwd(), 'electron', 'main', 'downloadManager.ts'), 'utf-8')
+  const cfg = readFileSync(join(process.cwd(), 'electron', 'main', 'configManager.ts'), 'utf-8')
+  const page = readFileSync(join(process.cwd(), 'src', 'views', 'ChannelsPage.vue'), 'utf-8')
+  assert(/@tencent-connect\/openclaw-qqbot/.test(dm), 'downloadManager 使用官方 QQ 插件包名')
+  assert(/_installQQBotChannelPlugin/.test(dm), '环境初始化/更新会安装 QQ 插件')
+  assert(/channels\.qqbot/.test(cfg), 'configManager 会注入 channels.qqbot')
+  assert(/openclaw-qqbot/.test(cfg), 'configManager 会启用 openclaw-qqbot 插件条目')
+  assert(/defaultRequireMention/.test(cfg), 'QQ 群「需 @」必须写 defaultRequireMention（插件只认这个键）')
+  assert(/allowFrom/.test(cfg) && /dmPolicy/.test(cfg), 'QQ 配置必须补 allowFrom/dmPolicy（2026.10.9 schema 要求）')
+  assert(/qqPluginInstalled/.test(cfg), '插件未安装时不得注入 channels.qqbot（unknown channel id）')
+  assert(/policyOnly/.test(page), '扫码用户（无凭证）也要能提交群策略')
+  assert(/qqbotBusy/.test(page), '扫码按钮要防连点/显示安装中')
+  assert(!/delete existingConfig\.channels\.qqbot/.test(cfg), '表单为空时不能删除扫码写入的 qqbot 配置')
+  assert(/channels login --channel qqbot/.test(page), '渠道页扫码按钮跳转终端执行 channels login --channel qqbot')
+  assert(/QQ 机器人（官方插件）/.test(page), '渠道页有 QQ 卡片')
+
+  rmSync(sandbox, { recursive: true, force: true })
+  return '状态识别/多账号/安装与配置接线 均正确'
+})
 // ── 结果 ─────────────────────────────────────────────────────────────────────
 
 const result = rec.toJSON({ entry: clawPath })

@@ -864,7 +864,64 @@ try {
     assert(res.html.includes('12 / 1'), '渲染今日用量')
     return '语音页四路加载与概览渲染 ✓'
   })
-} catch (e) {
+
+  // ── U20 渠道页 QQ 机器人卡片（扫码登录 + 手动配置保存）──
+  await r.check('U20', '渠道页 QQ 卡片：渲染/扫码跳终端/保存 channels.qqbot', async () => {
+    globalThis.__routerPushes = []
+    setIpc({
+      'config:get': {
+        channels: { qqbot: { enabled: true, appId: '102030405', clientSecret: 's3cret' } }
+      },
+      'config:save': { appConfigSavedOk: true, openClawSyncOk: true },
+      'channels:getStatuses': [{ key: 'qqbot', configured: true, detail: 'AppID 102030405' }],
+      'channels:isPluginInstalled': true
+    })
+    // preload 的 config/channels 桥返回裸值，而测试桩统一包了 {ok,data}；这里解包后再挂载
+    const unwrap = (fn) => async (...args) => {
+      const r = await fn(...args)
+      return r && typeof r === 'object' && 'ok' in r ? r.data : r
+    }
+    const pageApi = {
+      ...api,
+      config: { ...api.config, get: unwrap(api.config.get), save: unwrap(api.config.save) },
+      channels: {
+        ...api.channels,
+        getStatuses: unwrap(api.channels.getStatuses),
+        isPluginInstalled: unwrap(api.channels.isPluginInstalled),
+        installPlugin: unwrap(api.channels.installPlugin)
+      }
+    }
+    const bundle = compileVuePage('src/views/ChannelsPage.vue', 'ui-channels', {
+      routerStub: stubs.routerStub
+    })
+    const mod = await import(pathToFileURL(bundle).href)
+    const res = await mountPage(mod.default, { api: pageApi, flush: 30 })
+    assert(!res.mountError, '渠道页挂载无异常')
+    assert(res.html.includes('QQ 机器人（官方插件）'), '渲染 QQ 卡片')
+    assert(res.html.includes('已配置'), '已配置徽标来自渠道状态')
+    assert(res.html.includes('AppID'), '已有配置时卡片自动展开')
+
+    const qrBtn = findButton(res.root, 'QQ 扫码登录')
+    assert(qrBtn, '存在「QQ 扫码登录」按钮')
+    qrBtn.props.onClick()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const pushed = (globalThis.__routerPushes || []).at(-1)
+    assertEq(pushed?.path, '/terminal', '扫码登录跳终端页')
+    assertEq(pushed?.query?.autoRun, 'channels login --channel qqbot', '终端自动执行 QQ 扫码登录')
+
+    // 手动填写 AppID/AppSecret 后保存 → 写入 app.json channels.qqbot（主进程再同步 openclaw.json）
+    const saveBtn = findButton(res.root, '保存渠道配置')
+    assert(saveBtn, '存在保存按钮')
+    saveBtn.props.onClick()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const saved = calls().filter((c) => c.channel === 'config:save').at(-1)
+    assert(saved, '保存应调用 config:save')
+    assertEq(saved.args[0]?.channels?.qqbot?.appId, '102030405', '保存包含 channels.qqbot.appId')
+    assertEq(saved.args[0]?.channels?.qqbot?.clientSecret, 's3cret', '保存包含 channels.qqbot.clientSecret')
+    return 'QQ 卡片渲染/扫码跳转/保存接线 ✓'
+  })} catch (e) {
   console.error('UI 验收脚本自身异常:', e)
 }
 

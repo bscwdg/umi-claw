@@ -99,6 +99,9 @@ const sessionId = ref<string | null>(null);
 const cmdHistory = ref<string[]>([]);
 const inputEl = ref<HTMLInputElement | null>(null);
 
+// 扫码登录（渠道页带 qr=1）时用等比字号/行高，避免二维码被终端行高拉长
+const qrMode = route.query.qr === "1";
+
 function initTerm() {
   if (!termEl.value || term) return;
   term = new Terminal({
@@ -117,8 +120,8 @@ function initTerm() {
       white: "#e2e8f0",
     },
     fontFamily: '"Cascadia Code", "Fira Code", Consolas, monospace',
-    fontSize: 13,
-    lineHeight: 1.5,
+    fontSize: qrMode ? 12 : 13,
+    lineHeight: qrMode ? 1.1 : 1.5,
     cursorBlink: true,
     convertEol: true, // 核心修复：自动处理换行不回车的问题
     scrollback: 5000,

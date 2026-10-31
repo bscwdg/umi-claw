@@ -466,6 +466,35 @@ window.api.work.reminder.testPush() / .getPushStatus() / .check()
 > 企微 CLI 通过 npx 运行，会自动检测便携 Node.js 环境。国内用户默认走 npmmirror 镜像加速。
 > 安装过程中如遇问题，可在终端手动执行 `npx -y @wecom/wecom-openclaw-cli doctor` 诊断。
 
+### QQ 机器人（官方插件）
+
+QQ 机器人接入使用腾讯官方插件 `@tencent-connect/openclaw-qqbot`，支持**手机 QQ 扫码绑定**，也可手动填写 AppID/AppSecret；默认 WebSocket 长连接，无需公网 IP。
+
+#### 前置准备（QQ 开放平台）
+
+1. 打开 [QQ 开放平台](https://q.qq.com/)，手机 QQ 扫码登录并创建机器人。
+2. 在机器人页面获取 **AppID** 与 **AppSecret**（AppSecret 只显示一次；扫码绑定时会自动写入，无需手动复制）。
+3. 开发期使用沙箱环境时，把测试 QQ 加为沙箱成员；正式使用需按平台要求发布/审核。
+4. 群聊需把机器人拉进群，默认只有 @机器人 才会回复。
+
+#### 在应用内接入
+
+1. 进入「渠道接入」页，找到**QQ 机器人（官方插件）**卡片并展开
+2. 点击「📱 QQ 扫码登录」：应用会先确认官方插件已安装（首次约 1-2 分钟，环境初始化/更新时也会自动安装），随后跳转终端执行 `channels login --channel qqbot`
+3. 用手机 QQ 扫描终端里的二维码，完成机器人绑定
+4. 回到应用**重启 OpenClaw**，在 QQ 里给机器人发消息即可
+
+也可以不用扫码：直接在卡片里填写 AppID / AppSecret 后点「保存渠道配置」，应用会写入 `openclaw.json` 的 `channels.qqbot` 并启用 `openclaw-qqbot` 插件。
+
+#### 群聊配置
+
+- 卡片内的「群聊策略」支持：允许所有群 / 仅白名单群 / 禁用群聊；「需要 @机器人」默认开启
+- 白名单群需在 `openclaw.json` 的 `channels.qqbot.groupAllowFrom` 中填写群 OpenID
+- 运行期也可在 QQ 私聊里用 `/bot-group-always on|off` 切换账号级 @ 规则
+
+> Windows 不支持插件的 `/bot-upgrade` 热升级；升级插件请重新执行「QQ 扫码登录」前的安装流程，或在应用终端执行 `plugins install @tencent-connect/openclaw-qqbot@latest`（外部 shell 用 `openclaw plugins install ...`）。
+> 扫码失败时，可在应用终端执行 `plugins install @tencent-connect/openclaw-qqbot@latest` 后重试（外部 shell 用 `openclaw plugins install ...`）。
+
 ### 飞书（自建应用）
 
 飞书为**插件驱动**渠道（与微信一致），除填写凭证外还需安装官方插件 `@openclaw/feishu`，界面已将这一步自动化。

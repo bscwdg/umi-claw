@@ -651,3 +651,11 @@ offline maintenance → `openclaw.json` 读取失败 → 网关启动失败。
 `icacls data /inheritance:r /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /grant "<user>:(OI)(CI)F"`，
 之后 1.0 网关正常启动（/health 200）。已同步加固 `claw-master\data`，并把排查步骤写进
 各分支 README 的「常见问题」章节（影响所有 OpenClaw ≥ 2026.10.9 的 dev/便携/普通目录安装）。
+
+### 2026-11-01 · QQ 机器人渠道接入（全分支）
+
+- 渠道页新增「QQ 机器人（官方插件）」卡片：扫码登录（`channels login --channel qqbot`）+ 手动 AppID/AppSecret + 群聊策略/需 @ 配置
+- `channelManager` 新增 `qqbot` 运行状态（兼容 `channels.qqbot` 与多账号 `accounts.*`）
+- `configManager` 注入 `channels.qqbot` 并启用 `plugins.entries.openclaw-qqbot`；表单为空时**不删除**扫码写入的绑定
+- `downloadManager` 在环境初始化/更新时受管安装 `@tencent-connect/openclaw-qqbot@latest`（失败不阻断，保存/扫码时会补装）
+- 测试：maintenance 新增 `qqbot-channel`（状态识别 + 安装/扫码/配置接线），ui 新增 U20（QQ 卡片渲染 / 扫码跳终端 / 保存 channels.qqbot）
