@@ -575,7 +575,8 @@ await rec.check(
 // ── webhook 迁移标记兜底（2026-10 启动慢专项）────────────────────────────────
 // 背景：OpenClaw 只在迁移「无 warning」时记录 meta.migrations.webhookListeners；
 // 插件 doctor 契约在 Windows 上加载失败（符号链接权限/文件占用）会让它每次启动重跑
-// 该迁移（实测 185s）。应用侧按官方「外部管理配置」口径兜底补齐标记。
+// 该迁移（实测 185s）。应用侧按官方「外部管理配置」口径兜底补齐标记——
+// 但有 legacyWebhook 端点时必须交回官方迁移（官方要求「补端点 + 补标记」双管齐下）。
 
 const markerPath = bundleEntry(
   'electron/main/openclawWebhookMarker.ts',
@@ -599,59 +600,93 @@ await rec.check('marker-pure', 'webhook 标记：缺失→补齐、保留既有�
   return '缺失补齐、保留既有键、幂等'
 })
 
-await rec.check('marker-file', 'webhook 标记落盘：先备份、原子写回、坏文件不动', async () => {
+await rec.check('marker-legacy', 'webhook 标记：检测到 legacyWebhook 时交回官方迁移，不补标记', async () => {
+  const fs = await import('node:fs')
+  const os = await import('node:os')
+  const dir = fs.mkdtempSync(join(os.tmpdir(), 'umi-marker-legacy-'))
+  const file = join(dir, 'openclaw.json')
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      channels: {
+        feishu: { accounts: { main: { appId: 'x', legacyWebhook: { url: 'https://example.com/cb' } } } }
+      }
+    })
+  )
+  const r = await marker.ensureWebhookMigrationMarkerFile(file)
+  assertEq(r.changed, false, '有 legacyWebhook 时不得补标记')
+  assertDeepEq(r.skippedLegacyChannels, ['feishu'], '应指出命中的历史渠道')
+  const after = JSON.parse(fs.readFileSync(file, 'utf-8'))
+  assertEq(marker.hasWebhookMigrationMarker(after), false, '文件里也不应有标记')
+  fs.rmSync(dir, { recursive: true, force: true })
+  return 'legacy 渠道被识别、标记不写入'
+})
+
+await rec.check('marker-file', 'webhook 标记落盘：备份命名/原子写/保留 CRLF+BOM/幂等/坏文件保护', async () => {
   const fs = await import('node:fs')
   const os = await import('node:os')
   const dir = fs.mkdtempSync(join(os.tmpdir(), 'umi-marker-'))
   const file = join(dir, 'openclaw.json')
-  fs.writeFileSync(
-    file,
-    JSON.stringify(
-      { gateway: { mode: 'local' }, meta: { migrations: { utilityModelSeparation: true } } },
-      null,
-      2
-    )
-  )
-  const fixedNow = () => Date.UTC(2026, 9, 31, 4, 0, 0)
-  const r1 = marker.ensureWebhookMigrationMarkerFile(file, fixedNow)
+  // 真实 openclaw.json 是 CRLF；带 BOM 验证风格保留
+  const original = '\uFEFF' + JSON.stringify(
+    { gateway: { mode: 'local' }, meta: { migrations: { utilityModelSeparation: true } } },
+    null,
+    2
+  ).replace(/\n/g, '\r\n') + '\r\n'
+  fs.writeFileSync(file, original)
+
+  const r1 = await marker.ensureWebhookMigrationMarkerFile(file, {
+    now: () => Date.UTC(2026, 9, 31, 4, 0, 9)
+  })
   assertEq(r1.changed, true, '应写入标记')
-  const written = JSON.parse(fs.readFileSync(file, 'utf-8'))
-  assertEq(marker.hasWebhookMigrationMarker(written), true, '落盘后标记为 true')
-  assertEq(written.meta.migrations.utilityModelSeparation, true, '既有迁移键保留')
-  assert(r1.backupPath && fs.existsSync(r1.backupPath), '改写前必须有备份')
-  const backupCfg = JSON.parse(fs.readFileSync(r1.backupPath, 'utf-8'))
+  assert(r1.backupPath, '备份路径必须返回')
+  assert(/\.webhook-marker-bak\.\d{14}$/.test(r1.backupPath), `备份名应为 14 位时间戳，实际 ${r1.backupPath}`)
+  assert(fs.existsSync(r1.backupPath), '备份文件必须存在')
+  const backupCfg = JSON.parse(fs.readFileSync(r1.backupPath, 'utf-8').replace(/^\uFEFF/, ''))
   assertEq(marker.hasWebhookMigrationMarker(backupCfg), false, '备份必须是改动前内容')
 
-  const r2 = marker.ensureWebhookMigrationMarkerFile(file, fixedNow)
+  const writtenRaw = fs.readFileSync(file, 'utf-8')
+  const written = JSON.parse(writtenRaw.replace(/^\uFEFF/, ''))
+  assertEq(marker.hasWebhookMigrationMarker(written), true, '落盘后标记为 true')
+  assertEq(written.meta.migrations.utilityModelSeparation, true, '既有迁移键保留')
+  assert(writtenRaw.startsWith('\uFEFF'), '应保留原文件 BOM')
+  assert(writtenRaw.includes('\r\n'), '应保留原文件 CRLF 换行')
+  assert(!fs.readdirSync(dir).some((n) => n.includes('.webhook-marker-tmp-')), '不得残留 tmp 文件')
+
+  const r2 = await marker.ensureWebhookMigrationMarkerFile(file)
   assertEq(r2.changed, false, '第二次调用不再写')
 
   const bad = join(dir, 'bad.json')
   fs.writeFileSync(bad, '{ not json')
-  const r3 = marker.ensureWebhookMigrationMarkerFile(bad)
+  const r3 = await marker.ensureWebhookMigrationMarkerFile(bad)
   assertEq(r3.changed, false, '坏 JSON 不动作')
   assert(String(r3.error || '').includes('JSON'), '坏文件应返回可读原因')
   assertEq(fs.readFileSync(bad, 'utf-8'), '{ not json', '坏文件保持原样')
   fs.rmSync(dir, { recursive: true, force: true })
-  return '备份/原子写/幂等/坏文件保护'
+  return '备份命名/CRLF+BOM/原子写无残留/幂等/坏文件保护'
 })
 
-await rec.check('marker-wiring', '接线：config 同步之后、spawn 之前补齐标记；首文件骨架也带标记', async () => {
+await rec.check('marker-wiring', '接线：config 同步之后、spawn 之前补齐标记；两处首文件骨架都带标记', async () => {
   const { readFileSync } = await import('node:fs')
   const clawSrc = readFileSync(join(process.cwd(), 'electron', 'main', 'clawManager.ts'), 'utf-8')
   const cfgSrc = readFileSync(join(process.cwd(), 'electron', 'main', 'configManager.ts'), 'utf-8')
+  const dlSrc = readFileSync(join(process.cwd(), 'electron', 'main', 'downloadManager.ts'), 'utf-8')
   const iSync = clawSrc.indexOf('syncOpenClawConfig()')
   const iMarker = clawSrc.indexOf('ensureWebhookMigrationMarker()')
   const iSpawn = clawSrc.indexOf('spawn(nodePath')
   assert(iSync > 0, '应能在源码里找到启动前的 openclaw.json 同步')
   assert(iMarker > iSync, '标记补齐必须在 openclaw.json 同步之后（否则会被 patch 覆盖）')
   assert(iSpawn > iMarker, '标记补齐必须在 spawn 网关之前')
-  assert(cfgSrc.includes('ensureWebhookMigrationMarker'), 'ConfigManager 暴露兜底方法')
+  assert(cfgSrc.includes('runSerializedOpenClawConfigWrite'), '标记写入必须走官方写入串行队列')
+  assert(cfgSrc.includes('applyWebhookMigrationMarker'), 'configManager 首文件骨架也要带标记')
+  assert(dlSrc.includes('applyWebhookMigrationMarker'), 'downloadManager 首文件骨架也要带标记（同口径红线）')
   assert(
-    cfgSrc.includes('applyWebhookMigrationMarker(existingConfig)'),
-    '首文件骨架也要带标记（新装用户首次启动就不重跑迁移）'
+    cfgSrc.includes('findLegacyWebhookChannels') && dlSrc.includes('findLegacyWebhookChannels'),
+    '两处骨架都必须先检查 legacyWebhook'
   )
-  return '顺序与首文件骨架接线正确'
+  return '顺序、串行队列、两处首文件骨架接线正确'
 })
+
 // ── 结果 ─────────────────────────────────────────────────────────────────────
 
 const result = rec.toJSON({ entry: clawPath })

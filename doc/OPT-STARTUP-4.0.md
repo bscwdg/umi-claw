@@ -112,7 +112,7 @@
 
 **1.3 验收**
 - 双 typecheck、`npm run build`；
-- `plugin.accept`（61/61）与全量 19 套（368/368）回归；
+- `plugin.accept`（61/61）与全量 accept（当前 **28 套 / 503 条断言**，`npm run accept` 一次跑齐含 e2e/smoke）回归；
 - `ui.accept` 增加断言：未就绪时「打开网页」禁用、就绪后可用、文案含「启动中」；
 - 人工：重启网关，记录「点击 → 界面显示已就绪」秒数，与日志里的 `spawn→health` 对齐；确认失败场景（如端口被占用）能给出错误而不是一直转圈。
 
@@ -143,7 +143,7 @@
 - 批次 1 后：不再出现「显示运行中但网页打不开」；记录到真实启动耗时（spawn→health）
 - 批次 2.0 后：明确 captures 是否有可复用/去重空间；有则给出数据，没有则记录上游限制
 - 批次 2.3 后：保存配置不再阻塞在 patch 上（重启前有 flush 兜底）
-- 任何批次都不得破坏：全量 19 套 accept（当前 368/368）、`plugin.accept`（61/61）、`one-day.e2e`（11/11）、`packaged.smoke`（6/6）、双 typecheck、`npm run build`
+- 任何批次都不得破坏：全量 accept（当前 **28 套 / 503 条断言**；历史条目里的「19 套 / 368」是旧快照）、`plugin.accept`（61/61）、`one-day.e2e`（11/11）、`packaged.smoke`（6/6）、双 typecheck、`npm run build`
 
 **人工验证**
 - 重启网关 → 记录「点击 → 网页可打开」秒数；
@@ -192,12 +192,24 @@ Invoke-WebRequest -Uri 'http://127.0.0.1:3213/health' -UseBasicParsing | Select-
 **已实现的代码兜底（不依赖用户环境/权限）**
 1. `openclawWebhookMarker.ts` + `ConfigManager.ensureWebhookMigrationMarker()`：
    每次启动网关前（`syncOpenClawConfig` 之后、`spawn` 之前）补齐
-   `meta.migrations.webhookListeners=true`；先备份、原子写、幂等；坏文件不动作。
-   首文件骨架也直接带标记（新装用户首启不重跑迁移）。→ 每次启动省 ~185s 的重复迁移。
-2. `_repairManagedPluginPeerLinks` 修复链接后等 realpath 稳定（最多 3s）再 spawn，
-   避免与 OpenClaw 插件复制/审计撞上 `copy path changed during operation`。
-3. 启动耗时已在上一次提交里埋点（`[gateway] 启动耗时 xxs（spawn→health）`），
-   后续可直接用日志验证收益。
+   `meta.migrations.webhookListeners=true`。要点：
+   - **只在没有 legacyWebhook 端点时补**（先扫 telegram/feishu/msteams/nextcloud-talk）；
+     有 legacyWebhook 时交回 OpenClaw 官方迁移（官方要求「补端点 + 补标记」双管齐下）；
+   - 补写走官方写入器的**同一串行队列**（`runSerializedOpenClawConfigWrite`），避免与 config patch
+     read→write 交错导致 lost update；
+   - 先备份（`openclaw.json.webhook-marker-bak.<yyyyMMddHHmmss>`，仅备份成功才上报路径）、
+     「临时文件 + rename」原子写，rename 失败回退直写并清理 tmp；保留原文件 BOM/CRLF/结尾换行；
+   - 幂等；坏 JSON 不动作；首文件骨架（configManager + downloadManager 两处）也直接带标记。
+   → 对「原本每次都会重跑迁移」的配置，每次启动省约 180s（全新空配置本就不跑该迁移）。
+2. 启动状态机与探活健壮性（子代理审查后补）：
+   - 渲染端 `starting` 从**点击启动**就开始（覆盖 spawn 前的 patch/doctor 准备阶段）；
+   - `readyEpoch` 代际：stop/restart 后旧 `waitReady` 结果作废（不再误报「启动失败」）；
+     `statusChange(ready=true)` 清空历史 `startupError`（exit 78 自愈后不再挂红）；
+   - `_startReadyProbe` 加代际 + await 后 ready 去重（旧探针不写新实例状态、不重复日志）；
+     探活端口改用 spawn 时的 `this.port`；Dashboard 快捷入口与 Token 按钮门禁修正。
+   - 注：上一版曾尝试「修链接后等 realpath 稳定再 spawn」，实测 junction 创建后 realpath 立即就绪
+     （no-op），且 OpenClaw 的复制/审计发生在 spawn 之后，等待影响不到它 → 已删除该等待，只保留修复计数日志。
+3. 启动耗时埋点：`[gateway] 启动耗时 xxs（spawn→health）`，可直接用日志验证收益。
 
 **仍待观察（上游/环境相关，不再动用户环境）**
 - 渠道插件加载（`main-session-recovery`）在 Windows 无符号链接权限时仍可能慢；

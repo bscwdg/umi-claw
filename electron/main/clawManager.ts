@@ -185,6 +185,8 @@ export class ClawManager extends EventEmitter {
   private readyAt?: number
   /** 后台探活进行中：停止/退出后置 true，避免旧探针继续改状态 */
   private readyProbeStopped = false
+  /** 探活代际：每次 stop/spawn 自增；旧代际的探针结果一律丢弃（防重启窗口串台） */
+  private readyProbeSeq = 0
   private configManager: ConfigManager
   private isStopping = false
   // 网关退出码 78（状态库需要 schema 迁移）时的自动修复状态
@@ -571,12 +573,20 @@ export class ClawManager extends EventEmitter {
     //
     // 必须放在 syncOpenClawConfig 之后：官方 patch 可能重写 openclaw.json，标记要最后落盘。
     try {
-      const marker = this.configManager.ensureWebhookMigrationMarker()
+      const marker = await this.configManager.ensureWebhookMigrationMarker()
+      const legacy = marker.skippedLegacyChannels ?? []
       if (marker.changed) {
         this._addLog(
-          '[gateway] 已补齐 legacy webhook 迁移完成标记（避免每次启动重复迁移约 3 分钟）' +
+          '[gateway] 已补齐 legacy webhook 迁移完成标记（避免每次启动重复迁移，实测约 3 分钟）' +
             (marker.backupPath ? `；原文件备份：${marker.backupPath}` : ''),
           'system'
+        )
+      } else if (legacy.length > 0) {
+        // 有 legacyWebhook 端点：官方要求「补端点 + 补标记」双管齐下，我们只负责标记这一半，
+        // 所以这里交回 OpenClaw 官方迁移，不强行标记完成。
+        this._addLog(
+          `[gateway] 检测到 legacyWebhook 配置（${legacy.join(' / ')}），保留 OpenClaw 官方迁移、不补完成标记`,
+          'stderr'
         )
       } else if (marker.error) {
         this._addLog(`[gateway] webhook 迁移标记补齐跳过：${marker.error}`, 'stderr')
@@ -732,7 +742,9 @@ export class ClawManager extends EventEmitter {
    * 进程在但端口没监听是常态（实测可达数分钟），只有 /health 通才算能开网页。
    */
   private _fetchHealthOk(timeoutMs = 1500): Promise<boolean> {
-    const port = Number(this.configManager.getConfig().port) || this.port
+    // 用 spawn 时的端口：启动窗口内用户可能保存了新的 config.port（保存只改配置、不重启），
+    // 用配置端口会让探活盯错端口 → 15 分钟超时误报。
+    const port = Number(this.port) || Number(this.configManager.getConfig().port) || 3213
     return new Promise((resolve) => {
       let settled = false
       const done = (ok: boolean): void => {
@@ -761,6 +773,7 @@ export class ClawManager extends EventEmitter {
     this.ready = false
     this.readyAt = undefined
     this.readyProbeStopped = true
+    this.readyProbeSeq++
   }
 
   /** spawn 成功后启动后台探活：就绪时记 readyAt、写耗时日志、推状态 */
@@ -768,11 +781,17 @@ export class ClawManager extends EventEmitter {
     this.ready = false
     this.readyAt = undefined
     this.readyProbeStopped = false
+    // 代际隔离：stop→start 窗口里旧探针可能还在等 HTTP 响应；恢复后不能拿旧 spawnAt
+    // 给新实例写就绪/耗时日志（旧端口未释放时甚至可能探到旧进程的 /health 200）。
+    const seq = ++this.readyProbeSeq
     const spawnAt = this.startedAt ?? Date.now()
+    const stale = (): boolean =>
+      this.readyProbeStopped || seq !== this.readyProbeSeq || !this.process
     const poll = async (): Promise<void> => {
-      if (this.readyProbeStopped || !this.process) return
+      if (stale()) return
       if (await this._fetchHealthOk()) {
-        if (this.readyProbeStopped || !this.process) return
+        // 与 waitReady 并发时可能已被对方置 ready：去重，避免重复日志/emit。
+        if (stale() || this.ready) return
         this.ready = true
         this.readyAt = Date.now()
         this._addLog(
@@ -1662,15 +1681,9 @@ export class ClawManager extends EventEmitter {
     }
 
     if (repairedLinks.length > 0) {
-      // 修复会重写插件目录里的 node_modules/openclaw 链接；OpenClaw spawn 后马上会复制/审计
-      // 插件文件，刚改完就开跑容易撞上「copy path changed during operation」（实测会让
-      // webhook 迁移反复失败）。这里等链接状态稳定（最多 3s）再返回，让 spawn 拿到干净快照。
-      const waitedMs = await this._waitPluginLinksSettled(repairedLinks, expectedTarget, 3000)
-      this._addLog(
-        `已修复 ${repairedLinks.length} 个插件 peer 链接` +
-          (waitedMs > 0 ? `，等待文件稳定 ${waitedMs}ms` : ''),
-        'system'
-      )
+      // 仅记日志：实测 junction 创建后 realpath 立即就绪，额外等待是 no-op；
+      // 真正与 OpenClaw 插件复制/审计的交错发生在 spawn 之后，这里等待影响不到它。
+      this._addLog(`已修复 ${repairedLinks.length} 个插件 peer 链接`, 'system')
     }
 
     if (failures.length > 0) {
@@ -1684,36 +1697,5 @@ export class ClawManager extends EventEmitter {
     return null
   }
 
-  /**
-   * 等刚重建的插件 peer 链接状态稳定（realpath 指向预期目标）。
-   *
-   * 目的是把「应用改完插件目录」和「OpenClaw 复制/审计插件文件」错开：
-   * openclaw 的 fs-safe 复制对「复制期间源路径变化」很敏感，撞上就报
-   * `copy path changed during operation`，进而让 webhook 迁移反复失败。
-   *
-   * @returns 实际等待的毫秒数；链接一开始就全部稳定时返回 0。
-   */
-  private async _waitPluginLinksSettled(
-    links: string[],
-    expectedTarget: string,
-    timeoutMs: number
-  ): Promise<number> {
-    const started = Date.now()
-    const stable = async (): Promise<boolean> => {
-      for (const link of links) {
-        try {
-          if ((await fs.realpath(link)) !== expectedTarget) return false
-        } catch {
-          return false
-        }
-      }
-      return true
-    }
-    if (await stable()) return 0
-    while (Date.now() - started < timeoutMs) {
-      await new Promise((resolve) => setTimeout(resolve, 100))
-      if (await stable()) return Date.now() - started
-    }
-    return Date.now() - started
-  }
+
 }

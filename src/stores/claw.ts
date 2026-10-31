@@ -14,7 +14,8 @@ export interface LogEntry {
  * - `running`：**进程已 spawn**（`claw:status.running`）。openclaw 此时还要加载插件/渠道，
  *   端口往往还没监听，`running=true` 不代表能打开网页；
  * - `ready`：`GET /health` 返回 200，网关真正可用；
- * - `starting`：进程在、但还没 ready（长启动期间 UI 显示「启动中 xx s」）。
+ * - `starting`：启动流程进行中——包含「spawn 之前」的主进程准备阶段
+ *   （清理残留 / 配置 patch / doctor），以及「spawn 之后、/health 通之前」的加载阶段。
  */
 export const useClawStore = defineStore('claw', () => {
   const running = ref(false)
@@ -30,6 +31,13 @@ export const useClawStore = defineStore('claw', () => {
   const maintenance = ref(false)
   const logs = ref<LogEntry[]>([])
   const maxLogs = 1000
+
+  /**
+   * 就绪等待代际：stop / restart / 新一次 start 都会自增。
+   * 旧代际里挂起的 waitReady（可能长达数分钟）返回时必须被丢弃，
+   * 否则用户主动停止会看到「启动失败」，或自动修复重启成功后残留红色错误条。
+   */
+  let readyEpoch = 0
 
   // 驱动 uptime / 「启动中 xx s」周期刷新的「当前时间」。
   // computed 无法追踪 Date.now()，必须借助响应式 tick。
@@ -47,7 +55,7 @@ export const useClawStore = defineStore('claw', () => {
     return `${s}s`
   })
 
-  /** 启动中已等待秒数（未就绪时展示，避免用户以为卡死） */
+  /** 启动中已等待秒数（从点击「启动」算起，含主进程准备阶段） */
   const startingSeconds = computed(() => {
     if (!starting.value || !startedAt.value) return 0
     return Math.max(0, Math.floor((now.value - startedAt.value) / 1000))
@@ -99,16 +107,25 @@ export const useClawStore = defineStore('claw', () => {
 
   /**
    * 后台等待网关就绪（不阻塞 start/restart 返回）。
-   * 失败/超时写 `startupError`，由页面决定如何提示。
+   * 失败/超时写 `startupError`；代际过期（stop/restart）时静默丢弃结果。
    */
-  async function trackReady(timeoutMs?: number): Promise<{ ready: boolean; error?: string }> {
+  async function trackReady(
+    epoch: number,
+    timeoutMs?: number
+  ): Promise<{ ready: boolean; error?: string; stale?: boolean }> {
     try {
       const result = await window.api.claw.waitReady(timeoutMs)
+      if (epoch !== readyEpoch) {
+        // 期间用户停止/又重启过：旧等待结果作废，不能覆盖新状态，更不能弹「启动失败」。
+        return { ready: false, stale: true }
+      }
       if (result.ready) {
         ready.value = true
         starting.value = false
         startupError.value = ''
         startupMs.value = result.elapsedMs
+        // 就绪后把计时基准换成 main 的 spawn 时刻，让「运行时长」不含启动准备阶段
+        startedAt.value = Date.now() - result.elapsedMs
         return { ready: true }
       }
       starting.value = false
@@ -116,6 +133,7 @@ export const useClawStore = defineStore('claw', () => {
       startupError.value = result.error || '网关启动失败'
       return { ready: false, error: startupError.value }
     } catch (e) {
+      if (epoch !== readyEpoch) return { ready: false, stale: true }
       starting.value = false
       ready.value = false
       startupError.value = e instanceof Error ? e.message : String(e)
@@ -123,28 +141,34 @@ export const useClawStore = defineStore('claw', () => {
     }
   }
 
-  function beginStarting(): void {
+  function beginStarting(): number {
+    readyEpoch += 1
     running.value = true
     startedAt.value = Date.now()
     starting.value = true
     ready.value = false
     startupError.value = ''
     startupMs.value = undefined
+    return readyEpoch
   }
 
   async function start() {
+    // 先进入「启动中」再等主进程：spawn 之前还有 ghost 清理 / 配置 patch / doctor，
+    // 这段（可能数分钟）如果不显示启动中，界面会一直停在「已停止」，像点了没反应。
+    const epoch = beginStarting()
     const result = await window.api.claw.start()
     if (result.success) {
-      beginStarting()
-      void trackReady()
+      void trackReady(epoch)
     } else {
-      // 启动失败（含“已在运行中”）：以主进程真实状态为准对齐
+      // 启动失败（含「已在运行中」）：以主进程真实状态为准对齐，并作废本次等待。
+      readyEpoch += 1
       await fetchStatus()
     }
     return result
   }
 
   async function stop() {
+    readyEpoch += 1
     const result = await window.api.claw.stop()
     if (result.success) {
       running.value = false
@@ -158,20 +182,15 @@ export const useClawStore = defineStore('claw', () => {
   }
 
   async function restart() {
+    const epoch = beginStarting()
     const result = await window.api.claw.restart()
     if (result.success) {
-      beginStarting()
-      void trackReady()
+      void trackReady(epoch)
     } else {
+      readyEpoch += 1
       await fetchStatus()
     }
     return result
-  }
-
-  /** 手动重新等待就绪（页面「重试等待」用） */
-  async function waitReadyNow(timeoutMs?: number) {
-    starting.value = true
-    return trackReady(timeoutMs)
   }
 
   // 订阅 IPC 事件
@@ -187,12 +206,16 @@ export const useClawStore = defineStore('claw', () => {
       if (typeof data.ready === 'boolean') ready.value = data.ready
       if (typeof data.starting === 'boolean') starting.value = data.starting
       if (typeof data.startupMs === 'number') startupMs.value = data.startupMs
-      if (typeof data.startedAt === 'number') startedAt.value = data.startedAt
+      // 启动中不要把计时基准换成 main 的 spawn 时间：否则「已等 N 秒」会在 spawn 时被清零
+      if (typeof data.startedAt === 'number' && !starting.value) startedAt.value = data.startedAt
       if (data.running) {
         if (!startedAt.value) startedAt.value = Date.now()
+        // 网关已就绪（含 exit 78 自动修复后重启成功）：清掉之前的失败提示
+        if (data.ready === true) startupError.value = ''
       } else {
         startedAt.value = undefined
         resetReady()
+        startupError.value = ''
       }
     })
     return () => {
@@ -205,6 +228,6 @@ export const useClawStore = defineStore('claw', () => {
     running, pid, port, startedAt, ready, starting, startupMs, startupError,
     maintenance, logs, uptime, startingSeconds,
     addLog, clearLogs, fetchStatus,
-    start, stop, restart, trackReady, waitReadyNow, setupListeners
+    start, stop, restart, trackReady, setupListeners
   }
 })

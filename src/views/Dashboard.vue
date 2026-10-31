@@ -58,7 +58,7 @@
         {{ actionLoading ? '启动中...' : '▶ 启动' }}
       </button>
       <template v-else>
-          <button class="btn btn-success btn-lg" @click="handleFetchToken" :disabled="(loading && actionLoading) || !clawStore.ready">
+          <button class="btn btn-success btn-lg" @click="handleFetchToken" :disabled="loading && actionLoading">
             {{ loading ? '正在获取...' : '获取 Token(网关令牌)' }}
           </button>
           <button class="btn btn-danger" @click="handleStop" :disabled="actionLoading">
@@ -129,7 +129,7 @@
 
     <!-- Quick Links -->
     <div class="quick-links">
-      <a class="quick-link card" @click="shell.openExternal('http://localhost:' + clawStore.port)">
+      <a class="quick-link card" @click="openWeb()">
         <span>🌐</span><span>Web 控制台</span>
       </a>
       <a class="quick-link card" @click="router.push('/config')">

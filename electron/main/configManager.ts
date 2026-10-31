@@ -5,8 +5,13 @@ import AdmZip from 'adm-zip'
 import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawProviderRefs, isReservedOpenClawProviderKey } from './modelConfig'
 import { ModelPresetService, type PresetInfo, type RefreshResult } from './modelPresets'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
-import { applyOpenClawConfigPatch, buildJsonMergePatch, collectLossyIdArrayReplacePaths, type OpenClawPatchResult } from './openClawConfigWriter'
-import { applyWebhookMigrationMarker, ensureWebhookMigrationMarkerFile, type EnsureWebhookMarkerResult } from './openclawWebhookMarker'
+import { applyOpenClawConfigPatch, buildJsonMergePatch, collectLossyIdArrayReplacePaths, runSerializedOpenClawConfigWrite, type OpenClawPatchResult } from './openClawConfigWriter'
+import {
+  applyWebhookMigrationMarker,
+  ensureWebhookMigrationMarkerFile,
+  findLegacyWebhookChannels,
+  type EnsureWebhookMarkerResult
+} from './openclawWebhookMarker'
 import type { ObsidianConfig } from './obsidian/types'
 
 /**
@@ -389,8 +394,12 @@ export class ConfigManager {
    * 幂等 + 可回滚：已带标记时零写入；需要补写时先备份原文件
    * （`openclaw.json.webhook-marker-bak.<时间戳>`），再临时文件原子替换。
    */
-  ensureWebhookMigrationMarker(): EnsureWebhookMarkerResult {
-    return ensureWebhookMigrationMarkerFile(this.openClawConfigPath)
+  async ensureWebhookMigrationMarker(): Promise<EnsureWebhookMarkerResult> {
+    // 与官方 config patch 共用同一条「按 config 路径串行」的写入队列，
+    // 避免 read→modify→write 与 patch 的读/写交错导致 lost update（覆盖标记或用户配置）。
+    return runSerializedOpenClawConfigWrite(this.openClawConfigPath, () =>
+      ensureWebhookMigrationMarkerFile(this.openClawConfigPath)
+    )
   }
 
   /**
@@ -1274,12 +1283,14 @@ private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string; kind
     this._injectOpenClawTts(existingConfig)
 
     if (!parsedExisting) {
-      // 首文件骨架只带必要的 meta：剔除退役键/版本戳（官方写入器会自动盖），
-      // 但保留 legacy webhook 迁移完成标记——否则装了 telegram/feishu/msteams/
-      // nextcloud-talk 渠道的用户每次启动都会重跑官方迁移（插件 doctor 契约在
-      // Windows 上可能因符号链接权限/文件占用加载失败，实测单次约 3 分钟）。
-      delete existingConfig.meta
-      applyWebhookMigrationMarker(existingConfig)
+      // 首文件骨架只带必要的 meta：版本戳交给官方写入器自动盖；
+      // 但若没有 legacyWebhook 端点需要迁移，就带上 legacy webhook 迁移完成标记——
+      // 否则装了 telegram/feishu/msteams/nextcloud-talk 渠道的用户每次启动都会重跑
+      // 官方迁移（插件 doctor 契约在 Windows 上可能因符号链接权限/文件占用加载失败，
+      // 实测单次约 3 分钟）。有 legacyWebhook 时保留官方迁移，不补标记。
+      if (findLegacyWebhookChannels(existingConfig).length === 0) {
+        applyWebhookMigrationMarker(existingConfig as Record<string, unknown>)
+      }
       const content = JSON.stringify(existingConfig, null, 2)
       this._atomicWriteFileSync(this.openClawConfigPath, content)
       console.log('[ConfigManager] openclaw.json 首文件骨架已创建，后续同步走官方 config patch。')

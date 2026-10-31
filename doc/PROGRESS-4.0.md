@@ -455,17 +455,23 @@ deepseek-v4-flash. Use --replace-path models.providers.umiclaw-deepseek.models t
 - **`waitReady(timeoutMs)`**：UI 等待网关真正可用；超时/进程退出返回 `error`（不再用「进程存在」冒充可用）。
 - **`ClawStatus` 扩展**：`starting / ready / readyAt / startupMs`；`statusChange` 广播一并带上。
 - **新 IPC**：`claw:waitReady`（只读探测，不启动、不走协议闸门）；preload 暴露 `claw.waitReady`。
-- **`stores/claw.ts`**：区分 `running`（进程已 spawn）与 `ready`（/health 200）；`start/restart` 后进入
-  `starting` 并后台 `trackReady()`；失败写 `startupError`；暴露 `startingSeconds`、`waitReadyNow`。
+- **`stores/claw.ts`**：区分 `running`（进程已 spawn）与 `ready`（/health 200）；点击启动即进入
+  `starting`（覆盖 spawn 前的 patch/doctor 准备阶段），后台 `trackReady()`；失败写 `startupError`；
+  暴露 `startingSeconds`。（子代理审查后补充：`readyEpoch` 代际让 stop/restart 后旧等待结果作废，
+  避免「主动停止 → 报启动失败」；`statusChange(ready=true)` 清历史错误，避免 exit 78 自愈后挂红。）
 - **Dashboard**：「打开网页」只认 `ready`；启动中显示「启动中 xx s…」、状态卡显示已等秒数与
   「就绪后才能打开 Web 界面」提示；就绪/失败各给一次 toast；Token/重启按钮在启动中禁用。
+  （审查后修正：快捷入口「Web 控制台」也改走 `openWeb()`；Token 不依赖网关，不再被 ready 门禁挡住。）
 - **语音页重启**：`restart` 后等待 `waitReady`，就绪 toast「本次启动 xx s」，失败给错误（不再误报成功）。
-- **验收**：`ui.accept` 新增 **U18**（store 四条路径：启动中/就绪/失败/事件翻转）与 **U19**（Dashboard 门禁、
-  语音页等待、主进程/预加载/探活接线静态断言）。
+- **探活健壮性**（审查后补）：`_startReadyProbe` 加代际 `readyProbeSeq` + await 后 ready 去重
+  （旧探针不写新实例状态、不重复写「启动耗时」）；探活端口改用 spawn 时的 `this.port`。
+- **验收**：`ui.accept` 新增 **U18**（store 五条路径：准备阶段/就绪/失败/停止作废/事件清错）与 **U19**
+  （Dashboard 门禁、语音页等待、主进程/预加载/探活接线静态断言）。
 
-**验收**：全量 19 套 **370/370**；ui **19/19**；e2e 11/11；smoke 6/6；双 typecheck 0 错；build 通过。
-**人工验证**：点重启 → 状态卡出现「启动中（已等 xx s）」→ 就绪后 toast「启动耗时 xx s」，日志面板有
-`[gateway] 启动耗时`；就绪前「打开网页」禁用。
+**验收**：全量 accept **28 套 / 503 条断言**；ui **19/19**；e2e 11/11；smoke 6/6；双 typecheck 0 错；build 通过。
+（历史条目中的「19 套 / 370」是当时的套件数与断言数快照，现已扩到 28 套。）
+**人工验证**：点启动/重启 → 从点击起状态卡就出现「启动中（已等 xx s）」→ 就绪后 toast「启动耗时 xx s」，
+日志面板有 `[gateway] 启动耗时`；就绪前「打开网页」与「Web 控制台」都禁用。
 
 ### 2026-10-31 · 启动慢专项：应用侧兜底（环境无关代码修复）
 
@@ -479,31 +485,52 @@ deepseek-v4-flash. Use --replace-path models.providers.umiclaw-deepseek.models t
 | 真实配置 + 补 `meta.migrations.webhookListeners=true` | 329s（`process.bootstrap` 259s→77s） |
 | 真实配置 + 再关 3 个渠道插件 | 96s（`main-session-recovery` 240s→秒级） |
 
-定位到两处**代码问题**（不改环境，全部在应用侧兜底）：
+定位到**代码问题**（不改环境，全部在应用侧兜底；含一轮子代理审查后的修正）：
 
-1. **legacy webhook 迁移每次重跑（~185s/次）**
-   - OpenClaw 只在迁移「无 warning」时记录 `meta.migrations.webhookListeners`；迁移要动态加载
+1. **legacy webhook 迁移每次重跑（实测 ~185s/次）**
+   - OpenClaw 只在迁移「无 warning」时才可能记录 `meta.migrations.webhookListeners`；迁移要动态加载
      telegram/feishu/msteams/nextcloud-talk 的插件 doctor 契约，Windows 上可能因符号链接权限 /
-     复制期文件变化失败（`EPERM symlink` / `copy path changed during operation`）→ 标记永远写不进去。
-   - 官方对「外部管理的配置」明确要求由外部程序写入该标记；本应用就是 openclaw.json 的外部管理者。
+     复制期文件变化失败（`EPERM symlink` / `copy path changed during operation`）→ 标记写不进去，
+     下次启动继续重跑。
+   - 官方对「外部管理的配置」要求「补 legacyWebhook 端点 + 补完成标记」；本应用是 openclaw.json 的外部
+     管理者，但**只在配置里没有 legacyWebhook 端点时**才补标记（有则交回官方迁移，避免静默跳过）。
 
-2. **启动前改插件链接与 OpenClaw 插件复制抢时序**
-   - `_repairManagedPluginPeerLinks` 重建 junction 后立即 spawn，OpenClaw 马上复制/审计插件文件，
-     容易撞上 `copy path changed during operation`，进一步让 webhook 迁移反复失败。
+2. **启动状态机 / 探活健壮性缺口**（子代理审查发现，均已修）
+   - 点击启动后、spawn 之前（ghost 清理 / config patch / doctor，可能数分钟）界面仍显示「已停止」；
+   - 主动停止后旧的 `waitReady` 返回会写「启动失败」，且 `startupError` 在 exit 78 自愈成功后不清空；
+   - `_startReadyProbe` 无实例代际：stop→start 窗口旧探针可能用旧 spawnAt 写就绪/重复日志；
+     探活用配置端口而非 spawn 端口；
+   - Dashboard 快捷入口「Web 控制台」绕过 ready 门禁；Token 按钮被无关的 ready 门禁挡住。
+   - 注：上一版「修链接后等 realpath 稳定避免与插件复制抢时序」的因果不成立（实测 no-op 且发生在
+     spawn 前），已删除该等待，仅保留修复计数日志。
 
 **实现**
-- 新增 `electron/main/openclawWebhookMarker.ts`：`hasWebhookMigrationMarker` /
-  `applyWebhookMigrationMarker`（纯函数、幂等）/ `ensureWebhookMigrationMarkerFile`（先备份
-  `openclaw.json.webhook-marker-bak.<时间戳>`，再「临时文件 + rename」原子写回；坏 JSON 不动）。
-- `configManager`：首文件骨架带上该标记（新装用户第一次启动就不重跑迁移）；
-  新增 `ensureWebhookMigrationMarker()` 供启动前调用。
-- `clawManager._spawnGateway`：在 `syncOpenClawConfig()` **之后**、`spawn` **之前**补齐标记
-  （官方 patch 可能重写文件，标记必须最后落盘），改动时写日志面板。
-- `clawManager._repairManagedPluginPeerLinks`：记录本轮重建的链接，修复后 `_waitPluginLinksSettled`
-  等 realpath 稳定（最多 3s）再返回，避免和 OpenClaw 的插件复制/审计抢时序。
+- 新增 `electron/main/openclawWebhookMarker.ts`：
+  - `findLegacyWebhookChannels`（扫 4 个历史渠道的 `legacyWebhook`）+ `hasWebhookMigrationMarker` +
+    `applyWebhookMigrationMarker`（纯函数、幂等）；
+  - `ensureWebhookMigrationMarkerFile`：有 legacyWebhook → 不补（返回 `skippedLegacyChannels`）；
+    无则先备份（`openclaw.json.webhook-marker-bak.<yyyyMMddHHmmss>`，备份成功才上报路径）→
+    「临时文件 + rename」原子写，rename 失败回退直写并在 finally 清 tmp；保留原文件 BOM/CRLF/结尾换行；
+    坏 JSON 不动作。
+- `openClawConfigWriter`：导出 `runSerializedOpenClawConfigWrite`，让标记补写与官方 config patch 走
+  **同一按路径串行队列**（避免 read→write 交错 lost update）。
+- `configManager` / `downloadManager`：两处首文件骨架都按「无 legacyWebhook 才带标记」写入；
+  `ConfigManager.ensureWebhookMigrationMarker()` 走串行队列。
+- `clawManager._spawnGateway`：`syncOpenClawConfig()` 之后、`spawn` 之前 await 补齐标记并写日志
+  （有 legacy 时写 stderr 提示保留官方迁移）。
+- `stores/claw.ts`：点击启动即 `starting`；`readyEpoch` 代际使 stop/restart 后旧等待结果作废；
+  `statusChange(ready=true)` 清空历史错误；删除死 API `waitReadyNow`。
+- `clawManager`：`readyProbeSeq` 代际 + await 后 ready 去重；`_fetchHealthOk` 用 spawn 端口。
+- `Dashboard`：快捷入口改走 `openWeb()`；Token 按钮去掉 ready 门禁。
 
 **验收**
-- `claw-maintenance.accept` 新增 3 项：`marker-pure`（补齐/保留其它迁移键/幂等）、
-  `marker-file`（备份/原子写/坏文件保护）、`marker-wiring`（顺序 + 首文件骨架接线）→ 24/24。
-- 全量 `npm run accept`：**30 套全部通过**（accept×28 + e2e 11/11 + smoke 6/6）；
+- `claw-maintenance.accept` 新增 4 项：`marker-pure`、`marker-legacy`（有 legacyWebhook 不补标记）、
+  `marker-file`（14 位备份名/CRLF+BOM 保留/原子写无 tmp 残留/幂等/坏文件保护）、`marker-wiring`
+  （顺序 + 串行队列 + 两处首文件骨架）→ **25/25**。
+- `ui.accept`：U18 扩为五条路径（准备阶段/就绪/失败/停止作废/事件清错）、U19 增代际与快捷入口断言
+  → **19/19**。
+- 全量 `npm run accept`：**30 套全部通过**（accept×28 = 503 条断言 + e2e 11/11 + smoke 6/6）；
   双 typecheck 0 错；`npm run build` 通过。
+- 子代理审查结论「无阻断、5 重要 + 若干次要」中的问题已逐条修复；文档数字与因果表述同步修正
+  （套件数 28/503；「省 ~185s」限定为「原本会重跑迁移的配置」）。
+
