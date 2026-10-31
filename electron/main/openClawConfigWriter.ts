@@ -55,9 +55,11 @@ function serializePatch<T>(configPath: string, task: () => Promise<T>): Promise<
   const previous = patchChains.get(configPath) ?? Promise.resolve()
   const current = previous.then(task, task)
   patchChains.set(configPath, current)
-  void current.finally(() => {
+  const cleanup = (): void => {
     if (patchChains.get(configPath) === current) patchChains.delete(configPath)
-  })
+  }
+  // 不能用 finally：任务 reject 时 finally 返回的新 promise 会被丢弃 → unhandledRejection
+  void current.then(cleanup, cleanup)
   return current
 }
 

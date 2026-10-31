@@ -780,11 +780,12 @@ export class ClawManager extends EventEmitter {
           { file: gatewayErrFile, type: 'stderr' }
         ])
         this._writeGatewayRuntime(gatewayLogFile)
-        this._scheduleNodeCompileCacheCleanup(dataDir)
       } else {
         // 非保留模式：清掉可能遗留的陈旧运行时描述
         this._clearGatewayRuntime()
       }
+      // 不论是否 detached 都启用缓存清理（默认 keep=false 用户同样会写 NODE_COMPILE_CACHE）
+      this._scheduleNodeCompileCacheCleanup(dataDir)
       this._startReadyProbe()
       this._setupProcessEvents(this.process!)
       this.emit('statusChange', true, this.port)
@@ -1476,7 +1477,11 @@ export class ClawManager extends EventEmitter {
       ready: (!!this.process || this.adoptedPid !== undefined) && this.ready,
       readyAt: this.readyAt,
       startupMs:
-        this.startedAt && this.readyAt ? Math.max(0, this.readyAt - this.startedAt) : undefined,
+        this.adoptedPid !== undefined
+          ? undefined
+          : this.startedAt && this.readyAt
+            ? Math.max(0, this.readyAt - this.startedAt)
+            : undefined,
       bootPhase:
         this.process || this.adoptedPid !== undefined
           ? this.ready
