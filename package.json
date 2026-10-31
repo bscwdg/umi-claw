@@ -15,7 +15,8 @@
     "accept:config-writer": "esbuild electron/main/openClawConfigWriter.ts --bundle --platform=node --format=esm --target=node20 --outfile=test/.tmp/openclaw-config-writer.mjs && node --test test/openclaw-config-writer.accept.mjs",
     "accept:startup-stats": "esbuild electron/main/startupStats.ts --bundle --platform=node --format=esm --target=node20 --outfile=test/.tmp/startup-stats.mjs && node --test test/startup-stats.accept.mjs",
     "accept:webhook-marker": "esbuild electron/main/openclawWebhookMarker.ts --bundle --platform=node --format=esm --target=node20 --outfile=test/.tmp/webhook-marker.mjs && esbuild electron/main/openClawConfigWriter.ts --bundle --platform=node --format=esm --target=node20 --outfile=test/.tmp/openclaw-config-writer.mjs && node --test test/webhook-marker.accept.mjs",
-    "accept:startup-sync": "npm run accept:config-writer && npm run accept:startup-stats && npm run accept:webhook-marker"
+    "accept:startup-ready": "esbuild electron/main/clawManager.ts --bundle --platform=node --format=esm --target=node20 --alias:electron=./test/fixtures/electron-stub.ts --external:adm-zip --outfile=test/.tmp/claw-manager.mjs && node --test test/startup-ready.accept.mjs",
+    "accept:startup-sync": "npm run accept:config-writer && npm run accept:startup-stats && npm run accept:webhook-marker && npm run accept:startup-ready"
   },
   "dependencies": {
     "@vueuse/core": "^10.9.0",
