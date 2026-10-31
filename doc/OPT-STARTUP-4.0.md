@@ -215,3 +215,50 @@ Invoke-WebRequest -Uri 'http://127.0.0.1:3213/health' -UseBasicParsing | Select-
 - 渠道插件加载（`main-session-recovery`）在 Windows 无符号链接权限时仍可能慢；
   本次已把与其关联的迁移标记问题修掉，需实测该段是否随之改善。
 - 若仍慢，下一步方向是减少启动期工作（渠道插件预构建缓存/延迟加载），或整理日志反馈 OpenClaw 上游。
+
+---
+
+## 8. 官方文档 / 代码调研结论与后续优化清单（2026-10-31）
+
+读了 https://docs.openclaw.ai 相关页（`/help/debugging`、`/gateway/security/secure-file-operations`、
+`/plugins/runtime-compatibility`、`/gateway/security/dependency-locking`、`/cli/plugins`、`/plugins/manage-plugins`）
+并对照本机实际产物，结论与可优化点如下（按收益/风险排序）。
+
+### 8.1 已落地（本轮）
+
+- **启动阶段 UX**：主进程 `bootPhase`（preparing → spawning → loading → ready）+ TCP 监听探测；
+  Dashboard 显示「当前阶段 + 已等 N 秒」；`loading` 阶段提示「首次或升级后需重建渠道插件包」。
+- **官方启动阶段 trace**：网关 spawn env 加 `OPENCLAW_GATEWAY_STARTUP_TRACE=1`（只写日志）。
+  下次启动日志会给出每个插件 `plugins.gateway-load.plugin.<id>` 的分项耗时：
+  `configValidationMs` / `artifactPreparationMs` / `loadMs`（含 source capture）/ `registerMs`
+  → 可精确判断「5–6 分钟」花在复制、模块加载还是注册。
+
+### 8.2 待验证/可优化（代码可控，不改用户系统环境）
+
+1. **渠道插件被物化两次（高收益，待验证）**
+   实测部分启动里出现 7 个 `openclaw-plugin-build-*`（含 feishu 两次 73MB），部分启动只有 5 个。
+   可疑点：`configManager` 既写 `channels.feishu`（官方文档说明 channel config 会自动启用渠道插件），
+   又强制写 `plugins.entries.feishu.enabled = true` → 可能触发「插件入口 + 渠道入口」双份物化。
+   验证法：保留 `channels.feishu`、把 `plugins.entries.feishu.enabled` 去掉，比较启动 build 数与
+   `plugins.gateway-load` trace；若渠道仍正常且 build 少一份，直接省 ~1.5 分钟。
+2. **fs-safe native 模式对照（中收益，低风险实验）**
+   文档：默认 `OPENCLAW_FS_SAFE_NATIVE_MODE=auto`；native 提供逐操作 identity/ACL 校验，
+   “strict-mode mutations … can be slower”。可在网关 env 实验 `off`（走 JS 兜底）测一次启动；
+   代价是 Windows 安全凭证读取（SecretRef/GitHub 身份）不可用——本应用当前不依赖（明文 key）。
+   若物化明显提速，可做成设置项 + 安全说明，而不是硬编码。
+3. **agent 会话库裁剪（中收益）**
+   本机 `agents/main/agent/openclaw-agent.sqlite` 139.5MB / 19,558 条 transcript 事件，
+   activation + main-session-recovery 合计 60–250s。官方有 `/concepts/session-pruning`；
+   可在应用里提供「启动前体检 / 一键裁剪归档」维护动作（走官方能力，不手改 DB）。
+4. **渠道插件包瘦身（依赖上游）**
+   feishu 73.6MB = dist 0.7MB + node_modules 72.8MB；其中 `@larksuiteoapi/node-sdk` 29MB
+   （含 16.8MB 纯类型 `.d.ts`），其它平台 fs-safe 原生包 ~25MB（linux/darwin/win-arm64 均被打进来）。
+   文档说明 native-heavy 插件应做平台过滤；可向上游报 issue。短期可实验「安装后精简 + 观察
+   integrity drift 是否可接受」，但风险高，不建议默认开启。
+5. **workspace 体积体检（低风险）**
+   `workspace` 1.02GB（`lagou-courses` 928MB/4555 文件）；建议在诊断页提示大目录，
+   避免 agent 启动扫描/上下文处理被无效资料拖慢。
+6. **健康复查（低风险）**
+   gateway 存活但假死时 `ready` 不更新；可在页面 focus 时低频复查一次健康。
+7. **更细的阶段可视化（低风险，需解析日志）**
+   日志里已有 `startup phase:` 行；可按行解析出「正在物化哪个插件」，把 UI 阶段再细化。

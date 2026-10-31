@@ -534,3 +534,17 @@ deepseek-v4-flash. Use --replace-path models.providers.umiclaw-deepseek.models t
 - 子代理审查结论「无阻断、5 重要 + 若干次要」中的问题已逐条修复；文档数字与因果表述同步修正
   （套件数 28/503；「省 ~185s」限定为「原本会重跑迁移的配置」）。
 
+
+### 2026-10-31 · 启动阶段 UX + 官方 trace 接入 + 文档调研
+
+- **阶段 UX**：`clawManager` 新增 `bootPhase`（preparing → spawning → loading → ready），
+  用 TCP 监听探测区分「进程已起」与「端口已监听、插件/渠道加载中」；`ClawStatus`/`statusChange`/
+  `stores/claw.ts`/Dashboard 全链路展示「当前阶段 + 已等 N 秒」，loading 阶段提示
+  「首次或升级后需重建渠道插件包，可能需数分钟」。
+- **官方 trace**：网关 spawn env 增加 `OPENCLAW_GATEWAY_STARTUP_TRACE=1`（仅日志），
+  下次启动可拿到每个插件的 configValidation / artifactPreparation / load（含 source capture）/ register 分项。
+- **文档调研**（docs.openclaw.ai：debugging / secure-file-operations / dependency-locking /
+  cli-plugins / manage-plugins / runtime-compatibility）：结论写入 `doc/OPT-STARTUP-4.0.md` §8，
+  含 7 条后续优化项（渠道插件双重物化验证、fs-safe native 模式对照、agent 会话裁剪、
+  插件包瘦身、workspace 体检、健康复查、更细阶段可视化）。
+- **验收**：ui 19/19（U18 增阶段断言、U19 增阶段与 trace 接线断言）；全量 30 套通过；双 typecheck 0 错；build 通过。

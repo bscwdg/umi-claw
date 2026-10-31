@@ -32,7 +32,13 @@
           </div>
           <div class="status-sub text-muted text-sm">
             <template v-if="clawStore.starting">
-              正在加载插件与渠道，就绪后才能打开 Web 界面（首次启动可能较慢，日志见下方）
+              当前阶段：<b>{{ clawStore.phaseLabel }}</b>（已等 {{ clawStore.startingSeconds }}s）
+              <span v-if="clawStore.phase === 'loading'">
+                · 正在物化/加载渠道插件，首次启动或升级后可能需要数分钟（详见下方日志）
+              </span>
+              <span v-else-if="clawStore.phase === 'preparing'">
+                · 正在清理残留 / 同步配置 / 检查插件，请稍候
+              </span>
             </template>
             <template v-else-if="clawStore.ready">
               PID: {{ clawStore.pid }} · 端口: {{ clawStore.port }} · 运行时长: {{ clawStore.uptime || '--' }}

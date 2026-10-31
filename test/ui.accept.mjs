@@ -1003,6 +1003,11 @@ await r.check('U19', '就绪态接线：Dashboard 用 ready 门禁、语音页�
   const quickLinkOpenWeb = (dashSrc.match(/@click="openWeb(?:\(\))?"/g) || []).length
   assert(quickLinkOpenWeb >= 2, `Web 控制台快捷入口也要走 openWeb 门禁（实际 ${quickLinkOpenWeb} 处）`)
   assert(/readyProbeSeq/.test(clawMgrSrc), '探活必须带代际隔离（旧探针不得写新实例状态）')
+  assert(/_probePortOpen/.test(clawMgrSrc), '用 TCP 监听判定「加载插件/渠道」阶段')
+  assert(/OPENCLAW_GATEWAY_STARTUP_TRACE/.test(clawMgrSrc), '开启官方启动阶段 trace（排障用）')
+  assert(/phaseLabel/.test(storeSrc), 'store 暴露阶段文案')
+  assert(/phaseLabel/.test(dashSrc), 'Dashboard 展示当前启动阶段')
+  assert(/物化\/加载渠道插件/.test(dashSrc), '加载阶段的提示文案')
   return '就绪态接线完整（含门禁/代际/快捷入口）'
 })
 

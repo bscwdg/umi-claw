@@ -25,6 +25,8 @@ export const useClawStore = defineStore('claw', () => {
   const ready = ref(false)
   const starting = ref(false)
   const startupMs = ref<number | undefined>()
+  /** 启动阶段：preparing=准备配置 / spawning=已拉起进程 / loading=端口已监听、插件渠道加载中 / ready=已就绪 */
+  const phase = ref<'idle' | 'preparing' | 'spawning' | 'loading' | 'ready'>('idle')
   /** 启动失败/超时原因（就绪探测结束后仍失败时给出） */
   const startupError = ref('')
   /** doctor --fix / 状态库迁移进行中（网关未起但非静止）：前端据此显示「正在修复配置…」 */
@@ -59,6 +61,22 @@ export const useClawStore = defineStore('claw', () => {
   const startingSeconds = computed(() => {
     if (!starting.value || !startedAt.value) return 0
     return Math.max(0, Math.floor((now.value - startedAt.value) / 1000))
+  })
+
+  /** 当前阶段的中文说明（Dashboard 展示「现在在等什么」） */
+  const phaseLabel = computed(() => {
+    switch (phase.value) {
+      case 'preparing':
+        return '准备配置'
+      case 'spawning':
+        return '启动网关进程'
+      case 'loading':
+        return '加载渠道插件'
+      case 'ready':
+        return '已就绪'
+      default:
+        return '未启动'
+    }
   })
 
   // 运行时每秒 tick 让 uptime / 启动秒数跳动；停止时清掉定时器。
@@ -102,7 +120,11 @@ export const useClawStore = defineStore('claw', () => {
     ready.value = !!status.ready
     starting.value = !!status.starting
     startupMs.value = status.startupMs
-    if (!status.running) resetReady()
+    if (status.bootPhase) phase.value = status.bootPhase
+    if (!status.running) {
+      resetReady()
+      phase.value = 'idle'
+    }
   }
 
   /**
@@ -122,6 +144,7 @@ export const useClawStore = defineStore('claw', () => {
       if (result.ready) {
         ready.value = true
         starting.value = false
+        phase.value = 'ready'
         startupError.value = ''
         startupMs.value = result.elapsedMs
         // 就绪后把计时基准换成 main 的 spawn 时刻，让「运行时长」不含启动准备阶段
@@ -130,6 +153,7 @@ export const useClawStore = defineStore('claw', () => {
       }
       starting.value = false
       ready.value = false
+      phase.value = 'idle'
       startupError.value = result.error || '网关启动失败'
       return { ready: false, error: startupError.value }
     } catch (e) {
@@ -143,6 +167,7 @@ export const useClawStore = defineStore('claw', () => {
 
   function beginStarting(): number {
     readyEpoch += 1
+    phase.value = 'preparing'
     running.value = true
     startedAt.value = Date.now()
     starting.value = true
@@ -169,6 +194,7 @@ export const useClawStore = defineStore('claw', () => {
 
   async function stop() {
     readyEpoch += 1
+    phase.value = 'idle'
     const result = await window.api.claw.stop()
     if (result.success) {
       running.value = false
@@ -206,6 +232,7 @@ export const useClawStore = defineStore('claw', () => {
       if (typeof data.ready === 'boolean') ready.value = data.ready
       if (typeof data.starting === 'boolean') starting.value = data.starting
       if (typeof data.startupMs === 'number') startupMs.value = data.startupMs
+      if (data.bootPhase) phase.value = data.bootPhase
       // 启动中不要把计时基准换成 main 的 spawn 时间：否则「已等 N 秒」会在 spawn 时被清零
       if (typeof data.startedAt === 'number' && !starting.value) startedAt.value = data.startedAt
       if (data.running) {
@@ -215,6 +242,7 @@ export const useClawStore = defineStore('claw', () => {
       } else {
         startedAt.value = undefined
         resetReady()
+        phase.value = 'idle'
         startupError.value = ''
       }
     })
@@ -225,7 +253,7 @@ export const useClawStore = defineStore('claw', () => {
   }
 
   return {
-    running, pid, port, startedAt, ready, starting, startupMs, startupError,
+    running, pid, port, startedAt, ready, starting, startupMs, startupError, phase, phaseLabel,
     maintenance, logs, uptime, startingSeconds,
     addLog, clearLogs, fetchStatus,
     start, stop, restart, trackReady, setupListeners
