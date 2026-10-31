@@ -698,6 +698,26 @@ const api = {
       run: () => call<BootstrapReport>('character:bootstrap:run'),
       status: () => call<BootstrapReport | null>('character:bootstrap:status')
     },
+    pet: {
+      show: () => call<{ visible: boolean; clickThrough: boolean }>('character:window:pet', { action: 'show' }),
+      hide: () => call<{ visible: boolean; clickThrough: boolean }>('character:window:pet', { action: 'hide' }),
+      toggle: () => call<{ visible: boolean; clickThrough: boolean }>('character:window:pet', { action: 'toggle' }),
+      clickThrough: (value: boolean) =>
+        call<{ visible: boolean; clickThrough: boolean }>('character:window:pet', {
+          action: 'clickThrough',
+          value
+        }),
+      setPosition: (x: number, y: number) =>
+        call<{ x: number; y: number; width: number; height: number }>(
+          'character:window:pet:pos',
+          { x, y }
+        )
+    },
+    onOpenPage: (cb: (page: 'chat' | 'settings') => void) => {
+      const handler = (_event: unknown, page: 'chat' | 'settings') => cb(page)
+      ipcRenderer.on('character:open-page', handler)
+      return () => ipcRenderer.off('character:open-page', handler)
+    },
     onEvent: (cb: (event: CharacterEvent) => void) => {
       const handler = (_event: unknown, data: CharacterEvent) => cb(data)
       ipcRenderer.on('character:event', handler)

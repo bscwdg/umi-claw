@@ -1,5 +1,9 @@
 <template>
-  <div class="app-shell">
+  <!-- 桌宠窗口：只渲染裸页面，不套主壳（透明、无标题栏、无侧栏） -->
+  <template v-if="isPetWindow">
+    <router-view />
+  </template>
+  <div v-else class="app-shell">
     <!-- 自定义标题栏 -->
     <div class="titlebar drag-region">
       <div class="titlebar-left no-drag">
@@ -125,6 +129,8 @@ import {
 
 const api = window.api
 const router = useRouter()
+// 桌宠窗口复用同一个渲染端入口：按路由切成裸页面，不加载主壳（工具栏/侧栏/弹窗都不该出现在透明窗口里）
+const isPetWindow = computed(() => router.currentRoute.value.path === '/character-pet')
 const clawStore = useClawStore()
 const configStore = useConfigStore()
 const version = ref('')

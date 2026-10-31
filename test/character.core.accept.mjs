@@ -23,6 +23,7 @@ const {
   CHARACTER_ERROR_CODES,
   DEFAULT_CHARACTER_SETTINGS,
   FISH_KEYS,
+  clampPetPosition,
   mergeCharacterSettings,
   toCharacterEnvelope,
   toCharacterErrorEnvelope
@@ -399,6 +400,76 @@ await recorder.check('C12', '一键引导：5 步全过、幂等、用户改动�
   assertEq(again.ok, true, '二次引导仍全过（幂等）')
   assertEq(readFileSync(soulPath, 'utf8').includes('用户改的行'), true, '二次引导不覆盖用户改动')
   return '引导/幂等/改动保护 正确'
+})
+
+await recorder.check('C13', '桌宠状态：尺寸/穿透跟随设置，位置跨实例持久化', async () => {
+  const kv = memoryKv()
+  const store = new CharacterStore({ kv })
+  const manager = new CharacterManager({ store })
+  await manager.init()
+
+  const initial = await manager.getPetState()
+  assertEq(initial.width, 280, '默认 medium 宽 280')
+  assertEq(initial.height, 330, '默认 medium 高 330')
+  assertEq(initial.visible, false, '未启用时不可见（D8 默认关）')
+  assertEq(initial.clickThrough, false, '默认不穿透')
+
+  await manager.updateSettings({ enabled: true, pet: { size: 'large', clickThrough: true, visible: true } })
+  const resized = await manager.getPetState()
+  assertEq(resized.width, 340, 'large 宽 340')
+  assertEq(resized.height, 400, 'large 高 400')
+  assertEq(resized.clickThrough, true, '穿透跟随设置')
+  assertEq(resized.visible, true, '可见跟随设置')
+
+  const saved = await manager.savePetState({ x: 123, y: 456 })
+  assertEq(saved.x, 123, '位置写入 x')
+  assertEq(saved.y, 456, '位置写入 y')
+
+  // 新实例读同一 KV：位置记忆仍在
+  const manager2 = new CharacterManager({ store: new CharacterStore({ kv }) })
+  await manager2.init()
+  const restored = await manager2.getPetState()
+  assertEq(restored.x, 123, '重启后位置 x 仍在')
+  assertEq(restored.y, 456, '重启后位置 y 仍在')
+  return '尺寸/穿透/可见/位置持久化 正确'
+})
+
+await recorder.check('C14', '桌宠位置夹取：负坐标/越界/多屏偏移都不跑出工作区', async () => {
+  const work = { x: 0, y: 0, width: 1920, height: 1040 }
+  const p1 = clampPetPosition(100, 120, 280, 330, work)
+  assertEq(p1.x, 100, '工作区内位置不变 x')
+  assertEq(p1.y, 120, '工作区内位置不变 y')
+
+  const p2 = clampPetPosition(-50, -80, 280, 330, work)
+  assertEq(p2.x, 0, '负坐标夹到左边界')
+  assertEq(p2.y, 0, '负坐标夹到上边界')
+
+  const p3 = clampPetPosition(5000, 5000, 280, 330, work)
+  assertEq(p3.x, 1920 - 280, '右下越界夹回')
+  assertEq(p3.y, 1040 - 330, '下方越界夹回')
+
+  const secondary = { x: 1920, y: 0, width: 1280, height: 1024 }
+  const p4 = clampPetPosition(2000, 100, 280, 330, secondary)
+  assertEq(p4.x, 2000, '副屏内位置不变')
+  const p5 = clampPetPosition(100, 100, 280, 330, secondary)
+  assertEq(p5.x, 1920, '跨屏位置夹到副屏左边界')
+  return '边界/负值/多屏夹取 正确'
+})
+
+await recorder.check('C15', '桌宠位置脏值防御：NaN/字符串被忽略，保留旧值', async () => {
+  const kv = memoryKv()
+  const manager = new CharacterManager({ store: new CharacterStore({ kv }) })
+  await manager.init()
+  await manager.savePetState({ x: 10, y: 20 })
+  const dirty = await manager.savePetState({
+    x: Number.NaN,
+    y: 'abc',
+    visible: true
+  })
+  assertEq(dirty.x, 10, 'NaN 不覆盖旧 x')
+  assertEq(dirty.y, 20, '字符串不覆盖旧 y')
+  assertEq(dirty.visible, true, '合法 visible 仍生效')
+  return '脏值防御正确'
 })
 
 const ok = printResult(recorder.toJSON())

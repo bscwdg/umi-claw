@@ -6,10 +6,12 @@
 import {
   CHARACTER_ERROR_CODES,
   CharacterError,
+  PET_SIZE_MAP,
   createDefaultCharacterState,
   mergeCharacterSettings,
   type CharacterEvent,
   type CharacterInteractInput,
+  type CharacterPetState,
   type CharacterResetOptions,
   type CharacterSettings,
   type CharacterState,
@@ -208,6 +210,41 @@ export class CharacterManager {
 
   getBootstrapStatus(): BootstrapReport | null {
     return this.lastBootstrap ? clone(this.lastBootstrap) : null
+  }
+
+  /** 桌宠状态：尺寸/穿透/可见跟随设置，位置来自上一次记忆 */
+  async getPetState(): Promise<CharacterPetState> {
+    this.assertInitialized()
+    const settings = await this.getSettings()
+    const raw = (await this.store.readPet()) ?? {}
+    const size = PET_SIZE_MAP[settings.pet.size] ?? PET_SIZE_MAP.medium
+    const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+    return {
+      x: num(raw.x),
+      y: num(raw.y),
+      width: size.width,
+      height: size.height,
+      clickThrough: Boolean(settings.pet.clickThrough),
+      visible: Boolean(settings.enabled && settings.pet.visible)
+    }
+  }
+
+  async savePetState(patch: Partial<CharacterPetState>): Promise<CharacterPetState> {
+    this.assertInitialized()
+    const current = await this.getPetState()
+    const num = (v: unknown, fallback: number): number =>
+      typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : fallback
+    const next: CharacterPetState = {
+      x: num(patch.x, current.x),
+      y: num(patch.y, current.y),
+      width: current.width,
+      height: current.height,
+      clickThrough:
+        typeof patch.clickThrough === 'boolean' ? patch.clickThrough : current.clickThrough,
+      visible: typeof patch.visible === 'boolean' ? patch.visible : current.visible
+    }
+    await this.store.writePet(next)
+    return next
   }
 
   private assertInitialized(): void {

@@ -1,0 +1,191 @@
+<template>
+  <div class="pet-root" :class="[`size-${size}`, { clickThrough }]">
+    <div class="pet-drag drag-region">
+      <FishState :state="visualState" class="fish-wrap" />
+      <transition name="bubble">
+        <div v-if="bubble" class="bubble no-drag" @click="dismissBubble">{{ bubble }}</div>
+      </transition>
+      <div class="pet-actions no-drag">
+        <button class="mini" title="摸摸头" @click.stop="onPat">摸</button>
+        <button class="mini" title="收起" @click.stop="onHide">收</button>
+      </div>
+      <div v-if="clickThrough" class="through-hint">穿透中 · Ctrl+Alt+F 恢复</div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import FishState from './art/FishState.vue'
+
+type FishVisualState = 'idle' | 'happy' | 'sad' | 'sleepy' | 'thinking' | 'surprised'
+
+const state = ref({ mood: '', familiarity: 0, intimacy: 0 })
+const size = ref<'small' | 'medium' | 'large'>('medium')
+const clickThrough = ref(false)
+const bubble = ref('')
+let bubbleTimer: ReturnType<typeof setTimeout> | null = null
+let offEvent: (() => void) | null = null
+
+const visualState = computed<FishVisualState>(() => {
+  const mood = state.value.mood || ''
+  if (mood.includes('头')) return 'happy'
+  if (mood.includes('饱')) return 'happy'
+  if (mood.includes('困') || mood.includes('睡')) return 'sleepy'
+  if (mood.includes('想')) return 'thinking'
+  if (mood.includes('难过') || mood.includes('委屈')) return 'sad'
+  if (mood.includes('惊')) return 'surprised'
+  return 'idle'
+})
+
+const QUIPS = {
+  pat: ['别摸头…会长不高的。', '（甩了甩尾巴）', '哼，勉强让你摸一下。', '本鱼的头只能摸三下。'],
+  feed: ['……再来一碗。', '白饭！本鱼的白饭！', '这顿算你懂事。'],
+  idle: ['本鱼在摸鱼。', '有事说事，没事陪我发呆。', '（探出头）']
+}
+
+onMounted(async () => {
+  offEvent = window.api.character.onEvent(async () => {
+    await refresh()
+  })
+  await refresh()
+})
+
+onBeforeUnmount(() => {
+  offEvent?.()
+  offEvent = null
+  if (bubbleTimer) clearTimeout(bubbleTimer)
+})
+
+async function refresh(): Promise<void> {
+  try {
+    const settings = await window.api.character.settings.get()
+    size.value = settings.pet?.size ?? 'medium'
+    clickThrough.value = Boolean(settings.pet?.clickThrough)
+    state.value = await window.api.character.state()
+  } catch {
+    /* 窗口不因读取失败而消失 */
+  }
+}
+
+async function onPat(): Promise<void> {
+  try {
+    state.value = await window.api.character.interact({ kind: 'pat' })
+    showBubble(pick(QUIPS.pat))
+  } catch {
+    showBubble(pick(QUIPS.idle))
+  }
+}
+
+async function onHide(): Promise<void> {
+  try {
+    await window.api.character.pet.hide()
+  } catch {
+    /* 忽略：窗口可能已销毁 */
+  }
+}
+
+function dismissBubble(): void {
+  bubble.value = ''
+  if (bubbleTimer) clearTimeout(bubbleTimer)
+  bubbleTimer = null
+}
+
+function pick(list: string[]): string {
+  return list[Math.floor(Math.random() * list.length)]
+}
+
+function showBubble(text: string): void {
+  bubble.value = text
+  if (bubbleTimer) clearTimeout(bubbleTimer)
+  bubbleTimer = setTimeout(() => {
+    bubble.value = ''
+    bubbleTimer = null
+  }, 6000)
+}
+</script>
+
+<style scoped>
+.pet-root {
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+}
+.pet-drag {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+.fish-wrap {
+  width: 100%;
+  height: 100%;
+}
+.bubble {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 4%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(20, 26, 38, 0.94);
+  border: 1px solid #3b6fd4;
+  color: #e8ecf4;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  word-break: break-word;
+}
+.through-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: rgba(13, 18, 28, 0.8);
+  color: #ffcf6b;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.pet-actions {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+  gap: 4px;
+  opacity: 0.35;
+  transition: opacity 0.15s ease;
+}
+.pet-root:hover .pet-actions {
+  opacity: 1;
+}
+.mini {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid #3b6fd4;
+  background: rgba(20, 26, 38, 0.9);
+  color: #cfe0ff;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+.mini:hover {
+  background: #3b6fd4;
+  color: #fff;
+}
+.bubble-enter-active,
+.bubble-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.bubble-enter-from,
+.bubble-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+</style>

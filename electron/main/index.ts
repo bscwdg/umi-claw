@@ -2247,6 +2247,18 @@ app.whenReady().then(async () => {
         cwd: openClawPaths.installDir(characterDataDir)
       },
       obsidianVaultPath: () => configManager.getConfig().obsidian?.vaultPath,
+      petWindow: {
+        preloadPath: join(__dirname, '../preload/index.js'),
+        devRendererUrl: process.env['ELECTRON_RENDERER_URL'],
+        prodRendererUrl: 'app://renderer/index.html#/character-pet'
+      },
+      onPetAction: (action) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return
+        if (mainWindow.isMinimized()) mainWindow.restore()
+        mainWindow.show()
+        mainWindow.focus()
+        mainWindow.webContents.send('character:open-page', action === 'settings' ? 'settings' : 'chat')
+      },
       gatewayReady: () => Boolean(clawManager?.getStatus().ready),
       qqReady: () => false, // C08 接 QQ 渠道状态
       ttsReady: () => voiceManager !== null,

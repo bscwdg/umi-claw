@@ -131,6 +131,14 @@ export class CharacterStore {
     await this.kv.set(FISH_KEYS.life(date), JSON.stringify(value))
   }
 
+  async readPet(): Promise<Record<string, unknown> | null> {
+    return this.readJson<Record<string, unknown>>(FISH_KEYS.pet)
+  }
+
+  async writePet(value: unknown): Promise<void> {
+    await this.kv.set(FISH_KEYS.pet, JSON.stringify(value))
+  }
+
   /** 清理角色数据（scope 语义见 CharacterResetOptions；agent/Obsidian 由 C09 处理） */
   async reset(scope: 'values' | 'memory' | 'all' = 'values'): Promise<void> {
     const meta = await this.readMeta()

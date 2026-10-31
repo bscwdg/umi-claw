@@ -15,7 +15,9 @@ export const CHARACTER_CHANNELS = {
   interact: 'character:interact',
   reset: 'character:reset',
   bootstrapRun: 'character:bootstrap:run',
-  bootstrapStatus: 'character:bootstrap:status'
+  bootstrapStatus: 'character:bootstrap:status',
+  windowPet: 'character:window:pet',
+  windowPetPos: 'character:window:pet:pos'
 } as const
 
 /** 错误码（渲染端按 code 分支，不读 message） */
@@ -152,6 +154,50 @@ export interface CharacterStatus {
 
 export type CharacterInteractKind = 'pat' | 'feed'
 export type CharacterInteractInput = { kind: CharacterInteractKind } | { kind: 'dismiss'; bubbleId: string }
+
+/** 桌宠窗口尺寸（DIP）；大小档位来自设置 pet.size */
+export const PET_SIZE_MAP: Record<'small' | 'medium' | 'large', { width: number; height: number }> = {
+  small: { width: 220, height: 260 },
+  medium: { width: 280, height: 330 },
+  large: { width: 340, height: 400 }
+}
+
+export interface CharacterPetState {
+  x: number
+  y: number
+  width: number
+  height: number
+  clickThrough: boolean
+  visible: boolean
+}
+
+export function createDefaultPetState(): CharacterPetState {
+  const size = PET_SIZE_MAP.medium
+  return {
+    x: 0,
+    y: 0,
+    width: size.width,
+    height: size.height,
+    clickThrough: false,
+    visible: false
+  }
+}
+
+/** 把位置夹到工作区内（多屏/改分辨率后不越界；x/y 为窗口左上角，DIP） */
+export function clampPetPosition(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  workArea: { x: number; y: number; width: number; height: number }
+): { x: number; y: number } {
+  const maxX = workArea.x + Math.max(0, workArea.width - width)
+  const maxY = workArea.y + Math.max(0, workArea.height - height)
+  return {
+    x: Math.round(Math.min(Math.max(x, workArea.x), maxX)),
+    y: Math.round(Math.min(Math.max(y, workArea.y), maxY))
+  }
+}
 
 export interface CharacterResetOptions {
   /** values=只清数值；memory=+日记与关系；all=+agent/bindings/Obsidian 归档（C09 实现） */

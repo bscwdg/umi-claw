@@ -20,6 +20,8 @@ const router = createRouter({
     { path: '/voice', component: () => import('../views/voice/VoicePage.vue') },
     // 大肥鱼角色（宿主页面，默认关；PLAN-FISH-CHARACTER C01）
     { path: '/character', component: () => import('../character/CharacterPage.vue') },
+    // 桌宠窗口裸页面（App.vue 按此路由走 bare 布局；C03）
+    { path: '/character-pet', component: () => import('../character/PetWindow.vue') },
     { path: '/channelsPage', component: () => import('../views/ChannelsPage.vue') },
     { path: '/terminal', component: () => import('../views/TerminalPage.vue') },
     { path: '/about', component: () => import('../views/About.vue') },
