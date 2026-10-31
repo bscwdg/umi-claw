@@ -329,7 +329,6 @@ await recorder.check('V8', '克隆训练、试听下载、转正闸门、删除�
     voiceManager,
     fetchImpl,
     logger: () => undefined,
-    pollIntervalMs: 60_000
   })
   const samplePath = join(runDir, 'sample.wav')
   const wav = Buffer.alloc(1024)

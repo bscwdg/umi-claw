@@ -139,7 +139,7 @@ test('getStatus：复用状态 → running/pid/ready/bootPhase 正确', () => {
     assert.equal(st.ready, true)
     assert.equal(st.starting, false)
     assert.equal(st.bootPhase, 'ready')
-    assert.equal(st.startupMs, 2000)
+    // 复用后台网关不把「上次启动至今」当本次启动耗时\n    assert.equal(st.startupMs, undefined)
   } finally {
     cleanup()
   }

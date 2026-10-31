@@ -724,7 +724,7 @@ async function startCloneTraining(): Promise<void> {
         clonePollTimer = null
         void refreshClones().catch(() => undefined)
       }, 2500)
-      showNotice('训练任务已提交，关闭页面后主进程仍会继续轮询')
+      showNotice('训练任务已提交，关闭页面将暂停轮询')
     } else {
       showNotice('音色训练任务已返回')
     }
