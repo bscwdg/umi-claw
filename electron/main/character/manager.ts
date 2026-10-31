@@ -16,6 +16,7 @@ import {
   type CharacterStatus
 } from './types'
 import type { CharacterStore } from './store'
+import type { BootstrapReport } from './bootstrap'
 
 export interface CharacterManagerOptions {
   store: CharacterStore
@@ -36,6 +37,8 @@ export class CharacterManager {
   private settings: CharacterSettings | null = null
   private state: CharacterState | null = null
   private initialized = false
+  private bootstrapRunner: (() => Promise<BootstrapReport>) | null = null
+  private lastBootstrap: BootstrapReport | null = null
   private dependencyStatus: Omit<
     CharacterStatus,
     'enabled' | 'ready' | 'storeReady'
@@ -126,9 +129,16 @@ export class CharacterManager {
     if (!this.settings) {
       throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '角色设置尚未加载')
     }
+    const wasEnabled = Boolean(this.settings?.enabled)
     const next = mergeCharacterSettings(this.settings, patch)
     this.settings = next
     await this.store.writeSettings(next)
+    // 从关到开：自动跑一次引导（幂等；失败只记日志，不影响宿主）
+    if (next.enabled && !wasEnabled && this.bootstrapRunner) {
+      void this.runBootstrap().catch((error) => {
+        this.logger(`[character] 启用后引导失败: ${(error as Error)?.message ?? String(error)}`)
+      })
+    }
     this.emit({ type: 'settings', payload: clone(next), at: this.now() })
     return clone(next)
   }
@@ -171,6 +181,33 @@ export class CharacterManager {
     if (this.state.bornAt === 0) this.state = createDefaultCharacterState(this.now())
     this.emit({ type: 'state', payload: clone(this.state), at: this.now() })
     return { scope }
+  }
+
+  /** wiring 注入：真正执行引导（宿主路径 / 官方 CLI / 依赖就绪探测都由 wiring 提供） */
+  setBootstrapRunner(runner: () => Promise<BootstrapReport>): void {
+    this.bootstrapRunner = runner
+  }
+
+  async runBootstrap(): Promise<BootstrapReport> {
+    this.assertInitialized()
+    if (!this.bootstrapRunner) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '角色引导尚未接线')
+    }
+    const report = await this.bootstrapRunner()
+    this.lastBootstrap = report
+    this.setDependencyStatus({
+      agentReady: report.status.agentReady,
+      gatewayReady: report.status.gatewayReady,
+      obsidianReady: report.status.obsidianReady,
+      qqReady: report.status.qqReady,
+      ttsReady: report.status.ttsReady,
+      memorySearchReady: report.status.memorySearchReady
+    })
+    return report
+  }
+
+  getBootstrapStatus(): BootstrapReport | null {
+    return this.lastBootstrap ? clone(this.lastBootstrap) : null
   }
 
   private assertInitialized(): void {

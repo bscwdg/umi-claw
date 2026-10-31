@@ -22,16 +22,51 @@
         <div><span class="k">亲密度</span><span class="v">{{ state.intimacy }} / 100</span></div>
         <div><span class="k">心情</span><span class="v">{{ state.mood || '平静' }}</span></div>
       </div>
-      <p class="hint">C01 骨架：形象、聊天、语音会按计划逐包接上。</p>
     </section>
 
     <section class="card">
-      <h3>称呼</h3>
+      <h3>首启三问</h3>
       <div class="row">
-        <input v-model="addressDraft" maxlength="40" placeholder="她怎么称呼你（默认「你」）" />
-        <button class="btn" :disabled="busy" @click="saveAddress">保存</button>
+        <label class="lab">怎么称呼你</label>
+        <input v-model="addressDraft" maxlength="40" placeholder="默认「你」" />
       </div>
-      <p class="hint">不写死人名；改完立即生效。禁忌称呼留空 = 不限制。</p>
+      <div class="row">
+        <label class="lab">关系模式</label>
+        <select v-model="modeDraft">
+          <option value="companion">朋友（搭子）</option>
+          <option value="sister">妹妹</option>
+          <option value="lover">恋人未满</option>
+        </select>
+      </div>
+      <div class="row">
+        <label class="lab">不能叫的称呼</label>
+        <input v-model="tabooDraft" placeholder="逗号分隔；留空 = 不限制任何称呼" />
+      </div>
+      <p class="hint">称呼只来自你；答「没有」或留空 = 空列表 = 什么都能叫（建议项不默认生效）。</p>
+      <div class="row">
+        <button class="btn primary" :disabled="busy" @click="saveOnboarding">保存引导设置</button>
+        <button class="btn" :disabled="busy" @click="runBootstrap">一键初始化</button>
+      </div>
+      <ul v-if="bootstrapReport" class="steps">
+        <li v-for="step in bootstrapReport.steps" :key="step.id" :class="{ bad: !step.ok }">
+          <span class="dot">{{ step.ok ? '✓' : '×' }}</span>
+          <span class="name">{{ step.name }}</span>
+          <span class="detail">{{ step.detail }}</span>
+        </li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h3>连接自检</h3>
+      <div class="grid">
+        <div><span class="k">agent</span><span class="v">{{ flag(status.agentReady) }}</span></div>
+        <div><span class="k">网关</span><span class="v">{{ flag(status.gatewayReady) }}</span></div>
+        <div><span class="k">Obsidian</span><span class="v">{{ flag(status.obsidianReady) }}</span></div>
+        <div><span class="k">QQ</span><span class="v">{{ flag(status.qqReady) }}</span></div>
+        <div><span class="k">TTS</span><span class="v">{{ flag(status.ttsReady) }}</span></div>
+        <div><span class="k">记忆检索</span><span class="v">{{ flag(status.memorySearchReady) }}</span></div>
+      </div>
+      <p class="hint">记忆/世界书/日记只走既有 Obsidian 知识库，不新增知识库。</p>
     </section>
 
     <section class="card">
@@ -55,6 +90,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import type { BootstrapReport } from '../../electron/main/character/bootstrap'
 
 const status = ref({
   enabled: false,
@@ -76,11 +112,15 @@ const state = ref({
   addressForm: '你'
 })
 const addressDraft = ref('')
+const modeDraft = ref<'companion' | 'sister' | 'lover'>('companion')
+const tabooDraft = ref('')
+const bootstrapReport = ref<BootstrapReport | null>(null)
 const busy = ref(false)
 const error = ref('')
 
 const STAGE_LABELS = ['初识', '眼熟', '熟客', '自己人', '搭子以上']
 const stageLabel = computed(() => STAGE_LABELS[state.value.stage] ?? '初识')
+const flag = (v: boolean): string => (v ? '✓ 就绪' : '× 未就绪')
 
 let offEvent: (() => void) | null = null
 
@@ -102,6 +142,9 @@ async function refresh(): Promise<void> {
     state.value = await window.api.character.state()
     const settings = await window.api.character.settings.get()
     addressDraft.value = settings.relationship?.address || '你'
+    modeDraft.value = settings.relationship?.mode || 'companion'
+    tabooDraft.value = (settings.relationship?.taboo ?? []).join('，')
+    bootstrapReport.value = await window.api.character.bootstrap.status()
   } catch (e) {
     error.value = (e as Error)?.message || '读取角色状态失败'
   }
@@ -115,10 +158,23 @@ async function toggleEnabled(): Promise<void> {
   })
 }
 
-async function saveAddress(): Promise<void> {
+async function saveOnboarding(): Promise<void> {
   await run(async () => {
     const address = addressDraft.value.trim() || '你'
-    await window.api.character.settings.set({ relationship: { address } } as never)
+    const taboo = tabooDraft.value
+      .split(/[，,]/)
+      .map((x) => x.trim())
+      .filter(Boolean)
+    await window.api.character.settings.set({
+      relationship: { address, mode: modeDraft.value, taboo }
+    } as never)
+    await refresh()
+  })
+}
+
+async function runBootstrap(): Promise<void> {
+  await run(async () => {
+    bootstrapReport.value = await window.api.character.bootstrap.run()
     await refresh()
   })
 }
@@ -151,7 +207,7 @@ async function run(fn: () => Promise<void>): Promise<void> {
 
 <style scoped>
 .character-page {
-  max-width: 860px;
+  max-width: 900px;
   margin: 0 auto;
   padding: 20px 24px 40px;
 }
@@ -205,8 +261,16 @@ h2 {
   display: flex;
   gap: 10px;
   align-items: center;
+  margin-bottom: 8px;
 }
-input {
+.lab {
+  width: 120px;
+  flex: 0 0 120px;
+  font-size: 13px;
+  color: var(--text-secondary, #9aa4b8);
+}
+input,
+select {
   flex: 1;
   padding: 8px 10px;
   border-radius: 8px;
@@ -243,5 +307,33 @@ input {
   margin: 0 0 12px;
   color: #ff6b6b;
   font-size: 13px;
+}
+.steps {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+.steps li {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0;
+  color: var(--text-primary, #e8ecf4);
+}
+.steps li.bad .dot,
+.steps li.bad .detail {
+  color: #ff6b6b;
+}
+.steps .dot {
+  width: 14px;
+  color: #4cd07d;
+}
+.steps .name {
+  flex: 0 0 240px;
+  color: var(--text-secondary, #9aa4b8);
+}
+.steps .detail {
+  flex: 1;
+  word-break: break-all;
 }
 </style>

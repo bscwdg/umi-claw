@@ -2226,11 +2226,31 @@ app.whenReady().then(async () => {
   try {
     if (!workDatabase) throw new Error('workDatabase 尚未初始化')
     const characterDb = workDatabase
+    const characterDataDir = configManager.getDataDir()
+    const characterNodePath = openClawPaths.nodeBinary(characterDataDir)
     const character = await registerCharacter({
       kv: {
         get: (key) => characterDb.metaGet(key),
         set: (key, value) => characterDb.metaSet(key, value)
       },
+      dataDir: characterDataDir,
+      personaSourceDir: app.isPackaged
+        ? join(process.resourcesPath, 'resources', 'character', 'persona')
+        : join(app.getAppPath(), 'resources', 'character', 'persona'),
+      configPath: openClawPaths.openClawConfig(characterDataDir),
+      cli: {
+        nodePath: characterNodePath,
+        cliPath: join(characterDataDir, 'openclaw', 'node_modules', 'openclaw', 'openclaw.mjs'),
+        env: buildOpenClawEnv(characterDataDir, characterNodePath, {
+          NODE_CONFIG_DIR: openClawPaths.portableHome(characterDataDir)
+        }),
+        cwd: openClawPaths.installDir(characterDataDir)
+      },
+      obsidianVaultPath: () => configManager.getConfig().obsidian?.vaultPath,
+      gatewayReady: () => Boolean(clawManager?.getStatus().ready),
+      qqReady: () => false, // C08 接 QQ 渠道状态
+      ttsReady: () => voiceManager !== null,
+      memorySearchReady: () => Boolean(configManager.getConfig().obsidian?.enabled),
       logger: (message) => console.log(message),
       onEvent: (event) => {
         if (mainWindow && !mainWindow.isDestroyed()) {

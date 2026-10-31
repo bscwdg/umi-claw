@@ -13,7 +13,9 @@ export const CHARACTER_CHANNELS = {
   settingsGet: 'character:settings:get',
   settingsSet: 'character:settings:set',
   interact: 'character:interact',
-  reset: 'character:reset'
+  reset: 'character:reset',
+  bootstrapRun: 'character:bootstrap:run',
+  bootstrapStatus: 'character:bootstrap:status'
 } as const
 
 /** 错误码（渲染端按 code 分支，不读 message） */

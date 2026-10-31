@@ -30,6 +30,7 @@ import type {
   CharacterState,
   CharacterStatus
 } from '../main/character/types'
+import type { BootstrapReport } from '../main/character/bootstrap'
 console.log('✅ preload loaded')
 
 // ── work 域信封解包：IPC 返回 {ok,data} / {ok,error} ────────────────────────
@@ -693,6 +694,10 @@ const api = {
       call<CharacterState>('character:interact', input),
     reset: (options?: CharacterResetOptions) =>
       call<{ scope: string }>('character:reset', options ?? {}),
+    bootstrap: {
+      run: () => call<BootstrapReport>('character:bootstrap:run'),
+      status: () => call<BootstrapReport | null>('character:bootstrap:status')
+    },
     onEvent: (cb: (event: CharacterEvent) => void) => {
       const handler = (_event: unknown, data: CharacterEvent) => cb(data)
       ipcRenderer.on('character:event', handler)

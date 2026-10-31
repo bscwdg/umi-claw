@@ -38,6 +38,8 @@ export function registerCharacterIpc(manager: CharacterManager): CharacterIpcDis
   handle(CHARACTER_CHANNELS.reset, (options) =>
     manager.reset((options ?? {}) as CharacterResetOptions)
   )
+  handle(CHARACTER_CHANNELS.bootstrapRun, () => manager.runBootstrap())
+  handle(CHARACTER_CHANNELS.bootstrapStatus, () => manager.getBootstrapStatus())
 
   return () => {
     for (const channel of channels) ipcMain.removeHandler(channel)

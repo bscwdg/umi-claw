@@ -8,11 +8,16 @@
 // 用法：node test/character.core.accept.mjs（npm run accept:character）
 
 import { pathToFileURL } from 'node:url'
-import { Recorder, assert, assertEq, bundleEntry, printResult } from './_lib.mjs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { Recorder, assert, assertEq, bundleEntry, printResult, repoRoot, tmpDir } from './_lib.mjs'
 
 const typesMod = await import(pathToFileURL(bundleEntry('electron/main/character/types.ts', 'character-types.mjs')).href)
 const storeMod = await import(pathToFileURL(bundleEntry('electron/main/character/store.ts', 'character-store.mjs')).href)
 const managerMod = await import(pathToFileURL(bundleEntry('electron/main/character/manager.ts', 'character-manager.mjs')).href)
+const personaMod = await import(pathToFileURL(bundleEntry('electron/main/character/persona.ts', 'character-persona.mjs')).href)
+const agentConfigMod = await import(pathToFileURL(bundleEntry('electron/main/character/agentConfig.ts', 'character-agent-config.mjs')).href)
+const bootstrapMod = await import(pathToFileURL(bundleEntry('electron/main/character/bootstrap.ts', 'character-bootstrap.mjs')).href)
 
 const {
   CHARACTER_ERROR_CODES,
@@ -24,6 +29,9 @@ const {
 } = typesMod
 const { CharacterStore, formatDate } = storeMod
 const { CharacterManager } = managerMod
+const { applyTemplate, buildPersonaVars, composePersonaFiles, writeManagedFiles, safeJoin } = personaMod
+const { buildAgentPatch, readAgentEntry } = agentConfigMod
+const { runBootstrap } = bootstrapMod
 
 function memoryKv(initial = new Map()) {
   return {
@@ -210,6 +218,187 @@ await recorder.check('C8', '设置合并抗原型污染，不写坏宿主对象'
   assertEq({}.polluted, undefined, '全局原型未被污染')
   assertEq(merged.relationship.address, '你', '正常字段仍生效')
   return '无原型污染'
+})
+
+const personaSrcDir = join(repoRoot, 'resources', 'character', 'persona')
+
+function loadTemplates() {
+  const read = (name) => readFileSync(join(personaSrcDir, name), 'utf8')
+  return {
+    soul: read('SOUL.md.tpl'),
+    identity: read('IDENTITY.md.tpl'),
+    agents: read('AGENTS.md.tpl'),
+    user: read('USER.md.tpl'),
+    core: read('core.md'),
+    voice: read('voice.md')
+  }
+}
+
+function baseInputs(overrides = {}) {
+  return {
+    settings: {
+      ...JSON.parse(JSON.stringify(DEFAULT_CHARACTER_SETTINGS)),
+      relationship: {
+        ...JSON.parse(JSON.stringify(DEFAULT_CHARACTER_SETTINGS.relationship)),
+        ...(overrides.relationship ?? {})
+      }
+    },
+    state: {
+      ...{
+        bornAt: 1,
+        stage: 1,
+        familiarity: 10,
+        intimacy: 20,
+        streakDays: 3,
+        lastInteractionAt: 5,
+        addressForm: '你',
+        mood: '有点得意',
+        updatedAt: 6
+      }
+    },
+    templates: loadTemplates(),
+    herName: '大肥鱼'
+  }
+}
+
+await recorder.check('C9', '人格变量：空值降级「你」、称呼注入、无占位符残留、禁忌空=不限制', async () => {
+  const vars = buildPersonaVars(baseInputs())
+  assertEq(vars.address, '你', '未设置称呼时默认「你」')
+  assertEq(vars.address, vars.address.trim(), '称呼不带头尾空格')
+
+  const withName = buildPersonaVars(baseInputs({ relationship: { address: '', userName: '阿爸' } }))
+  assertEq(withName.address, '阿爸', '没填 address 时用 userName')
+
+  const explicit = buildPersonaVars(baseInputs({ relationship: { address: '老板', userName: '阿爸' } }))
+  assertEq(explicit.address, '老板', 'address 优先于 userName')
+
+  assertEq(applyTemplate('叫{{address}}', withName), '叫阿爸', '变量替换')
+  assertEq(applyTemplate('叫{{unknownVar}}', vars), '叫', '未知变量清空')
+  assertEq(applyTemplate('{{address}}/{{userName}}', { address: '', userName: '' }), '你/你', '空变量降级「你」')
+
+  const files = composePersonaFiles(baseInputs({ relationship: { address: '老板' } }))
+  for (const content of Object.values(files)) {
+    assertEq(/\{\{[^}]+\}\}/.test(content), false, '落盘文件不应残留 {{变量}}')
+  }
+  assertEq(files['SOUL.md'].includes('本鱼'), true, 'SOUL 含自称「本鱼」')
+  assertEq(files['AGENTS.md'].includes('老板'), true, 'AGENTS 注入称呼')
+  assertEq(files['AGENTS.md'].includes('任何称呼都不拦截'), true, '禁忌空时明确不拦截')
+  assertEq(files['USER.md'].includes('（无）'), true, 'USER 禁忌为空显示（无）')
+
+  const tabooFiles = composePersonaFiles(
+    baseInputs({ relationship: { taboo: ['主人', '爸爸'] } })
+  )
+  assertEq(tabooFiles['AGENTS.md'].includes('主人、爸爸'), true, 'AGENTS 列出禁忌称呼')
+  return '变量替换/降级/禁忌规则 正确'
+})
+
+await recorder.check('C10', '受管写入：用户改过的不覆盖、STATE 归宿主、路径越界拒绝', async () => {
+  const dir = join(tmpDir, `character-persona-${Date.now()}`)
+  mkdirSync(dir, { recursive: true })
+  const files = composePersonaFiles(baseInputs())
+
+  const first = writeManagedFiles(dir, files)
+  assertEq(first.written.includes('SOUL.md'), true, '首次写入 SOUL.md')
+  assertEq(first.written.includes('fish/STATE.md'), true, '首次写入 STATE.md')
+  assertEq(existsSync(join(dir, 'SOUL.md')), true, 'SOUL 已落盘')
+  assertEq(existsSync(join(dir, '.fish-managed.json')), true, 'manifest 已落盘')
+
+  // 用户改 SOUL.md：后续写入必须保留
+  const custom = `${readFileSync(join(dir, 'SOUL.md'), 'utf8')}\n<!-- 用户自己加的一句 -->\n`
+  writeFileSync(join(dir, 'SOUL.md'), custom, 'utf8')
+  const second = writeManagedFiles(dir, files)
+  assertEq(second.kept.includes('SOUL.md'), true, '用户改过的 SOUL 被保留')
+  assertEq(readFileSync(join(dir, 'SOUL.md'), 'utf8').includes('用户自己加的一句'), true, 'SOUL 改动仍在')
+
+  // STATE 宿主维护：即使用户改也会被重写
+  writeFileSync(join(dir, 'fish/STATE.md'), '# 乱改\n', 'utf8')
+  const third = writeManagedFiles(dir, files)
+  assertEq(third.written.includes('fish/STATE.md'), true, 'STATE 每次重写')
+  assertEq(readFileSync(join(dir, 'fish/STATE.md'), 'utf8').includes('鱼的状态'), true, 'STATE 内容恢复')
+
+  let rejected = false
+  try {
+    safeJoin(dir, '../escape.md')
+  } catch {
+    rejected = true
+  }
+  assertEq(rejected, true, '拒绝 ../ 越界路径')
+  return '受管写入/用户改动保护/宿主文件 正确'
+})
+
+await recorder.check('C11', 'agent 补丁构造与配置读回（官方 config patch 载荷）', async () => {
+  const patch = buildAgentPatch('feiyu', 'D:/data/workspace-feiyu')
+  assertEq(patch.agents.entries.feiyu.workspace, 'D:/data/workspace-feiyu', '补丁含 workspace')
+  let bad = false
+  try {
+    buildAgentPatch('Feiyu!', 'x')
+  } catch {
+    bad = true
+  }
+  assertEq(bad, true, '非法 agent id 被拒')
+
+  const configPath = join(tmpDir, `character-config-${Date.now()}.json`)
+  writeFileSync(configPath, JSON.stringify({ agents: { entries: { main: {} } } }), 'utf8')
+  assertEq(readAgentEntry(configPath, 'feiyu').exists, false, '不存在时 exists=false')
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      agents: { entries: { main: {}, feiyu: { workspace: 'D:/data/workspace-feiyu' } } }
+    }),
+    'utf8'
+  )
+  const found = readAgentEntry(configPath, 'feiyu')
+  assertEq(found.exists, true, '存在时 exists=true')
+  assertEq(found.workspace, 'D:/data/workspace-feiyu', '读回 workspace')
+
+  writeFileSync(configPath, '{bad json', 'utf8')
+  const broken = readAgentEntry(configPath, 'feiyu')
+  assertEq(broken.exists, false, '坏配置返回不存在')
+  assertEq(typeof broken.error, 'string', '坏配置带 error')
+  return '补丁载荷/读回/坏配置 正确'
+})
+
+await recorder.check('C12', '一键引导：5 步全过、幂等、用户改动保留、Obsidian 目录就位', async () => {
+  const runDir = join(tmpDir, `character-bootstrap-${Date.now()}`)
+  const workspaceDir = join(runDir, 'workspace-feiyu')
+  const vault = join(runDir, 'vault')
+  mkdirSync(vault, { recursive: true })
+  const inputs = baseInputs()
+  let ensured = 0
+
+  const deps = {
+    workspaceDir,
+    personaSourceDir: personaSrcDir,
+    getSettings: async () => inputs.settings,
+    getState: async () => inputs.state,
+    obsidianVaultPath: vault,
+    ensureAgentEntry: async () => {
+      ensured += 1
+      return { ok: true }
+    },
+    agentConfigured: () => true,
+    gatewayReady: () => true,
+    qqReady: () => false,
+    ttsReady: () => true,
+    memorySearchReady: () => true
+  }
+
+  const report = await runBootstrap(deps)
+  assertEq(report.ok, true, '首次引导全过')
+  assertEq(report.steps.length, 5, '五步：workspace/persona/agent/obsidian/deps')
+  assertEq(report.steps.every((s) => s.ok), true, '每步 ok')
+  assertEq(existsSync(join(workspaceDir, 'SOUL.md')), true, 'SOUL 已落盘')
+  assertEq(existsSync(join(vault, '大肥鱼')), true, 'Obsidian 大肥鱼目录已建')
+  assertEq(report.status.agentReady, true, '自检 agentReady')
+  assertEq(report.status.obsidianReady, true, '自检 obsidianReady')
+  assertEq(ensured, 1, 'agent 补丁执行一次')
+
+  const soulPath = join(workspaceDir, 'SOUL.md')
+  writeFileSync(soulPath, `${readFileSync(soulPath, 'utf8')}\n用户改的行\n`, 'utf8')
+  const again = await runBootstrap(deps)
+  assertEq(again.ok, true, '二次引导仍全过（幂等）')
+  assertEq(readFileSync(soulPath, 'utf8').includes('用户改的行'), true, '二次引导不覆盖用户改动')
+  return '引导/幂等/改动保护 正确'
 })
 
 const ok = printResult(recorder.toJSON())
