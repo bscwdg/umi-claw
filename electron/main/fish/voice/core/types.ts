@@ -89,6 +89,9 @@ export interface VoiceSpeakOptions {
   speaker?: string
   speedRatio?: number
   emotion?: string
+  /** 输出格式覆盖（角色语音条需要 pcm/16k）；缺省按单段 mp3、多段 pcm */
+  format?: 'mp3' | 'pcm'
+  sampleRate?: number
 }
 
 export interface VoiceSpeakInput {

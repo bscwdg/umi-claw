@@ -23,6 +23,11 @@ export type CharacterIpcDisposer = () => void
 export interface CharacterIpcDeps {
   pet?: PetWindowController | null
   chat?: CharacterChatService | null
+  /** 语音条发送（C08；由 wiring 组装 TTS→SILK→QQ，失败降级文字） */
+  deliverVoice?: (
+    text: string,
+    requested: boolean
+  ) => Promise<{ delivered: boolean; channel: 'qq' | 'text'; error?: string }>
 }
 
 export function registerCharacterIpc(
@@ -182,6 +187,24 @@ export function registerCharacterIpc(
       throw new CharacterError(CHARACTER_ERROR_CODES.DISABLED, '大肥鱼未启用')
     }
     return manager.maybeRunDailyMemory(undefined, true)
+  })
+  handle(CHARACTER_CHANNELS.voiceSend, async (payload) => {
+    if (!manager.isEnabled()) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.DISABLED, '大肥鱼未启用')
+    }
+    const text = typeof (payload as { text?: unknown } | undefined)?.text === 'string'
+      ? String((payload as { text: string }).text).slice(0, 120)
+      : '本鱼在呢。'
+    const decision = await manager.decideVoiceFor(text, true)
+    if (!decision.send) {
+      return { delivered: false, channel: 'text' as const, reason: decision.reason }
+    }
+    if (!deps.deliverVoice) {
+      return { delivered: false, channel: 'text' as const, reason: 'not-wired' }
+    }
+    const result = await deps.deliverVoice(text, decision.requested)
+    if (result.delivered) await manager.markVoiceSent()
+    return { ...result, reason: decision.reason }
   })
 
   return () => {

@@ -1179,5 +1179,30 @@ await recorder.check('hot-speaker', 'bridge 热更：环境变量带设置文件
   assert(/readFileSync/.test(bridgeSrc), 'volc-tts.mjs 每次合成重新读取')
   return 'env 路径/原子写/保存即更新/脚本读取 均正确'
 })
+await recorder.check('V7', '角色语音条：format/sampleRate 覆盖为 pcm/16k（QQ 语音条前置）', async () => {
+  const calls = []
+  const manager = makeManager({
+    fetchImpl: async (url, init) => {
+      const body = JSON.parse(init.body)
+      calls.push({
+        url: String(url),
+        format: body.req_params.audio_params.format,
+        rate: body.req_params.audio_params.sample_rate
+      })
+      return ttsResponse({ format: body.req_params.audio_params.format, byte: 33 })
+    }
+  })
+  const result = await manager.speak({
+    text: '本鱼在呢。',
+    options: { format: 'pcm', sampleRate: 16000 }
+  })
+  const audio = await manager.readAudio(result.audioId)
+  assertEq(calls[0].format, 'pcm', '请求 PCM')
+  assertEq(calls[0].rate, 16000, '请求 16k 采样率')
+  assertEq(result.mime, 'audio/wav', '输出 WAV')
+  assertEq(audio.bytes.length > 44, true, '带 WAV 头')
+  return 'pcm/16k 覆盖生效'
+})
+
 const ok = printResult(recorder.toJSON({ cacheDir, catalog: join(repoRoot, 'resources/voice/curated-voices.v1.json') }))
 if (!ok) process.exit(1)

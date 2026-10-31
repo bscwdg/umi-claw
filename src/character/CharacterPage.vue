@@ -118,8 +118,9 @@
       <div class="row">
         <button class="btn" :disabled="busy || !status.enabled" @click="interact('pat')">摸摸头</button>
         <button class="btn" :disabled="busy || !status.enabled" @click="interact('feed')">投喂</button>
+        <button class="btn" :disabled="busy || !status.enabled" @click="sendVoice">发一条语音</button>
       </div>
-      <p class="hint">C05 才接关系规则与每日上限；现在只验证状态读写。</p>
+      <p class="hint">语音需要 QQ 机器人凭据；没配置会降级成文字，不会报错。</p>
     </section>
 
     <section class="card">
@@ -247,6 +248,19 @@ async function toggleEnabled(): Promise<void> {
   await run(async () => {
     const next = !status.value.enabled
     await window.api.character.settings.set({ enabled: next } as never)
+    await refresh()
+  })
+}
+
+async function sendVoice(): Promise<void> {
+  await run(async () => {
+    const result = await window.api.character.voice.send('本鱼在呢。')
+    if (!result.delivered) {
+      error.value = result.error
+        ? `语音条没发出去（已降级文字）：${result.error}`
+        : `这次没发语音：${result.reason ?? '未知原因'}`
+      return
+    }
     await refresh()
   })
 }

@@ -58,8 +58,8 @@ export interface CharacterChatServiceOptions {
   model?: string
   /** 每轮注入的短上下文（STATE/LIFE 摘要，≤300 字）；只拼在 user 内容前，不落 sticky */
   contextProvider?: () => Promise<string | null>
-  /** 一轮聊天成功结束：交给关系引擎记账（refId=runId 保证幂等） */
-  onMessage?: (text: string, refId: string) => void
+  /** 一轮聊天成功结束：交给关系引擎记账（refId=runId 保证幂等）；附带本轮用户输入 */
+  onMessage?: (text: string, refId: string, userText: string) => void
   onEmotion?: (emotion: string, visualState: string) => void
   now?: () => number
   logger?: (message: string) => void
@@ -213,7 +213,7 @@ export class CharacterChatService {
       )
     }
     this.active.set(runId, handle)
-    void this.pump(runId, handle, emit)
+    void this.pump(runId, handle, emit, text)
     return { runId, conversationKey, gen: this.gen }
   }
 
@@ -261,7 +261,8 @@ export class CharacterChatService {
   private async pump(
     runId: string,
     handle: CharacterChatHandle,
-    emit: (event: CharacterChatStreamEvent) => void
+    emit: (event: CharacterChatStreamEvent) => void,
+    userText: string
   ): Promise<void> {
     const filter = new EmotionStreamFilter()
     const gen = this.gen
@@ -299,7 +300,7 @@ export class CharacterChatService {
       })
       if (!cancelled) {
         try {
-          this.options.onMessage?.(finalText, runId)
+          this.options.onMessage?.(finalText, runId, userText)
         } catch (error) {
           this.options.logger?.(
             `[character] 关系记账失败: ${(error as Error)?.message ?? String(error)}`

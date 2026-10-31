@@ -714,6 +714,13 @@ const api = {
       runNow: () =>
         call<{ ran: boolean; reason: string; errors?: string[] }>('character:memory:runNow')
     },
+    voice: {
+      send: (text?: string) =>
+        call<{ delivered: boolean; channel: 'qq' | 'text'; reason?: string; error?: string }>(
+          'character:voice:send',
+          text ? { text } : {}
+        )
+    },
     pet: {
       show: () => call<{ visible: boolean; clickThrough: boolean }>('character:window:pet', { action: 'show' }),
       hide: () => call<{ visible: boolean; clickThrough: boolean }>('character:window:pet', { action: 'hide' }),

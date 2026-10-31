@@ -550,7 +550,16 @@ export class VoiceManager {
       typeof input?.options?.emotion === 'string'
         ? input.options.emotion.trim().slice(0, 64)
         : settings.emotion
-    const format = split.segments.length > 1 ? 'pcm' : 'mp3'
+    const format =
+      input?.options?.format === 'pcm' || input?.options?.format === 'mp3'
+        ? input.options.format
+        : split.segments.length > 1
+          ? 'pcm'
+          : 'mp3'
+    const sampleRate =
+      typeof input?.options?.sampleRate === 'number' && Number.isFinite(input.options.sampleRate)
+        ? Math.max(8000, Math.min(48000, Math.round(input.options.sampleRate)))
+        : settings.sampleRate
     const endpoint = route === 'preset' ? settings.ttsEndpoint : settings.cloneEndpoint
     const resourceId =
       route === 'preset' ? settings.ttsResourceId : settings.cloneResourceId
@@ -564,7 +573,7 @@ export class VoiceManager {
       emotion,
       speedRatio,
       format,
-      settings.sampleRate
+      sampleRate
     ])
     const audioId = voiceAudioId(hash, format === 'pcm' ? 'wav' : 'mp3')
     const cached = bypassCache ? null : await this.cache.get(audioId)
@@ -596,7 +605,7 @@ export class VoiceManager {
       speedRatio,
       emotion,
       format,
-      sampleRate: settings.sampleRate,
+      sampleRate,
       route,
       hash,
       jobId: input.jobId,

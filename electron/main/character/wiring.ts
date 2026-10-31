@@ -13,6 +13,8 @@ import { applyAgentPatch, createOpenClawCliRunner } from './agentPatchRunner'
 import { CHARACTER_AGENT_ID, CHARACTER_AGENT_MODEL, readAgentEntry } from './agentConfig'
 import { loadPersonaTemplates, runBootstrap } from './bootstrap'
 import { parseLifeDeck } from './contentCards'
+import { deliverVoice, type QqBotCreds } from './qqVoice'
+import { isVoiceRequest } from './voicePolicy'
 import { composePersonaFiles, writeManagedFiles } from './persona'
 import { PetWindowController, type PetMenuAction } from './petWindow'
 import { CharacterChatService, type CharacterChatFn } from './chat'
@@ -63,6 +65,12 @@ export interface CharacterWiringDeps {
   sendProactive?: (message: { text: string; channel: 'qq' | 'app' }) => Promise<boolean>
   /** 日记生成（index.ts 用 gateway 非流式 chat + openclaw/feiyu） */
   generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
+  /** 语音条（C08）：TTS 出 16k WAV + QQ 凭据；缺省则语音条不可用（降级文字） */
+  voice?: {
+    speakPcm: (text: string) => Promise<Uint8Array>
+    creds: () => QqBotCreds | null
+    encodeSilk?: (pcm: Uint8Array, sampleRate: number) => Promise<Uint8Array>
+  }
   /** 既有 Obsidian vault 路径（只在其下建 `大肥鱼/`，不新增知识库） */
   obsidianVaultPath?: () => string | undefined
   gatewayReady?: () => boolean
@@ -194,6 +202,32 @@ async function registerCharacterInternal(
     managerRef = manager
     await manager.init()
 
+    // 语音条（C08）：TTS 16k WAV → SILK → QQ；失败降级文字，不重试
+    let voiceSeq = 0
+    const deliverVoiceFn = deps.voice
+      ? async (
+          text: string
+        ): Promise<{ delivered: boolean; channel: 'qq' | 'text'; error?: string }> => {
+          try {
+            const result = await deliverVoice({
+              text,
+              creds: deps.voice!.creds(),
+              speakPcm: deps.voice!.speakPcm,
+              encodeSilk: deps.voice!.encodeSilk,
+              seq: voiceSeq
+            })
+            voiceSeq = result.seq
+            return { delivered: result.delivered, channel: result.channel, error: result.error }
+          } catch (error) {
+            return {
+              delivered: false,
+              channel: 'text',
+              error: (error as Error)?.message ?? String(error)
+            }
+          }
+        }
+      : undefined
+
     // 聊天（C04）：会话键 conv:fish:<session>:<gen>；清空 = 轮换代际
     let chat: CharacterChatService | null = null
     if (deps.chat) {
@@ -206,12 +240,31 @@ async function registerCharacterInternal(
         onEmotion: (emotion, visualState) => {
           void manager.applyChatEmotion(emotion, visualState).catch(() => undefined)
         },
-        onMessage: (_text, refId) => {
+        onMessage: (text, refId, userText) => {
           void manager
             .applyRelationshipEvent({ type: 'chat.message', refId })
             .catch((error) =>
               logger(`[character] 聊天记账失败: ${(error as Error)?.message ?? String(error)}`)
             )
+          // 用户明确要语音：按策略发语音条；失败只降级文字（聊天文本已经展示）
+          if (deliverVoiceFn && isVoiceRequest(userText)) {
+            void (async () => {
+              try {
+                const decision = await manager.decideVoiceFor(text, true)
+                if (!decision.send) return
+                const result = await deliverVoiceFn(text)
+                if (result.delivered) {
+                  await manager.markVoiceSent()
+                  await manager.applyRelationshipEvent({
+                    type: 'voice.request',
+                    refId: `v:${refId}`
+                  })
+                }
+              } catch (error) {
+                logger(`[character] 语音条失败（已降级文字）: ${(error as Error)?.message ?? String(error)}`)
+              }
+            })()
+          }
         },
         contextProvider: async () => {
           // 每轮注入的短上下文：称呼 + 阶段 + 今日活动（≤300 字，让 C05/C06 对对话可见）
@@ -256,7 +309,11 @@ async function registerCharacterInternal(
       updateShortcut(manager.isEnabled() && initialPet.clickThrough)
     }
 
-    ipcDisposer = registerCharacterIpc(manager, { pet, chat: chatService })
+    ipcDisposer = registerCharacterIpc(manager, {
+      pet,
+      chat: chatService,
+      deliverVoice: deliverVoiceFn
+    })
 
     // 设置/互动后 ≤300ms 合并重写人格文件（STATE.md 即时；用户改过的 SOUL/AGENTS 保留）
     manager.setPersonaSyncRunner(async () => {

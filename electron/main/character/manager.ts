@@ -45,6 +45,8 @@ import {
   type MemoryGateReason
 } from './memoryJob'
 import { renderStateDoc } from './persona'
+import { decideVoice, type VoiceDecision } from './voicePolicy'
+import { isQuietHours } from './proactive'
 
 export interface CharacterManagerOptions {
   store: CharacterStore
@@ -627,6 +629,69 @@ export class CharacterManager {
       const fresh = (await this.store.readDay<Record<string, unknown>>(date)) ?? {}
       await this.store.writeDay(date, { ...fresh, memory })
     })
+  }
+
+  /** 语音状态（设置页/策略用） */
+  async getVoiceStatus(now = this.now()): Promise<{
+    enabled: boolean
+    requestAllowed: boolean
+    sttEnabled: boolean
+    dailyCap: number
+    usedToday: number
+    stage: number
+  }> {
+    this.assertInitialized()
+    const settings = await this.getSettings()
+    const state = await this.getState()
+    const day = (await this.store.readDay<{ voiceSent?: number }>(toDateKey(now))) ?? {}
+    return {
+      enabled: settings.voice.enabled,
+      requestAllowed: settings.voice.requestAllowed,
+      sttEnabled: settings.voice.sttEnabled,
+      dailyCap: settings.voice.dailyCap,
+      usedToday: day.voiceSent ?? 0,
+      stage: state.stage
+    }
+  }
+
+  /** 语音发送策略（纯逻辑 + 当前状态） */
+  async decideVoiceFor(text: string, requested: boolean, now = this.now()): Promise<VoiceDecision> {
+    this.assertInitialized()
+    const settings = await this.getSettings()
+    const state = await this.getState()
+    const day = (await this.store.readDay<{ voiceSent?: number }>(toDateKey(now))) ?? {}
+    return decideVoice({
+      voiceEnabled: settings.voice.enabled,
+      requestAllowed: settings.voice.requestAllowed,
+      requested,
+      stage: state.stage,
+      quiet: isQuietHours(now, settings.proactive.quietFrom, settings.proactive.quietTo),
+      usedToday: day.voiceSent ?? 0,
+      dailyCap: settings.voice.dailyCap,
+      text
+    })
+  }
+
+  /** 记一次语音条成功发送 */
+  async markVoiceSent(now = this.now()): Promise<number> {
+    this.assertInitialized()
+    const date = toDateKey(now)
+    const time = new Date(now).toTimeString().slice(0, 5)
+    const next = await this.patchDay(date, (day) => ({
+      ...day,
+      voiceSent: (typeof day.voiceSent === 'number' ? day.voiceSent : 0) + 1,
+      events: [
+        ...(Array.isArray(day.events) ? (day.events as unknown[]) : []),
+        `${time}:voice`
+      ].slice(-50)
+    }))
+    return typeof next.voiceSent === 'number' ? next.voiceSent : 0
+  }
+
+  /** 入站语音转写成功：按 voice.listen 记一次关系事件（refId 幂等） */
+  async recordSttInbound(text: string, now = this.now()): Promise<RelationshipApplyResult> {
+    const refId = `stt:${toDateKey(now)}:${String(text ?? '').slice(0, 24)}`
+    return this.applyRelationshipEvent({ type: 'voice.listen', refId })
   }
 
   async reset(options: CharacterResetOptions = {}): Promise<{ scope: string }> {

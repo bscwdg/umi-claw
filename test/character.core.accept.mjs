@@ -24,6 +24,9 @@ const cardsMod = await import(pathToFileURL(bundleEntry('electron/main/character
 const lifeMod = await import(pathToFileURL(bundleEntry('electron/main/character/life.ts', 'character-life.mjs')).href)
 const proactiveMod = await import(pathToFileURL(bundleEntry('electron/main/character/proactive.ts', 'character-proactive.mjs')).href)
 const memoryMod = await import(pathToFileURL(bundleEntry('electron/main/character/memoryJob.ts', 'character-memory.mjs')).href)
+const voicePolicyMod = await import(pathToFileURL(bundleEntry('electron/main/character/voicePolicy.ts', 'character-voice-policy.mjs')).href)
+const qqVoiceMod = await import(pathToFileURL(bundleEntry('electron/main/character/qqVoice.ts', 'character-qq-voice.mjs')).href)
+const sttMod = await import(pathToFileURL(bundleEntry('electron/main/character/stt.ts', 'character-stt.mjs')).href)
 
 const {
   CHARACTER_ERROR_CODES,
@@ -66,6 +69,9 @@ const {
   shouldRunMemory,
   validateDiary
 } = memoryMod
+const { decideVoice, isVoiceRequest } = voicePolicyMod
+const { deliverVoice, extractWavPcm, nextMsgSeq, QQ_VOICE_MSG_TYPE } = qqVoiceMod
+const { transcribeInbound, STT_FALLBACK_MESSAGE } = sttMod
 
 function memoryKv(initial = new Map()) {
   return {
@@ -1440,6 +1446,189 @@ await recorder.check('C51', '聊天上下文注入：STATE/LIFE 摘要进 user �
   assertEq(request.messages[0].content.includes('在数贝壳'), true, '含今日活动')
   assertEq(request.messages[0].content.endsWith('在吗'), true, '原文保留在末尾')
   return '上下文注入正确'
+})
+
+await recorder.check('C52', '语音策略：开关/要求/免打扰/上限/未解锁/过长', async () => {
+  const base = {
+    voiceEnabled: true,
+    requestAllowed: true,
+    requested: false,
+    stage: 3,
+    quiet: false,
+    usedToday: 0,
+    dailyCap: 10,
+    text: '本鱼在呢。'
+  }
+  assertEq(decideVoice(base).send, true, '默认可发')
+  assertEq(decideVoice({ ...base, voiceEnabled: false }).reason, 'disabled', '语音关')
+  assertEq(
+    decideVoice({ ...base, requested: true, requestAllowed: false }).reason,
+    'request-not-allowed',
+    '要求语音被禁'
+  )
+  assertEq(decideVoice({ ...base, quiet: true }).reason, 'quiet', '免打扰')
+  assertEq(decideVoice({ ...base, usedToday: 10 }).reason, 'daily-cap', '日上限')
+  assertEq(decideVoice({ ...base, text: 'x'.repeat(200) }).reason, 'too-long', '过长')
+  assertEq(decideVoice({ ...base, stage: 0 }).reason, 'not-unlocked', '初识不主动语音')
+  assertEq(decideVoice({ ...base, stage: 0, requested: true }).send, true, '用户要求可越过阶段')
+
+  assertEq(isVoiceRequest('发条语音'), true, '要求语音①')
+  assertEq(isVoiceRequest('用你的声音说句话'), true, '要求语音②')
+  assertEq(isVoiceRequest('今天吃什么'), false, '普通聊天不误判')
+  return '策略/请求识别正确'
+})
+
+function makeWav(pcmBytes) {
+  const header = new Uint8Array(44)
+  const view = new DataView(header.buffer)
+  header.set([0x52, 0x49, 0x46, 0x46], 0)
+  view.setUint32(4, 36 + pcmBytes.length, true)
+  header.set([0x57, 0x41, 0x56, 0x45], 8)
+  header.set([0x66, 0x6d, 0x74, 0x20], 12)
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, 16000, true)
+  view.setUint32(28, 32000, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  header.set([0x64, 0x61, 0x74, 0x61], 36)
+  view.setUint32(40, pcmBytes.length, true)
+  const out = new Uint8Array(44 + pcmBytes.length)
+  out.set(header, 0)
+  out.set(pcmBytes, 44)
+  return out
+}
+
+await recorder.check('C53', 'QQ 语音：WAV 解析与 msg_seq 递增', async () => {
+  const wav = makeWav(new Uint8Array([1, 2, 3, 4, 5, 6]))
+  const parsed = extractWavPcm(wav)
+  assertEq(parsed.sampleRate, 16000, '解析采样率')
+  assertEq(parsed.pcm.length, 6, '解析 PCM 长度')
+  assertEq(Array.from(parsed.pcm).join(','), '1,2,3,4,5,6', 'PCM 内容正确')
+  assertEq(nextMsgSeq(0), 1, 'seq 从 1 开始')
+  assertEq(nextMsgSeq(41), 42, 'seq 递增')
+  return 'WAV/seq 正确'
+})
+
+await recorder.check('C54', 'QQ 语音：access_token → 上传(file_type=3) → 发送(msg_type=7)', async () => {
+  const calls = []
+  const fetchImpl = async (url, init) => {
+    calls.push({ url: String(url), init })
+    if (String(url).includes('getAppAccessToken')) {
+      return { ok: true, status: 200, json: async () => ({ access_token: 'tok' }) }
+    }
+    if (String(url).includes('/files')) {
+      const body = init.body
+      return { ok: true, status: 200, json: async () => ({ file_info: 'fi_1', form: body instanceof FormData ? 'formdata' : 'other' }) }
+    }
+    return { ok: true, status: 200, json: async () => ({ id: 'msg_1' }) }
+  }
+  const result = await deliverVoice({
+    text: '本鱼在呢。',
+    creds: { appId: 'app', clientSecret: 'sec', openid: 'openid-1' },
+    speakPcm: async () => makeWav(new Uint8Array([9, 9, 9, 9])),
+    encodeSilk: async (pcm) => new Uint8Array([7, 7, 7]),
+    fetchImpl,
+    seq: 0
+  })
+  assertEq(result.delivered, true, '发送成功')
+  assertEq(result.channel, 'qq', '走 QQ 通道')
+  assertEq(result.seq, 1, 'msg_seq=1')
+  assertEq(calls.length, 3, '三步调用')
+  const sendCall = calls.find((c) => c.url.endsWith('/messages'))
+  const payload = JSON.parse(sendCall.init.body)
+  assertEq(payload.msg_type, QQ_VOICE_MSG_TYPE, 'msg_type=7')
+  assertEq(payload.media.file_info, 'fi_1', '带 file_info')
+  assertEq(payload.content, '', '不带 content')
+  assertEq(String(sendCall.init.headers.Authorization).startsWith('QQBot '), true, '鉴权头')
+  return 'QQ 语音链路正确'
+})
+
+await recorder.check('C55', 'QQ 语音失败降级：无凭据/编码失败/合成失败都不抛', async () => {
+  const noCreds = await deliverVoice({
+    text: 'x',
+    creds: null,
+    speakPcm: async () => makeWav(new Uint8Array([1])),
+    seq: 0
+  })
+  assertEq(noCreds.delivered, false, '无凭据不发送')
+  assertEq(noCreds.channel, 'text', '降级文字')
+
+  const encodeFail = await deliverVoice({
+    text: 'x',
+    creds: { appId: 'a', clientSecret: 'b', openid: 'c' },
+    speakPcm: async () => makeWav(new Uint8Array([1])),
+    encodeSilk: async () => {
+      throw new Error('SILK_ENCODER_UNAVAILABLE')
+    },
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({}) }),
+    seq: 0
+  })
+  assertEq(encodeFail.delivered, false, '编码失败降级')
+  assertEq(/SILK/.test(encodeFail.error ?? ''), true, '错误可读')
+
+  const speakFail = await deliverVoice({
+    text: 'x',
+    creds: { appId: 'a', clientSecret: 'b', openid: 'c' },
+    speakPcm: async () => {
+      throw new Error('TTS 未配置')
+    },
+    seq: 0
+  })
+  assertEq(speakFail.delivered, false, '合成失败降级')
+  return '降级正确'
+})
+
+await recorder.check('C56', '入站 STT：未配置/过大/成功/空结果都诚实降级', async () => {
+  const none = await transcribeInbound({ audio: new Uint8Array([1]) })
+  assertEq(none.ok, false, '未配置 STT')
+  assertEq(none.fallbackMessage, STT_FALLBACK_MESSAGE, '诚实文案')
+
+  const big = await transcribeInbound({
+    audio: new Uint8Array(100),
+    transcribe: async () => 'x',
+    maxBytes: 10
+  })
+  assertEq(big.ok, false, '过大拒绝')
+  assertEq(/太长了/.test(big.fallbackMessage ?? ''), true, '过大文案')
+
+  const ok = await transcribeInbound({
+    download: async () => new Uint8Array([1, 2, 3]),
+    transcribe: async () => '  在吗  '
+  })
+  assertEq(ok.ok, true, '转写成功')
+  assertEq(ok.text, '在吗', 'trim 后文本')
+
+  const empty = await transcribeInbound({
+    audio: new Uint8Array([1]),
+    transcribe: async () => '   '
+  })
+  assertEq(empty.ok, false, '空结果降级')
+  return 'STT 行为正确'
+})
+
+await recorder.check('C57', 'manager 语音：策略/用量/记账/入站转写事件', async () => {
+  const kv = memoryKv()
+  const now = new Date(2026, 10, 1, 14, 0, 0).getTime()
+  const manager = new CharacterManager({ store: new CharacterStore({ kv, now: () => now }), now: () => now })
+  await manager.init()
+  await manager.updateSettings({ enabled: true, voice: { dailyCap: 2 } })
+
+  const status = await manager.getVoiceStatus()
+  assertEq(status.usedToday, 0, '初始用量 0')
+  const d1 = await manager.decideVoiceFor('本鱼在呢。', true)
+  assertEq(d1.send, true, '用户要求可发')
+  await manager.markVoiceSent()
+  await manager.markVoiceSent()
+  const d2 = await manager.decideVoiceFor('本鱼在呢。', true)
+  assertEq(d2.reason, 'daily-cap', '日上限生效')
+
+  const r = await manager.recordSttInbound('在吗')
+  assertEq(r.applied, true, '入站转写记账')
+  const r2 = await manager.recordSttInbound('在吗')
+  assertEq(r2.applied, false, '同内容幂等')
+  return 'manager 语音集成正确'
 })
 
 const ok = printResult(recorder.toJSON())

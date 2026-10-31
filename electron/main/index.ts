@@ -2261,6 +2261,30 @@ app.whenReady().then(async () => {
         })
         return result.text
       },
+      voice: {
+        speakPcm: async (text: string) => {
+          if (!voiceManager) throw new Error('语音模块未初始化')
+          const result = await voiceManager.speak({
+            text,
+            options: { format: 'pcm', sampleRate: 16000 }
+          })
+          const payload = await voiceManager.readAudio(result.audioId)
+          return payload.bytes
+        },
+        // 凭据只读：从 channels.qqbot 读，缺 openid 时降级文字（等 C08 真机补 openid 发现）
+        creds: () => {
+          const cfg = configManager.getConfig() as unknown as {
+            channels?: { qqbot?: Record<string, unknown> }
+          }
+          const qq = cfg?.channels?.qqbot
+          if (!qq) return null
+          const appId = (qq.appId ?? qq.appid ?? qq.app_id) as string | undefined
+          const clientSecret = (qq.clientSecret ?? qq.appSecret ?? qq.secret) as string | undefined
+          const openid = (qq.openid ?? qq.ownerOpenid ?? qq.userOpenId) as string | undefined
+          if (!appId || !clientSecret || !openid) return null
+          return { appId, clientSecret, openid }
+        }
+      },
       obsidianVaultPath: () => configManager.getConfig().obsidian?.vaultPath,
       petWindow: {
         preloadPath: join(__dirname, '../preload/pet.js'),
