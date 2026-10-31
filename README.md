@@ -692,6 +692,28 @@ OpenClaw 通过 MCP 工具按需检索片段，不用把整个知识库塞进上
 > 切换 embedding 模型后需重新「重建索引」，应用会检测到签名变化自动清掉旧向量库。
 > 代码块内容不参与语义索引（避免污染切块），但 `read_note` 可读取全文。
 
+## 常见问题：Windows 下网关启动失败（OpenClaw ≥ 2026.10.9）
+
+**现象**：点「启动」后提示启动失败；日志（`data/logs/runtime-debug.log` 或
+`%TEMP%\openclaw\openclaw-日期.log`）出现：
+
+- `Windows ACL permits untrusted SQLite staging access on ancestor: ... principal=S-1-5-11`
+- `OpenClaw state ... is undergoing offline maintenance` / `openclaw.json` 读取失败
+
+**原因**：OpenClaw 2026.10.9 起会对 SQLite 状态目录做安全预检：若数据目录（或其祖先）
+允许 `Authenticated Users`（S-1-5-11）写入，就拒绝 state capture，网关因此无法启动。
+Windows 上新建在普通目录（项目根、U 盘、便携目录）的 `data` 默认会继承宽松 ACL。
+
+**修复**（PowerShell；`<数据目录>` 换成实际路径）：
+
+```powershell
+icacls "<数据目录>" /inheritance:r /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /grant "$(whoami):(OI)(CI)F"
+```
+
+数据目录位置：dev 为项目根 `data`；安装版为 `%APPDATA%\UmiClaw\data`；便携版为 exe 同级 `data`。
+执行后重启应用再启动网关。若日志仍提示更上级目录，对提示的那个目录做同样处理（只去掉
+`Authenticated Users` 的写权限，不要删除当前用户 / SYSTEM 的权限）。
+
 ## 联系作者
 
 嘿嘿，我是小北，开源不易请点点 stars，谢谢！
