@@ -183,6 +183,19 @@ export class CharacterStore {
     await this.kv.set(FISH_KEYS.chatGen, JSON.stringify({ gen: safe }))
   }
 
+  /** 已解锁项（阶段解锁/收集等；只增不减） */
+  async readUnlocks(): Promise<string[]> {
+    const raw = await this.readJson<{ items?: unknown }>(FISH_KEYS.unlocks)
+    return Array.isArray(raw?.items)
+      ? raw!.items.filter((x): x is string => typeof x === 'string').slice(0, 200)
+      : []
+  }
+
+  async writeUnlocks(items: string[]): Promise<void> {
+    const unique = [...new Set(items.filter((x) => typeof x === 'string' && x.trim()))].slice(0, 200)
+    await this.kv.set(FISH_KEYS.unlocks, JSON.stringify({ items: unique }))
+  }
+
   /** 关系事件幂等表（refId → 时间戳） */
   async readDedup(): Promise<Record<string, number>> {
     const raw = await this.readJson<Record<string, unknown>>(FISH_KEYS.dedup)

@@ -2250,12 +2250,14 @@ app.whenReady().then(async () => {
         if (!workGatewayClient) throw new Error('gateway 客户端尚未初始化')
         return workGatewayClient.createChatStream(input as never)
       },
-      generateDiary: async (prompt: string) => {
+      generateDiary: async (prompt: string, meta: { date: string }) => {
         if (!workGatewayClient) throw new Error('gateway 客户端尚未初始化')
+        // 必须给会话键：gateway 的 resolver 对空 project/conversation 会直接抛错（否则日记必失败）
         const result = await workGatewayClient.chat({
           messages: [{ role: 'user', content: prompt }],
           stream: false,
-          model: 'openclaw/feiyu'
+          model: 'openclaw/feiyu',
+          conversationKey: `conv:fish:daily-memory:${meta.date}`
         })
         return result.text
       },

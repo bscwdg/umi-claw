@@ -22,7 +22,6 @@ type FishVisualState = 'idle' | 'happy' | 'sleepy' | 'sulk' | 'eat' | 'caught'
 
 const state = ref({ mood: '', familiarity: 0, intimacy: 0 })
 const emotionState = ref<FishVisualState | ''>('')
-const size = ref<'small' | 'medium' | 'large'>('medium')
 const clickThrough = ref(false)
 const bubble = ref('')
 let bubbleTimer: ReturnType<typeof setTimeout> | null = null
@@ -79,7 +78,6 @@ onBeforeUnmount(() => {
 async function refresh(): Promise<void> {
   try {
     const settings = await window.api.character.settings.get()
-    size.value = settings.pet?.size ?? 'medium'
     clickThrough.value = Boolean(settings.pet?.clickThrough)
     state.value = await window.api.character.state()
   } catch {

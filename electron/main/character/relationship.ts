@@ -103,9 +103,10 @@ export function applyRelationshipEvent(
   }
   if (!rule) return { ...base, reason: 'unknown-event' }
 
-  // 幂等：同 refId 在窗口内只算一次
-  if (event.refId) {
-    const last = dedup[event.refId]
+  // 幂等：同 refId 在窗口内只算一次（长度截断 + 原型键防护）
+  const refKey = event.refId ? sanitizeRefId(event.refId) : ''
+  if (refKey) {
+    const last = dedup[refKey]
     if (typeof last === 'number' && ctx.now - last < DEDUP_WINDOW_MS) {
       return { ...base, reason: 'duplicate' }
     }
@@ -136,7 +137,7 @@ export function applyRelationshipEvent(
   next.lastInteractionAt = ctx.now
   next.updatedAt = ctx.now
 
-  if (event.refId) dedup[event.refId] = ctx.now
+  if (refKey) dedup[refKey] = ctx.now
   const pruned = pruneDedup(dedup, ctx.now)
 
   // 阶段只升不降
@@ -185,4 +186,15 @@ export function toDateKey(ts: number): string {
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
+}
+
+/** refId 幂等键消毒：防 __proto__/constructor 原型键与超长键污染幂等表 */
+export function sanitizeRefId(refId: string): string {
+  const raw = String(refId ?? '').trim()
+  if (!raw) return ''
+  const safe = raw.replace(/[^\w:.\-]/g, '_').slice(0, 64)
+  if (!safe || safe === '__proto__' || safe === 'constructor' || safe === 'prototype') {
+    return `ref:${safe || 'empty'}`
+  }
+  return `ref:${safe}`
 }

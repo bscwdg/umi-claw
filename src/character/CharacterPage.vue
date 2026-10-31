@@ -108,6 +108,7 @@
           {{ proactiveEnabled ? '关闭主动消息' : '开启主动消息' }}
         </button>
         <button class="btn ghost" :disabled="busy || !status.enabled" @click="quietDays">安静三天</button>
+        <button class="btn ghost" :disabled="busy || !status.enabled" @click="cancelQuiet">取消安静</button>
       </div>
       <p class="hint">安静期间不发主动消息，不影响聊天与好感；免打扰时段与每日上限在设置里改。</p>
     </section>
@@ -282,6 +283,13 @@ async function runMemory(): Promise<void> {
     await refresh()
     if (result.errors?.length) error.value = result.errors.join('；')
     else if (!result.ran) error.value = `这次没写：${result.reason}`
+  })
+}
+
+async function cancelQuiet(): Promise<void> {
+  await run(async () => {
+    await window.api.character.settings.set({ proactive: { silentUntil: 0 } } as never)
+    await refresh()
   })
 }
 

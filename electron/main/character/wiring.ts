@@ -62,7 +62,7 @@ export interface CharacterWiringDeps {
   /** 主动消息外发（C08 注入 QQ；缺省只发应用内气泡） */
   sendProactive?: (message: { text: string; channel: 'qq' | 'app' }) => Promise<boolean>
   /** 日记生成（index.ts 用 gateway 非流式 chat + openclaw/feiyu） */
-  generateDiary?: (prompt: string) => Promise<string>
+  generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
   /** 既有 Obsidian vault 路径（只在其下建 `大肥鱼/`，不新增知识库） */
   obsidianVaultPath?: () => string | undefined
   gatewayReady?: () => boolean
@@ -188,7 +188,8 @@ async function registerCharacterInternal(
         const target = join(vault, ...relPath.split('/'))
         mkdirSync(dirname(target), { recursive: true })
         writeFileSync(target, text, 'utf8')
-      }
+      },
+      obsidianAvailable: () => Boolean(deps.obsidianVaultPath?.()?.trim())
     })
     managerRef = manager
     await manager.init()
@@ -211,6 +212,23 @@ async function registerCharacterInternal(
             .catch((error) =>
               logger(`[character] 聊天记账失败: ${(error as Error)?.message ?? String(error)}`)
             )
+        },
+        contextProvider: async () => {
+          // 每轮注入的短上下文：称呼 + 阶段 + 今日活动（≤300 字，让 C05/C06 对对话可见）
+          try {
+            const settings = await manager.getSettings()
+            const state = await manager.getState()
+            const life = await manager.getLife()
+            const address = settings.relationship.address || '你'
+            const activity = life.day?.activity ?? ''
+            const stageLabels = ['初识', '眼熟', '熟客', '自己人', '搭子以上']
+            const line = `称呼：${address}；阶段：${stageLabels[state.stage] ?? '初识'}；心情：${
+              state.mood || '平静'
+            }${activity ? `；今天：${activity}` : ''}`
+            return line.slice(0, 300)
+          } catch {
+            return null
+          }
         },
         model: deps.chatModel ?? CHARACTER_AGENT_MODEL,
         now: deps.now,

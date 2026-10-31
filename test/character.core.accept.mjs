@@ -60,6 +60,9 @@ const {
   buildMemoryPrompt,
   diaryObsidianRelPath,
   extractDiaryText,
+  isMemoryWindow,
+  memoryDateFor,
+  normalizeDiary,
   shouldRunMemory,
   validateDiary
 } = memoryMod
@@ -1025,7 +1028,9 @@ await recorder.check('C37', '内容卡：确定性抽取、阶段过滤、7 天�
   assertEq(c.every((card) => !recent.includes(card.id)), true, '排除最近 7 天用过的卡')
 
   const low = drawLifeCards(lifeDeck, { stage: 0, date: '2026-11-03', count: 10 })
-  assertEq(low.every((card) => card.minStage <= 0), true, '阶段不足的卡不出现')
+  // stage 0 没有专属卡：逐级放宽兜底，保证「她的一天」永远有内容
+  assertEq(low.length > 0, true, '阶段不足时兜底抽卡，不会空白')
+  assertEq(low.every((card) => card.minStage >= 1), true, '兜底卡来自更高阶段')
   assertEq(slotForHour(8), 'morning', '8 点 → 上午')
   assertEq(slotForHour(23), 'night', '23 点 → 深夜')
   return '抽卡规则正确'
@@ -1108,7 +1113,9 @@ await recorder.check('C41', 'manager：每日生活幂等 + 7 天不重复 + LIF
   assertEq(docs.length, 1, 'LIFE.md 写一次')
   const again = await manager.ensureDailyLife()
   assertEq(again.generated, false, '同日不重复生成')
-  assertEq(docs.length, 1, '不重复写盘')
+  // 每次 ensure 都会补写一次（文件可能被用户删掉），但内容必须一致
+  assertEq(docs.length >= 1, true, '补写不破坏幂等')
+  assertEq(docs[docs.length - 1], docs[0], '补写内容一致')
 
   const life = await manager.getLife()
   assertEq(life.day?.date, '2026-11-01', '读到今天')
@@ -1319,8 +1326,120 @@ await recorder.check('C47', 'manager 每日记忆：失败计数/冷却/上限',
   fail = false
   now += 6 * 60_000
   const manual = await manager.maybeRunDailyMemory(now, true)
-  assertEq(manual.reason, 'attempts', '手动也受上限保护')
-  return '失败/冷却/上限正确'
+  assertEq(manual.ran, true, '手动可绕过尝试上限补救')
+  const after = await manager.getMemoryStatus()
+  assertEq(after.done, true, '手动补救后完成')
+  return '失败/冷却/上限/手动补救正确'
+})
+
+await recorder.check('C48', '每日记忆并发单飞：两次同时触发只生成一次', async () => {
+  const kv = memoryKv()
+  const now = new Date(2026, 10, 1, 23, 10, 0).getTime()
+  let generated = 0
+  const writes = []
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    loadLifeDeck: async () => lifeDeck,
+    generateDiary: async () => {
+      generated += 1
+      await new Promise((r) => setTimeout(r, 10))
+      return goodDiary
+    },
+    writeWorkspaceMemory: async (d, t) => writes.push(['ws', d, t]),
+    writeObsidianDiary: async (rel) => writes.push(['ob', rel])
+  })
+  await manager.init()
+  await manager.updateSettings({ enabled: true })
+  const [a, b] = await Promise.all([
+    manager.maybeRunDailyMemory(),
+    manager.maybeRunDailyMemory()
+  ])
+  assertEq(generated, 1, '生成只发生一次')
+  assertEq(a.ran === true || b.ran === true, true, '至少一次成功')
+  assertEq(writes.filter((w) => w[0] === 'ws').length, 1, 'workspace 只写一次')
+  return '并发单飞正确'
+})
+
+await recorder.check('C49', '主动性并发：额度预留后只发一条（cap=1）', async () => {
+  const kv = memoryKv()
+  const now = new Date(2026, 10, 1, 12, 0, 0).getTime()
+  const sent = []
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    loadLifeDeck: async () => lifeDeck,
+    sendProactive: async () => {
+      sent.push(1)
+      await new Promise((r) => setTimeout(r, 20))
+      return true
+    }
+  })
+  await manager.init()
+  await manager.updateSettings({
+    enabled: true,
+    proactive: { enabled: true, silenceDays: 0, dailyCap: 1, quietFrom: '00:00', quietTo: '00:00' }
+  })
+  const kvState = JSON.parse(kv.map.get(FISH_KEYS.state))
+  kvState.bornAt = now - 10 * 86_400_000
+  kv.map.set(FISH_KEYS.state, JSON.stringify(kvState))
+
+  const [r1, r2] = await Promise.all([manager.runProactiveTick(), manager.runProactiveTick()])
+  const sends = [r1, r2].filter((r) => r.delivered || r.message).length
+  assertEq(sent.length, 1, '并发 tick 只外发 1 条')
+  assertEq(sends >= 1, true, '至少一次成功')
+  return '主动性不超发'
+})
+
+await recorder.check('C50', '日记脱敏与规范化：密钥不落盘、额外 YAML 键被丢弃、围栏被剥离', async () => {
+  const dirty = `好的，日记如下：
+\`\`\`markdown
+---
+date: 2026-11-01
+tags: [大肥鱼/日记]
+stage: 2
+intimacy: 40
+mood: 平静
+source: test
+cssclass: evil
+aliases: [x]
+---
+# 本鱼的日记
+今天用了 sk-live-ABCDEF123456 这个 key，密码是 hunter2。希望明天别忘。
+\`\`\`
+希望你喜欢！`
+  const normalized = normalizeDiary(extractDiaryText(dirty), '2026-11-01')
+  assertEq(normalized.includes('sk-live-ABCDEF123456'), false, 'sk key 已脱敏')
+  assertEq(normalized.includes('hunter2'), false, '密码已脱敏')
+  assertEq(normalized.includes('cssclass'), false, '额外 YAML 键被丢弃')
+  assertEq(normalized.includes('希望你喜欢'), false, '结尾解释被剥离')
+  const check = validateDiary(normalized, '2026-11-01')
+  assertEq(check.ok, true, '规范化后通过校验')
+
+  assertEq(memoryDateFor(new Date(2026, 10, 2, 0, 30, 0).getTime()), '2026-11-01', '凌晨补写前一天')
+  assertEq(isMemoryWindow(new Date(2026, 10, 2, 0, 30, 0).getTime()), true, '凌晨窗口开放')
+  return '脱敏/规范化/跨午夜补偿 正确'
+})
+
+await recorder.check('C51', '聊天上下文注入：STATE/LIFE 摘要进 user 内容（≤300 字）', async () => {
+  let request = null
+  const svc = new CharacterChatService({
+    chat: async (input) => {
+      request = input
+      return fakeHandle(['好'])
+    },
+    store: {
+      readChatGeneration: async () => 1,
+      writeChatGeneration: async () => undefined
+    },
+    contextProvider: async () => '称呼：阿爸；阶段：熟客；今天：在数贝壳'
+  })
+  await svc.init()
+  await svc.send({ text: '在吗' }, () => undefined)
+  assertEq(request.messages[0].content.startsWith('【本鱼状态】'), true, '带状态前缀')
+  assertEq(request.messages[0].content.includes('在数贝壳'), true, '含今日活动')
+  assertEq(request.messages[0].content.endsWith('在吗'), true, '原文保留在末尾')
+  return '上下文注入正确'
 })
 
 const ok = printResult(recorder.toJSON())

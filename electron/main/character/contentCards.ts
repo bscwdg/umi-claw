@@ -97,22 +97,29 @@ export interface DrawOptions {
 export function drawLifeCards(deck: LifeDeck, options: DrawOptions): LifeCard[] {
   const recent = new Set(options.recentIds ?? [])
   const rng = options.rng ?? seededRandom(`${options.date}:${options.stage}`)
-  const pool = deck.cards.filter((c) => c.minStage <= options.stage && !recent.has(c.id))
+  const eligible = deck.cards.filter((c) => c.minStage <= options.stage)
+  const fresh = eligible.filter((c) => !recent.has(c.id))
   const picked: LifeCard[] = []
   const target = Math.max(1, options.count ?? 3)
-  while (picked.length < target && pool.length > 0) {
-    const total = pool.reduce((sum, c) => sum + c.weight, 0)
-    let r = rng() * total
-    let index = 0
-    for (let i = 0; i < pool.length; i += 1) {
-      r -= pool[i].weight
-      if (r <= 0) {
-        index = i
-        break
+  // 卡池不够时逐级放宽：先忽略 7 天去重，再从全部卡里兜底，保证每天都有「她的一天」
+  const pools = [fresh, eligible, [...deck.cards]]
+  for (const pool of pools) {
+    const rest = pool.filter((c) => !picked.some((p) => p.id === c.id))
+    while (picked.length < target && rest.length > 0) {
+      const total = rest.reduce((sum, c) => sum + c.weight, 0)
+      let r = rng() * total
+      let index = 0
+      for (let i = 0; i < rest.length; i += 1) {
+        r -= rest[i].weight
+        if (r <= 0) {
+          index = i
+          break
+        }
       }
+      picked.push(rest[index])
+      rest.splice(index, 1)
     }
-    picked.push(pool[index])
-    pool.splice(index, 1)
+    if (picked.length >= target) break
   }
   return picked
 }

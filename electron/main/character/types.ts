@@ -288,7 +288,11 @@ export function mergeCharacterSettings(
       p.contentTypes = proactive.contentTypes.filter((x): x is string => typeof x === 'string').slice(0, 20)
     }
     if (proactive.channel === 'qq' || proactive.channel === 'app') p.channel = proactive.channel
-    if (typeof proactive.silentUntil === 'number') p.silentUntil = Math.max(0, proactive.silentUntil)
+    if (typeof proactive.silentUntil === 'number') {
+      // 上界 14 天：防止一个超大值把主动性永久锁死
+      const max = Date.now() + 14 * 86_400_000
+      p.silentUntil = Math.min(Math.max(0, proactive.silentUntil), max)
+    }
   }
 
   const voice = src.voice as Record<string, unknown> | undefined

@@ -56,6 +56,8 @@ export interface CharacterChatServiceOptions {
   }
   /** 角色 agent 的模型路由（缺省 openclaw/feiyu，由 wiring 注入） */
   model?: string
+  /** 每轮注入的短上下文（STATE/LIFE 摘要，≤300 字）；只拼在 user 内容前，不落 sticky */
+  contextProvider?: () => Promise<string | null>
   /** 一轮聊天成功结束：交给关系引擎记账（refId=runId 保证幂等） */
   onMessage?: (text: string, refId: string) => void
   onEmotion?: (emotion: string, visualState: string) => void
@@ -187,10 +189,19 @@ export class CharacterChatService {
     const runId = `chat-${this.options.now?.() ?? Date.now()}-${(this.seq += 1)}`
 
     let handle: CharacterChatHandle
+    let context = ''
+    if (this.options.contextProvider) {
+      try {
+        context = (await this.options.contextProvider()) ?? ''
+      } catch {
+        context = ''
+      }
+    }
+    const content = context ? `【本鱼状态】${context}\n\n${text}` : text
     try {
       handle = await this.options.chat({
         conversationKey,
-        messages: [{ role: 'user', content: text }],
+        messages: [{ role: 'user', content }],
         stream: true,
         // 兜底路由到角色 agent：调用方忘传 model 也不能静默退回默认模型
         model: this.options.model ?? CHARACTER_AGENT_MODEL

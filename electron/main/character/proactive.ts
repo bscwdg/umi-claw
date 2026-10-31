@@ -12,6 +12,7 @@ export type ProactiveReason =
   | 'quiet-hours'
   | 'daily-cap'
   | 'silent-until'
+  | 'min-interval'
   | 'ok'
 
 export interface ProactiveDayState {
@@ -21,7 +22,12 @@ export interface ProactiveDayState {
   voiceSent?: number
   intimacyGained?: number
   events?: string[]
+  /** 最近一次主动发送时间（最小间隔用） */
+  lastActiveAt?: number
 }
+
+/** 两条主动消息之间的最小间隔：默认 1 小时（避免 tick 连发同一条内容） */
+export const PROACTIVE_MIN_GAP_MS = 60 * 60_000
 
 export interface ProactiveContext {
   settings: CharacterSettings
@@ -85,6 +91,11 @@ export function decideProactive(ctx: ProactiveContext): ProactiveDecision {
   // 当日上限
   const cap = Math.max(0, Math.min(10, Math.round(settings.proactive.dailyCap)))
   if ((day.activeSent ?? 0) >= cap) return deny('daily-cap')
+
+  // 最小间隔：tick 每 30s，不设间隔会连发同一条内容
+  if (day.lastActiveAt && now - day.lastActiveAt < PROACTIVE_MIN_GAP_MS) {
+    return deny('min-interval')
+  }
 
   return { send: true, reason: 'ok', channel }
 }

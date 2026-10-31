@@ -27,11 +27,18 @@ import {
 } from './relationship'
 import { composeLifeDay, renderLifeDoc, type LifeDay } from './life'
 import type { LifeDeck } from './contentCards'
-import { decideProactive, type ProactiveDayState, type ProactiveDecision } from './proactive'
+import {
+  decideProactive,
+  PROACTIVE_MIN_GAP_MS,
+  type ProactiveDayState,
+  type ProactiveDecision
+} from './proactive'
 import {
   buildMemoryPrompt,
   diaryObsidianRelPath,
   extractDiaryText,
+  memoryDateFor,
+  normalizeDiary,
   shouldRunMemory,
   validateDiary,
   type MemoryDayState,
@@ -53,10 +60,12 @@ export interface CharacterManagerOptions {
   /** 主动消息外发（C08 接 QQ；不提供则只做应用内气泡） */
   sendProactive?: (message: { text: string; channel: 'qq' | 'app' }) => Promise<boolean>
   /** 每日记忆（C07）：生成日记 + 双写（workspace / Obsidian） */
-  generateDiary?: (prompt: string) => Promise<string>
+  generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
   readWorkspaceMemory?: (date: string) => Promise<string | null>
   writeWorkspaceMemory?: (date: string, text: string) => Promise<void>
   writeObsidianDiary?: (relPath: string, text: string) => Promise<void>
+  /** Obsidian vault 是否可用（缺失时日记降级 workspace-only，不判失败） */
+  obsidianAvailable?: () => boolean
 }
 
 export class CharacterManager {
@@ -76,11 +85,16 @@ export class CharacterManager {
     text: string
     channel: 'qq' | 'app'
   }) => Promise<boolean>
-  private readonly generateDiary?: (prompt: string) => Promise<string>
+  private readonly generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
   private readonly readWorkspaceMemory?: (date: string) => Promise<string | null>
   private readonly writeWorkspaceMemory?: (date: string, text: string) => Promise<void>
   private readonly writeObsidianDiary?: (relPath: string, text: string) => Promise<void>
+  private readonly obsidianAvailable?: () => boolean
   private lifeDeckCache: LifeDeck | null = null
+  private memoryInFlight: Promise<{ ran: boolean; reason: MemoryGateReason; errors?: string[] }> | null =
+    null
+  private proactiveInFlight = false
+  private disposed = false
 
   private settings: CharacterSettings | null = null
   private state: CharacterState | null = null
@@ -117,6 +131,7 @@ export class CharacterManager {
     this.readWorkspaceMemory = options.readWorkspaceMemory
     this.writeWorkspaceMemory = options.writeWorkspaceMemory
     this.writeObsidianDiary = options.writeObsidianDiary
+    this.obsidianAvailable = options.obsidianAvailable
   }
 
   async init(): Promise<void> {
@@ -235,6 +250,22 @@ export class CharacterManager {
     await this.store.writeState(next)
     await this.store.writeDedup(result.dedup)
     this.state = next
+    // day 事件（记日记时当素材）：与 activeSent 等共用同一 day 键，必须在锁内合并
+    const date = toDateKey(now)
+    const time = new Date(now).toTimeString().slice(0, 5)
+    await this.patchDayUnlocked(date, (day) => {
+      const events = Array.isArray(day.events) ? (day.events as unknown[]) : []
+      return {
+        ...day,
+        events: [...events, `${time} ${event.type}`].slice(-50)
+      }
+    })
+    if (result.unlocked.length > 0) {
+      const before = await this.store.readUnlocks()
+      const merged = [...before]
+      for (const item of result.unlocked) if (!merged.includes(item)) merged.push(item)
+      await this.store.writeUnlocks(merged)
+    }
     this.emit({ type: 'state', payload: clone(next), at: now })
     if (result.unlocked.length > 0) {
       this.emit({
@@ -284,11 +315,10 @@ export class CharacterManager {
     const existing = await this.store.readLife<LifeDay>(date)
     const deck = await this.getLifeDeck()
     if (existing && existing.date === date) {
-      return {
-        day: existing,
-        doc: renderLifeDoc(existing, this.cardsFor(deck, existing.cardIds ?? [])),
-        generated: false
-      }
+      const doc = renderLifeDoc(existing, this.cardsFor(deck, existing.cardIds ?? []))
+      // 文件可能被用户删掉/首写失败：每次 ensure 都补写一次（幂等）
+      await this.writeLifeDocSafe(doc)
+      return { day: existing, doc, generated: false }
     }
     const state = await this.getState()
     const recent = await this.recentCardIds(date, now)
@@ -301,14 +331,19 @@ export class CharacterManager {
       recentIds: recent
     })
     await this.store.writeLife(date, composed.day)
-    if (this.writeLifeDoc) {
-      try {
-        await this.writeLifeDoc(composed.doc)
-      } catch (error) {
-        this.logger(`[character] LIFE.md 写入失败: ${(error as Error)?.message ?? String(error)}`)
-      }
-    }
+    await this.writeLifeDocSafe(composed.doc)
+    // 每日剪枝：长跑进程也要按保留策略清理（§13.1-3）
+    void this.store.prune().catch(() => undefined)
     return { day: composed.day, doc: composed.doc, generated: true }
+  }
+
+  private async writeLifeDocSafe(doc: string): Promise<void> {
+    if (!this.writeLifeDoc) return
+    try {
+      await this.writeLifeDoc(doc)
+    } catch (error) {
+      this.logger(`[character] LIFE.md 写入失败: ${(error as Error)?.message ?? String(error)}`)
+    }
   }
 
   /** 读某天「她的一天」（缺省今天） */
@@ -318,6 +353,9 @@ export class CharacterManager {
   ): Promise<{ day: LifeDay | null; doc: string | null }> {
     this.assertInitialized()
     const target = date ?? toDateKey(now)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(target)) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '日期格式应为 YYYY-MM-DD')
+    }
     const day = await this.store.readLife<LifeDay>(target)
     if (!day) return { day: null, doc: null }
     const deck = await this.getLifeDeck()
@@ -351,47 +389,91 @@ export class CharacterManager {
   /** 记一次主动发送（含降级通道）；用于日上限与状态展示 */
   async markProactiveSent(channel: 'qq' | 'app', now = this.now()): Promise<number> {
     this.assertInitialized()
-    return this.withMutation(async () => {
-      const date = toDateKey(now)
-      const day = (await this.store.readDay<ProactiveDayState>(date)) ?? {}
-      const next: ProactiveDayState = {
-        ...day,
-        activeSent: (day.activeSent ?? 0) + 1,
-        events: [...(day.events ?? []), `${date}T${new Date(now).toTimeString().slice(0, 5)}:${channel}`]
-      }
-      await this.store.writeDay(date, next)
-      return next.activeSent ?? 0
-    })
+    const date = toDateKey(now)
+    const time = new Date(now).toTimeString().slice(0, 5)
+    const next = await this.patchDay(date, (day) => ({
+      ...day,
+      activeSent: (typeof day.activeSent === 'number' ? day.activeSent : 0) + 1,
+      lastActiveAt: now,
+      events: [
+        ...(Array.isArray(day.events) ? (day.events as unknown[]) : []),
+        `${time}:${channel}`
+      ].slice(-50)
+    }))
+    return typeof next.activeSent === 'number' ? next.activeSent : 0
   }
 
   /**
-   * 主动性 tick：判定 → 外发（可选）→ 应用内气泡兜底 → 记账。
-   * 不重试、不换通道；外发失败只降级到应用内气泡。
+   * 主动性 tick：原子预留额度 → 外发（可选）→ 失败降级应用内气泡。
+   * 不重试、不换通道；tick 重入被 in-flight 挡住，额度在发送前已计入。
    */
   async runProactiveTick(
     now = this.now()
   ): Promise<{ decision: ProactiveDecision; message?: string; delivered?: boolean }> {
-    const { decision, message } = await this.evaluateProactive(now)
-    if (!decision.send || !message) return { decision }
-    let delivered = false
-    if (this.sendProactive) {
-      try {
-        delivered = await this.sendProactive({ text: message, channel: decision.channel })
-      } catch (error) {
-        this.logger(`[character] 主动消息外发失败: ${(error as Error)?.message ?? String(error)}`)
-      }
+    this.assertInitialized()
+    if (this.proactiveInFlight) {
+      return { decision: { send: false, reason: 'min-interval', channel: 'app' } }
     }
-    // 应用内气泡始终发（外部失败也不打扰用户操作）
-    this.emit({ type: 'bubble', payload: { text: message }, at: now })
-    await this.markProactiveSent(delivered ? decision.channel : 'app', now)
-    return { decision, message, delivered }
+    this.proactiveInFlight = true
+    try {
+      const { decision, message } = await this.evaluateProactive(now)
+      if (!decision.send || !message) return { decision }
+      const claimed = await this.claimProactiveSlot(now)
+      if (!claimed) {
+        return { decision: { ...decision, send: false, reason: 'daily-cap' } }
+      }
+      let delivered = false
+      if (this.sendProactive) {
+        try {
+          delivered = await this.sendProactive({ text: message, channel: decision.channel })
+        } catch (error) {
+          this.logger(`[character] 主动消息外发失败: ${(error as Error)?.message ?? String(error)}`)
+        }
+      }
+      // 外发成功就不要再发应用内气泡（避免双通知）；失败才降级
+      if (!delivered) {
+        this.emit({ type: 'bubble', payload: { text: message }, at: now })
+      }
+      return { decision, message, delivered }
+    } finally {
+      this.proactiveInFlight = false
+    }
+  }
+
+  /** 发送前预留额度（锁内二次校验上限与最小间隔，防并发超发） */
+  private async claimProactiveSlot(now: number): Promise<boolean> {
+    const date = toDateKey(now)
+    const time = new Date(now).toTimeString().slice(0, 5)
+    return this.withMutation(async () => {
+      const settings = await this.getSettings()
+      const day = (await this.store.readDay<ProactiveDayState>(date)) ?? {}
+      const cap = Math.max(0, Math.min(10, Math.round(settings.proactive.dailyCap)))
+      if ((day.activeSent ?? 0) >= cap) return false
+      if (day.lastActiveAt && now - day.lastActiveAt < PROACTIVE_MIN_GAP_MS) return false
+      const next: ProactiveDayState = {
+        ...day,
+        activeSent: (day.activeSent ?? 0) + 1,
+        lastActiveAt: now,
+        events: [...(day.events ?? []), `${time}:reserve`].slice(-50)
+      }
+      await this.store.writeDay(date, next)
+      return true
+    })
   }
 
   private async getLifeDeck(): Promise<LifeDeck> {
     if (!this.lifeDeckCache) {
-      this.lifeDeckCache = this.loadLifeDeck
-        ? await this.loadLifeDeck()
-        : { schema: 'fish-life-cards/1', version: '0.0.0', cards: [] }
+      try {
+        this.lifeDeckCache = this.loadLifeDeck
+          ? await this.loadLifeDeck()
+          : { schema: 'fish-life-cards/1', version: '0.0.0', cards: [] }
+      } catch (error) {
+        // 坏卡文件不能每 30s 刷日志：缓存空 deck 并只记一次
+        this.logger(
+          `[character] 生活卡加载失败，降级为空卡池: ${(error as Error)?.message ?? String(error)}`
+        )
+        this.lifeDeckCache = { schema: 'fish-life-cards/1', version: '0.0.0', cards: [] }
+      }
     }
     return this.lifeDeckCache
   }
@@ -435,78 +517,116 @@ export class CharacterManager {
     manual = false
   ): Promise<{ ran: boolean; reason: MemoryGateReason; errors?: string[] }> {
     this.assertInitialized()
-    const date = toDateKey(now)
-    const settings = await this.getSettings()
-    const day = (await this.store.readDay<{ memory?: MemoryDayState }>(date)) ?? {}
-    const gate = shouldRunMemory({ now, day: day.memory ?? {}, settings, manual })
-    if (!gate.run) return { ran: false, reason: gate.reason }
-    return this.runDailyMemoryImpl(now, manual)
+    // 生成常 >30s：tick 与手动可能同时进入；单飞锁必须在第一个 await 之前同步占位
+    if (this.memoryInFlight) return this.memoryInFlight
+    const task = (async () => {
+      const date = manual ? toDateKey(now) : memoryDateFor(now)
+      const settings = await this.getSettings()
+      const day = (await this.store.readDay<{ memory?: MemoryDayState }>(date)) ?? {}
+      const gate = shouldRunMemory({ now, day: day.memory ?? {}, settings, manual })
+      if (!gate.run) return { ran: false, reason: gate.reason }
+      return this.runDailyMemoryImpl(now, manual, date)
+    })()
+    this.memoryInFlight = task.finally(() => {
+      this.memoryInFlight = null
+    })
+    return this.memoryInFlight
   }
 
   private async runDailyMemoryImpl(
     now: number,
-    _manual: boolean
+    _manual: boolean,
+    date: string
   ): Promise<{ ran: boolean; reason: MemoryGateReason; errors?: string[] }> {
-    const date = toDateKey(now)
-    const day = (await this.store.readDay<{ memory?: MemoryDayState; events?: string[] }>(date)) ?? {}
-    const memory: MemoryDayState = { ...(day.memory ?? {}) }
+    const base =
+      (await this.store.readDay<{ memory?: MemoryDayState; events?: string[] }>(date)) ?? {}
+    const memory: MemoryDayState = { ...(base.memory ?? {}) }
     memory.attempts = (memory.attempts ?? 0) + 1
     memory.lastAttemptAt = now
+    // 先落 attempts：并发/崩溃后冷却与上限才有意义
+    await this.mergeDayMemory(date, memory)
     try {
       if (!this.generateDiary || !this.writeWorkspaceMemory || !this.writeObsidianDiary) {
         throw new Error('记忆生成链路未接线')
       }
-      const settings = await this.getSettings()
-      const state = await this.getState()
-      const life = await this.ensureDailyLife(now)
-      const workspaceMemory = this.readWorkspaceMemory
-        ? await this.readWorkspaceMemory(date).catch(() => null)
-        : null
-      const prompt = buildMemoryPrompt({
-        date,
-        address: settings.relationship.address,
-        stage: state.stage,
-        stateDoc: renderStateDoc(state, settings),
-        lifeDoc: life.doc,
-        workspaceMemory: workspaceMemory ?? '',
-        recentEvents: day.events ?? []
-      })
-      const raw = await this.generateDiary(prompt)
-      const cleaned = extractDiaryText(raw)
-      const validation = validateDiary(cleaned, date)
-      if (!validation.ok) {
-        throw new Error(`日记校验失败：${validation.errors.join('；')}`)
+      let cleaned = memory.pendingText ?? ''
+      if (!cleaned) {
+        const settings = await this.getSettings()
+        const state = await this.getState()
+        const life = await this.ensureDailyLife(now)
+        const workspaceMemory = this.readWorkspaceMemory
+          ? await this.readWorkspaceMemory(date).catch(() => null)
+          : null
+        const prompt = buildMemoryPrompt({
+          date,
+          address: settings.relationship.address,
+          stage: state.stage,
+          stateDoc: renderStateDoc(state, settings),
+          lifeDoc: life.doc,
+          workspaceMemory: workspaceMemory ?? '',
+          recentEvents: base.events ?? []
+        })
+        const raw = await this.generateDiary(prompt, { date })
+        // 先规范化（frontmatter 白名单 + 正文脱敏），再校验/落盘
+        cleaned = normalizeDiary(extractDiaryText(raw), date)
+        const validation = validateDiary(cleaned, date)
+        if (!validation.ok) {
+          throw new Error(`日记校验失败：${validation.errors.join('；')}`)
+        }
+        memory.pendingText = cleaned
+        await this.mergeDayMemory(date, memory)
+      } else {
+        const validation = validateDiary(cleaned, date)
+        if (!validation.ok) {
+          throw new Error(`复用日记校验失败：${validation.errors.join('；')}`)
+        }
       }
       // 先写 workspace（宿主可回滚），再写 Obsidian 日记目录
       await this.writeWorkspaceMemory(date, cleaned)
+      memory.memoryFile = `memory/${date}.md`
+      const obsidianReady = this.obsidianAvailable ? this.obsidianAvailable() : true
+      if (!obsidianReady) {
+        // 未配置 vault 是合法状态：降级 workspace-only，不判失败、不重复生成
+        memory.done = true
+        memory.partial = false
+        memory.lastError = undefined
+        memory.pendingText = undefined
+        memory.obsidianPath = undefined
+        await this.mergeDayMemory(date, memory)
+        this.emit({
+          type: 'bubble',
+          payload: { text: `日记写好了（${date}，未配置 Obsidian，只存本机）` },
+          at: now
+        })
+        return { ran: true, reason: 'ok' }
+      }
+      memory.partial = true
+      await this.mergeDayMemory(date, memory)
       const relPath = diaryObsidianRelPath(date)
       await this.writeObsidianDiary(relPath, cleaned)
       memory.done = true
+      memory.partial = false
       memory.lastError = undefined
-      memory.memoryFile = `memory/${date}.md`
+      memory.pendingText = undefined
       memory.obsidianPath = relPath
-      await this.writeDayMemory(date, day, memory)
-      this.emit({
-        type: 'bubble',
-        payload: { text: `日记写好了（${date}）` },
-        at: now
-      })
+      await this.mergeDayMemory(date, memory)
+      this.emit({ type: 'bubble', payload: { text: `日记写好了（${date}）` }, at: now })
       return { ran: true, reason: 'ok' }
     } catch (error) {
       const message = (error as Error)?.message ?? String(error)
       memory.lastError = message
-      await this.writeDayMemory(date, day, memory)
+      await this.mergeDayMemory(date, memory)
       this.logger(`[character] 每日记忆失败（第 ${memory.attempts} 次）: ${message}`)
-      return { ran: false, reason: 'ok', errors: [message] }
+      return { ran: false, reason: 'failed', errors: [message] }
     }
   }
 
-  private async writeDayMemory(
-    date: string,
-    day: Record<string, unknown>,
-    memory: MemoryDayState
-  ): Promise<void> {
-    await this.store.writeDay(date, { ...day, memory })
+  /** 只合并 memory 字段并加锁：避免长生成回来用旧 day 快照覆盖 activeSent/events */
+  private async mergeDayMemory(date: string, memory: MemoryDayState): Promise<void> {
+    await this.withMutation(async () => {
+      const fresh = (await this.store.readDay<Record<string, unknown>>(date)) ?? {}
+      await this.store.writeDay(date, { ...fresh, memory })
+    })
   }
 
   async reset(options: CharacterResetOptions = {}): Promise<{ scope: string }> {
@@ -547,6 +667,7 @@ export class CharacterManager {
 
   /** 释放：清理防抖定时器 */
   dispose(): void {
+    this.disposed = true
     if (this.personaSyncTimer) clearTimeout(this.personaSyncTimer)
     this.personaSyncTimer = null
   }
@@ -652,9 +773,36 @@ export class CharacterManager {
   }
 
   private assertInitialized(): void {
+    if (this.disposed) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '大肥鱼已停用')
+    }
     if (!this.initialized) {
       throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '大肥鱼尚未初始化')
     }
+  }
+
+  /** day 记录读改写（走同一串行队列，避免 memory/proactive/events 互相覆盖） */
+  private async patchDay(
+    date: string,
+    fn: (day: Record<string, unknown>) => Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    return this.withMutation(async () => {
+      const fresh = (await this.store.readDay<Record<string, unknown>>(date)) ?? {}
+      const next = fn({ ...fresh })
+      await this.store.writeDay(date, next)
+      return next
+    })
+  }
+
+  /** 已在 mutation 队列内时使用：只读改写、不再次加锁 */
+  private async patchDayUnlocked(
+    date: string,
+    fn: (day: Record<string, unknown>) => Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    const fresh = (await this.store.readDay<Record<string, unknown>>(date)) ?? {}
+    const next = fn({ ...fresh })
+    await this.store.writeDay(date, next)
+    return next
   }
 
   /** 串行化状态写：并发 interact/savePetState 不会互相覆盖（桌宠连点） */
