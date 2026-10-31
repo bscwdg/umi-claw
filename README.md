@@ -517,3 +517,37 @@ OpenClaw 通过 MCP 工具按需检索片段，不用把整个知识库塞进上
 ## License
 
 MIT
+
+## 启动可靠性修复（2026-10-31，自 4.0 同步）
+
+3.0 与 4.0 共用 OpenClaw 网关启动链路，本次把 4.0 的启动慢优化与可靠性修复按功能簇同步到 3.0，
+并在 3.0 自己的测试体系（ui/voice/maintenance/gateway 等）下验证。
+
+### 新增能力
+- **就绪态与阶段可视化**：`running`（进程）与 `ready`（/health 200）分离；点击启动立即显示「启动中」；
+  Dashboard 展示 preparing/spawning/loading/ready 阶段、预计剩余时间（ETA）；启动中禁用重启按钮
+- **webhook 迁移标记兜底**：无 `legacyWebhook` 时自动补 `meta.migrations.webhookListeners=true`，
+  避免每次启动重跑旧迁移（约 185s 级）；备份 + 原子写回退 + BOM/CRLF 保留，走官方写入串行队列
+- **退出应用时保留网关（可选，默认关）**：设置页新增开关；开启后网关 detached 运行，退出应用不停网关，
+  下次启动校验「端口 owner pid / openclaw 版本 / 健康检查」后直接复用（跳过冷启动）
+- **启动耗时统计与 ETA**：记录最近 5 次启动耗时，样本 ≤2 用最近一次、≥3 取最近 3 次中位数
+- **网关日志文件 tail**：增量读取、半行 carry、截断检测、stdout/stderr 分流、兼容 pino `msg`
+- **语音音色热更**：桥接脚本每次合成读取 `data/voice/tts-bridge.json`，改音色**无需重启网关**；
+  改 Key / TTS 模式 / 通道仍需重启（Key 不落盘）
+- 环境开关：`OPENCLAW_GATEWAY_STARTUP_TRACE` 默认关（`CLAW_OC_STARTUP_TRACE=1` 开启）；
+  `OPENCLAW_FS_SAFE_NATIVE_MODE` 覆盖值白名单；`NODE_COMPILE_CACHE` >512MB 后台清理
+
+### 合并前审查后的收尾
+- adopt 复用网关时不再显示异常的「本次启动耗时」
+- 编译缓存清理覆盖默认配置（keep=false 也会写缓存）
+- 串行配置写入避免未处理 rejection；渲染端 `AppConfig` 补 `keepGatewayOnQuit`
+- 退出路径统一走幂等 `handleAppQuit`（quitApp / 托盘 / before-quit）
+
+### 验证
+- 双 typecheck 0 错、`npm run build` 通过
+- 全量 `npm run accept` 18 套全绿（accept×16 + e2e + smoke）
+- 单跑：maintenance 28/28、voice 20/20、ui 19/19、gateway 29/29、config-writer 21/21
+
+### 冒烟建议
+开启保留网关 → 重启应用 → 退出 → 再开（应秒级复用）→ 关闭开关退出（应正常停网关）；
+升级核心包后旧后台网关应被拒绝复用并结束；改音色不重启网关、改 Key 需重启。
