@@ -793,8 +793,19 @@ async function restartOpenClaw(): Promise<void> {
   if (!window.confirm('重启 OpenClaw 网关？当前对话会短暂中断。')) return
   busy.value = true
   try {
-    await window.api.claw.restart()
-    showNotice('网关已重启；对话内语音配置已生效')
+    const restarted = await window.api.claw.restart()
+    if (!restarted?.success) {
+      showError(new Error(restarted?.error || '重启失败'))
+      return
+    }
+    // 进程起了不等于网关可用：必须等 /health 通（openclaw 要加载插件/渠道，可能数分钟）
+    showNotice('网关重启中，正在等待就绪（首次可能较慢）…')
+    const ready = await window.api.claw.waitReady()
+    if (!ready.ready) {
+      showError(new Error(ready.error || '网关启动失败，请查看日志'))
+      return
+    }
+    showNotice(`网关已就绪（本次启动 ${Math.round(ready.elapsedMs / 1000)}s）；对话内语音配置已生效`)
     await refreshOpenClawStatus()
   } catch (e) {
     showError(e)

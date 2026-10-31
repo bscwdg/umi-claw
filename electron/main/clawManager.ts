@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events'
 import { ChildProcess, spawn, exec, execFile } from 'child_process'
-import { join, relative, resolve, sep } from 'path'
+import { dirname, join, relative, resolve, sep } from 'path'
 import {
   existsSync,
   mkdirSync,
@@ -9,11 +9,20 @@ import {
   readdirSync,
   openSync,
   readSync,
-  closeSync
+  closeSync,
+  writeFileSync
 } from 'fs'
 import { promises as fs } from "fs";
 import { ConfigManager } from './configManager'
 import { promisify } from "util";
+import { get as httpGet } from 'node:http'
+import {
+  appendStartupDuration,
+  estimateStartupMs,
+  parseStartupStats,
+  serializeStartupStats
+} from './startupStats'
+import { connect as netConnect } from 'node:net'
 import { toOpenClawProviderKey } from './modelConfig'
 import { openClawPaths, toPosix, buildOpenClawEnv } from './openClawPaths'
 
@@ -25,7 +34,22 @@ export interface ClawStatus {
   startedAt?: number
   /** doctor --fix / 状态库迁移进行中（网关未起但非静止） */
   maintenance?: boolean
+  /** 进程已起但 `/health` 还没通（启动中） */
+  starting?: boolean
+  /** 网关真正可用（`/health` 200） */
+  ready?: boolean
+  /** 就绪时刻（毫秒时间戳），未就绪为空 */
+  readyAt?: number
+  /** 最近一次「spawn→就绪」耗时（毫秒），便于前端/日志展示 */
+  startupMs?: number
+  /** 启动阶段（前端展示「现在在等什么」）：preparing/spawning/loading/ready */
+  bootPhase?: BootPhase
+  /** 依据最近几次启动历史估算的总耗时（毫秒），用于 UI「预计还需 N 秒」 */
+  estimateStartupMs?: number
 }
+
+/** 启动阶段：preparing=主进程准备（清理/patch/doctor）；spawning=已拉起进程；loading=端口已监听、插件/渠道加载中 */
+export type BootPhase = 'idle' | 'preparing' | 'spawning' | 'loading' | 'ready'
 
 export interface LogEntry {
   line: string
@@ -166,6 +190,25 @@ export class ClawManager extends EventEmitter {
   private maxLogs = 2000
   private startedAt?: number
   private port = 3213
+  /**
+   * 网关「真正可用」标记（`GET /health` 返回 200）。
+   *
+   * 注意：`startedAt` 只表示**进程已 spawn**，此时 openclaw 还要加载插件/渠道/状态库
+   * （实测可达数分钟）。前端/UI 必须用 `ready` 判断「能不能开网页」，不能用 `running`。
+   */
+  private ready = false
+  private readyAt?: number
+  /** 后台探活进行中：停止/退出后置 true，避免旧探针继续改状态 */
+  private readyProbeStopped = false
+  /** 探活代际：每次 stop/spawn 自增；旧代际的探针结果一律丢弃（防重启窗口串台） */
+  private readyProbeSeq = 0
+  /** 当前启动阶段（见 BootPhase） */
+  private bootPhase: BootPhase = 'idle'
+  /** 最近几次「spawn→health」耗时（毫秒），用于估算 ETA */
+  private startupDurations: number[] = []
+  private startupStatsLoaded = false
+  /** 本次 spawn 是否已记过耗时（探针与 waitReady 可能同时完成，避免重复记录） */
+  private startupDurationRecorded = false
   private configManager: ConfigManager
   private isStopping = false
   // 网关退出码 78（状态库需要 schema 迁移）时的自动修复状态
@@ -431,6 +474,9 @@ export class ClawManager extends EventEmitter {
       console.log('启动已在进行中，归并到同一次启动')
       return this.startInFlight
     }
+    // 提前进入「准备配置」阶段：spawn 之前还有 ghost 清理 / captures 回收 / 配置 patch / doctor，
+    // 在慢环境里可能持续数分钟；前端据此显示「正在准备」而不是停在「已停止」。
+    this._setBootPhase('preparing', '[gateway] 开始准备启动（清理残留 / 同步配置 / 检查插件）…')
     const inFlight = this._spawnGateway().finally(() => {
       if (this.startInFlight === inFlight) this.startInFlight = null
     })
@@ -455,9 +501,11 @@ export class ClawManager extends EventEmitter {
     const clawJsPath = openClawPaths.clawJs(dataDir)
 
     if (!existsSync(nodePath)) {
+      this._setBootPhase('idle')
       return { success: false, error: '未找到 Node.js 运行时，请先初始化环境' }
     }
     if (!existsSync(clawJsPath)) {
+      this._setBootPhase('idle')
       return { success: false, error: '未找到 OpenClaw 核心库，请先初始化环境' }
     }
 
@@ -557,11 +605,39 @@ export class ClawManager extends EventEmitter {
       }
     }
 
+    // V8 编译缓存：渠道插件包很大（feishu 73MB），每次冷启动都要重新编译 JS。
+    // NODE_COMPILE_CACHE 让 Node 把编译产物缓存到磁盘，后续启动复用（Node 22+ 支持）。
+    // 缓存放 data 目录内，不把任何数据迁出用户既有的数据盘。
+    let nodeCompileCacheDir = ''
+    try {
+      nodeCompileCacheDir = join(dataDir, 'cache', 'node-compile')
+      mkdirSync(nodeCompileCacheDir, { recursive: true })
+    } catch {
+      nodeCompileCacheDir = ''
+    }
+
     const commonEnv = buildOpenClawEnv(dataDir, nodePath, {
       PORT: String(this.port),
       OPENCLAW_DISABLE_BONJOUR: '1',
       BONJOUR_DISABLE: '1',
+      ...(nodeCompileCacheDir ? { NODE_COMPILE_CACHE: nodeCompileCacheDir } : {}),
       OPENCLAW_GATEWAY_MODE: 'local',
+      // 官方启动阶段 trace：在日志里给出 plugins.gateway-load.plugin.<id> 的
+      // configValidation / artifactPreparation / source-capture+load / register 分项耗时，
+      // 用于定位「插件物化慢」的确切环节（只写日志，不改变行为）。
+      // 官方启动 trace：默认关闭（日志量大）；排障时用 CLAW_OC_STARTUP_TRACE=1 打开
+      ...(process.env.CLAW_OC_STARTUP_TRACE === '1' ? { OPENCLAW_GATEWAY_STARTUP_TRACE: '1' } : {}),
+      // 实验开关：fs-safe 走 JS 兜底（native 会对每次文件操作做 identity/ACL 校验，
+      // 官方文档说 strict-mode 的额外校验 "can be slower"）。用 per-plugin trace 对比
+      // feishu 的 loadMs 是否下降；默认写 'auto'，实验期间用 'off'。
+      // 注：off 会让 Windows 安全凭证读取（SecretRef/GitHub 身份）不可用——本应用当前不依赖。
+      // 覆盖值必须白名单，避免非法值让网关启动失败
+      OPENCLAW_FS_SAFE_NATIVE_MODE: (() => {
+        const override = process.env.CLAW_FS_SAFE_NATIVE_MODE
+        return override === 'auto' || override === 'off' || override === 'require'
+          ? override
+          : 'auto'
+      })(),
       GATEWAY_MODE: 'local',
       gateway__mode: 'local',
       NODE_CONFIG_DIR: targetConfigDir
@@ -607,6 +683,9 @@ export class ClawManager extends EventEmitter {
       })
 
       this.startedAt = Date.now()
+      this.startupDurationRecorded = false
+      this._setBootPhase('spawning', '[gateway] 网关进程已拉起，等待 HTTP 端口监听…')
+      this._startReadyProbe()
       this._setupProcessEvents(this.process!)
       this.emit('statusChange', true, this.port)
       if (this.healthyResetTimer) clearTimeout(this.healthyResetTimer)
@@ -618,6 +697,7 @@ export class ClawManager extends EventEmitter {
       return { success: true, warning }
     } catch (err: any) {
       this.process = null
+      this._setBootPhase('idle')
       return { success: false, error: err.message }
     }
   }
@@ -666,6 +746,7 @@ export class ClawManager extends EventEmitter {
       proc.on('exit', () => {
         clearTimeout(timeout)
         this.startedAt = undefined
+        this._markNotReady()
         this.emit('statusChange', false)
         this._addLog('OpenClaw 已停止', 'system')
         finish()
@@ -674,11 +755,222 @@ export class ClawManager extends EventEmitter {
       proc.on('error', (err) => {
         clearTimeout(timeout)
         this.startedAt = undefined
+        this._markNotReady()
         this.emit('statusChange', false)
         this._addLog(`停止过程中出错: ${err.message}`, 'system')
         finish()
       })
     })
+  }
+
+  private get _startupStatsPath(): string {
+    return join(this.configManager.getDataDir(), 'cache', 'startup-stats.json')
+  }
+
+  /** 懒加载历史启动耗时（读失败一律当空，不影响启动） */
+  private _ensureStartupStatsLoaded(): void {
+    if (this.startupStatsLoaded) return
+    this.startupStatsLoaded = true
+    try {
+      this.startupDurations = parseStartupStats(readFileSync(this._startupStatsPath, 'utf-8'))
+    } catch {
+      this.startupDurations = []
+    }
+  }
+
+  /** 记录一次「spawn→health」耗时（同一次 spawn 只记一次），并落盘供 ETA 估算 */
+  private _recordStartupDuration(durationMs: number): void {
+    if (this.startupDurationRecorded) return
+    this.startupDurationRecorded = true
+    this._ensureStartupStatsLoaded()
+    this.startupDurations = appendStartupDuration(this.startupDurations, durationMs)
+    try {
+      const file = this._startupStatsPath
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, serializeStartupStats(this.startupDurations), 'utf-8')
+    } catch {
+      // 统计写盘失败不影响启动
+    }
+  }
+
+  /** 估算总启动耗时（最近几次中位数）；没有历史时 undefined */
+  private _estimateStartupMs(): number | undefined {
+    this._ensureStartupStatsLoaded()
+    return estimateStartupMs(this.startupDurations)
+  }
+  /** 更新启动阶段并推送（阶段变化才推送，避免事件/日志刷屏） */
+  private _setBootPhase(phase: BootPhase, logLine?: string): void {
+    if (this.bootPhase === phase) return
+    this.bootPhase = phase
+    if (logLine) this._addLog(logLine, 'system')
+    // preparing 阶段进程还没起：由渲染端本地状态显示「准备中」，这里不推 running=false 打扰它
+    if (this.process || phase === 'idle') this.emit('statusChange', !!this.process, this.port)
+  }
+
+  /** TCP 端口是否已监听（HTTP 服务在听、但 /health 还没 200 → 插件/渠道加载中） */
+  private _probePortOpen(timeoutMs = 800): Promise<boolean> {
+    const port = Number(this.port) || 3213
+    return new Promise((resolve) => {
+      let settled = false
+      const done = (ok: boolean): void => {
+        if (settled) return
+        settled = true
+        resolve(ok)
+      }
+      try {
+        const socket = netConnect({ host: '127.0.0.1', port })
+        socket.setTimeout(timeoutMs)
+        socket.once('connect', () => {
+          socket.destroy()
+          done(true)
+        })
+        socket.once('timeout', () => {
+          socket.destroy()
+          done(false)
+        })
+        socket.once('error', () => done(false))
+      } catch {
+        done(false)
+      }
+    })
+  }
+  /**
+   * 探测网关是否真正可用（`GET /health` 200）。
+   *
+   * 用短超时的 http 请求而不是「进程是否存活」：openclaw spawn 后要加载插件/渠道/状态库，
+   * 进程在但端口没监听是常态（实测可达数分钟），只有 /health 通才算能开网页。
+   */
+  private _fetchHealthOk(timeoutMs = 1500): Promise<boolean> {
+    // 用 spawn 时的端口：启动窗口内用户可能保存了新的 config.port（保存只改配置、不重启），
+    // 用配置端口会让探活盯错端口 → 15 分钟超时误报。
+    const port = Number(this.port) || Number(this.configManager.getConfig().port) || 3213
+    return new Promise((resolve) => {
+      let settled = false
+      const done = (ok: boolean): void => {
+        if (settled) return
+        settled = true
+        resolve(ok)
+      }
+      try {
+        const req = httpGet({ host: '127.0.0.1', port, path: '/health', timeout: timeoutMs }, (res) => {
+          res.resume()
+          done(res.statusCode === 200)
+        })
+        req.on('timeout', () => {
+          req.destroy()
+          done(false)
+        })
+        req.on('error', () => done(false))
+      } catch {
+        done(false)
+      }
+    })
+  }
+
+  /** 进程停止/退出：清 ready 并停掉后台探针（避免旧探针改新实例状态） */
+  private _markNotReady(): void {
+    this.ready = false
+    this.readyAt = undefined
+    this.readyProbeStopped = true
+    this.readyProbeSeq++
+    this.bootPhase = 'idle'
+  }
+
+  /** spawn 成功后启动后台探活：就绪时记 readyAt、写耗时日志、推状态 */
+  private _startReadyProbe(): void {
+    this.ready = false
+    this.readyAt = undefined
+    this.readyProbeStopped = false
+    // 代际隔离：stop→start 窗口里旧探针可能还在等 HTTP 响应；恢复后不能拿旧 spawnAt
+    // 给新实例写就绪/耗时日志（旧端口未释放时甚至可能探到旧进程的 /health 200）。
+    const seq = ++this.readyProbeSeq
+    const spawnAt = this.startedAt ?? Date.now()
+    const stale = (): boolean =>
+      this.readyProbeStopped || seq !== this.readyProbeSeq || !this.process
+    const poll = async (): Promise<void> => {
+      if (stale()) return
+      if (await this._fetchHealthOk()) {
+        // 与 waitReady 并发时可能已被对方置 ready：去重，避免重复日志/emit。
+        if (stale() || this.ready) return
+        this.ready = true
+        this.readyAt = Date.now()
+        this._setBootPhase('ready')
+        this._recordStartupDuration(this.readyAt - spawnAt)
+        this._addLog(
+          `[gateway] 启动耗时 ${((this.readyAt - spawnAt) / 1000).toFixed(1)}s（spawn→health）`,
+          'system'
+        )
+        this.emit('statusChange', true, this.port)
+        return
+      }
+      // 端口已监听说明 HTTP 服务起来了，但 /health 还没 200：
+      // 这段正是 OpenClaw 物化/加载渠道插件的时间（实测可达数分钟），单独标一个阶段。
+      if (this.bootPhase === 'spawning' && (await this._probePortOpen())) {
+        if (stale()) return
+        this._setBootPhase(
+          'loading',
+          '[gateway] HTTP 端口已监听，正在加载插件/渠道（首次或升级后需重建插件包，可能需数分钟）…'
+        )
+      }
+      setTimeout(() => void poll(), 500)
+    }
+    void poll()
+  }
+
+  /**
+   * 等待网关就绪（UI 的「启动中…」/「打开网页」前调用）。
+   *
+   * @returns ready=false 时带 error：进程已退出（启动失败）或超时。
+   */
+  async waitReady(
+    timeoutMs = 15 * 60_000
+  ): Promise<{ ready: boolean; elapsedMs: number; error?: string }> {
+    const startAt = this.startedAt ?? Date.now()
+    if (!this.process) {
+      return { ready: false, elapsedMs: 0, error: 'OpenClaw 未在运行' }
+    }
+    if (this.ready) {
+      return { ready: true, elapsedMs: (this.readyAt ?? Date.now()) - startAt }
+    }
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (!this.process) {
+        return {
+          ready: false,
+          elapsedMs: Date.now() - startAt,
+          error: 'OpenClaw 进程已退出（启动失败），请查看日志'
+        }
+      }
+      if (this.ready) {
+        return { ready: true, elapsedMs: (this.readyAt ?? Date.now()) - startAt }
+      }
+      if (await this._fetchHealthOk()) {
+        if (!this.ready) {
+          this.ready = true
+          this.readyAt = Date.now()
+          this._setBootPhase('ready')
+          this._recordStartupDuration(this.readyAt - startAt)
+          this._addLog(
+            `[gateway] 启动耗时 ${((this.readyAt - startAt) / 1000).toFixed(1)}s（spawn→health）`,
+            'system'
+          )
+          this.emit('statusChange', true, this.port)
+        }
+        return { ready: true, elapsedMs: (this.readyAt ?? Date.now()) - startAt }
+      }
+      if (this.bootPhase === 'spawning' && (await this._probePortOpen())) {
+        this._setBootPhase(
+          'loading',
+          '[gateway] HTTP 端口已监听，正在加载插件/渠道（首次或升级后需重建插件包，可能需数分钟）…'
+        )
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+    return {
+      ready: false,
+      elapsedMs: Date.now() - startAt,
+      error: `启动超时（>${Math.round(timeoutMs / 1000)}s），请查看日志`
+    }
   }
 
   getStatus(): ClawStatus {
@@ -695,7 +987,21 @@ export class ClawManager extends EventEmitter {
       startedAt: this.startedAt,
       // doctor --fix / 状态库迁移进行中：网关虽未起，但也不是静止，
       // 前端据此把「启动中」细化为「正在修复配置…」，避免用户以为卡死重复点击。
-      maintenance: this.maintenanceActive
+      maintenance: this.maintenanceActive,
+      // spawn 前的准备阶段（startInFlight 在途）同样算「启动中」，避免刷新窗口显示已停止
+      starting: (!!this.process && !this.ready) || (this.startInFlight !== null && !this.ready),
+      ready: !!this.process && this.ready,
+      readyAt: this.readyAt,
+      startupMs:
+        this.startedAt && this.readyAt ? Math.max(0, this.readyAt - this.startedAt) : undefined,
+      bootPhase: this.process
+        ? this.ready
+          ? 'ready'
+          : this.bootPhase
+        : this.startInFlight !== null
+          ? 'preparing'
+          : 'idle',
+      estimateStartupMs: this._estimateStartupMs()
     }
   }
 
@@ -1264,6 +1570,7 @@ export class ClawManager extends EventEmitter {
       if (isTracked) {
         this.process = null
         this.startedAt = undefined
+        this._markNotReady()
         this.emit('statusChange', false)
       }
       // 退出码 78（EX_CONFIG）或本生命周期内出现过迁移提示：自动 doctor --fix 后重启，每次启动最多一次
@@ -1300,6 +1607,7 @@ export class ClawManager extends EventEmitter {
       if (this.process === proc) {
         this.process = null
         this.startedAt = undefined
+        this._markNotReady()
         this.emit('statusChange', false)
       }
     })
@@ -1424,6 +1732,8 @@ export class ClawManager extends EventEmitter {
     if (!(await pathExists(projectsDir))) return null
 
     const failures: string[] = []
+    /** 本轮实际重建过的链接：用于修复后等文件稳定，避免和 OpenClaw 的插件复制/审计抢时序 */
+    const repairedLinks: string[] = []
 
     const listPluginDirs = async (): Promise<string[]> => {
       const result: string[] = []
@@ -1491,10 +1801,17 @@ export class ClawManager extends EventEmitter {
 
       try {
         await fs.symlink(hostRoot, linkPath, 'junction')
+        repairedLinks.push(linkPath)
       } catch (e: any) {
         failures.push(pluginDir)
         this._addLog(`修复插件链接失败: ${linkPath} (${e.message})`, 'stderr')
       }
+    }
+
+    if (repairedLinks.length > 0) {
+      // 仅记日志：实测 junction 创建后 realpath 立即就绪，额外等待是 no-op；
+      // 真正与 OpenClaw 插件复制/审计的交错发生在 spawn 之后，这里等待影响不到它。
+      this._addLog(`已修复 ${repairedLinks.length} 个插件 peer 链接`, 'system')
     }
 
     if (failures.length > 0) {

@@ -58,6 +58,7 @@ const api = {
     stop: () => ipcRenderer.invoke('claw:stop'),
     restart: () => ipcRenderer.invoke('claw:restart'),
     status: () => ipcRenderer.invoke('claw:status'),
+    waitReady: (timeoutMs?: number) => ipcRenderer.invoke('claw:waitReady', timeoutMs),
     openWeb: () => ipcRenderer.invoke('claw:openWeb'),
     // 事件监听
     onLog: (cb: (data: { line: string; type: string; time: number }) => void) => {
