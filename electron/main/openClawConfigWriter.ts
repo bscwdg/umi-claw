@@ -55,9 +55,13 @@ function serializePatch<T>(configPath: string, task: () => Promise<T> | T): Prom
   const previous = patchChains.get(configPath) ?? Promise.resolve()
   const current = previous.then(task, task)
   patchChains.set(configPath, current)
-  void current.finally(() => {
+  // 用 then(两参) 而不是 finally：任务被拒时 finally 会返回一个未处理的 rejected promise
+  // （调用方通过 runSerializedOpenClawConfigWrite 传入的任务允许抛错），会触发
+  // unhandledRejection。这里只做清理，绝不把任务的成败再冒泡一次。
+  const cleanup = (): void => {
     if (patchChains.get(configPath) === current) patchChains.delete(configPath)
-  })
+  }
+  void current.then(cleanup, cleanup)
   return current
 }
 
