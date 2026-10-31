@@ -62,6 +62,8 @@ export interface AppConfig {
   autoStart: boolean
   launchOnBoot: boolean
   minimizeToTray: boolean
+  /** 退出应用时是否保留网关在后台运行（下次启动直接复用，跳过冷启动） */
+  keepGatewayOnQuit: boolean
   closeAction: 'ask' | 'tray' | 'exit'
   useChineseMirror: boolean
   logLevel: 'debug' | 'info' | 'warn' | 'error'
@@ -203,6 +205,7 @@ const getDeepCopyDefaultConfig = (): AppConfig => ({
   autoStart: false,
   launchOnBoot: false,
   minimizeToTray: true,
+  keepGatewayOnQuit: false,
   closeAction: 'ask',
   useChineseMirror: true,
   logLevel: 'info',
