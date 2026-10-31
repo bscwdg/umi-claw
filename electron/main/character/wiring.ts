@@ -4,7 +4,7 @@
 // 初始化失败只降级角色自身，绝不阻断宿主启动（红线 2）。
 
 import { globalShortcut, screen } from 'electron'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { CharacterManager } from './manager'
 import { registerCharacterIpc, type CharacterIpcDisposer } from './ipc'
@@ -61,6 +61,8 @@ export interface CharacterWiringDeps {
   onPetAction?: (action: PetMenuAction) => void
   /** 主动消息外发（C08 注入 QQ；缺省只发应用内气泡） */
   sendProactive?: (message: { text: string; channel: 'qq' | 'app' }) => Promise<boolean>
+  /** 日记生成（index.ts 用 gateway 非流式 chat + openclaw/feiyu） */
+  generateDiary?: (prompt: string) => Promise<string>
   /** 既有 Obsidian vault 路径（只在其下建 `大肥鱼/`，不新增知识库） */
   obsidianVaultPath?: () => string | undefined
   gatewayReady?: () => boolean
@@ -166,7 +168,27 @@ async function registerCharacterInternal(
       writeLifeDoc: async (text) => {
         writeFileSync(join(workspaceDir, 'fish', 'LIFE.md'), text, 'utf8')
       },
-      sendProactive: deps.sendProactive
+      sendProactive: deps.sendProactive,
+      generateDiary: deps.generateDiary,
+      readWorkspaceMemory: async (date) => {
+        try {
+          return readFileSync(join(workspaceDir, 'memory', `${date}.md`), 'utf8')
+        } catch {
+          return null
+        }
+      },
+      writeWorkspaceMemory: async (date, text) => {
+        const dir = join(workspaceDir, 'memory')
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(join(dir, `${date}.md`), text, 'utf8')
+      },
+      writeObsidianDiary: async (relPath, text) => {
+        const vault = deps.obsidianVaultPath?.()?.trim()
+        if (!vault) throw new Error('未配置 Obsidian vault，日记只写 workspace')
+        const target = join(vault, ...relPath.split('/'))
+        mkdirSync(dirname(target), { recursive: true })
+        writeFileSync(target, text, 'utf8')
+      }
     })
     managerRef = manager
     await manager.init()
@@ -272,6 +294,10 @@ async function registerCharacterInternal(
       proactiveTimer = setInterval(() => {
         void manager.runProactiveTick().catch((error) => {
           logger(`[character] 主动性 tick 失败: ${(error as Error)?.message ?? String(error)}`)
+        })
+        // 23:00 窗口内跑每日记忆（失败会按 5 分钟间隔重试，最多 3 次）
+        void manager.maybeRunDailyMemory().catch((error) => {
+          logger(`[character] 每日记忆 tick 失败: ${(error as Error)?.message ?? String(error)}`)
         })
       }, 30_000)
     }

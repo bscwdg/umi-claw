@@ -28,6 +28,16 @@ import {
 import { composeLifeDay, renderLifeDoc, type LifeDay } from './life'
 import type { LifeDeck } from './contentCards'
 import { decideProactive, type ProactiveDayState, type ProactiveDecision } from './proactive'
+import {
+  buildMemoryPrompt,
+  diaryObsidianRelPath,
+  extractDiaryText,
+  shouldRunMemory,
+  validateDiary,
+  type MemoryDayState,
+  type MemoryGateReason
+} from './memoryJob'
+import { renderStateDoc } from './persona'
 
 export interface CharacterManagerOptions {
   store: CharacterStore
@@ -42,6 +52,11 @@ export interface CharacterManagerOptions {
   writeLifeDoc?: (text: string) => Promise<void>
   /** 主动消息外发（C08 接 QQ；不提供则只做应用内气泡） */
   sendProactive?: (message: { text: string; channel: 'qq' | 'app' }) => Promise<boolean>
+  /** 每日记忆（C07）：生成日记 + 双写（workspace / Obsidian） */
+  generateDiary?: (prompt: string) => Promise<string>
+  readWorkspaceMemory?: (date: string) => Promise<string | null>
+  writeWorkspaceMemory?: (date: string, text: string) => Promise<void>
+  writeObsidianDiary?: (relPath: string, text: string) => Promise<void>
 }
 
 export class CharacterManager {
@@ -61,6 +76,10 @@ export class CharacterManager {
     text: string
     channel: 'qq' | 'app'
   }) => Promise<boolean>
+  private readonly generateDiary?: (prompt: string) => Promise<string>
+  private readonly readWorkspaceMemory?: (date: string) => Promise<string | null>
+  private readonly writeWorkspaceMemory?: (date: string, text: string) => Promise<void>
+  private readonly writeObsidianDiary?: (relPath: string, text: string) => Promise<void>
   private lifeDeckCache: LifeDeck | null = null
 
   private settings: CharacterSettings | null = null
@@ -94,6 +113,10 @@ export class CharacterManager {
     this.loadLifeDeck = options.loadLifeDeck
     this.writeLifeDoc = options.writeLifeDoc
     this.sendProactive = options.sendProactive
+    this.generateDiary = options.generateDiary
+    this.readWorkspaceMemory = options.readWorkspaceMemory
+    this.writeWorkspaceMemory = options.writeWorkspaceMemory
+    this.writeObsidianDiary = options.writeObsidianDiary
   }
 
   async init(): Promise<void> {
@@ -391,6 +414,99 @@ export class CharacterManager {
       if (life?.cardIds) out.push(...life.cardIds)
     }
     return out
+  }
+
+  /** 每日记忆状态（设置页展示；不含日记正文） */
+  async getMemoryStatus(now = this.now()): Promise<
+    MemoryDayState & { date: string; reason?: MemoryGateReason }
+  > {
+    this.assertInitialized()
+    const date = toDateKey(now)
+    const day = (await this.store.readDay<{ memory?: MemoryDayState }>(date)) ?? {}
+    return { date, ...(day.memory ?? {}) }
+  }
+
+  /**
+   * 23:00 窗口的自动触发（tick 调用）：满足窗口/冷却/尝试次数才跑。
+   * manual=true 时跳过窗口与冷却（设置页「现在写一篇」）。
+   */
+  async maybeRunDailyMemory(
+    now = this.now(),
+    manual = false
+  ): Promise<{ ran: boolean; reason: MemoryGateReason; errors?: string[] }> {
+    this.assertInitialized()
+    const date = toDateKey(now)
+    const settings = await this.getSettings()
+    const day = (await this.store.readDay<{ memory?: MemoryDayState }>(date)) ?? {}
+    const gate = shouldRunMemory({ now, day: day.memory ?? {}, settings, manual })
+    if (!gate.run) return { ran: false, reason: gate.reason }
+    return this.runDailyMemoryImpl(now, manual)
+  }
+
+  private async runDailyMemoryImpl(
+    now: number,
+    _manual: boolean
+  ): Promise<{ ran: boolean; reason: MemoryGateReason; errors?: string[] }> {
+    const date = toDateKey(now)
+    const day = (await this.store.readDay<{ memory?: MemoryDayState; events?: string[] }>(date)) ?? {}
+    const memory: MemoryDayState = { ...(day.memory ?? {}) }
+    memory.attempts = (memory.attempts ?? 0) + 1
+    memory.lastAttemptAt = now
+    try {
+      if (!this.generateDiary || !this.writeWorkspaceMemory || !this.writeObsidianDiary) {
+        throw new Error('记忆生成链路未接线')
+      }
+      const settings = await this.getSettings()
+      const state = await this.getState()
+      const life = await this.ensureDailyLife(now)
+      const workspaceMemory = this.readWorkspaceMemory
+        ? await this.readWorkspaceMemory(date).catch(() => null)
+        : null
+      const prompt = buildMemoryPrompt({
+        date,
+        address: settings.relationship.address,
+        stage: state.stage,
+        stateDoc: renderStateDoc(state, settings),
+        lifeDoc: life.doc,
+        workspaceMemory: workspaceMemory ?? '',
+        recentEvents: day.events ?? []
+      })
+      const raw = await this.generateDiary(prompt)
+      const cleaned = extractDiaryText(raw)
+      const validation = validateDiary(cleaned, date)
+      if (!validation.ok) {
+        throw new Error(`日记校验失败：${validation.errors.join('；')}`)
+      }
+      // 先写 workspace（宿主可回滚），再写 Obsidian 日记目录
+      await this.writeWorkspaceMemory(date, cleaned)
+      const relPath = diaryObsidianRelPath(date)
+      await this.writeObsidianDiary(relPath, cleaned)
+      memory.done = true
+      memory.lastError = undefined
+      memory.memoryFile = `memory/${date}.md`
+      memory.obsidianPath = relPath
+      await this.writeDayMemory(date, day, memory)
+      this.emit({
+        type: 'bubble',
+        payload: { text: `日记写好了（${date}）` },
+        at: now
+      })
+      return { ran: true, reason: 'ok' }
+    } catch (error) {
+      const message = (error as Error)?.message ?? String(error)
+      memory.lastError = message
+      await this.writeDayMemory(date, day, memory)
+      this.logger(`[character] 每日记忆失败（第 ${memory.attempts} 次）: ${message}`)
+      return { ran: false, reason: 'ok', errors: [message] }
+    }
+  }
+
+  private async writeDayMemory(
+    date: string,
+    day: Record<string, unknown>,
+    memory: MemoryDayState
+  ): Promise<void> {
+    await this.store.writeDay(date, { ...day, memory })
   }
 
   async reset(options: CharacterResetOptions = {}): Promise<{ scope: string }> {

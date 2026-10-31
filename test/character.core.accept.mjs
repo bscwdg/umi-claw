@@ -23,6 +23,7 @@ const relationshipMod = await import(pathToFileURL(bundleEntry('electron/main/ch
 const cardsMod = await import(pathToFileURL(bundleEntry('electron/main/character/contentCards.ts', 'character-cards.mjs')).href)
 const lifeMod = await import(pathToFileURL(bundleEntry('electron/main/character/life.ts', 'character-life.mjs')).href)
 const proactiveMod = await import(pathToFileURL(bundleEntry('electron/main/character/proactive.ts', 'character-proactive.mjs')).href)
+const memoryMod = await import(pathToFileURL(bundleEntry('electron/main/character/memoryJob.ts', 'character-memory.mjs')).href)
 
 const {
   CHARACTER_ERROR_CODES,
@@ -55,6 +56,13 @@ const {
 const { parseLifeDeck, drawLifeCards, slotForHour, seededRandom } = cardsMod
 const { composeLifeDay, renderLifeDoc } = lifeMod
 const { decideProactive, isQuietHours } = proactiveMod
+const {
+  buildMemoryPrompt,
+  diaryObsidianRelPath,
+  extractDiaryText,
+  shouldRunMemory,
+  validateDiary
+} = memoryMod
 
 function memoryKv(initial = new Map()) {
   return {
@@ -1152,6 +1160,168 @@ function storeDayRecord(kv) {
   const key = [...kv.map.keys()].find((k) => k.startsWith('fish:v2:day:'))
   return key ? JSON.parse(kv.map.get(key)) : {}
 }
+
+const goodDiary = `---
+date: 2026-11-01
+tags: [大肥鱼/日记]
+stage: 2
+intimacy: 40
+mood: 有点得意
+source: openclaw-memory/2026-11-01
+---
+
+# 2026-11-01 · 本鱼的日记
+
+今天数了贝壳，攒到第 7 个。晚上等了一会儿，没等到人，就先睡了。
+`
+
+await recorder.check('C43', '记忆触发闸门：开关/窗口/已完成/尝试次数/冷却/手动', async () => {
+  const now = new Date(2026, 10, 1, 23, 10, 0).getTime()
+  const settings = JSON.parse(JSON.stringify(DEFAULT_CHARACTER_SETTINGS))
+  settings.enabled = true
+  const gate = (day = {}, patch = {}, manual = false) =>
+    shouldRunMemory({ now, day, settings: { ...settings, ...patch }, manual })
+
+  assertEq(gate().run, true, '窗口内可跑')
+  assertEq(gate({}, { enabled: false }).reason, 'disabled', '未启用')
+  assertEq(gate({}, { memory: { autoEnabled: false } }).reason, 'auto-off', '自动记忆关')
+  assertEq(gate({ done: true }).reason, 'done', '今天已完成')
+  assertEq(gate({ attempts: 3 }).reason, 'attempts', '尝试次数用尽')
+  assertEq(gate({ lastAttemptAt: now - 60_000 }).reason, 'cooldown', '冷却中')
+  assertEq(gate({ lastAttemptAt: now - 6 * 60_000 }).run, true, '冷却结束可重试')
+
+  const early = new Date(2026, 10, 1, 20, 0, 0).getTime()
+  assertEq(
+    shouldRunMemory({ now: early, day: {}, settings, manual: false }).reason,
+    'not-window',
+    '窗口外不自动跑'
+  )
+  assertEq(
+    shouldRunMemory({ now: early, day: {}, settings, manual: true }).run,
+    true,
+    '手动可跳窗口'
+  )
+  return '闸门正确'
+})
+
+await recorder.check('C44', '记忆 prompt：带日期/状态/她的一天/事件/称呼', async () => {
+  const prompt = buildMemoryPrompt({
+    date: '2026-11-01',
+    address: '老板',
+    stage: 2,
+    stateDoc: '# 鱼的状态（宿主维护，勿改）',
+    lifeDoc: '# 她的一天（2026-11-01）',
+    recentEvents: ['11:00:pat'],
+    workspaceMemory: '碎片'
+  })
+  assertEq(prompt.includes('2026-11-01'), true, '含日期')
+  assertEq(prompt.includes('老板'), true, '含称呼')
+  assertEq(prompt.includes('鱼的状态'), true, '含 STATE')
+  assertEq(prompt.includes('她的一天'), true, '含 LIFE')
+  assertEq(prompt.includes('11:00:pat'), true, '含事件')
+  assertEq(prompt.length < 5000, true, 'prompt 有预算')
+  return 'prompt 正确'
+})
+
+await recorder.check('C45', '日记校验：frontmatter/日期/正文；围栏与目录约束', async () => {
+  const ok = validateDiary(goodDiary, '2026-11-01')
+  assertEq(ok.ok, true, '合法日记通过')
+  assertEq(ok.frontmatter?.date, '2026-11-01', '读到 date')
+
+  assertEq(validateDiary('', '2026-11-01').ok, false, '空内容拒绝')
+  assertEq(validateDiary('随便写写', '2026-11-01').ok, false, '缺 frontmatter 拒绝')
+  assertEq(validateDiary(goodDiary, '2026-11-02').ok, false, '日期不匹配拒绝')
+  const noTags = goodDiary.replace('[大肥鱼/日记]', '[]')
+  assertEq(validateDiary(noTags, '2026-11-01').ok, false, '缺 tags 拒绝')
+  const shortBody =
+    '---\ndate: 2026-11-01\ntags: [大肥鱼/日记]\nstage: 2\nintimacy: 40\nmood: 平静\nsource: x\n---\n\n短\n'
+  assertEq(validateDiary(shortBody, '2026-11-01').ok, false, '正文过短拒绝')
+
+  const fenced = '```markdown\n' + goodDiary + '\n```'
+  assertEq(extractDiaryText(fenced).startsWith('---'), true, '剥掉代码围栏')
+  assertEq(diaryObsidianRelPath('2026-11-01'), '大肥鱼/日记/2026-11-01.md', 'Obsidian 路径固定')
+  let bad = null
+  try {
+    diaryObsidianRelPath('../escape')
+  } catch (e) {
+    bad = e
+  }
+  assertEq(Boolean(bad), true, '非法日期拒绝')
+  return '校验正确'
+})
+
+await recorder.check('C46', 'manager 每日记忆：双写、幂等、完成状态', async () => {
+  const kv = memoryKv()
+  const now = new Date(2026, 10, 1, 23, 10, 0).getTime()
+  const writes = { workspace: [], obsidian: [] }
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    loadLifeDeck: async () => lifeDeck,
+    generateDiary: async () => goodDiary,
+    writeWorkspaceMemory: async (date, text) => writes.workspace.push([date, text]),
+    writeObsidianDiary: async (rel, text) => writes.obsidian.push([rel, text])
+  })
+  await manager.init()
+  await manager.updateSettings({ enabled: true })
+  // 跳过 3 天静默期不影响记忆；直接跑
+  const first = await manager.maybeRunDailyMemory()
+  assertEq(first.ran, true, '窗口内跑成功')
+  assertEq(writes.workspace.length, 1, 'workspace 写一次')
+  assertEq(writes.obsidian.length, 1, 'Obsidian 写一次')
+  assertEq(writes.obsidian[0][0], '大肥鱼/日记/2026-11-01.md', '写对目录')
+
+  const status = await manager.getMemoryStatus()
+  assertEq(status.done, true, '状态：已完成')
+  const again = await manager.maybeRunDailyMemory()
+  assertEq(again.ran, false, '同日不重复写')
+  assertEq(again.reason, 'done', '原因是 done')
+  assertEq(writes.workspace.length, 1, '不重复写盘')
+  return '双写/幂等正确'
+})
+
+await recorder.check('C47', 'manager 每日记忆：失败计数/冷却/上限', async () => {
+  const kv = memoryKv()
+  let now = new Date(2026, 10, 1, 23, 10, 0).getTime()
+  let fail = true
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    loadLifeDeck: async () => lifeDeck,
+    generateDiary: async () => {
+      if (fail) throw new Error('模型超时')
+      return goodDiary
+    },
+    writeWorkspaceMemory: async () => undefined,
+    writeObsidianDiary: async () => undefined
+  })
+  await manager.init()
+  await manager.updateSettings({ enabled: true })
+
+  const r1 = await manager.maybeRunDailyMemory()
+  assertEq(r1.ran, false, '首次失败不抛')
+  let st = await manager.getMemoryStatus()
+  assertEq(st.attempts, 1, '记 1 次失败')
+  assertEq(/模型超时/.test(st.lastError ?? ''), true, '错误可读')
+
+  const r2 = await manager.maybeRunDailyMemory()
+  assertEq(r2.reason, 'cooldown', '5 分钟内不重试')
+
+  now += 6 * 60_000
+  await manager.maybeRunDailyMemory()
+  now += 6 * 60_000
+  await manager.maybeRunDailyMemory()
+  st = await manager.getMemoryStatus()
+  assertEq(st.attempts, 3, '最多 3 次')
+  const r4 = await manager.maybeRunDailyMemory()
+  assertEq(r4.reason, 'attempts', '超过上限不再试')
+
+  fail = false
+  now += 6 * 60_000
+  const manual = await manager.maybeRunDailyMemory(now, true)
+  assertEq(manual.reason, 'attempts', '手动也受上限保护')
+  return '失败/冷却/上限正确'
+})
 
 const ok = printResult(recorder.toJSON())
 if (!ok) process.exit(1)

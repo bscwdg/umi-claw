@@ -2250,6 +2250,15 @@ app.whenReady().then(async () => {
         if (!workGatewayClient) throw new Error('gateway 客户端尚未初始化')
         return workGatewayClient.createChatStream(input as never)
       },
+      generateDiary: async (prompt: string) => {
+        if (!workGatewayClient) throw new Error('gateway 客户端尚未初始化')
+        const result = await workGatewayClient.chat({
+          messages: [{ role: 'user', content: prompt }],
+          stream: false,
+          model: 'openclaw/feiyu'
+        })
+        return result.text
+      },
       obsidianVaultPath: () => configManager.getConfig().obsidian?.vaultPath,
       petWindow: {
         preloadPath: join(__dirname, '../preload/pet.js'),

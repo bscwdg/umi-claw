@@ -22,6 +22,8 @@ export const CHARACTER_CHANNELS = {
   chatCancel: 'character:chat:cancel',
   chatClear: 'character:chat:clear',
   lifeGet: 'character:life:get',
+  memoryRunNow: 'character:memory:runNow',
+  memoryStatus: 'character:memory:status',
   streamChunk: 'character:stream:chunk',
   streamDone: 'character:stream:done',
   streamError: 'character:stream:error',

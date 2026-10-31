@@ -706,6 +706,14 @@ const api = {
           date ? { date } : {}
         )
     },
+    memory: {
+      status: () =>
+        call<{ date: string; done?: boolean; attempts?: number; lastError?: string; obsidianPath?: string }>(
+          'character:memory:status'
+        ),
+      runNow: () =>
+        call<{ ran: boolean; reason: string; errors?: string[] }>('character:memory:runNow')
+    },
     pet: {
       show: () => call<{ visible: boolean; clickThrough: boolean }>('character:window:pet', { action: 'show' }),
       hide: () => call<{ visible: boolean; clickThrough: boolean }>('character:window:pet', { action: 'hide' }),

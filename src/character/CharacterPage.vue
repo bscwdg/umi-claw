@@ -122,6 +122,15 @@
     </section>
 
     <section class="card">
+      <h3>今天的日记</h3>
+      <p class="hint">{{ memoryText }}</p>
+      <div class="row">
+        <button class="btn" :disabled="busy || !status.enabled" @click="runMemory">现在写一篇</button>
+      </div>
+      <p class="hint">每天 23:00 自动写；先写 workspace，再写 Obsidian 的「大肥鱼/日记」。</p>
+    </section>
+
+    <section class="card">
       <h3>数据</h3>
       <div class="row">
         <button class="btn ghost" :disabled="busy" @click="resetValues">重置数值</button>
@@ -169,6 +178,14 @@ const bootstrapReport = ref<BootstrapReport | null>(null)
 const petVisible = ref(false)
 const lifeDoc = ref('')
 const proactiveEnabled = ref(false)
+const memoryStatus = ref({ done: false, attempts: 0, lastError: '' })
+const memoryText = computed(() => {
+  if (memoryStatus.value.done) return '今天已经写好了。'
+  if (memoryStatus.value.lastError) {
+    return `上次失败（第 ${memoryStatus.value.attempts} 次）：${memoryStatus.value.lastError}`
+  }
+  return '今天还没写。23:00 后会自动写，也可以手动写。'
+})
 const messages = ref<ChatBubble[]>([])
 const draft = ref('')
 const runId = ref('')
@@ -213,6 +230,12 @@ async function refresh(): Promise<void> {
     proactiveEnabled.value = Boolean(settings.proactive?.enabled)
     const life = await window.api.character.life.get()
     lifeDoc.value = life.doc ?? ''
+    const memory = await window.api.character.memory.status()
+    memoryStatus.value = {
+      done: Boolean(memory.done),
+      attempts: memory.attempts ?? 0,
+      lastError: memory.lastError ?? ''
+    }
     bootstrapReport.value = await window.api.character.bootstrap.status()
   } catch (e) {
     error.value = (e as Error)?.message || '读取角色状态失败'
@@ -250,6 +273,15 @@ async function quietDays(): Promise<void> {
     const until = Date.now() + 3 * 86_400_000
     await window.api.character.settings.set({ proactive: { silentUntil: until } } as never)
     await refresh()
+  })
+}
+
+async function runMemory(): Promise<void> {
+  await run(async () => {
+    const result = await window.api.character.memory.runNow()
+    await refresh()
+    if (result.errors?.length) error.value = result.errors.join('；')
+    else if (!result.ran) error.value = `这次没写：${result.reason}`
   })
 }
 

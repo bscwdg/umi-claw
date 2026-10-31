@@ -176,6 +176,13 @@ export function registerCharacterIpc(
     const date = (payload as { date?: unknown } | undefined)?.date
     return manager.getLife(typeof date === 'string' ? date : undefined)
   })
+  handle(CHARACTER_CHANNELS.memoryStatus, () => manager.getMemoryStatus())
+  handle(CHARACTER_CHANNELS.memoryRunNow, async () => {
+    if (!manager.isEnabled()) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.DISABLED, '大肥鱼未启用')
+    }
+    return manager.maybeRunDailyMemory(undefined, true)
+  })
 
   return () => {
     for (const channel of channels) ipcMain.removeHandler(channel)
