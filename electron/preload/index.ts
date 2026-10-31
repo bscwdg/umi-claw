@@ -22,6 +22,14 @@ import type {
   VoiceOpenClawStatus,
   VoiceOpenClawTestResult
 } from '../main/fish/voice/core/types'
+import type {
+  CharacterEvent,
+  CharacterInteractInput,
+  CharacterResetOptions,
+  CharacterSettings,
+  CharacterState,
+  CharacterStatus
+} from '../main/character/types'
 console.log('✅ preload loaded')
 
 // ── work 域信封解包：IPC 返回 {ok,data} / {ok,error} ────────────────────────
@@ -669,6 +677,26 @@ const api = {
           return () => ipcRenderer.off('fish:voice:auto-speak', handler)
         }
       }
+    }
+  },
+
+  // ── 大肥鱼角色（宿主模块，默认关；PLAN-FISH-CHARACTER）────────────────────
+  character: {
+    status: () => call<CharacterStatus>('character:status:get'),
+    state: () => call<CharacterState>('character:state:get'),
+    settings: {
+      get: () => call<CharacterSettings>('character:settings:get'),
+      set: (patch: Partial<CharacterSettings>) =>
+        call<CharacterSettings>('character:settings:set', patch)
+    },
+    interact: (input: CharacterInteractInput) =>
+      call<CharacterState>('character:interact', input),
+    reset: (options?: CharacterResetOptions) =>
+      call<{ scope: string }>('character:reset', options ?? {}),
+    onEvent: (cb: (event: CharacterEvent) => void) => {
+      const handler = (_event: unknown, data: CharacterEvent) => cb(data)
+      ipcRenderer.on('character:event', handler)
+      return () => ipcRenderer.off('character:event', handler)
     }
   }
 }

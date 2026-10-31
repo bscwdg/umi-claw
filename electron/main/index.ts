@@ -74,6 +74,8 @@ import {
   createVoiceManager,
   registerVoiceIpc
 } from './fish/voice'
+import { registerCharacter } from './character/wiring'
+import type { CharacterManager } from './character/manager'
 import { AppError, ERROR_CODES } from './database/errors'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
@@ -99,6 +101,9 @@ let workGatewayClient: GatewayClient | null = null
 let workDatabase: DatabaseClient | null = null
 /** 语音管理器（合并后只有一份；初始化绑 workDatabase，见 app.whenReady 的 voice 段） */
 let voiceManager: VoiceManager | null = null
+/** 大肥鱼角色（宿主模块；默认关，初始化失败只降级自身） */
+let characterManager: CharacterManager | null = null
+let characterDispose: (() => Promise<void>) | null = null
 
 /**
  * 取 Gateway Client 单例（Commit 07 → 合并后指向 work 域的唯一实例）。
@@ -2215,6 +2220,34 @@ app.whenReady().then(async () => {
       }`
     )
   }
+  // ── 大肥鱼角色（宿主模块；默认关，失败只降级自身）──
+  // 数据只落宿主 work.db 的 app_meta（fish:v2:*），与 voice 同库同口径；
+  // 知识库/世界书/日记走既有 Obsidian，不新增知识库服务。
+  try {
+    if (!workDatabase) throw new Error('workDatabase 尚未初始化')
+    const characterDb = workDatabase
+    const character = await registerCharacter({
+      kv: {
+        get: (key) => characterDb.metaGet(key),
+        set: (key, value) => characterDb.metaSet(key, value)
+      },
+      logger: (message) => console.log(message),
+      onEvent: (event) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('character:event', event)
+        }
+      }
+    })
+    characterManager = character.manager
+    characterDispose = character.dispose
+  } catch (error) {
+    characterManager = null
+    console.log(
+      `[character] 初始化失败，角色功能降级（不影响主流程）: ${
+        (error as Error)?.message ?? String(error)
+      }`
+    )
+  }
   // ── 两个固定本地通知的轻量定时检查（硬规则22；不是调度系统）──
   // 提醒循环已随 work 插件启动（plugins/work/main.ts），此处不再重复 start
   createWindow()
@@ -2277,6 +2310,12 @@ async function runQuitCleanup(): Promise<void> {
     } catch (e) {
       console.error(`[Main] 退出清理 ${name} 失败（继续）:`, e)
     }
+  }
+  // 角色模块先落状态（IPC disposer + 将来的窗口/定时器）
+  await step('停用角色模块', () => characterDispose?.(), 1500)
+  if (characterManager) {
+    console.log('[Main] 已停用大肥鱼角色模块')
+    characterManager = null
   }
   // 插件先优雅停用：移除 IPC / 清定时器，避免退出过程中还有插件回调在跑
   await step('停用插件', () => pluginHost?.disposeAll(), 3000)

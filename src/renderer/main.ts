@@ -18,6 +18,8 @@ const router = createRouter({
     { path: '/logs', component: () => import('../views/Logs.vue') },
     { path: '/setup', component: () => import('../views/Setup.vue') },
     { path: '/voice', component: () => import('../views/voice/VoicePage.vue') },
+    // 大肥鱼角色（宿主页面，默认关；PLAN-FISH-CHARACTER C01）
+    { path: '/character', component: () => import('../character/CharacterPage.vue') },
     { path: '/channelsPage', component: () => import('../views/ChannelsPage.vue') },
     { path: '/terminal', component: () => import('../views/TerminalPage.vue') },
     { path: '/about', component: () => import('../views/About.vue') },

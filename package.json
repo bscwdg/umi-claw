@@ -40,6 +40,7 @@
     "accept:platform": "node test/platform.accept.mjs",
     "accept:wizard": "node test/wizard.accept.mjs",
     "accept:voice": "node test/voice.accept.mjs",
+    "accept:character": "node test/character.core.accept.mjs",
     "accept:ui": "node test/ui.accept.mjs",
     "accept:plugin": "node test/plugin.accept.mjs",
     "e2e:day": "node test/one-day.e2e.mjs",
