@@ -863,6 +863,151 @@ await r.check('U17', 'CSP 放行 blob:（否则语音播不出来）', async () 
   return 'CSP 已放行媒体 blob:，且未放宽脚本来源'
 })
 
+// ── U18/U19 启动就绪态（2026-10-30 启动优化）────────────────────────────────
+await r.check('U18', 'claw store：spawn 前即显示「启动中」，就绪/失败/停止作废/事件清错 各路径正确', async () => {
+  const { createPinia, setActivePinia } = await import('pinia')
+  const storeMod = await import(
+    pathToFileURL(
+      esbuildBundle(join(repoRoot, 'src', 'stores', 'claw.ts'), 'ui-claw-store.mjs', {
+        externals: ['vue', 'pinia']
+      })
+    ).href
+  )
+  const savedWindow = globalThis.window
+  try {
+    // 场景 A：主进程 start() 在 spawn 前的准备阶段（patch/doctor）挂很久 → 未 resolve 时就必须是「启动中」
+    setActivePinia(createPinia())
+    let resolveStart = null
+    let resolveReady = null
+    let statusHandler = null
+    globalThis.window = {
+      api: {
+        claw: {
+          start: () => new Promise((resolve) => { resolveStart = resolve }),
+          stop: async () => ({ success: true }),
+          restart: async () => ({ success: true }),
+          status: async () => ({ running: false, port: 3213 }),
+          waitReady: () => new Promise((resolve) => { resolveReady = resolve }),
+          onLog: () => () => undefined,
+          onStatusChange: (cb) => {
+            statusHandler = cb
+            return () => undefined
+          }
+        }
+      }
+    }
+
+    const store = storeMod.useClawStore()
+    assertEq(store.running, false, '初始未运行')
+    assertEq(store.ready, false, '初始未就绪')
+    const startPromise = store.start()
+    assertEq(store.running, true, '点击启动后立即进入启动态（不等主进程 spawn）')
+    assertEq(store.starting, true, 'spawn 之前的准备阶段也必须显示「启动中」')
+    resolveStart?.({ success: true })
+    await startPromise
+    assertEq(store.ready, false, '未就绪前 ready 必须为 false（关键：不能拿 running 当可用）')
+    assertEq(store.starting, true, 'spawn 后、/health 前仍是启动中')
+    // 主进程推送：spawn 时刻 + 历史估算 → 阶段/ETA 必须跟着 statusChange 实时更新
+    store.setupListeners()
+    statusHandler?.({
+      running: true,
+      starting: true,
+      ready: false,
+      bootPhase: 'loading',
+      startedAt: Date.now(),
+      estimateStartupMs: 600_000
+    })
+    assertEq(store.phase, 'loading', '端口监听后阶段=加载渠道插件')
+    assertEq(store.phaseLabel, '加载渠道插件', '加载阶段文案')
+    assertEq(store.estimatedStartupMs, 600_000, 'statusChange 同步估算值')
+    assert(store.spawnedAt > 0, 'statusChange 同步 spawn 时刻（ETA 基准）')
+    assert(
+      store.etaRemainingSeconds !== undefined && store.etaRemainingSeconds > 0,
+      '加载阶段应显示「预计还需约 N」'
+    )
+    resolveReady?.({ ready: true, elapsedMs: 1234 })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assertEq(store.ready, true, 'waitReady 成功后 ready=true')
+    assertEq(store.starting, false, '就绪后不再显示启动中')
+    assertEq(store.startupMs, 1234, '记录启动耗时')
+    assertEq(store.phase, 'ready', '就绪后阶段=ready')
+    // 场景 B：启动中用户主动停止 → 旧的 waitReady 结果必须作废，不能弹「启动失败」
+    setActivePinia(createPinia())
+    // 场景 A 的 start 桩是「手动 resolve」的一次性 promise，这里换成即成功（否则会复用未决 promise 挂死）
+    globalThis.window.api.claw.start = async () => ({ success: true })
+    let resolveSlow = null
+    globalThis.window.api.claw.waitReady = () => new Promise((resolve) => { resolveSlow = resolve })
+    const store3 = storeMod.useClawStore()
+    await store3.start()
+    await store3.stop()
+    resolveSlow?.({ ready: false, error: 'OpenClaw 进程已退出（启动失败）' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assertEq(store3.ready, false, '停止后不会就绪')
+    assertEq(store3.starting, false, '停止后退出启动中')
+    assertEq(store3.startupError, '', '主动停止不得写回旧等待的失败原因')
+    // 场景 C：等待失败 → startupError 透出；随后主进程事件 ready=true 要能翻转并清错
+    setActivePinia(createPinia())
+    const failReady = { ready: false, error: '启动超时（>1s）' }
+    globalThis.window.api.claw.waitReady = async () => failReady
+    const store2 = storeMod.useClawStore()
+    await store2.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assertEq(store2.ready, false, '失败时 ready 仍为 false')
+    assertEq(store2.startupError, '启动超时（>1s）', '失败原因透出给页面')
+
+    store2.setupListeners()
+    statusHandler?.({ running: true, ready: true, starting: false, startupMs: 2000 })
+    assertEq(store2.ready, true, 'statusChange(ready=true) 能翻转状态')
+    assertEq(store2.starting, false, '同步清掉启动中')
+    assertEq(store2.startupError, '', '就绪事件要清掉历史失败提示（exit 78 自愈后不能挂红）')
+    // 清定时器，避免测试结束还留 ticker
+    await store.stop()
+    await store3.stop()
+    await store2.stop()
+    return '准备阶段/就绪/失败/停止作废/事件清错 五条路径都正确'
+  } finally {
+    globalThis.window = savedWindow
+  }
+})
+
+await r.check('U19', '就绪态接线：Dashboard 用 ready 门禁、语音页重启后等 waitReady', async () => {
+  const dashSrc = readFileSync(join(repoRoot, 'src', 'views', 'Dashboard.vue'), 'utf-8')
+  assert(/:disabled="!clawStore\.ready"/.test(dashSrc), '「打开网页」必须等 ready')
+  assert(/clawStore\.starting/.test(dashSrc), '启动中状态要在界面上可见')
+  assert(/clawStore\.startingSeconds/.test(dashSrc), '展示已等待秒数')
+  assert(/已就绪/.test(dashSrc), '就绪提示')
+
+  const voiceSrc = readFileSync(join(repoRoot, 'src', 'views', 'voice', 'VoicePage.vue'), 'utf-8')
+  assert(/claw\.waitReady\(/.test(voiceSrc), '语音页重启后要等网关就绪')
+
+  // 主进程/桥接层接线（缺一环就静默掉回「用 running 当可用」）
+  const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
+  assert(/claw:waitReady/.test(preloadSrc), 'preload 暴露 claw:waitReady')
+  const mainSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
+  assert(/ipcMain\.handle\('claw:waitReady'/.test(mainSrc), '主进程注册 claw:waitReady')
+  const clawMgrSrc = readFileSync(join(repoRoot, 'electron', 'main', 'clawManager.ts'), 'utf-8')
+  assert(/_fetchHealthOk/.test(clawMgrSrc), 'clawManager 用 /health 探活')
+  assert(/async waitReady\(/.test(clawMgrSrc), 'clawManager 提供 waitReady')
+  assert(/启动耗时 \$\{/.test(clawMgrSrc), '就绪时记录 spawn→health 耗时日志')
+
+  const storeSrc = readFileSync(join(repoRoot, 'src', 'stores', 'claw.ts'), 'utf-8')
+  for (const token of ['ready', 'starting', 'startingSeconds', 'startupMs', 'startupError', 'trackReady']) {
+    assert(storeSrc.includes(token), `store 应暴露 ${token}`)
+  }
+  assert(!storeSrc.includes('waitReadyNow'), '已删除死 API waitReadyNow')
+  assert(/readyEpoch/.test(storeSrc), '就绪等待必须带代际（stop 后旧结果作废）')
+  // 「Web 控制台」快捷入口也必须走 openWeb()（否则启动中点它照样开空白页）
+  const quickLinkOpenWeb = (dashSrc.match(/@click="openWeb(?:\(\))?"/g) || []).length
+  assert(quickLinkOpenWeb >= 2, `Web 控制台快捷入口也要走 openWeb 门禁（实际 ${quickLinkOpenWeb} 处）`)
+  assert(/readyProbeSeq/.test(clawMgrSrc), '探活必须带代际隔离（旧探针不得写新实例状态）')
+  assert(/_probePortOpen/.test(clawMgrSrc), '用 TCP 监听判定「加载插件/渠道」阶段')
+  assert(/OPENCLAW_GATEWAY_STARTUP_TRACE/.test(clawMgrSrc), '开启官方启动阶段 trace（排障用）')
+  assert(/phaseLabel/.test(storeSrc), 'store 暴露阶段文案')
+  assert(/phaseLabel/.test(dashSrc), 'Dashboard 展示当前启动阶段')
+  assert(/物化\/加载渠道插件/.test(dashSrc), '加载阶段的提示文案')
+  return '就绪态接线完整（含门禁/代际/快捷入口）'
+})
+
 const result = r.toJSON({})
 
 const ok = printResult(result)

@@ -572,6 +572,239 @@ await rec.check(
   }
 )
 
+// ── webhook 迁移标记兜底（2026-10 启动慢专项）────────────────────────────────
+// 背景：OpenClaw 只在迁移「无 warning」时记录 meta.migrations.webhookListeners；
+// 插件 doctor 契约在 Windows 上加载失败（符号链接权限/文件占用）会让它每次启动重跑
+// 该迁移（实测 185s）。应用侧按官方「外部管理配置」口径兜底补齐标记——
+// 但有 legacyWebhook 端点时必须交回官方迁移（官方要求「补端点 + 补标记」双管齐下）。
+
+const markerPath = bundleEntry(
+  'electron/main/openclawWebhookMarker.ts',
+  'claw-maintenance-webhook-marker.mjs'
+)
+const marker = await import(pathToFileURL(markerPath).href)
+
+await rec.check('marker-pure', 'webhook 标记：缺失→补齐、保留既有迁移键、幂等', async () => {
+  const cfg = {
+    gateway: { mode: 'local' },
+    meta: { migrations: { modelPolicyAllowlist: true } }
+  }
+  assertEq(marker.hasWebhookMigrationMarker(cfg), false, '初始无标记')
+  const r = marker.applyWebhookMigrationMarker(cfg)
+  assertEq(r.changed, true, '缺失时应补齐')
+  assertEq(marker.hasWebhookMigrationMarker(cfg), true, '补齐后标记为 true')
+  assertEq(cfg.meta.migrations.modelPolicyAllowlist, true, '不得动其它迁移键')
+  assertEq(cfg.meta.lastTouchedVersion, undefined, '不得新增无关 meta 键')
+  const again = marker.applyWebhookMigrationMarker(cfg)
+  assertEq(again.changed, false, '幂等：已带标记不再改')
+  return '缺失补齐、保留既有键、幂等'
+})
+
+await rec.check('marker-legacy', 'webhook 标记：检测到 legacyWebhook 时交回官方迁移，不补标记', async () => {
+  const fs = await import('node:fs')
+  const os = await import('node:os')
+  const dir = fs.mkdtempSync(join(os.tmpdir(), 'umi-marker-legacy-'))
+  const file = join(dir, 'openclaw.json')
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      channels: {
+        feishu: { accounts: { main: { appId: 'x', legacyWebhook: { url: 'https://example.com/cb' } } } }
+      }
+    })
+  )
+  const r = await marker.ensureWebhookMigrationMarkerFile(file)
+  assertEq(r.changed, false, '有 legacyWebhook 时不得补标记')
+  assertDeepEq(r.skippedLegacyChannels, ['feishu'], '应指出命中的历史渠道')
+  const after = JSON.parse(fs.readFileSync(file, 'utf-8'))
+  assertEq(marker.hasWebhookMigrationMarker(after), false, '文件里也不应有标记')
+  fs.rmSync(dir, { recursive: true, force: true })
+  return 'legacy 渠道被识别、标记不写入'
+})
+
+await rec.check('marker-file', 'webhook 标记落盘：备份命名/原子写/保留 CRLF+BOM/幂等/坏文件保护', async () => {
+  const fs = await import('node:fs')
+  const os = await import('node:os')
+  const dir = fs.mkdtempSync(join(os.tmpdir(), 'umi-marker-'))
+  const file = join(dir, 'openclaw.json')
+  // 真实 openclaw.json 是 CRLF；带 BOM 验证风格保留
+  const original = '\uFEFF' + JSON.stringify(
+    { gateway: { mode: 'local' }, meta: { migrations: { utilityModelSeparation: true } } },
+    null,
+    2
+  ).replace(/\n/g, '\r\n') + '\r\n'
+  fs.writeFileSync(file, original)
+
+  const r1 = await marker.ensureWebhookMigrationMarkerFile(file, {
+    now: () => Date.UTC(2026, 9, 31, 4, 0, 9)
+  })
+  assertEq(r1.changed, true, '应写入标记')
+  assert(r1.backupPath, '备份路径必须返回')
+  assert(/\.webhook-marker-bak\.\d{14}$/.test(r1.backupPath), `备份名应为 14 位时间戳，实际 ${r1.backupPath}`)
+  assert(fs.existsSync(r1.backupPath), '备份文件必须存在')
+  const backupCfg = JSON.parse(fs.readFileSync(r1.backupPath, 'utf-8').replace(/^\uFEFF/, ''))
+  assertEq(marker.hasWebhookMigrationMarker(backupCfg), false, '备份必须是改动前内容')
+
+  const writtenRaw = fs.readFileSync(file, 'utf-8')
+  const written = JSON.parse(writtenRaw.replace(/^\uFEFF/, ''))
+  assertEq(marker.hasWebhookMigrationMarker(written), true, '落盘后标记为 true')
+  assertEq(written.meta.migrations.utilityModelSeparation, true, '既有迁移键保留')
+  assert(writtenRaw.startsWith('\uFEFF'), '应保留原文件 BOM')
+  assert(writtenRaw.includes('\r\n'), '应保留原文件 CRLF 换行')
+  assert(!fs.readdirSync(dir).some((n) => n.includes('.webhook-marker-tmp-')), '不得残留 tmp 文件')
+
+  const r2 = await marker.ensureWebhookMigrationMarkerFile(file)
+  assertEq(r2.changed, false, '第二次调用不再写')
+
+  const bad = join(dir, 'bad.json')
+  fs.writeFileSync(bad, '{ not json')
+  const r3 = await marker.ensureWebhookMigrationMarkerFile(bad)
+  assertEq(r3.changed, false, '坏 JSON 不动作')
+  assert(String(r3.error || '').includes('JSON'), '坏文件应返回可读原因')
+  assertEq(fs.readFileSync(bad, 'utf-8'), '{ not json', '坏文件保持原样')
+  fs.rmSync(dir, { recursive: true, force: true })
+  return '备份命名/CRLF+BOM/原子写无残留/幂等/坏文件保护'
+})
+
+await rec.check('marker-wiring', '接线：config 同步之后、spawn 之前补齐标记；两处首文件骨架都带标记', async () => {
+  const { readFileSync } = await import('node:fs')
+  const clawSrc = readFileSync(join(process.cwd(), 'electron', 'main', 'clawManager.ts'), 'utf-8')
+  const cfgSrc = readFileSync(join(process.cwd(), 'electron', 'main', 'configManager.ts'), 'utf-8')
+  const dlSrc = readFileSync(join(process.cwd(), 'electron', 'main', 'downloadManager.ts'), 'utf-8')
+  const iSync = clawSrc.indexOf('syncOpenClawConfig()')
+  const iMarker = clawSrc.indexOf('ensureWebhookMigrationMarker()')
+  const iSpawn = clawSrc.indexOf('spawn(nodePath')
+  assert(iSync > 0, '应能在源码里找到启动前的 openclaw.json 同步')
+  assert(iMarker > iSync, '标记补齐必须在 openclaw.json 同步之后（否则会被 patch 覆盖）')
+  assert(iSpawn > iMarker, '标记补齐必须在 spawn 网关之前')
+  assert(cfgSrc.includes('runSerializedOpenClawConfigWrite'), '标记写入必须走官方写入串行队列')
+  assert(cfgSrc.includes('applyWebhookMigrationMarker'), 'configManager 首文件骨架也要带标记')
+  assert(dlSrc.includes('applyWebhookMigrationMarker'), 'downloadManager 首文件骨架也要带标记（同口径红线）')
+  assert(
+    cfgSrc.includes('findLegacyWebhookChannels') && dlSrc.includes('findLegacyWebhookChannels'),
+    '两处骨架都必须先检查 legacyWebhook'
+  )
+  return '顺序、串行队列、两处首文件骨架接线正确'
+})
+
+// ── 启动耗时统计 / 保留网关（2026-10-31）───────────────────────────────────────
+const statsPath = bundleEntry('electron/main/startupStats.ts', 'claw-startup-stats.mjs')
+const stats = await import(pathToFileURL(statsPath).href)
+
+await rec.check('stats-pure', '启动耗时统计：追加/上限/中位数/估算/序列化回读', async () => {
+  assertDeepEq(stats.appendStartupDuration([1000, 2000], 3000), [1000, 2000, 3000])
+  assertDeepEq(
+    stats.appendStartupDuration([1, 2, 3, 4, 5], 6),
+    [2, 3, 4, 5, 6],
+    '只保留最近 5 次'
+  )
+  assertEq(stats.appendStartupDuration([], -1).length, 0, '非法耗时不入样本')
+  assertEq(stats.medianOf([], undefined), undefined)
+  assertEq(stats.medianOf([100, 300, 200]), 200, '奇数中位数')
+  assertEq(stats.medianOf([100, 200]), 150, '偶数中位数取均值')
+  assertEq(stats.estimateStartupMs([1000, 2000, 3000, 4000]), 3000, '取最近 3 次中位数')
+  assertEq(stats.estimateStartupMs([648404, 325047]), 325047, '样本不足 3 次时用最近一次（避免异常值带偏 ETA）')
+  assertEq(stats.estimateStartupMs([]), undefined)
+  const roundTrip = stats.parseStartupStats(stats.serializeStartupStats([1234, 5678]))
+  assertDeepEq(roundTrip, [1234, 5678], '序列化/回读一致')
+  assertDeepEq(stats.parseStartupStats('not-json'), [], '坏文件按空处理')
+  return '追加/上限/中位数/估算/回读/坏文件'
+})
+
+await rec.check('keep-gateway', '保留网关：复用健康的后台网关 + 退出时按设置保留/停止', async () => {
+  const { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import('node:fs')
+  const os = await import('node:os')
+  const sandbox = mkdtempSync(join(os.tmpdir(), 'umi-keep-gw-'))
+  const runtimeDir = join(sandbox, 'cache')
+  mkdirSync(runtimeDir, { recursive: true })
+  const runtimeFile = join(runtimeDir, 'gateway-runtime.json')
+  writeFileSync(
+    runtimeFile,
+    JSON.stringify({ version: 1, pid: 4321, port: 3213, startedAt: Date.now(), detached: true, logFile: join(sandbox, 'gw.log') })
+  )
+  const makeCm = (keep) =>
+    new ClawManager({
+      getDataDir: () => sandbox,
+      getNodePath: () => process.execPath,
+      getConfig: () => ({ port: 3213, keepGatewayOnQuit: keep })
+    })
+
+  // 1) 复用：健康 + 进程存活 → 直接 running/ready，不 spawn
+  const cm = makeCm(true)
+  cm._fetchHealthOk = async () => true
+  cm._isPidAlive = () => true
+  cm._findPidListeningOnPort = async () => 4321
+  cm._startGatewayLogTails = () => undefined
+  cm._stopGatewayLogTails = () => undefined
+  cm._startAdoptedHealthWatch = () => undefined
+  cm._stopAdoptedHealthWatch = () => undefined
+  cm._killAdoptedProcess = async () => true
+  const adopted = await cm.adoptRunningGateway()
+  assertEq(adopted, true, '应成功复用后台网关')
+  const st = cm.getStatus()
+  assertEq(st.running, true, '复用后 running=true')
+  assertEq(st.ready, true, '复用后 ready=true')
+  assertEq(st.pid, 4321, 'pid 来自运行时描述')
+  await cm.stop()
+  assertEq(cm.getStatus().running, false, 'stop 后不再运行')
+  assert(!existsSync(runtimeFile), 'stop 后运行时描述应清理')
+
+  // 2) 设置关闭时不复用
+  writeFileSync(runtimeFile, JSON.stringify({ pid: 4321, port: 3213 }))
+  const cmOff = makeCm(false)
+  cmOff._fetchHealthOk = async () => true
+  assertEq(await cmOff.adoptRunningGateway(), false, '设置关闭时绝不复用')
+
+  // 2b) 端口 owner pid 与记录不一致 → 拒绝复用（防 pid 复用误杀）
+  const cmMismatch = makeCm(true)
+  cmMismatch._fetchHealthOk = async () => true
+  cmMismatch._isPidAlive = () => true
+  cmMismatch._findPidListeningOnPort = async () => 9999
+  cmMismatch._clearGatewayRuntime = () => undefined
+  assertEq(await cmMismatch.adoptRunningGateway(), false, '端口 owner 不一致时不得复用')
+
+  // 3) 退出：开启保留时不停网关；关闭时照常 stop
+  const cmKeep = makeCm(true)
+  cmKeep.detachedChild = true
+  cmKeep.process = { unref: () => undefined }
+  let keptStopCalled = false
+  cmKeep.stop = async () => { keptStopCalled = true; return { success: true } }
+  await cmKeep.handleAppQuit()
+  assertEq(keptStopCalled, false, '开启保留时退出不应停止网关')
+  assertEq(cmKeep.process, null, '退出后不再持有子进程句柄')
+
+  const cmStop = makeCm(false)
+  cmStop.detachedChild = true
+  cmStop.process = { unref: () => undefined }
+  let stopCalled = false
+  cmStop.stop = async () => { stopCalled = true; return { success: true } }
+  await cmStop.handleAppQuit()
+  assertEq(stopCalled, true, '关闭保留时退出照常停止网关')
+
+  rmSync(sandbox, { recursive: true, force: true })
+  return '复用/清理/设置关闭不复用/退出保留与停止'
+})
+
+await rec.check('eta-wiring', 'ETA 接线：状态里有估算值、store/Dashboard 展示', async () => {
+  const { readFileSync } = await import('node:fs')
+  const clawSrc = readFileSync(join(process.cwd(), 'electron', 'main', 'clawManager.ts'), 'utf-8')
+  const storeSrc = readFileSync(join(process.cwd(), 'src', 'stores', 'claw.ts'), 'utf-8')
+  const dashSrc = readFileSync(join(process.cwd(), 'src', 'views', 'Dashboard.vue'), 'utf-8')
+  const cfgView = readFileSync(join(process.cwd(), 'src', 'views', 'Config.vue'), 'utf-8')
+  assert(/startup-stats\.json/.test(clawSrc), '耗时样本落盘')
+  assert(/estimateStartupMs/.test(clawSrc), '状态里暴露估算值')
+  assert(/etaRemainingSeconds/.test(storeSrc), 'store 计算剩余秒数')
+  assert(/etaRemainingSeconds/.test(dashSrc), 'Dashboard 展示预计剩余')
+  assert(/keepGatewayOnQuit/.test(cfgView), '设置页提供「退出保留网关」开关')
+  assert(/adoptRunningGateway/.test(clawSrc), '启动时复用后台网关')
+  // 生产接线：所有退出路径必须走 handleAppQuit（否则保留网关是死代码）
+  const idxSrc = readFileSync(join(process.cwd(), 'electron', 'main', 'index.ts'), 'utf-8')
+  const quitCalls = (idxSrc.match(/clawManager\.handleAppQuit\(\)/g) || []).length
+  assert(quitCalls >= 3, `quitApp/托盘/before-quit 都要走 handleAppQuit（实际 ${quitCalls} 处）`)
+  assert(/bootPhase: full\.bootPhase/.test(idxSrc), 'statusChange 必须推送 bootPhase')
+  assert(/estimateStartupMs: full\.estimateStartupMs/.test(idxSrc), 'statusChange 必须推送 estimateStartupMs')
+  return '估算值/展示/开关/复用 接线齐全'
+})
 // ── 结果 ─────────────────────────────────────────────────────────────────────
 
 const result = rec.toJSON({ entry: clawPath })
