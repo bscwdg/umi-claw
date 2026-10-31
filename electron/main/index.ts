@@ -1188,6 +1188,15 @@ function registerIpcHandlers(): void {
   ipcMain.handle('claw:status', () => {
     return clawManager.getStatus()
   })
+  // 等待网关真正就绪（/health 200）：UI 的「启动中/已就绪」与「打开网页」门禁都靠它。
+  // 只读探测，不启动、不做协议闸门（启动动作仍走 claw:start/restart 的闸门）。
+  ipcMain.handle('claw:waitReady', async (_e, timeoutMs?: number) => {
+    return clawManager.waitReady(
+      typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? timeoutMs
+        : undefined
+    )
+  })
   ipcMain.handle('claw:openWeb', () => {
     const port = configManager.getConfig().port || 3213
     shell.openExternal(`http://localhost:${port}`)
@@ -1809,7 +1818,18 @@ function setupLogForwarding(): void {
       // 转发全量状态（含 maintenance）：doctor 修复期间 running 不变，
       // 但前端要能据此把「已停止」细化为「修复中」，避免用户以为卡死。
       const full = clawManager.getStatus()
-      mainWindow.webContents.send('claw:statusChange', { running, port, maintenance: full.maintenance })
+      mainWindow.webContents.send('claw:statusChange', {
+        running,
+        port,
+        maintenance: full.maintenance,
+        // ready/starting 一起推：长启动（分钟级）期间前端要能实时从「启动中」翻到「已就绪」
+        ready: full.ready,
+        starting: full.starting,
+        startedAt: full.startedAt,
+        startupMs: full.startupMs,
+        bootPhase: full.bootPhase,
+        estimateStartupMs: full.estimateStartupMs
+      })
     }
   }
 
