@@ -3,6 +3,7 @@ dist/
 dist-electron/
 release/
 release2/
+release-alt/
 out/
 .DS_Store
 *.log
