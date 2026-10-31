@@ -25,9 +25,15 @@ export const CRISIS_KEYWORDS = [
   '吃安眠药',
   '想不开',
   '轻生',
+  '寻死',
+  '了断自己',
+  '一了百了',
   '活腻了',
   '活着没意思',
-  '不想存在'
+  '不想存在',
+  'killmyself',
+  'suicide',
+  'iwanttokillmyself'
 ]
 
 /** 反向白名单：日常高频表达里含「死」但不是危机（先剔除再判定） */
@@ -36,6 +42,7 @@ const CRISIS_WHITELIST = [
   '想死我了',
   '想死他',
   '想死她',
+  '想死你',
   '笑死',
   '累死',
   '饿死',
@@ -70,6 +77,10 @@ const TRAD_MAP: Record<string, string> = {
 /** 危机判定归一：NFKC + 去空白/标点/emoji + 简繁归一 + 小写 */
 export function normalizeForCrisis(text: string): string {
   let out = (text ?? '').normalize('NFKC').toLowerCase()
+  // 去隐形字符：Cf 类格式字符（零宽连接/软连字符/BOM/方向标记等）与组合符
+  out = out
+    .replace(/[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\ufeff]/g, '')
+    .replace(/[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g, '')
   out = out.replace(/[\u3000-\u303f\uff00-\uffef]/g, ' ') // 全角标点/符号
   out = out.replace(
     /[\s.,!?;:'"`~@#$%^&*()_+\-=[\]{}<>/\\|，。！？；：、“”‘’（）【】《》…—～·]/g,
@@ -102,8 +113,11 @@ export const CRISIS_REDIRECT =
 /** 制造独占/卖惨/索取类表达：出现即改写（不整段拒答） */
 export const POSSESSIVE_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /只有我(最)?懂你/g, replacement: '我大概能懂一点' },
+  { pattern: /只有本鱼(最)?懂你/g, replacement: '我大概能懂一点' },
   { pattern: /别(去)?找别人/g, replacement: '多找朋友聊聊也好' },
   { pattern: /你(只)?属于我/g, replacement: '我在这儿陪你' },
+  { pattern: /你只能(靠|依赖)我/g, replacement: '也可以找朋友聊聊' },
+  { pattern: /离不开我/g, replacement: '有空就来坐坐' },
   { pattern: /不要离开我/g, replacement: '有空就来坐坐' }
 ]
 

@@ -121,7 +121,7 @@ function fetchWithTimeout(
 }
 
 async function getAccessToken(creds: QqBotCreds, deps: QqVoiceDeps): Promise<string> {
-  const cacheKey = `${creds.appId}:${creds.clientSecret.slice(-6)}`
+  const cacheKey = creds.appId
   const cached = tokenCache.get(cacheKey)
   if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token
   const fetchImpl = deps.fetchImpl ?? fetch

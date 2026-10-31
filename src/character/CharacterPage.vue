@@ -196,6 +196,17 @@ const lifeDoc = ref('')
 const proactiveEnabled = ref(false)
 const memoryStatus = ref({ done: false, attempts: 0, lastError: '' })
 const ageConfirmed = ref(false)
+const MEMORY_REASON_TEXT: Record<string, string> = {
+  'age-unconfirmed': '还没确认年龄（在「隐私与安全」勾选后才会写）',
+  'auto-off': '自动记忆已关闭',
+  'not-window': '还没到 23:00 窗口',
+  'attempts': '今天尝试次数用完了',
+  'cooldown': '刚失败过，5 分钟后再试',
+  'done': '今天已经写好了',
+  'in-flight': '正在写，别催',
+  'disabled': '大肥鱼未启用'
+}
+
 const memoryText = computed(() => {
   if (memoryStatus.value.done) return '今天已经写好了。'
   if (memoryStatus.value.lastError) {
@@ -312,7 +323,7 @@ async function runMemory(): Promise<void> {
     const result = await window.api.character.memory.runNow()
     await refresh()
     if (result.errors?.length) error.value = result.errors.join('；')
-    else if (!result.ran) error.value = `这次没写：${result.reason}`
+    else if (!result.ran) error.value = `这次没写：${MEMORY_REASON_TEXT[result.reason] ?? result.reason}`
   })
 }
 

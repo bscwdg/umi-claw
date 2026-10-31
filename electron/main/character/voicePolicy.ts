@@ -5,6 +5,7 @@
 
 export type VoiceDecisionReason =
   | 'disabled'
+  | 'age-unconfirmed'
   | 'request-not-allowed'
   | 'not-unlocked'
   | 'quiet'
@@ -21,6 +22,8 @@ export interface VoiceDecision {
 
 export interface VoicePolicyInput {
   voiceEnabled: boolean
+  /** D10：未确认年龄前不发语音（与主动消息同一闸门） */
+  ageConfirmed: boolean
   requestAllowed: boolean
   requested: boolean
   stage: number
@@ -31,16 +34,16 @@ export interface VoicePolicyInput {
   textMaxChars?: number
 }
 
-/** 「发条语音 / 说句话 / 语音说」这类明确要求（正则预筛，模型二次判定由调用方做） */
+/** 「发条语音 / 用你的声音说」这类明确要求（正则预筛，模型二次判定由调用方做） */
 export function isVoiceRequest(text: string): boolean {
   const raw = (text ?? '').trim()
   if (!raw) return false
   // 否定表达先排除（「我不想发语音」「别用声音」不是要求）
   if (/(不想|不要|不用|别)(发|来|用|听|说).{0,4}(语音|声音)/.test(raw)) return false
-  if (/(发|来|出)(一?条|个|段)?(语音|声音|语音条)/.test(raw)) return true
+  if (/(发|来)(一?条|个|段)(语音|声音|语音条)/.test(raw)) return true
   if (/语音(说|讲|回|发)/.test(raw)) return true
-  if (/(用|拿)(你的)?声音/.test(raw)) return true
-  if (/说句(话|话嘛|话听听)/.test(raw)) return true
+  if (/(用|拿)你的声音/.test(raw)) return true
+  if (/说句话?听听/.test(raw)) return true
   return false
 }
 
@@ -48,6 +51,7 @@ export function decideVoice(input: VoicePolicyInput): VoiceDecision {
   const requested = Boolean(input.requested)
   const deny = (reason: VoiceDecisionReason): VoiceDecision => ({ send: false, reason, requested })
   if (!input.voiceEnabled) return deny('disabled')
+  if (!input.ageConfirmed) return deny('age-unconfirmed')
   // §5.7 优先级：用户明确要求 > 阶段解锁 > 内容适配 > 免打扰
   if (requested) {
     if (!input.requestAllowed) return deny('request-not-allowed')

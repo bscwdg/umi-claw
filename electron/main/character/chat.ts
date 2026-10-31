@@ -156,25 +156,29 @@ export class EmotionStreamFilter {
 }
 
 /**
- * 输出过滤滑窗：独占/卖惨模式可能被模型拆到两个 chunk 里，
- * 先扣住尾部 8 个字符，等下一块拼上再过滤，避免「只有我」+「最懂你」漏网。
+ * 输出过滤滑窗：对「累计文本」整体过滤，只发射倒数 24 字之前的部分，
+ * 这样独占表达即使被拆到多帧也会在同一缓冲里匹配；前缀一旦发射就不会再被后续改写。
  */
 export class OutputStreamFilter {
-  private pending = ''
+  private raw = ''
+  private emitted = 0
   constructor(private readonly filter: (text: string) => string) {}
 
   push(chunk: string): string {
-    this.pending += chunk
-    if (this.pending.length <= 8) return ''
-    const cut = this.pending.length - 8
-    const head = this.pending.slice(0, cut)
-    this.pending = this.pending.slice(cut)
-    return this.filter(head)
+    this.raw += chunk
+    const filtered = this.filter(this.raw)
+    const safeLen = Math.max(0, filtered.length - 24)
+    if (safeLen <= this.emitted) return ''
+    const out = filtered.slice(this.emitted, safeLen)
+    this.emitted = safeLen
+    return out
   }
 
   flush(): string {
-    const out = this.filter(this.pending)
-    this.pending = ''
+    const filtered = this.filter(this.raw)
+    const out = filtered.slice(this.emitted)
+    this.raw = ''
+    this.emitted = 0
     return out
   }
 }

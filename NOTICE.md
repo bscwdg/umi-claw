@@ -7,7 +7,7 @@
 
 - **silk-wasm**（MIT）：QQ 语音条的 SILK 编码（`electron/main/character/qqVoice.ts` 动态加载；
   未安装时语音条自动降级为文字，不影响应用启动）。
-  许可：https://github.com/...（以 npm 包内 LICENSE 为准，打包时随 `node_modules` 保留）。
+  许可：https://www.npmjs.com/package/silk-wasm （以包内 LICENSE 为准，打包时随 `node_modules` 保留）。
 
 ## 设计与文本参考（不随安装包分发）
 

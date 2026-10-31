@@ -25,6 +25,7 @@ const outDir = join(repoRoot, 'dist-electron')
 function resolveUnpacked() {
   const candidates = [
     process.env.UMI_PACKAGED_DIR,
+    join(repoRoot, 'release-build', 'win-unpacked'),
     join(repoRoot, 'release-alt', 'win-unpacked'),
     join(repoRoot, 'release', 'win-unpacked')
   ].filter(Boolean)
@@ -88,7 +89,9 @@ try {
   await r.check('S6', '安装包目录：清单/migrations 在 resources，代码在 asar 且不含插件数据', async () => {
     const unpacked = resolveUnpacked()
     if (!unpacked) {
-      return '跳过（未构建 release/win-unpacked）'
+      if (process.env.UMI_ALLOW_PACKAGE_SKIP === '1') return '跳过（显式允许）'
+      assert(false, '缺少解包产物：请先 electron-builder --win --dir（或设 UMI_ALLOW_PACKAGE_SKIP=1）')
+      return ''
     }
     const resRoot = join(unpacked, 'resources', 'resources')
     assert(existsSync(join(resRoot, 'plugins', 'work', 'plugin.json')), '包内 work 清单')
@@ -118,7 +121,9 @@ try {
   await r.check('S7', '角色内容包随包（persona/cards/emotions）且桌宠独立 preload 进 asar', async () => {
     const unpacked = resolveUnpacked()
     if (!unpacked) {
-      return '跳过（未构建 release/win-unpacked）'
+      if (process.env.UMI_ALLOW_PACKAGE_SKIP === '1') return '跳过（显式允许）'
+      assert(false, '缺少解包产物：请先 electron-builder --win --dir（或设 UMI_ALLOW_PACKAGE_SKIP=1）')
+      return ''
     }
     const resRoot = join(unpacked, 'resources', 'resources')
     const character = join(resRoot, 'character')
@@ -140,8 +145,19 @@ try {
     const asarText = readFileSync(join(unpacked, 'resources', 'app.asar')).toString('utf8')
     assert(asarText.includes('"pet.js"'), 'asar 含桌宠独立 preload（pet.js）')
     assert(asarText.includes('character:window:pet'), 'asar 含角色通道代码')
-    assert(asarText.includes('silk-wasm'), 'asar 含 silk-wasm 依赖声明')
+    // 不能只匹配 package.json 的依赖声明：要真的把 silk-wasm 包目录/资源打进 asar
+    assert(/"silk-wasm":\{"files"/.test(asarText), 'asar 内含 silk-wasm 包目录')
+    assert(asarText.includes('.wasm'), 'asar 内含 wasm 资源')
     assert(!asarText.includes('doc/research/upstream'), 'asar 不含上游参考库')
+    // 内容不能是 101 字节占位：JSON 必须可解析且卡池/六态达数量
+    const deck = JSON.parse(readFileSync(join(character, 'cards', 'life-cards.v1.json'), 'utf8'))
+    assert(Array.isArray(deck.cards) && deck.cards.length >= 20, '包内生活卡 ≥20 且可解析')
+    const emotions = JSON.parse(readFileSync(join(character, 'emotions.v1.json'), 'utf8'))
+    assert(Object.keys(emotions.states ?? {}).length === 6, '包内六态定义完整')
+    const soulTpl = readFileSync(join(character, 'persona', 'SOUL.md.tpl'), 'utf8')
+    assert(/\{\{[a-zA-Z]+\}\}/.test(soulTpl), 'SOUL 模板含变量占位')
+    const voiceRules = readFileSync(join(character, 'persona', 'voice-rules.md'), 'utf8')
+    assert(voiceRules.includes('风格规则'), 'voice-rules 是规则正文')
     // NOTICE：第三方署名与许可（silk-wasm / codex-deepseek-pet 署名）
     const notice = readFileSync(join(repoRoot, 'NOTICE.md'), 'utf8')
     assert(notice.includes('silk-wasm'), 'NOTICE 列 silk-wasm')

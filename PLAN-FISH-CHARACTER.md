@@ -328,7 +328,7 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 - `voicePolicy.evaluate({stage, textLen, requested, quiet, usedToday})` → `{send, reason}`；优先级：用户要求 > 阶段解锁 > 内容适配 > 免打扰。
 - 要求识别：正则预筛 + 模型二次判定（命中 `voice.request` 事件，日限 3）。
 - **出站 TTS**：`voiceManager.speak({format:'pcm', sampleRate:16000})` → 包 16k WAV → `silk-wasm` → 上传 `file_type=3` → 发 `msg_type=7`（不带 content/msg_id，`msg_seq` 递增）；失败降级文字。**不做 mp3 解码**（仓库无解码/ffmpeg 依赖，直出 PCM 少一个 native 依赖）。
-- **入站语音（已定支持）**：QQ 语音条（`.amr/.silk`）→ 下载 → 复用现有 STT 模型转写 → 按文本进对话；转写失败诚实回「没听清」并提示改文字，不假装听懂。
+- **入站语音（M2 接线，M1 交付注入接口）**：QQ 语音条（`.amr/.silk`）→ 下载 → 复用现有 STT 模型转写 → 按文本进对话；转写失败诚实回「没听清」并提示改文字，不假装听懂。M1 只交付 `stt.ts` 注入接口 + 单测；QQ 入站入口、SILK/AMR 解码与宿主 STT provider 接线排 M2（1–2 人天，解码/供应商待定）。
 - 凭据：读 `channels.qqbot` + 32 位备份凭据；**不覆盖**已有可用凭据；写入前长度校验。
 - 新增依赖：`silk-wasm`（MIT，纯 wasm；打包需确认 cli 资源路径）。
 

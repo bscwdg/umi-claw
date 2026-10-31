@@ -110,6 +110,8 @@ export class CharacterManager {
     null
   private proactiveInFlight = false
   private disposed = false
+  /** 数据代际：删除时自增，长任务（记忆/主动）写回前校验，避免删完又被写回 */
+  private dataEpoch = 0
 
   private settings: CharacterSettings | null = null
   private state: CharacterState | null = null
@@ -431,12 +433,17 @@ export class CharacterManager {
       return { decision: { send: false, reason: 'min-interval', channel: 'app' } }
     }
     this.proactiveInFlight = true
+    const epoch = this.dataEpoch
     try {
       const { decision, message } = await this.evaluateProactive(now)
       if (!decision.send || !message) return { decision }
       const claimed = await this.claimProactiveSlot(now)
       if (!claimed) {
         return { decision: { ...decision, send: false, reason: 'daily-cap' } }
+      }
+      // 删除发生在评估/预留之间：不再发送，也不再写回
+      if (epoch !== this.dataEpoch) {
+        return { decision: { ...decision, send: false }, message: undefined }
       }
       let delivered = false
       if (this.sendProactive) {
@@ -560,6 +567,8 @@ export class CharacterManager {
   ): Promise<{ ran: boolean; reason: MemoryGateReason; errors?: string[] }> {
     const base =
       (await this.store.readDay<{ memory?: MemoryDayState; events?: string[] }>(date)) ?? {}
+    const epoch = this.dataEpoch
+    const epochOk = (): boolean => epoch === this.dataEpoch
     const memory: MemoryDayState = { ...(base.memory ?? {}) }
     memory.attempts = (memory.attempts ?? 0) + 1
     memory.lastAttemptAt = now
@@ -604,6 +613,7 @@ export class CharacterManager {
         }
       }
       // 先写 workspace（宿主可回滚），再写 Obsidian 日记目录
+      if (!epochOk()) throw new Error('数据已删除，取消写回')
       await this.writeWorkspaceMemory(date, cleaned)
       memory.memoryFile = `memory/${date}.md`
       const obsidianReady = this.obsidianAvailable ? this.obsidianAvailable() : true
@@ -623,8 +633,9 @@ export class CharacterManager {
         return { ran: true, reason: 'ok' }
       }
       memory.partial = true
-      await this.mergeDayMemory(date, memory)
+      await this.mergeDayMemory(date, memory, epoch)
       const relPath = diaryObsidianRelPath(date)
+      if (!epochOk()) throw new Error('数据已删除，取消写回')
       await this.writeObsidianDiary(relPath, cleaned)
       memory.done = true
       memory.partial = false
@@ -644,8 +655,14 @@ export class CharacterManager {
   }
 
   /** 只合并 memory 字段并加锁：避免长生成回来用旧 day 快照覆盖 activeSent/events */
-  private async mergeDayMemory(date: string, memory: MemoryDayState): Promise<void> {
+  private async mergeDayMemory(
+    date: string,
+    memory: MemoryDayState,
+    epoch?: number
+  ): Promise<void> {
+    if (epoch !== undefined && epoch !== this.dataEpoch) return
     await this.withMutation(async () => {
+      if (epoch !== undefined && epoch !== this.dataEpoch) return
       const fresh = (await this.store.readDay<Record<string, unknown>>(date)) ?? {}
       await this.store.writeDay(date, { ...fresh, memory })
     })
@@ -682,6 +699,7 @@ export class CharacterManager {
     const day = (await this.store.readDay<{ voiceSent?: number }>(toDateKey(now))) ?? {}
     return decideVoice({
       voiceEnabled: settings.voice.enabled,
+      ageConfirmed: Boolean(settings.safety.ageConfirmed),
       requestAllowed: settings.voice.requestAllowed,
       requested,
       stage: state.stage,
@@ -792,8 +810,15 @@ export class CharacterManager {
   async deleteData(scopeInput: unknown): Promise<{ scope: DeleteScope }> {
     this.assertInitialized()
     const scope = normalizeDeleteScope(scopeInput)
+    // 先推进代际：在途的长任务写回前会校验，避免删除后数据复活
+    this.dataEpoch += 1
+    const previousGen = await this.store.readChatGeneration()
     return this.withMutation(async () => {
       await this.store.reset(scope)
+      // 代际单调递增（不能回到 1，否则可能复活最早一次 sticky 上下文）
+      if (scope === 'memory' || scope === 'all') {
+        await this.store.writeChatGeneration(previousGen + 1)
+      }
       if (this.deleteWorkspaceFiles) {
         try {
           await this.deleteWorkspaceFiles(scope)

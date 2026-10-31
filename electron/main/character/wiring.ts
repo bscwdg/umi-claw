@@ -237,9 +237,14 @@ async function registerCharacterInternal(
           // §13.1-4：全量删除后 openclaw.json 里不应再有 feiyu 条目
           if (removeAgentEntryFn) {
             try {
-              await removeAgentEntryFn()
+              const result = (await removeAgentEntryFn()) as { ok?: boolean; error?: string } | undefined
+              if (result && result.ok === false) {
+                // 不能静默：删除 all 后 agent 条目必须消失（§13.1-4）
+                throw new Error(result.error ?? 'agent 条目删除失败')
+              }
             } catch (error) {
               logger(`[character] 删除 agent 条目失败: ${(error as Error)?.message ?? String(error)}`)
+              throw error
             }
           }
         }
@@ -250,27 +255,33 @@ async function registerCharacterInternal(
 
     // 语音条（C08）：TTS 16k WAV → SILK → QQ；失败降级文字，不重试
     let voiceSeq = 0
+    // 串行化语音发送：msg_seq 的读取-自增不能并发（QQ 会因重复 seq 拒收）
+    let voiceQueue: Promise<unknown> = Promise.resolve()
     const deliverVoiceFn = deps.voice
       ? async (
           text: string
         ): Promise<{ delivered: boolean; channel: 'qq' | 'text'; error?: string }> => {
-          try {
-            const result = await deliverVoice({
-              text,
-              creds: deps.voice!.creds(),
-              speakPcm: deps.voice!.speakPcm,
-              encodeSilk: deps.voice!.encodeSilk,
-              seq: voiceSeq
-            })
-            voiceSeq = result.seq
-            return { delivered: result.delivered, channel: result.channel, error: result.error }
-          } catch (error) {
-            return {
-              delivered: false,
-              channel: 'text',
-              error: (error as Error)?.message ?? String(error)
+          const run = voiceQueue.then(async () => {
+            try {
+              const result = await deliverVoice({
+                text,
+                creds: deps.voice!.creds(),
+                speakPcm: deps.voice!.speakPcm,
+                encodeSilk: deps.voice!.encodeSilk,
+                seq: voiceSeq
+              })
+              voiceSeq = result.seq
+              return { delivered: result.delivered, channel: result.channel, error: result.error }
+            } catch (error) {
+              return {
+                delivered: false,
+                channel: 'text' as const,
+                error: (error as Error)?.message ?? String(error)
+              }
             }
-          }
+          })
+          voiceQueue = run.catch(() => undefined)
+          return run
         }
       : undefined
 
@@ -296,13 +307,10 @@ async function registerCharacterInternal(
           if (deliverVoiceFn && isVoiceRequest(userText)) {
             void (async () => {
               try {
+                const decision = await manager.decideVoiceFor(text, true)
+                if (!decision.send) return
                 const claimed = await manager.claimVoiceSlot()
                 if (!claimed.ok) return
-                const decision = await manager.decideVoiceFor(text, true)
-                if (!decision.send) {
-                  await manager.releaseVoiceSlot()
-                  return
-                }
                 const result = await deliverVoiceFn(text)
                 if (result.delivered) {
                   await manager.applyRelationshipEvent({

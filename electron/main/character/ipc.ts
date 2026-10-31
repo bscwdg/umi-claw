@@ -194,14 +194,14 @@ export function registerCharacterIpc(
     }
     const rawText = (payload as { text?: unknown } | undefined)?.text
     const text = typeof rawText === 'string' ? rawText.slice(0, 120) : '本鱼在呢。'
+    const decision = await manager.decideVoiceFor(text, true)
+    if (!decision.send) {
+      return { delivered: false, channel: 'text' as const, reason: decision.reason }
+    }
+    // 判定发生在预留之前，避免「先自增再判满」导致 cap=1 永远发不出
     const claimed = await manager.claimVoiceSlot()
     if (!claimed.ok) {
       return { delivered: false, channel: 'text' as const, reason: claimed.reason ?? 'daily-cap' }
-    }
-    const decision = await manager.decideVoiceFor(text, true)
-    if (!decision.send) {
-      await manager.releaseVoiceSlot()
-      return { delivered: false, channel: 'text' as const, reason: decision.reason }
     }
     if (!deps.deliverVoice) {
       await manager.releaseVoiceSlot()
