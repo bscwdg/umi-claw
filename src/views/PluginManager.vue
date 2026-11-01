@@ -19,6 +19,43 @@
       没有已登记的插件。把插件放到 <code>resources/plugins/&lt;id&gt;/</code> 并重新构建即可。
     </div>
 
+    <!-- 宿主模块：内置在宿主里的能力，不参与插件装卸；这里只做统一入口 -->
+    <h2 class="section-title">宿主模块</h2>
+    <section class="plugin-card host-module-card">
+      <div class="card-head">
+        <div class="titles">
+          <strong>🐟 大肥鱼</strong>
+          <span class="text-muted">宿主模块 · 角色 M1</span>
+        </div>
+        <span class="state" :class="characterEnabled ? 'state-activated' : ''">
+          {{ characterEnabled ? '已启用' : '未启用' }}
+        </span>
+      </div>
+
+      <p class="meta">
+        人格 / 聊天 / 关系 / 记忆 / 语音内置在宿主主进程，不随插件启停；
+        自检 {{ characterReadyCount }}/{{ CHARACTER_CHECKS.length }} 项就绪。
+      </p>
+
+      <p v-if="characterError" class="error-line">{{ characterError }}</p>
+      <p v-if="characterNotice" class="meta">{{ characterNotice }}</p>
+
+      <div class="actions">
+        <button
+          class="btn"
+          :class="{ 'btn-danger': characterEnabled, 'btn-primary': !characterEnabled }"
+          :disabled="characterBusy"
+          @click="toggleCharacter"
+        >
+          {{ characterBusy ? '处理中…' : characterEnabled ? '停用' : '启用' }}
+        </button>
+        <router-link class="btn btn-ghost" to="/character">打开页面</router-link>
+        <button class="btn btn-ghost" :disabled="characterBusy || !characterEnabled" @click="initCharacter">
+          一键初始化
+        </button>
+      </div>
+    </section>
+
     <section v-for="p in list" :key="p.id" class="plugin-card">
       <div class="card-head">
         <div class="titles">
@@ -71,6 +108,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 import type { PluginStatus } from '../../electron/main/kernel/lifecycle'
+import type { CharacterStatus } from '../../electron/main/character/types'
 import {
   errorSummary,
   normalizeListPayload,
@@ -91,6 +129,76 @@ let unsubscribe: (() => void) | null = null
 let disposed = false
 
 const list = computed(() => sortForDisplay(plugins.value))
+
+// ── 宿主模块：大肥鱼（内置在宿主里，不参与插件装卸；复用 character:* 通道） ──
+const CHARACTER_CHECKS = [
+  { key: 'agentReady', label: 'agent 配置' },
+  { key: 'gatewayReady', label: '网关' },
+  { key: 'obsidianReady', label: 'Obsidian' },
+  { key: 'qqReady', label: '外部渠道' },
+  { key: 'ttsReady', label: 'TTS' },
+  { key: 'memorySearchReady', label: '记忆检索' }
+] as const
+
+const characterStatus = ref<CharacterStatus | null>(null)
+const characterBusy = ref(false)
+const characterError = ref('')
+const characterNotice = ref('')
+const characterEnabled = computed(() => Boolean(characterStatus.value?.enabled))
+const characterReadyCount = computed(() => {
+  const status = characterStatus.value as Record<string, unknown> | null
+  if (!status) return 0
+  return CHARACTER_CHECKS.filter((check) => Boolean(status[check.key])).length
+})
+
+async function loadCharacter(): Promise<void> {
+  try {
+    characterStatus.value = await window.api.character.status()
+    characterError.value = ''
+  } catch (e) {
+    characterError.value = `读取大肥鱼状态失败：${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+async function toggleCharacter(): Promise<void> {
+  const next = !characterEnabled.value
+  if (
+    !next &&
+    !window.confirm('停用后主动消息、日记会自动停止；关系与日记数据保留。确定停用大肥鱼？')
+  ) {
+    return
+  }
+  characterBusy.value = true
+  characterError.value = ''
+  characterNotice.value = ''
+  try {
+    await window.api.character.settings.set({ enabled: next } as never)
+    await loadCharacter()
+    characterNotice.value = next ? '已启用；建议点「一键初始化」补齐配置' : '已停用（数据保留）'
+  } catch (e) {
+    characterError.value = `操作失败：${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    characterBusy.value = false
+  }
+}
+
+async function initCharacter(): Promise<void> {
+  characterBusy.value = true
+  characterError.value = ''
+  characterNotice.value = ''
+  try {
+    const report = await window.api.character.bootstrap.run()
+    const failed = report.steps.filter((step) => !step.ok).length
+    characterNotice.value = report.ok
+      ? '初始化完成'
+      : `初始化有 ${failed} 项未通过，去「大肥鱼」页查看并去配置`
+    await loadCharacter()
+  } catch (e) {
+    characterError.value = `初始化失败：${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    characterBusy.value = false
+  }
+}
 
 /** 清单级失败不能靠「启用」复活，按钮直接禁用；运行时失败允许重试 */
 function enableBlocked(status: PluginStatus): boolean {
@@ -167,6 +275,7 @@ onMounted(async () => {
     return
   }
   await reload()
+  await loadCharacter()
 })
 
 onUnmounted(() => {
@@ -238,5 +347,14 @@ onUnmounted(() => {
 .actions {
   display: flex;
   gap: 8px;
+}
+.section-title {
+  margin: 18px 0 10px;
+  font-size: 15px;
+  color: var(--text-muted, #6b7280);
+  font-weight: 600;
+}
+.host-module-card {
+  border-style: dashed;
 }
 </style>
