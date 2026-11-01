@@ -112,6 +112,8 @@ export class CharacterManager {
   private disposed = false
   /** 数据代际：删除时自增，长任务（记忆/主动）写回前校验，避免删完又被写回 */
   private dataEpoch = 0
+  /** 聊天代际缓存：渲染端用 status.chatGen 对齐流事件（否则首轮事件会被 gen 过滤掉） */
+  private chatGen = 1
 
   private settings: CharacterSettings | null = null
   private state: CharacterState | null = null
@@ -162,7 +164,8 @@ export class CharacterManager {
     await this.store.writeState(this.state)
     await this.store.prune()
     this.initialized = true
-    this.logger(`[character] 初始化完成（enabled=${existingSettings.enabled}）`)
+    this.chatGen = await this.store.readChatGeneration().catch(() => 1)
+    this.logger(`[character] 初始化完成（enabled=${existingSettings.enabled}，chatGen=${this.chatGen}）`)
   }
 
   /** C02/C08 完成后由 wiring 回填依赖就绪态 */
@@ -199,8 +202,14 @@ export class CharacterManager {
       enabled,
       ready: this.initialized && enabled,
       storeReady: this.initialized,
+      chatGen: this.chatGen,
       ...this.dependencyStatus
     }
+  }
+
+  /** 渲染端/聊天服务轮换代际后回写缓存（status 与事件必须同一个 gen） */
+  noteChatGen(gen: number): void {
+    if (typeof gen === 'number' && Number.isFinite(gen) && gen > 0) this.chatGen = Math.floor(gen)
   }
 
   async getState(): Promise<CharacterState> {
@@ -818,6 +827,7 @@ export class CharacterManager {
       // 代际单调递增（不能回到 1，否则可能复活最早一次 sticky 上下文）
       if (scope === 'memory' || scope === 'all') {
         await this.store.writeChatGeneration(previousGen + 1)
+        this.chatGen = previousGen + 1
       }
       if (this.deleteWorkspaceFiles) {
         try {

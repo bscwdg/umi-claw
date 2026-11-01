@@ -171,7 +171,10 @@ export function registerCharacterIpc(
     try {
       const chat = deps.chat
       if (!chat) throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '聊天尚未接线')
-      return toCharacterEnvelope(await chat.clear())
+      const result = await chat.clear()
+      // status 与流事件必须同一个 gen：清空后立刻回写缓存
+      manager.noteChatGen(result.gen)
+      return toCharacterEnvelope(result)
     } catch (error) {
       return toCharacterErrorEnvelope(error)
     }

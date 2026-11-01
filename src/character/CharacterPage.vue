@@ -11,6 +11,7 @@
     </header>
 
     <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="toast" class="toast">{{ toast }}</p>
 
     <section class="card">
       <h3>当前状态</h3>
@@ -59,19 +60,42 @@
           <span class="detail">{{ step.detail }}</span>
         </li>
       </ul>
+      <div v-if="failedFlags.length" class="row" style="flex-wrap: wrap; margin-top: 10px">
+        <button v-for="f in failedFlags" :key="f.key" class="btn ghost" @click="go(f.to)">
+          {{ f.label }}未就绪 · 去配置
+        </button>
+      </div>
     </section>
 
     <section class="card">
       <h3>连接自检</h3>
       <div class="grid">
-        <div><span class="k">agent</span><span class="v">{{ flag(status.agentReady) }}</span></div>
-        <div><span class="k">网关</span><span class="v">{{ flag(status.gatewayReady) }}</span></div>
-        <div><span class="k">Obsidian</span><span class="v">{{ flag(status.obsidianReady) }}</span></div>
-        <div><span class="k">QQ</span><span class="v">{{ flag(status.qqReady) }}</span></div>
-        <div><span class="k">TTS</span><span class="v">{{ flag(status.ttsReady) }}</span></div>
-        <div><span class="k">记忆检索</span><span class="v">{{ flag(status.memorySearchReady) }}</span></div>
+        <div>
+          <span class="k">agent</span><span class="v">{{ flag(status.agentReady) }}</span>
+          <button v-if="!status.agentReady" class="link" @click="go('/config')">去配置</button>
+        </div>
+        <div>
+          <span class="k">网关</span><span class="v">{{ flag(status.gatewayReady) }}</span>
+          <button v-if="!status.gatewayReady" class="link" @click="go('/dashboard')">去查看</button>
+        </div>
+        <div>
+          <span class="k">Obsidian</span><span class="v">{{ flag(status.obsidianReady) }}</span>
+          <button v-if="!status.obsidianReady" class="link" @click="go('/obsidian')">去配置</button>
+        </div>
+        <div>
+          <span class="k">QQ</span><span class="v">{{ flag(status.qqReady) }}</span>
+          <button v-if="!status.qqReady" class="link" @click="go('/channelsPage')">去配置</button>
+        </div>
+        <div>
+          <span class="k">TTS</span><span class="v">{{ flag(status.ttsReady) }}</span>
+          <button v-if="!status.ttsReady" class="link" @click="go('/voice')">去配置</button>
+        </div>
+        <div>
+          <span class="k">记忆检索</span><span class="v">{{ flag(status.memorySearchReady) }}</span>
+          <button v-if="!status.memorySearchReady" class="link" @click="go('/obsidian')">去配置</button>
+        </div>
       </div>
-      <p class="hint">记忆/世界书/日记只走既有 Obsidian 知识库，不新增知识库。</p>
+      <p class="hint">记忆/世界书/日记只走既有 Obsidian 知识库，不新增知识库。QQ 只是外部渠道之一，不配也不影响在应用里聊天。</p>
     </section>
 
     <section class="card">
@@ -79,7 +103,7 @@
       <div class="chat-log">
         <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
           <span class="who">{{ m.role === 'user' ? '你' : '她' }}</span>
-          <span class="text">{{ m.text }}<span v-if="m.streaming" class="cursor">▍</span></span>
+          <span class="text">{{ m.streaming && !m.text ? '正在想…' : m.text }}<span v-if="m.streaming" class="cursor">▍</span></span>
         </div>
         <p v-if="!messages.length" class="hint">还没聊过。说句话试试。</p>
       </div>
@@ -96,7 +120,10 @@
         <button class="btn" :disabled="!streaming" @click="stopStreaming">停止</button>
         <button class="btn ghost" @click="clearChat">清空</button>
       </div>
-      <p class="hint">清空只轮换会话上下文；日记与关系记忆不受影响。</p>
+      <p class="hint">
+        清空只轮换会话上下文；日记与关系记忆不受影响。首次或隔很久的回复可能要几十秒（网关/模型冷启动），
+        失败会显示在页面上方。
+      </p>
     </section>
 
     <section class="card">
@@ -158,6 +185,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import type { BootstrapReport } from '../../electron/main/character/bootstrap'
 import type { CharacterChatStreamEvent } from '../../electron/main/character/chat'
 
@@ -222,6 +250,49 @@ const streaming = computed(() => Boolean(runId.value))
 let cancelPending = false
 const busy = ref(false)
 const error = ref('')
+const toast = ref('')
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+let slowTimer: ReturnType<typeof setTimeout> | null = null
+const router = useRouter()
+
+function clearSlowTimer(): void {
+  if (slowTimer) {
+    clearTimeout(slowTimer)
+    slowTimer = null
+  }
+}
+
+/** 轻提示：保存/启用/导出等操作给明确反馈（3 秒自动消失） */
+function showToast(message: string): void {
+  toast.value = message
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => {
+    toast.value = ''
+    toastTimer = null
+  }, 3000)
+}
+
+/** 自检失败项 → 对应配置页（QQ/飞书/微信都在渠道接入里） */
+const FLAG_FIX: Record<string, { label: string; to: string }> = {
+  agentReady: { label: '模型', to: '/config' },
+  gatewayReady: { label: '网关', to: '/dashboard' },
+  obsidianReady: { label: 'Obsidian', to: '/obsidian' },
+  qqReady: { label: '渠道', to: '/channelsPage' },
+  ttsReady: { label: '语音', to: '/voice' },
+  sttReady: { label: '语音识别', to: '/config' },
+  memorySearchReady: { label: '记忆检索', to: '/obsidian' }
+}
+const failedFlags = computed(() => {
+  const flags = bootstrapReport.value?.status
+  if (!flags) return []
+  return Object.entries(FLAG_FIX)
+    .filter(([key]) => flags[key] === false)
+    .map(([key, meta]) => ({ key, ...meta }))
+})
+
+function go(path: string): void {
+  void router.push(path)
+}
 
 const STAGE_LABELS = ['初识', '眼熟', '熟客', '自己人', '搭子以上']
 const stageLabel = computed(() => STAGE_LABELS[state.value.stage] ?? '初识')
@@ -272,10 +343,14 @@ async function refresh(): Promise<void> {
 }
 
 async function toggleEnabled(): Promise<void> {
+  const next = !status.value.enabled
+  if (!next && !window.confirm('停用后主动消息、日记、桌宠都会停止，关系与日记数据会保留。确定停用？')) {
+    return
+  }
   await run(async () => {
-    const next = !status.value.enabled
     await window.api.character.settings.set({ enabled: next } as never)
     await refresh()
+    showToast(next ? '已启用她；建议再点「一键初始化」' : '已停用（数据保留）')
   })
 }
 
@@ -289,6 +364,7 @@ async function sendVoice(): Promise<void> {
       return
     }
     await refresh()
+    showToast('语音条已发出')
   })
 }
 
@@ -298,6 +374,7 @@ async function togglePetVisible(): Promise<void> {
     await window.api.character.settings.set({ pet: { visible: next } } as never)
     petVisible.value = next
     await refresh()
+    showToast(next ? '桌宠已显示；右键可调出菜单' : '桌宠已收起')
   })
 }
 
@@ -307,6 +384,7 @@ async function toggleProactive(): Promise<void> {
     await window.api.character.settings.set({ proactive: { enabled: next } } as never)
     proactiveEnabled.value = next
     await refresh()
+    showToast(next ? '主动消息已开启' : '主动消息已关闭')
   })
 }
 
@@ -315,6 +393,7 @@ async function quietDays(): Promise<void> {
     const until = Date.now() + 3 * 86_400_000
     await window.api.character.settings.set({ proactive: { silentUntil: until } } as never)
     await refresh()
+    showToast('已安静三天（可点「取消安静」恢复）')
   })
 }
 
@@ -324,6 +403,7 @@ async function runMemory(): Promise<void> {
     await refresh()
     if (result.errors?.length) error.value = result.errors.join('；')
     else if (!result.ran) error.value = `这次没写：${MEMORY_REASON_TEXT[result.reason] ?? result.reason}`
+    else showToast('日记写好了')
   })
 }
 
@@ -331,6 +411,7 @@ async function cancelQuiet(): Promise<void> {
   await run(async () => {
     await window.api.character.settings.set({ proactive: { silentUntil: 0 } } as never)
     await refresh()
+    showToast('已取消安静，主动消息恢复')
   })
 }
 
@@ -340,6 +421,7 @@ async function saveAgeConfirm(): Promise<void> {
       safety: { ageConfirmed: ageConfirmed.value }
     } as never)
     await refresh()
+    showToast(ageConfirmed.value ? '已确认年龄' : '已取消年龄确认（主动/日记会停）')
   })
 }
 
@@ -353,6 +435,7 @@ async function exportData(): Promise<void> {
     a.download = `fish-character-${new Date().toISOString().slice(0, 10)}.json`
     a.click()
     URL.revokeObjectURL(url)
+    showToast('档案已导出（不含密钥）')
   })
 }
 
@@ -361,6 +444,7 @@ async function deleteMemory(): Promise<void> {
   await run(async () => {
     await window.api.character.safety.deleteData('memory')
     await refresh()
+    showToast('日记与关系记忆已删除（日记已归档）')
   })
 }
 
@@ -369,6 +453,7 @@ async function deleteAll(): Promise<void> {
   await run(async () => {
     await window.api.character.safety.deleteData('all')
     await refresh()
+    showToast('全部角色数据已删除')
   })
 }
 
@@ -383,6 +468,7 @@ async function saveOnboarding(): Promise<void> {
       relationship: { address, mode: modeDraft.value, taboo }
     } as never)
     await refresh()
+    showToast('引导设置已保存')
   })
 }
 
@@ -390,22 +476,29 @@ async function runBootstrap(): Promise<void> {
   await run(async () => {
     bootstrapReport.value = await window.api.character.bootstrap.run()
     await refresh()
+    if (bootstrapReport.value?.ok) showToast('初始化完成')
+    else error.value = '初始化有未通过项，下面列出了要补的配置'
   })
 }
 
 function onStreamEvent(event: CharacterChatStreamEvent): void {
-  // 旧代际的迟到事件（清空/重置后）一律丢弃
-  if (event.gen !== activeGen.value) return
+  // status.chatGen 缓存未对上时（页面刚打开/清空后）先接纳首个事件的代际，避免整轮事件被丢弃
+  if (activeGen.value !== event.gen) {
+    if (activeGen.value === 0) activeGen.value = event.gen
+    else return
+  }
   const current = runId.value
   // 清空/结束后旧 run 的迟到事件必须丢弃
   if (!current) return
   if (current !== 'pending' && event.runId !== current) return
   const last = messages.value[messages.value.length - 1]
   if (event.kind === 'chunk') {
+    clearSlowTimer()
     if (last && last.role === 'assistant') last.text += event.text ?? ''
     return
   }
   if (event.kind === 'done') {
+    clearSlowTimer()
     if (last && last.role === 'assistant') {
       last.streaming = false
       if (!last.text) last.text = '……'
@@ -413,6 +506,7 @@ function onStreamEvent(event: CharacterChatStreamEvent): void {
     runId.value = ''
     return
   }
+  clearSlowTimer()
   if (last && last.role === 'assistant') last.streaming = false
   error.value = event.error || '聊天出错了'
   runId.value = ''
@@ -428,6 +522,14 @@ async function sendMessage(): Promise<void> {
   messages.value.push({ role: 'assistant', text: '', streaming: true })
   // 先占位，避免首帧 delta 比 send 的返回值更快到达时被丢弃
   runId.value = 'pending'
+  clearSlowTimer()
+  slowTimer = setTimeout(() => {
+    if (!streaming.value) return
+    const last = messages.value[messages.value.length - 1]
+    if (last?.role === 'assistant' && !last.text) {
+      error.value = '她还没回。首次/隔久后的回复可能因网关或模型冷启动较慢，可以再等等，或点「停止」重发。'
+    }
+  }, 45000)
   try {
     const result = await window.api.character.chat.send({ text })
     activeGen.value = result.gen
@@ -436,9 +538,11 @@ async function sendMessage(): Promise<void> {
       cancelPending = false
       await window.api.character.chat.cancel(result.runId).catch(() => undefined)
       markLastDone()
+      clearSlowTimer()
     }
   } catch (e) {
     cancelPending = false
+    clearSlowTimer()
     const last = messages.value[messages.value.length - 1]
     if (last && last.role === 'assistant' && !last.text) messages.value.pop()
     error.value = (e as Error)?.message || '发送失败'
@@ -629,6 +733,28 @@ select {
   margin: 0 0 12px;
   color: #ff6b6b;
   font-size: 13px;
+}
+.toast {
+  position: sticky;
+  top: 8px;
+  z-index: 20;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(46, 160, 67, 0.16);
+  border: 1px solid rgba(46, 160, 67, 0.45);
+  color: #7ee2a8;
+  font-size: 13px;
+}
+.link {
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #7aa2ff;
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
 }
 .steps {
   margin: 12px 0 0;

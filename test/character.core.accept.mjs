@@ -1961,5 +1961,20 @@ await recorder.check('C67', '删除与在途记忆竞态：删除后不再写 wo
   return '删除竞态正确'
 })
 
+await recorder.check('C68', 'status 带 chatGen：渲染端能与流事件对齐（防首轮事件被 gen 过滤）', async () => {
+  const kv = memoryKv()
+  const manager = new CharacterManager({ store: new CharacterStore({ kv }) })
+  await manager.init()
+  const store = new CharacterStore({ kv })
+  await store.writeChatGeneration(7)
+  // 重新 init 读取缓存
+  const manager2 = new CharacterManager({ store: new CharacterStore({ kv }) })
+  await manager2.init()
+  assertEq(manager2.getStatus().chatGen, 7, 'status 返回真实 gen')
+  manager2.noteChatGen(9)
+  assertEq(manager2.getStatus().chatGen, 9, '清空后可回写')
+  return 'chatGen 对齐正确'
+})
+
 const ok = printResult(recorder.toJSON())
 if (!ok) process.exit(1)
