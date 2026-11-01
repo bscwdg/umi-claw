@@ -2261,6 +2261,21 @@ app.whenReady().then(async () => {
         })
         return result.text
       },
+      // 预检索：直接复用「知识库」页同一条 search.mjs 链路（实测 200–500ms）
+      searchKnowledge: async (query: string) => {
+        try {
+          const obs = configManager.getConfig().obsidian
+          if (!obs?.enabled) return []
+          const result = await obsidianManager.testSearch({ query, limit: 5 })
+          return (result.hits ?? []).map((hit) => ({
+            path: hit.filePath,
+            content: hit.content,
+            score: hit.score
+          }))
+        } catch {
+          return []
+        }
+      },
       voice: {
         speakPcm: async (text: string) => {
           if (!voiceManager) throw new Error('语音模块未初始化')

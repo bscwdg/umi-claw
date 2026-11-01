@@ -15,6 +15,7 @@ import { loadPersonaTemplates, runBootstrap } from './bootstrap'
 import { parseLifeDeck } from './contentCards'
 import { deliverVoice, type QqBotCreds } from './qqVoice'
 import { isVoiceRequest } from './voicePolicy'
+import { formatSearchContext, looksLikeRecallQuery, withTimeout } from './searchContext'
 import { composePersonaFiles, writeManagedFiles } from './persona'
 import { PetWindowController, type PetMenuAction } from './petWindow'
 import { CharacterChatService, type CharacterChatFn } from './chat'
@@ -65,6 +66,10 @@ export interface CharacterWiringDeps {
   sendProactive?: (message: { text: string; channel: 'qq' | 'app' }) => Promise<boolean>
   /** 日记生成（index.ts 用 gateway 非流式 chat + openclaw/feiyu） */
   generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
+  /** 预检索（性能）：像在问过去/笔记时由宿主直接查 Obsidian，命中片段注入本轮上下文 */
+  searchKnowledge?: (
+    query: string
+  ) => Promise<Array<{ path: string; content: string; score: number }>>
   /** 语音条（C08）：TTS 出 16k WAV + QQ 凭据；缺省则语音条不可用（降级文字） */
   voice?: {
     speakPcm: (text: string) => Promise<Uint8Array>
@@ -349,8 +354,9 @@ async function registerCharacterInternal(
         // 安全闸门：危机词不进模型；输出侧改写独占/卖惨表达
         screenInput: (text) => manager.screenInbound(text),
         filterOutput: (text) => manager.filterAssistantText(text),
-        contextProvider: async () => {
+        contextProvider: async (text: string) => {
           // 每轮注入的短上下文：称呼 + 阶段 + 今日活动（≤300 字，让 C05/C06 对对话可见）
+          const parts: string[] = []
           try {
             const settings = await manager.getSettings()
             const state = await manager.getState()
@@ -358,13 +364,26 @@ async function registerCharacterInternal(
             const address = settings.relationship.address || '你'
             const activity = life.day?.activity ?? ''
             const stageLabels = ['初识', '眼熟', '熟客', '自己人', '搭子以上']
-            const line = `称呼：${address}；阶段：${stageLabels[state.stage] ?? '初识'}；心情：${
-              state.mood || '平静'
-            }${activity ? `；今天：${activity}` : ''}`
-            return line.slice(0, 300)
+            parts.push(
+              `称呼：${address}；阶段：${stageLabels[state.stage] ?? '初识'}；心情：${
+                state.mood || '平静'
+              }${activity ? `；今天：${activity}` : ''}`.slice(0, 300)
+            )
           } catch {
-            return null
+            /* 状态读失败不影响对话 */
           }
+          // 预检索：像在问过去/笔记时，宿主直接查 Obsidian（200–500ms），
+          // 把命中片段注入本轮，省掉模型 tool_search → search_notes 的 40s+ 链路。
+          if (deps.searchKnowledge && looksLikeRecallQuery(text)) {
+            try {
+              const hits = await withTimeout(deps.searchKnowledge(text), 1200)
+              const context = formatSearchContext(hits ?? [])
+              if (context) parts.push(context)
+            } catch {
+              /* 预检索失败就退回让模型自己决定是否检索 */
+            }
+          }
+          return parts.length ? parts.join('\n\n') : null
         },
         model: deps.chatModel ?? CHARACTER_AGENT_MODEL,
         now: deps.now,

@@ -28,6 +28,7 @@ const voicePolicyMod = await import(pathToFileURL(bundleEntry('electron/main/cha
 const qqVoiceMod = await import(pathToFileURL(bundleEntry('electron/main/character/qqVoice.ts', 'character-qq-voice.mjs')).href)
 const sttMod = await import(pathToFileURL(bundleEntry('electron/main/character/stt.ts', 'character-stt.mjs')).href)
 const safetyMod = await import(pathToFileURL(bundleEntry('electron/main/character/safety.ts', 'character-safety.mjs')).href)
+const searchContextMod = await import(pathToFileURL(bundleEntry('electron/main/character/searchContext.ts', 'character-search-context.mjs')).href)
 
 const {
   CHARACTER_ERROR_CODES,
@@ -390,6 +391,9 @@ await recorder.check('C10', '受管写入：用户改过的不覆盖、STATE 归
 await recorder.check('C11', 'agent 补丁构造与配置读回（官方 config patch 载荷）', async () => {
   const patch = buildAgentPatch('feiyu', 'D:/data/workspace-feiyu')
   assertEq(patch.agents.entries.feiyu.workspace, 'D:/data/workspace-feiyu', '补丁含 workspace')
+  // 性能默认值：不带 skills / 关内置 memory 检索（实测 prompt 19.6k→12.7k，TTFT 6.8s→5.3s）
+  assertEq(JSON.stringify(patch.agents.entries.feiyu.skills), '[]', 'lean：不加载 skills')
+  assertEq(patch.agents.entries.feiyu.memory.search.enabled, false, 'lean：关内置 memory 检索')
   let bad = false
   try {
     buildAgentPatch('Feiyu!', 'x')
@@ -1447,6 +1451,7 @@ aliases: [x]
 
 await recorder.check('C51', '聊天上下文注入：STATE/LIFE 摘要进 user 内容（≤300 字）', async () => {
   let request = null
+  let receivedText = ''
   const svc = new CharacterChatService({
     chat: async (input) => {
       request = input
@@ -1456,10 +1461,14 @@ await recorder.check('C51', '聊天上下文注入：STATE/LIFE 摘要进 user �
       readChatGeneration: async () => 1,
       writeChatGeneration: async () => undefined
     },
-    contextProvider: async () => '称呼：阿爸；阶段：熟客；今天：在数贝壳'
+    contextProvider: async (text) => {
+      receivedText = text
+      return '称呼：阿爸；阶段：熟客；今天：在数贝壳'
+    }
   })
   await svc.init()
   await svc.send({ text: '在吗' }, () => undefined)
+  assertEq(receivedText, '在吗', 'contextProvider 收到本轮用户原文（预检索用）')
   assertEq(request.messages[0].content.startsWith('【本鱼状态】'), true, '带状态前缀')
   assertEq(request.messages[0].content.includes('在数贝壳'), true, '含今日活动')
   assertEq(request.messages[0].content.endsWith('在吗'), true, '原文保留在末尾')
@@ -2027,6 +2036,30 @@ await recorder.check('C70', 'AGENTS.md 受管段合并：用户手写保留、�
   assertEq(merged.includes('obsidian__search_notes'), true, '受管段更新为新工具名')
   assertEq(merged.includes('mcp__obsidian__search_notes'), false, '旧错误工具名被替换')
   return 'AGENTS 受管段合并正确'
+})
+
+const { formatSearchContext, looksLikeRecallQuery, withTimeout } = searchContextMod
+
+await recorder.check('C71', '宿主预检索：问题识别 / 命中格式化 / 低分丢弃 / 超时降级', async () => {
+  assertEq(looksLikeRecallQuery('红烧肉怎么做'), true, '回忆类问题要预检索')
+  assertEq(looksLikeRecallQuery('之前说过的生日'), true, '过去类问题要预检索')
+  assertEq(looksLikeRecallQuery('你好啊'), false, '普通问候不预检索')
+  assertEq(looksLikeRecallQuery(''), false, '空消息不预检索')
+
+  const hits = [
+    { path: '生活\\红烧肉做法.md', content: '第一步 焯水\n第二步 炒糖色', score: 0.875 },
+    { path: '家庭/疫苗.md', content: '乙肝 出生24小时内', score: 0.8 },
+    { path: '无关.md', content: '不相关的内容', score: 0.2 }
+  ]
+  const context = formatSearchContext(hits)
+  assertEq(context.includes('笔记检索'), true, '带宿主预检索标记')
+  assertEq(context.includes('生活/红烧肉做法.md'), true, '路径统一为 /')
+  assertEq(context.includes('不相关的内容'), false, '低分命中丢弃')
+  assertEq(context.length <= 900, true, '注入总量截断')
+
+  const slow = await withTimeout(new Promise((resolve) => setTimeout(() => resolve('late'), 200)), 20)
+  assertEq(slow, null, '预检索超时返回 null（不影响聊天）')
+  return '预检索 helper 正确'
 })
 
 const ok = printResult(recorder.toJSON())

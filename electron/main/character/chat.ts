@@ -57,7 +57,7 @@ export interface CharacterChatServiceOptions {
   /** 角色 agent 的模型路由（缺省 openclaw/feiyu，由 wiring 注入） */
   model?: string
   /** 每轮注入的短上下文（STATE/LIFE 摘要，≤300 字）；只拼在 user 内容前，不落 sticky */
-  contextProvider?: () => Promise<string | null>
+  contextProvider?: (text: string) => Promise<string | null>
   /** 输入侧安全检查（危机词等）：blocked 时直接回 reply，不调用模型 */
   screenInput?: (text: string) => { blocked: boolean; reply?: string }
   /** 输出侧过滤（独占/卖惨表达改写） */
@@ -235,7 +235,7 @@ export class CharacterChatService {
     let context = ''
     if (this.options.contextProvider) {
       try {
-        context = (await this.options.contextProvider()) ?? ''
+        context = (await this.options.contextProvider(text)) ?? ''
       } catch {
         context = ''
       }

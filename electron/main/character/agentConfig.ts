@@ -10,7 +10,18 @@ export const CHARACTER_AGENT_ID = 'feiyu'
 export const CHARACTER_AGENT_MODEL = `openclaw/${CHARACTER_AGENT_ID}`
 
 export interface AgentPatchPayload {
-  agents: { entries: Record<string, { workspace: string }> }
+  agents: {
+    entries: Record<
+      string,
+      {
+        workspace: string
+        /** 角色只需要少量技能：清空 allowlist（[] = 不加载任何 skill），显著压缩系统提示 */
+        skills: string[]
+        /** 关掉 openclaw 内置 memory 检索（角色走 Obsidian MCP；该工具在本机实测无应答且吃 prompt） */
+        memory: { search: { enabled: boolean } }
+      }
+    >
+  }
 }
 
 export function isValidAgentId(id: string): boolean {
@@ -20,7 +31,18 @@ export function isValidAgentId(id: string): boolean {
 export function buildAgentPatch(agentId: string, workspace: string): AgentPatchPayload {
   if (!isValidAgentId(agentId)) throw new Error(`非法 agent id: ${agentId}`)
   if (!workspace) throw new Error('workspace 不能为空')
-  return { agents: { entries: { [agentId]: { workspace } } } }
+  return {
+    agents: {
+      entries: {
+        [agentId]: {
+          workspace,
+          // 性能：19.6k prompt → 12.7k（实测），TTFT 6.8s → 5.3s
+          skills: [],
+          memory: { search: { enabled: false } }
+        }
+      }
+    }
+  }
 }
 
 export interface AgentEntryReadResult {
