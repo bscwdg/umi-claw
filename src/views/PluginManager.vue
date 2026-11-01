@@ -28,7 +28,7 @@
           <span class="text-muted">宿主模块 · 角色 M1</span>
         </div>
         <span class="state" :class="characterEnabled ? 'state-activated' : ''">
-          {{ characterEnabled ? '已启用' : '未启用' }}
+          {{ characterStateLabel }}
         </span>
       </div>
 
@@ -44,13 +44,17 @@
         <button
           class="btn"
           :class="{ 'btn-danger': characterEnabled, 'btn-primary': !characterEnabled }"
-          :disabled="characterBusy"
+          :disabled="characterBusy || !characterStatus"
           @click="toggleCharacter"
         >
           {{ characterBusy ? '处理中…' : characterEnabled ? '停用' : '启用' }}
         </button>
         <router-link class="btn btn-ghost" to="/character">打开页面</router-link>
-        <button class="btn btn-ghost" :disabled="characterBusy || !characterEnabled" @click="initCharacter">
+        <button
+          class="btn btn-ghost"
+          :disabled="characterBusy || !characterStatus || !characterEnabled"
+          @click="initCharacter"
+        >
           一键初始化
         </button>
       </div>
@@ -145,6 +149,10 @@ const characterBusy = ref(false)
 const characterError = ref('')
 const characterNotice = ref('')
 const characterEnabled = computed(() => Boolean(characterStatus.value?.enabled))
+const characterStateLabel = computed(() => {
+  if (!characterStatus.value) return '状态未知'
+  return characterStatus.value.enabled ? '已启用' : '未启用'
+})
 const characterReadyCount = computed(() => {
   const status = characterStatus.value as Record<string, unknown> | null
   if (!status) return 0
@@ -174,6 +182,10 @@ async function toggleCharacter(): Promise<void> {
   try {
     await window.api.character.settings.set({ enabled: next } as never)
     await loadCharacter()
+    if (!characterStatus.value) {
+      characterNotice.value = '已提交，但读取状态失败，请点「刷新」确认'
+      return
+    }
     characterNotice.value = next ? '已启用；建议点「一键初始化」补齐配置' : '已停用（数据保留）'
   } catch (e) {
     characterError.value = `操作失败：${e instanceof Error ? e.message : String(e)}`

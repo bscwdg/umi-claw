@@ -157,7 +157,7 @@
       <div class="row">
         <button class="btn" :disabled="busy || !status.enabled" @click="runMemory">现在写一篇</button>
       </div>
-      <p class="hint">每天 23:00 自动写；先写 workspace，再写 Obsidian 的「大肥鱼/日记」。</p>
+      <p class="hint">每天 23:00 自动写；先写 workspace，再写 Obsidian 的「大肥鱼/日记」。需要先在「隐私与安全」确认年龄。</p>
     </section>
 
     <section class="card">
@@ -235,6 +235,16 @@ const MEMORY_REASON_TEXT: Record<string, string> = {
   'in-flight': '正在写，别催',
   'disabled': '大肥鱼未启用'
 }
+const VOICE_REASON_TEXT: Record<string, string> = {
+  'disabled': '语音条未开启（设置里打开语音）',
+  'age-unconfirmed': '还没确认年龄（先到「隐私与安全」勾选）',
+  'request-not-allowed': '语音条被设置禁用了',
+  'not-unlocked': '还不熟，先多聊几句',
+  'quiet': '现在是免打扰时间',
+  'daily-cap': '今天的语音条额度用完了',
+  'too-long': '这句话太长了，先缩到 120 字内',
+  'not-wired': '语音服务未接线（缺 TTS/QQ 配置）'
+}
 
 const memoryText = computed(() => {
   if (memoryStatus.value.done) return '今天已经写好了。'
@@ -254,6 +264,7 @@ const error = ref('')
 const toast = ref('')
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 let slowTimer: ReturnType<typeof setTimeout> | null = null
+const slowHintShown = ref(false)
 const router = useRouter()
 
 function clearSlowTimer(): void {
@@ -284,8 +295,8 @@ const FLAG_FIX: Record<string, { label: string; to: string }> = {
   memorySearchReady: { label: '记忆检索', to: '/obsidian' }
 }
 const failedFlags = computed(() => {
-  const flags = bootstrapReport.value?.status
-  if (!flags) return []
+  // 用实时 status（而不是上次初始化报告）：配置改完这里立刻反映
+  const flags = status.value as Record<string, unknown>
   return Object.entries(FLAG_FIX)
     .filter(([key]) => flags[key] === false)
     .map(([key, meta]) => ({ key, ...meta }))
@@ -344,7 +355,7 @@ async function refresh(): Promise<void> {
 
 async function toggleEnabled(): Promise<void> {
   const next = !status.value.enabled
-  if (!next && !window.confirm('停用后主动消息、日记、桌宠都会停止，关系与日记数据会保留。确定停用？')) {
+  if (!next && !window.confirm('停用后主动消息、日记都会停止，关系与日记数据会保留。确定停用？')) {
     return
   }
   await run(async () => {
@@ -360,7 +371,7 @@ async function sendVoice(): Promise<void> {
     if (!result.delivered) {
       error.value = result.error
         ? `语音条没发出去（已降级文字）：${result.error}`
-        : `这次没发语音：${result.reason ?? '未知原因'}`
+        : `这次没发语音：${VOICE_REASON_TEXT[result.reason ?? ''] ?? result.reason ?? '未知原因'}`
       return
     }
     await refresh()
@@ -484,11 +495,19 @@ function onStreamEvent(event: CharacterChatStreamEvent): void {
   const last = messages.value[messages.value.length - 1]
   if (event.kind === 'chunk') {
     clearSlowTimer()
+    if (slowHintShown.value) {
+      slowHintShown.value = false
+      error.value = ''
+    }
     if (last && last.role === 'assistant') last.text += event.text ?? ''
     return
   }
   if (event.kind === 'done') {
     clearSlowTimer()
+    if (slowHintShown.value) {
+      slowHintShown.value = false
+      error.value = ''
+    }
     if (last && last.role === 'assistant') {
       last.streaming = false
       if (!last.text) last.text = '……'
@@ -513,10 +532,12 @@ async function sendMessage(): Promise<void> {
   // 先占位，避免首帧 delta 比 send 的返回值更快到达时被丢弃
   runId.value = 'pending'
   clearSlowTimer()
+  slowHintShown.value = false
   slowTimer = setTimeout(() => {
     if (!streaming.value) return
     const last = messages.value[messages.value.length - 1]
     if (last?.role === 'assistant' && !last.text) {
+      slowHintShown.value = true
       error.value = '她还没回。首次/隔久后的回复可能因网关或模型冷启动较慢，可以再等等，或点「停止」重发。'
     }
   }, 45000)

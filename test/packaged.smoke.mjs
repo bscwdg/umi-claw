@@ -117,8 +117,8 @@ try {
     assert(!asarText.includes('plugins/work/migrations'), 'asar 不应打包插件 migrations')
     return '打包产物结构正确 ✓'
   })
-  // ── S7 角色内容包与桌宠 preload（C10）──
-  await r.check('S7', '角色内容包随包（persona/cards/emotions）且桌宠独立 preload 进 asar', async () => {
+  // ── S7 角色内容包与依赖（C10；桌宠 M1 已下线，不再为其背书）──
+  await r.check('S7', '角色内容包随包（persona/cards/emotions）且 silk 依赖真实进 asar', async () => {
     const unpacked = resolveUnpacked()
     if (!unpacked) {
       if (process.env.UMI_ALLOW_PACKAGE_SKIP === '1') return '跳过（显式允许）'
@@ -143,8 +143,6 @@ try {
       assert(statSync(file).size > 100, `包内角色内容非空 ${rel}`)
     }
     const asarText = readFileSync(join(unpacked, 'resources', 'app.asar')).toString('utf8')
-    assert(asarText.includes('"pet.js"'), 'asar 含桌宠独立 preload（pet.js）')
-    assert(asarText.includes('character:window:pet'), 'asar 含角色通道代码')
     // 不能只匹配 package.json 的依赖声明：要真的把 silk-wasm 包目录/资源打进 asar
     assert(/"silk-wasm":\{"files"/.test(asarText), 'asar 内含 silk-wasm 包目录')
     assert(asarText.includes('.wasm'), 'asar 内含 wasm 资源')

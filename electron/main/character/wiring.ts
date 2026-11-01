@@ -252,14 +252,13 @@ async function registerCharacterInternal(
     })
     managerRef = manager
     // 状态自检改为实时求值：配置改完不用重跑初始化，页面「连接自检」立刻反映
+    // 与 bootstrap 同口径：条目存在且 workspace 指向角色工作区
     const readAgentConfigured = (): boolean => {
-      try {
-        const raw = readFileSync(deps.configPath, 'utf8').replace(/^\uFEFF/, '')
-        const config = JSON.parse(raw) as { agents?: { entries?: Record<string, unknown> } }
-        return Boolean(config?.agents?.entries?.feiyu)
-      } catch {
-        return false
-      }
+      const entry = readAgentEntry(deps.configPath, CHARACTER_AGENT_ID)
+      if (!entry.exists) return false
+      if (!entry.workspace) return true
+      const normalize = (p: string): string => p.replace(/[\\/]+$/, '').toLowerCase()
+      return normalize(entry.workspace) === normalize(workspaceDir)
     }
     manager.setStatusProviders({
       ...(deps.gatewayReady ? { gatewayReady: deps.gatewayReady } : {}),
@@ -269,7 +268,7 @@ async function registerCharacterInternal(
       agentReady: readAgentConfigured,
       obsidianReady: () => {
         const vault = deps.obsidianVaultPath?.()?.trim()
-        return Boolean(vault && existsSync(vault))
+        return Boolean(vault && existsSync(join(vault, '大肥鱼')))
       }
     })
     await manager.init()

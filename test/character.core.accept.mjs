@@ -810,7 +810,7 @@ await recorder.check('C26', "reset('all') 轮换聊天代际，旧上下文不�
   await store.writeChatGeneration(5)
   assertEq(await store.readChatGeneration(), 5, '代际写入 5')
   await manager.reset({ scope: 'all' })
-  assertEq(await store.readChatGeneration(), 1, '清空全部后代际回到 1')
+  assertEq(await store.readChatGeneration(), 6, '清空全部后代际单调 +1（不回 1 复活旧上下文）')
   return '代际重置正确'
 })
 
@@ -1499,6 +1499,11 @@ await recorder.check('C52', '语音策略：开关/要求/免打扰/上限/未�
 
   assertEq(isVoiceRequest('发条语音'), true, '要求语音①')
   assertEq(isVoiceRequest('用你的声音说句话'), true, '要求语音②')
+  assertEq(isVoiceRequest('发语音'), true, '要求语音③（无量词）')
+  assertEq(isVoiceRequest('发语音给我'), true, '要求语音④')
+  assertEq(isVoiceRequest('说句话'), true, '要求语音⑤')
+  assertEq(isVoiceRequest('发出声音'), false, '描述声音不算要求')
+  assertEq(isVoiceRequest('用声音跟你说话'), false, '普通聊天不误判')
   assertEq(isVoiceRequest('今天吃什么'), false, '普通聊天不误判')
   return '策略/请求识别正确'
 })
@@ -1930,7 +1935,7 @@ await recorder.check('C66', '输出过滤：模式跨 chunk 边界也不漏', as
   return '边界过滤正确'
 })
 
-await recorder.check('C67', '删除与在途记忆竞态：删除后不再写 workspace/Obsidian', async () => {
+await recorder.check('C67', '删除与在途记忆竞态：删除后 KV/workspace/Obsidian 都不复活', async () => {
   const kv = memoryKv()
   const now = new Date(2026, 10, 1, 23, 10, 0).getTime()
   const writes = []
@@ -1958,7 +1963,24 @@ await recorder.check('C67', '删除与在途记忆竞态：删除后不再写 wo
   const result = await task
   assertEq(writes.length, 0, '删除后没有写回')
   assertEq(result.ran, false, '本轮被取消')
+  const leftover = [...kv.map.keys()].filter(
+    (key) => key.startsWith('fish:v2:day:') || key === 'fish:v2:meta' || key.startsWith('fish:v2:life:')
+  )
+  assertEq(leftover.length, 0, `删除后不得复活 day/meta/life（实际 ${leftover.join(',')}）`)
   return '删除竞态正确'
+})
+
+await recorder.check('C69', '旧 reset 也轮换代际（status 与流事件不脱节）', async () => {
+  const kv = memoryKv()
+  const manager = new CharacterManager({ store: new CharacterStore({ kv }) })
+  await manager.init()
+  const store = new CharacterStore({ kv })
+  await store.writeChatGeneration(4)
+  const manager2 = new CharacterManager({ store: new CharacterStore({ kv }) })
+  await manager2.init()
+  await manager2.reset({ scope: 'memory' })
+  assertEq(manager2.getStatus().chatGen, 5, 'memory reset 后代际单调 +1 并同步缓存')
+  return 'reset 代际正确'
 })
 
 await recorder.check('C68', 'status 带 chatGen：渲染端能与流事件对齐（防首轮事件被 gen 过滤）', async () => {
@@ -1974,6 +1996,37 @@ await recorder.check('C68', 'status 带 chatGen：渲染端能与流事件对齐
   manager2.noteChatGen(9)
   assertEq(manager2.getStatus().chatGen, 9, '清空后可回写')
   return 'chatGen 对齐正确'
+})
+
+await recorder.check('C70', 'AGENTS.md 受管段合并：用户手写保留、检索指令可更新（工具名正确）', async () => {
+  const dir = join(tmpDir, `character-agents-${Date.now()}`)
+  mkdirSync(dir, { recursive: true })
+  const template = join(repoRoot, 'resources', 'character', 'persona')
+  const templates = {
+    soul: readFileSync(join(template, 'SOUL.md.tpl'), 'utf8'),
+    identity: readFileSync(join(template, 'IDENTITY.md.tpl'), 'utf8'),
+    agents: readFileSync(join(template, 'AGENTS.md.tpl'), 'utf8'),
+    user: readFileSync(join(template, 'USER.md.tpl'), 'utf8'),
+    core: readFileSync(join(template, 'core.md'), 'utf8'),
+    voice: readFileSync(join(template, 'voice-rules.md'), 'utf8')
+  }
+  const base = { ...baseInputs(), templates }
+  writeManagedFiles(dir, composePersonaFiles(base))
+  // 模拟用户手改：加自定义内容、把受管段换成旧错误指令
+  const original = readFileSync(join(dir, 'AGENTS.md'), 'utf8')
+  const replaced = original.replace(
+    /<!-- fish:managed:memory:start -->[\s\S]*?<!-- fish:managed:memory:end -->/,
+    '<!-- fish:managed:memory:start -->\n- 旧指令：mcp__obsidian__search_notes\n<!-- fish:managed:memory:end -->'
+  )
+  writeFileSync(join(dir, 'AGENTS.md'), `# 我的自定义规则\n- 用户手写内容\n\n${replaced}`)
+
+  writeManagedFiles(dir, composePersonaFiles({ ...baseInputs(), templates }))
+  const merged = readFileSync(join(dir, 'AGENTS.md'), 'utf8')
+  assertEq(merged.includes('# 我的自定义规则'), true, '用户手写内容保留')
+  assertEq(merged.includes('用户手写内容'), true, '用户段落保留')
+  assertEq(merged.includes('obsidian__search_notes'), true, '受管段更新为新工具名')
+  assertEq(merged.includes('mcp__obsidian__search_notes'), false, '旧错误工具名被替换')
+  return 'AGENTS 受管段合并正确'
 })
 
 const ok = printResult(recorder.toJSON())

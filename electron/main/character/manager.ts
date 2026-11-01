@@ -199,11 +199,19 @@ export class CharacterManager {
   getStatus(): CharacterStatus {
     const enabled = this.isEnabled()
     const flags = { ...this.dependencyStatus } as unknown as Record<string, boolean>
+    const now = this.now()
     for (const key of Object.keys(this.statusProviders)) {
       const provider = this.statusProviders[key as keyof typeof this.statusProviders]
       if (!provider) continue
+      const cached = this.statusProviderCache.get(key)
+      if (cached && now - cached.at < CharacterManager.STATUS_CACHE_MS) {
+        flags[key] = cached.value
+        continue
+      }
       try {
-        flags[key] = Boolean(provider())
+        const value = Boolean(provider())
+        flags[key] = value
+        this.statusProviderCache.set(key, { value, at: now })
       } catch {
         flags[key] = false
       }
@@ -339,22 +347,25 @@ export class CharacterManager {
 
   /** 确保当天「她的一天」已生成（幂等；错过不补多天） */
   async ensureDailyLife(
-    now = this.now()
+    now = this.now(),
+    epoch?: number
   ): Promise<{ day: LifeDay; doc: string; generated: boolean }> {
     this.assertInitialized()
-    return this.withMutation(() => this.ensureDailyLifeImpl(now))
+    return this.withMutation(() => this.ensureDailyLifeImpl(now, epoch))
   }
 
   private async ensureDailyLifeImpl(
-    now: number
+    now: number,
+    epoch?: number
   ): Promise<{ day: LifeDay; doc: string; generated: boolean }> {
     const date = toDateKey(now)
+    const epochOk = (): boolean => epoch === undefined || epoch === this.dataEpoch
     const existing = await this.store.readLife<LifeDay>(date)
     const deck = await this.getLifeDeck()
     if (existing && existing.date === date) {
       const doc = renderLifeDoc(existing, this.cardsFor(deck, existing.cardIds ?? []))
       // 文件可能被用户删掉/首写失败：每次 ensure 都补写一次（幂等）
-      await this.writeLifeDocSafe(doc)
+      if (epochOk()) await this.writeLifeDocSafe(doc)
       return { day: existing, doc, generated: false }
     }
     const state = await this.getState()
@@ -367,8 +378,10 @@ export class CharacterManager {
       now,
       recentIds: recent
     })
+    // 删除可能发生在生成期间：epoch 变了就不再写 life 与 LIFE.md
+    if (!epochOk()) return { day: composed.day, doc: composed.doc, generated: false }
     await this.store.writeLife(date, composed.day)
-    await this.writeLifeDocSafe(composed.doc)
+    if (epochOk()) await this.writeLifeDocSafe(composed.doc)
     // 每日剪枝：长跑进程也要按保留策略清理（§13.1-3）
     void this.store.prune().catch(() => undefined)
     return { day: composed.day, doc: composed.doc, generated: true }
@@ -456,7 +469,7 @@ export class CharacterManager {
     try {
       const { decision, message } = await this.evaluateProactive(now)
       if (!decision.send || !message) return { decision }
-      const claimed = await this.claimProactiveSlot(now)
+      const claimed = await this.claimProactiveSlot(now, epoch)
       if (!claimed) {
         return { decision: { ...decision, send: false, reason: 'daily-cap' } }
       }
@@ -483,10 +496,12 @@ export class CharacterManager {
   }
 
   /** 发送前预留额度（锁内二次校验上限与最小间隔，防并发超发） */
-  private async claimProactiveSlot(now: number): Promise<boolean> {
+  private async claimProactiveSlot(now: number, epoch?: number): Promise<boolean> {
     const date = toDateKey(now)
     const time = new Date(now).toTimeString().slice(0, 5)
     return this.withMutation(async () => {
+      // 删除已发生：不再预留/写回 day
+      if (epoch !== undefined && epoch !== this.dataEpoch) return false
       const settings = await this.getSettings()
       const day = (await this.store.readDay<ProactiveDayState>(date)) ?? {}
       const cap = Math.max(0, Math.min(10, Math.round(settings.proactive.dailyCap)))
@@ -592,7 +607,7 @@ export class CharacterManager {
     memory.attempts = (memory.attempts ?? 0) + 1
     memory.lastAttemptAt = now
     // 先落 attempts：并发/崩溃后冷却与上限才有意义
-    await this.mergeDayMemory(date, memory)
+    await this.mergeDayMemory(date, memory, epoch)
     try {
       if (!this.generateDiary || !this.writeWorkspaceMemory || !this.writeObsidianDiary) {
         throw new Error('记忆生成链路未接线')
@@ -603,7 +618,7 @@ export class CharacterManager {
         const state = await this.getState()
         // 凌晨补偿写「昨天」的日记时，LIFE 也要取昨天那份
         const lifeNow = date === toDateKey(now) ? now : now - 86_400_000
-        const life = await this.ensureDailyLife(lifeNow)
+        const life = await this.ensureDailyLife(lifeNow, epoch)
         const workspaceMemory = this.readWorkspaceMemory
           ? await this.readWorkspaceMemory(date).catch(() => null)
           : null
@@ -624,7 +639,7 @@ export class CharacterManager {
           throw new Error(`日记校验失败：${validation.errors.join('；')}`)
         }
         memory.pendingText = cleaned
-        await this.mergeDayMemory(date, memory)
+        await this.mergeDayMemory(date, memory, epoch)
       } else {
         const validation = validateDiary(cleaned, date)
         if (!validation.ok) {
@@ -643,7 +658,7 @@ export class CharacterManager {
         memory.lastError = undefined
         memory.pendingText = undefined
         memory.obsidianPath = undefined
-        await this.mergeDayMemory(date, memory)
+        await this.mergeDayMemory(date, memory, epoch)
         this.emit({
           type: 'bubble',
           payload: { text: `日记写好了（${date}，未配置 Obsidian，只存本机）` },
@@ -661,13 +676,13 @@ export class CharacterManager {
       memory.lastError = undefined
       memory.pendingText = undefined
       memory.obsidianPath = relPath
-      await this.mergeDayMemory(date, memory)
+      await this.mergeDayMemory(date, memory, epoch)
       this.emit({ type: 'bubble', payload: { text: `日记写好了（${date}）` }, at: now })
       return { ran: true, reason: 'ok' }
     } catch (error) {
       const message = (error as Error)?.message ?? String(error)
       memory.lastError = message
-      await this.mergeDayMemory(date, memory)
+      await this.mergeDayMemory(date, memory, epoch)
       this.logger(`[character] 每日记忆失败（第 ${memory.attempts} 次）: ${message}`)
       return { ran: false, reason: 'failed', errors: [message] }
     }
@@ -701,6 +716,10 @@ export class CharacterManager {
     >
   > = {}
 
+  /** 状态提供者短 TTL 缓存：getStatus 会被页面高频调用，避免每次同步读配置文件 */
+  private statusProviderCache = new Map<string, { value: boolean; at: number }>()
+  private static readonly STATUS_CACHE_MS = 1500
+
   setStatusProviders(
     providers: Partial<
       Record<
@@ -716,6 +735,7 @@ export class CharacterManager {
     >
   ): void {
     this.statusProviders = { ...this.statusProviders, ...providers }
+    this.statusProviderCache.clear()
   }
 
   /** 语音状态（设置页/策略用） */
@@ -898,7 +918,13 @@ export class CharacterManager {
     if (scope !== 'values' && scope !== 'memory' && scope !== 'all') {
       throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '未知的重置范围')
     }
+    const previousGen = await this.store.readChatGeneration()
     await this.store.reset(scope)
+    if (scope === 'memory' || scope === 'all') {
+      // 与 deleteData 同口径：代际单调 +1，并同步 status 缓存
+      await this.store.writeChatGeneration(previousGen + 1)
+      this.chatGen = previousGen + 1
+    }
     if (scope === 'all') {
       this.settings = await this.store.readSettings()
     }

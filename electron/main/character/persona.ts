@@ -145,6 +145,27 @@ export interface ManagedWriteOptions {
   manifestName?: string
 }
 
+/** AGENTS.md 里由宿主维护的「记忆与日记」段：只合并这一段，用户其他内容保留 */
+export const AGENTS_BLOCK_START = '<!-- fish:managed:memory:start -->'
+export const AGENTS_BLOCK_END = '<!-- fish:managed:memory:end -->'
+
+function extractAgentsBlock(text: string): string | null {
+  const start = text.indexOf(AGENTS_BLOCK_START)
+  if (start < 0) return null
+  const end = text.indexOf(AGENTS_BLOCK_END, start)
+  if (end < 0) return null
+  return text.slice(start, end + AGENTS_BLOCK_END.length)
+}
+
+/** 把模板里的「记忆与日记」受管段合并进现有 AGENTS.md（无则追加）；用户其他内容不动 */
+export function mergeAgentsMemoryBlock(existing: string, template: string): string {
+  const block = extractAgentsBlock(template)
+  if (!block) return existing
+  const current = extractAgentsBlock(existing)
+  if (current) return existing.replace(current, block)
+  return `${existing.trimEnd()}\n\n${block}\n`
+}
+
 /**
  * 受管写入：首次写；用户改过的不覆盖；没改过的跟随模板更新。
  * 保守模式（manifest 缺失/损坏，或文件存在但没有记录 hash）：一律保留现存文件，
@@ -174,6 +195,21 @@ export function writeManagedFiles(
     const isHostOwned = hostOwned.has(rel)
     const noRecord = previousHash === undefined
     const userModified = existed && (conservative || noRecord || currentHash !== previousHash)
+    // AGENTS.md 例外：只合并宿主的「记忆与日记」受管段，用户手写的其他内容永远保留
+    // （否则用户改过一次 AGENTS.md 就再也收不到检索指令更新）
+    if (rel === 'AGENTS.md' && existed) {
+      const merged = mergeAgentsMemoryBlock(readFileSync(abs, 'utf8'), content)
+      if (merged !== readFileSync(abs, 'utf8')) {
+        writeAtomic(abs, merged)
+        written.push(rel)
+        next.files[rel] = sha256(merged)
+        continue
+      }
+      // 内容无变化：也要把 manifest 对齐到当前内容，避免下次被当成「用户改动」
+      next.files[rel] = currentHash
+      kept.push(rel)
+      continue
+    }
     if (userModified && !isHostOwned) {
       kept.push(rel)
       continue

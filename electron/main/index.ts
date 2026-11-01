@@ -2306,9 +2306,32 @@ app.whenReady().then(async () => {
       // 「外部渠道」就绪：QQ/飞书/微信任一配置即可（不强制 QQ）
       qqReady: () => {
         try {
-          const channels = configManager.getOpenClawChannels()
-          return ['qqbot', 'feishu', 'wecom', 'openclaw-weixin'].some(
-            (name) => channels?.[name] && Object.keys(channels[name]).length > 0
+          const channels = configManager.getOpenClawChannels() as Record<
+            string,
+            Record<string, unknown>
+          >
+          const nonEmpty = (value: unknown): boolean =>
+            typeof value === 'string' && value.trim().length > 0
+          // 只认「有真实凭据且未被禁用」的渠道：首启骨架里的空凭据/disabled 不算
+          const configured = (name: string, fields: string[]): boolean => {
+            const channel = channels?.[name]
+            if (!channel || channel.enabled === false) return false
+            const scopes: Record<string, unknown>[] = [channel]
+            const accounts = channel.accounts
+            if (accounts && typeof accounts === 'object') {
+              for (const account of Object.values(accounts as Record<string, unknown>)) {
+                if (account && typeof account === 'object') {
+                  scopes.push(account as Record<string, unknown>)
+                }
+              }
+            }
+            return scopes.some((scope) => fields.some((field) => nonEmpty(scope?.[field])))
+          }
+          return (
+            configured('qqbot', ['appId', 'appid', 'app_id', 'clientSecret', 'secret']) ||
+            configured('feishu', ['appId', 'appSecret']) ||
+            configured('wecom', ['corpId', 'corpSecret', 'secret', 'token']) ||
+            configured('openclaw-weixin', ['appId', 'appSecret', 'token'])
           )
         } catch {
           return false

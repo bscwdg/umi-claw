@@ -40,10 +40,13 @@ export function isVoiceRequest(text: string): boolean {
   if (!raw) return false
   // 否定表达先排除（「我不想发语音」「别用声音」不是要求）
   if (/(不想|不要|不用|别)(发|来|用|听|说).{0,4}(语音|声音)/.test(raw)) return false
-  if (/(发|来)(一?条|个|段)(语音|声音|语音条)/.test(raw)) return true
+  // 「发出声音」这类描述不是发语音条请求
+  if (/发出声音/.test(raw)) return false
+  if (/(发|来|出)(一?条|个|段)?(语音|语音条)/.test(raw)) return true
+  if (/(发|来)(一?条|个|段)?(语音|声音)给我/.test(raw)) return true
   if (/语音(说|讲|回|发)/.test(raw)) return true
   if (/(用|拿)你的声音/.test(raw)) return true
-  if (/说句话?听听/.test(raw)) return true
+  if (/说句话?(听听)?/.test(raw)) return true
   return false
 }
 
