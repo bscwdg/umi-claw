@@ -2228,7 +2228,7 @@ app.whenReady().then(async () => {
     const characterDb = workDatabase
     const characterDataDir = configManager.getDataDir()
     const characterNodePath = openClawPaths.nodeBinary(characterDataDir)
-    const character = await registerCharacter({
+    const characterPromise = registerCharacter({
       kv: {
         get: (key) => characterDb.metaGet(key),
         set: (key, value) => characterDb.metaSet(key, value)
@@ -2358,8 +2358,33 @@ app.whenReady().then(async () => {
         }
       }
     })
-    characterManager = character.manager
-    characterDispose = character.dispose
+    // 启动体验：角色初始化最多等 3s；超时先开窗口，角色后台就绪后再接线
+    let characterTimeoutId: NodeJS.Timeout | null = null
+    const characterTimeout = new Promise<'timeout'>((resolve) => {
+      characterTimeoutId = setTimeout(() => resolve('timeout'), 3000)
+    })
+    const characterResult = await Promise.race([characterPromise, characterTimeout])
+    if (characterTimeoutId) clearTimeout(characterTimeoutId)
+    if (characterResult === 'timeout') {
+      console.log('[character] 初始化超过 3s，先开窗口；角色就绪后自动接线')
+      void characterPromise
+        .then((character) => {
+          characterManager = character.manager
+          characterDispose = character.dispose
+        })
+        .catch((error) => {
+          characterManager = null
+          characterDispose = null
+          console.log(
+            `[character] 后台初始化失败，角色功能降级（不影响主流程）: ${
+              (error as Error)?.message ?? String(error)
+            }`
+          )
+        })
+    } else {
+      characterManager = characterResult.manager
+      characterDispose = characterResult.dispose
+    }
   } catch (error) {
     characterManager = null
     console.log(

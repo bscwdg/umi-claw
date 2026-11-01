@@ -137,7 +137,10 @@ const version = ref('')
 
 // 分组导航：work 组来自 3.0，营销组来自 2.0；`/dashboard` 标签已拍板为「控制台」，
 // `/skills` 标签已拍板为「能力中心」（2026-10-30）。
-const navGroups = [
+// 大肥鱼停用后自动隐藏侧栏入口（仍可从「插件管理 → 宿主模块」重新启用）。
+const characterNavKnown = ref(false)
+const characterNavEnabled = ref(true)
+const navGroups = computed(() => [
   // 工作域导航由 plugins/work/renderer.ts 贡献（Phase 2 装箱）
 
   {
@@ -150,7 +153,9 @@ const navGroups = [
     items: [
       { to: '/config', icon: '⚙️', label: '模型配置' },
       { to: '/voice', icon: '🔊', label: '语音设置' },
-      { to: '/character', icon: '🐟', label: '大肥鱼' },
+      ...(characterNavKnown.value && !characterNavEnabled.value
+        ? []
+        : [{ to: '/character', icon: '🐟', label: '大肥鱼' }]),
       { to: '/skills', icon: '🧩', label: '能力中心' },
       { to: '/channelsPage', icon: '📩', label: '渠道接入' },
       { to: '/terminal', icon: '💻', label: 'OpenClaw终端' },
@@ -166,12 +171,12 @@ const navGroups = [
       { to: '/about', icon: 'ℹ️', label: '关于' }
     ]
   }
-]
+])
 
 // 插件导航组排在内核导航之后。两组来源字段不同（内核只有 title，插件有 id/label），
 // 这里统一成 { id, title, items }：key 用 id（多个插件组不会撞 key），显示用 title。
 const allNavGroups = computed(() => [
-  ...navGroups.map((g) => ({ id: `core:${g.title}`, title: g.title, items: g.items })),
+  ...navGroups.value.map((g) => ({ id: `core:${g.title}`, title: g.title, items: g.items })),
   ...pluginNavGroups.value.map((g) => ({ id: `plugin:${g.id}`, title: g.label, items: g.items }))
 ])
 
@@ -179,6 +184,18 @@ let cleanup: (() => void) | null = null
 let closeCleanup: (() => void) | null = null
 let autoSpeakCleanup: (() => void) | null = null
 let characterCleanup: (() => void) | null = null
+let characterNavCleanup: (() => void) | null = null
+
+/** 大肥鱼启用状态 → 侧栏入口显隐（停用后隐藏；仍可从插件管理卡片重新启用） */
+async function refreshCharacterNav(): Promise<void> {
+  try {
+    const status = await api.character.status()
+    characterNavKnown.value = true
+    characterNavEnabled.value = Boolean(status.enabled)
+  } catch {
+    // 模块未就绪/未注册：保持默认显示，让用户能进页面看到具体错误
+  }
+}
 
 // 关闭确认对话框状态
 const showCloseConfirm = ref(false)
@@ -201,6 +218,11 @@ onMounted(async () => {
   // 桌宠右键菜单「聊两句/设置」→ 主窗跳到大肥鱼页
   characterCleanup = api.character.onOpenPage(() => {
     void router.push('/character')
+  })
+  // 侧栏「🐟 大肥鱼」入口跟随启用状态：停用后自动隐藏（插件管理卡片仍可启用）
+  void refreshCharacterNav()
+  characterNavCleanup = api.character.onEvent((event) => {
+    if (event.type === 'settings' || event.type === 'reset') void refreshCharacterNav()
   })
   // §八 Day1：首启先过用户协议（阻断式，只出现一次）。
   // 不 await：弹窗在状态回来后自己弹，绝不阻塞应用启动（硬规则 17）。
@@ -233,6 +255,7 @@ onUnmounted(() => {
   closeCleanup?.()
   autoSpeakCleanup?.()
   characterCleanup?.()
+  characterNavCleanup?.()
 })
 
 /**
