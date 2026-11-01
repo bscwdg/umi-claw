@@ -24,9 +24,7 @@
         <div><span class="k">心情</span><span class="v">{{ state.mood || '平静' }}</span></div>
       </div>
       <div class="row" style="margin-top: 10px">
-        <button class="btn" :disabled="busy || !status.enabled" @click="togglePetVisible">
-          {{ petVisible ? '收起桌宠' : '显示桌宠' }}
-        </button>
+        <span class="hint">桌宠暂时下线（形象重做后再放出）</span>
       </div>
     </section>
 
@@ -83,7 +81,7 @@
           <button v-if="!status.obsidianReady" class="link" @click="go('/obsidian')">去配置</button>
         </div>
         <div>
-          <span class="k">QQ</span><span class="v">{{ flag(status.qqReady) }}</span>
+          <span class="k">外部渠道</span><span class="v">{{ flag(status.qqReady) }}</span>
           <button v-if="!status.qqReady" class="link" @click="go('/channelsPage')">去配置</button>
         </div>
         <div>
@@ -95,7 +93,10 @@
           <button v-if="!status.memorySearchReady" class="link" @click="go('/obsidian')">去配置</button>
         </div>
       </div>
-      <p class="hint">记忆/世界书/日记只走既有 Obsidian 知识库，不新增知识库。QQ 只是外部渠道之一，不配也不影响在应用里聊天。</p>
+      <p class="hint">
+        记忆/世界书/日记走既有 Obsidian：在「知识库」页启用 MCP 并重建索引后，她才能检索回忆。
+        外部渠道（QQ/飞书/微信）任一配置即可；不配也不影响在应用里聊天。
+      </p>
     </section>
 
     <section class="card">
@@ -325,7 +326,6 @@ async function refresh(): Promise<void> {
     addressDraft.value = settings.relationship?.address || '你'
     modeDraft.value = settings.relationship?.mode || 'companion'
     tabooDraft.value = (settings.relationship?.taboo ?? []).join('，')
-    petVisible.value = Boolean(settings.pet?.visible)
     proactiveEnabled.value = Boolean(settings.proactive?.enabled)
     ageConfirmed.value = Boolean(settings.safety?.ageConfirmed)
     const life = await window.api.character.life.get()
@@ -365,16 +365,6 @@ async function sendVoice(): Promise<void> {
     }
     await refresh()
     showToast('语音条已发出')
-  })
-}
-
-async function togglePetVisible(): Promise<void> {
-  await run(async () => {
-    const next = !petVisible.value
-    await window.api.character.settings.set({ pet: { visible: next } } as never)
-    petVisible.value = next
-    await refresh()
-    showToast(next ? '桌宠已显示；右键可调出菜单' : '桌宠已收起')
   })
 }
 

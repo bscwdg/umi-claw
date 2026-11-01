@@ -251,6 +251,27 @@ async function registerCharacterInternal(
       }
     })
     managerRef = manager
+    // 状态自检改为实时求值：配置改完不用重跑初始化，页面「连接自检」立刻反映
+    const readAgentConfigured = (): boolean => {
+      try {
+        const raw = readFileSync(deps.configPath, 'utf8').replace(/^\uFEFF/, '')
+        const config = JSON.parse(raw) as { agents?: { entries?: Record<string, unknown> } }
+        return Boolean(config?.agents?.entries?.feiyu)
+      } catch {
+        return false
+      }
+    }
+    manager.setStatusProviders({
+      ...(deps.gatewayReady ? { gatewayReady: deps.gatewayReady } : {}),
+      ...(deps.qqReady ? { qqReady: deps.qqReady } : {}),
+      ...(deps.ttsReady ? { ttsReady: deps.ttsReady } : {}),
+      ...(deps.memorySearchReady ? { memorySearchReady: deps.memorySearchReady } : {}),
+      agentReady: readAgentConfigured,
+      obsidianReady: () => {
+        const vault = deps.obsidianVaultPath?.()?.trim()
+        return Boolean(vault && existsSync(vault))
+      }
+    })
     await manager.init()
 
     // 语音条（C08）：TTS 16k WAV → SILK → QQ；失败降级文字，不重试

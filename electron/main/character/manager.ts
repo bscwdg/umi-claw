@@ -198,12 +198,22 @@ export class CharacterManager {
 
   getStatus(): CharacterStatus {
     const enabled = this.isEnabled()
+    const flags = { ...this.dependencyStatus } as unknown as Record<string, boolean>
+    for (const key of Object.keys(this.statusProviders)) {
+      const provider = this.statusProviders[key as keyof typeof this.statusProviders]
+      if (!provider) continue
+      try {
+        flags[key] = Boolean(provider())
+      } catch {
+        flags[key] = false
+      }
+    }
     return {
       enabled,
       ready: this.initialized && enabled,
       storeReady: this.initialized,
       chatGen: this.chatGen,
-      ...this.dependencyStatus
+      ...(flags as unknown as Omit<CharacterStatus, 'enabled' | 'ready' | 'storeReady' | 'chatGen'>)
     }
   }
 
@@ -675,6 +685,37 @@ export class CharacterManager {
       const fresh = (await this.store.readDay<Record<string, unknown>>(date)) ?? {}
       await this.store.writeDay(date, { ...fresh, memory })
     })
+  }
+
+  /** 依赖状态提供者：每次 getStatus 实时求值（配置改了不用重跑初始化） */
+  private statusProviders: Partial<
+    Record<
+      | 'agentReady'
+      | 'gatewayReady'
+      | 'obsidianReady'
+      | 'qqReady'
+      | 'ttsReady'
+      | 'sttReady'
+      | 'memorySearchReady',
+      () => boolean
+    >
+  > = {}
+
+  setStatusProviders(
+    providers: Partial<
+      Record<
+        | 'agentReady'
+        | 'gatewayReady'
+        | 'obsidianReady'
+        | 'qqReady'
+        | 'ttsReady'
+        | 'sttReady'
+        | 'memorySearchReady',
+        () => boolean
+      >
+    >
+  ): void {
+    this.statusProviders = { ...this.statusProviders, ...providers }
   }
 
   /** 语音状态（设置页/策略用） */

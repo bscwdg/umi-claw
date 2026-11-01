@@ -2301,22 +2301,33 @@ app.whenReady().then(async () => {
         }
       },
       obsidianVaultPath: () => configManager.getConfig().obsidian?.vaultPath,
-      petWindow: {
-        preloadPath: join(__dirname, '../preload/pet.js'),
-        devRendererUrl: process.env['ELECTRON_RENDERER_URL'],
-        prodRendererUrl: 'app://renderer/index.html#/character-pet'
-      },
-      onPetAction: (action) => {
-        if (!mainWindow || mainWindow.isDestroyed()) return
-        if (mainWindow.isMinimized()) mainWindow.restore()
-        mainWindow.show()
-        mainWindow.focus()
-        mainWindow.webContents.send('character:open-page', action === 'settings' ? 'settings' : 'chat')
-      },
+      // 桌宠暂时下线（M2 重做形象后再启用）：不创建桌宠窗口，页面也不再提供入口
       gatewayReady: () => Boolean(clawManager?.getStatus().ready),
-      qqReady: () => false, // C08 接 QQ 渠道状态
+      // 「外部渠道」就绪：QQ/飞书/微信任一配置即可（不强制 QQ）
+      qqReady: () => {
+        try {
+          const channels = configManager.getOpenClawChannels()
+          return ['qqbot', 'feishu', 'wecom', 'openclaw-weixin'].some(
+            (name) => channels?.[name] && Object.keys(channels[name]).length > 0
+          )
+        } catch {
+          return false
+        }
+      },
       ttsReady: () => voiceManager !== null,
-      memorySearchReady: () => Boolean(configManager.getConfig().obsidian?.enabled),
+      // 记忆检索就绪 = Obsidian 集成开启 + MCP 已注入 + 索引有数据 + vault 存在
+      memorySearchReady: () => {
+        try {
+          const obs = configManager.getConfig().obsidian
+          if (!obs?.enabled || !obs.vaultPath || !existsSync(obs.vaultPath)) return false
+          const mcp = obsidianManager?.buildMcpServerConfig?.()
+          const status = obsidianManager?.getIndexStatus?.()
+          const chunkCount = Number((status as { chunkCount?: number } | undefined)?.chunkCount ?? 0)
+          return Boolean(mcp && chunkCount > 0)
+        } catch {
+          return false
+        }
+      },
       logger: (message) => console.log(message),
       onEvent: (event) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
