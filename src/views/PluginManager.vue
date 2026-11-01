@@ -49,7 +49,17 @@
         >
           {{ characterBusy ? '处理中…' : characterEnabled ? '停用' : '启用' }}
         </button>
-        <router-link class="btn btn-ghost" to="/character">打开页面</router-link>
+        <router-link v-if="characterEnabled" class="btn btn-ghost" to="/character">
+          打开页面
+        </router-link>
+        <button
+          v-else
+          class="btn btn-ghost"
+          :disabled="characterBusy || !characterStatus"
+          @click="enableAndOpen"
+        >
+          启用并打开
+        </button>
         <button
           class="btn btn-ghost"
           :disabled="characterBusy || !characterStatus || !characterEnabled"
@@ -110,6 +120,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 import type { PluginStatus } from '../../electron/main/kernel/lifecycle'
 import type { CharacterStatus } from '../../electron/main/character/types'
@@ -148,6 +159,7 @@ const characterStatus = ref<CharacterStatus | null>(null)
 const characterBusy = ref(false)
 const characterError = ref('')
 const characterNotice = ref('')
+const router = useRouter()
 const characterEnabled = computed(() => Boolean(characterStatus.value?.enabled))
 const characterStateLabel = computed(() => {
   if (!characterStatus.value) return '状态未知'
@@ -189,6 +201,29 @@ async function toggleCharacter(): Promise<void> {
     characterNotice.value = next ? '已启用；建议点「一键初始化」补齐配置' : '已停用（数据保留）'
   } catch (e) {
     characterError.value = `操作失败：${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    characterBusy.value = false
+  }
+}
+
+/** 停用状态下不做「静默打开」：先启用再进页面，语义与侧栏隐藏保持一致 */
+async function enableAndOpen(): Promise<void> {
+  if (characterEnabled.value) {
+    void router.push('/character')
+    return
+  }
+  characterBusy.value = true
+  characterError.value = ''
+  try {
+    await window.api.character.settings.set({ enabled: true } as never)
+    await loadCharacter()
+    if (characterStatus.value?.enabled) {
+      void router.push('/character')
+    } else {
+      characterNotice.value = '未能确认启用状态，请点「刷新」后再试'
+    }
+  } catch (e) {
+    characterError.value = `启用失败：${e instanceof Error ? e.message : String(e)}`
   } finally {
     characterBusy.value = false
   }
