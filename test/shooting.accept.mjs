@@ -358,7 +358,11 @@ try {
     lastDeliverable = settled.deliverable
     scriptContentId = run.contentId
 
-    const req = fake.state.requests.at(-1)
+    // 三路并行请求的到达顺序不保证与角度编号一致（事件循环/网络调度决定），
+    // 不能按「第 N 个请求」断言；按会话键找对应请求，再比对集合。
+    const scriptRequests = fake.state.requests.filter((q) => /-script$/.test(String(q.conversationKey)))
+    const req = scriptRequests[scriptRequests.length - 1]
+    assert(req, '找到 -script 会话请求')
     assert(/-script$/.test(String(req.conversationKey)), '会话键 -script 唯一')
     assert(!/-a\d$/.test(String(req.conversationKey)), '不与角度键混')
     assertEq(req.temperature, 0.4)
@@ -462,12 +466,12 @@ try {
     assertEq(settled.filter((s) => !s.aborted).length, 3)
     const newRequests = fake.state.requests.slice(before)
     assertEq(newRequests.length, 3)
-    assertDeepEq(
-      newRequests.map((q) => /-a(\d)$/.exec(String(q.conversationKey))?.[1]),
-      ['0', '1', '2'],
-      '角度会话键'
-    )
-    assertEq(newRequests[0].temperature, 0.8)
+    // 三路并发请求的到达顺序由调度决定（曾出现 0,2,1），断言「集合」而不是顺序
+    const angleKeys = newRequests
+      .map((q) => /-a(\d)$/.exec(String(q.conversationKey))?.[1])
+      .sort()
+    assertDeepEq(angleKeys, ['0', '1', '2'], '角度会话键集合')
+    for (const q of newRequests) assertEq(q.temperature, 0.8, '三路温度均为 0.8')
     const versions = await manager.listVersions(project.id, run.contentId)
     assertEq(versions.length, 3)
     for (const v of versions) {
