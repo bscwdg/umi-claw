@@ -570,7 +570,7 @@ Get-ChildItem *.md | ForEach-Object {
 **尚未完成（阻塞 v4.0.0 tag）**：
 
 1. C0.3 NSIS 真机 7 步（RUNBOOK §6，需人工）；
-2. ~~重新产出 NSIS + 刷新 `release/win-unpacked`~~ **部分完成（2026-11-03）**：`electron-builder --win --dir` 已刷新 `release-build2/win-unpacked` 并 packaged.smoke 7/7（`UMI_PACKAGED_DIR` 指向新包）；**NSIS 安装包仍失败**（`Exit code: null` on Setup.exe，本机环境阻塞，需用户终端/管理员环境重打）；
+2. ~~重新产出 NSIS + 刷新 `release/win-unpacked`~~ **部分完成（2026-11-03）**：`electron-builder --win --dir` 已刷新 `release-build2/win-unpacked` 并 packaged.smoke 7/7（`UMI_PACKAGED_DIR` 指向新包）；**NSIS 安装包仍失败**（`Exit code: null` on Setup.exe；产物仅 537KB Setup + builder-debug.yml、无 latest.yml/.nsis.7z，判不完整；本机环境阻塞，需用户终端/管理员环境重打）；
 3. ~~对 `7122a94..eed488c`（**44** 个提交）补一次独立对抗复核~~ **已完成（2026-11-03）**：task-9 事实核对 + task-10 对抗复核，C1 38/44、C2 4/44 如实记录并三态处置，见 PROGRESS 4.0.0 段；
 4. 四件套留档必须晚于最终 HEAD。
 

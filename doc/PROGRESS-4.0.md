@@ -1479,11 +1479,26 @@ index **1,777** ≤1,800；宿主 **26,373**（V4 差 373，登记 4.2）。
    成功刷新 win-unpacked（app.asar 98 MB，05:55:42）；以 `UMI_PACKAGED_DIR=release-build2/win-unpacked` 跑
    packaged.smoke **7/7 通过**（验证的是本批代码，不再是旧包）。`npx electron-builder --win nsis
    --config.directories.output=release-nsis` 在 NSIS 阶段失败：`Exit code: null. Command failed:
-   release-nsis/Umi Claw Setup 4.0.0.exe` → 产出 537KB 安装器 + 94MB `.nsis.7z`，**判为不完整**
-   （无 latest.yml/builder-debug.yml、payload 未嵌入），不当作可用安装包证据；**NSIS 仍受本机环境阻塞**
-   （需用户在其终端/管理员环境重打）。规范目录 `release/win-unpacked` 未替换（新包在 release-build2/）；
+   release-nsis/Umi Claw Setup 4.0.0.exe` → 产物只有 537KB 安装器 + `builder-debug.yml`（无 latest.yml、
+   无 .nsis.7z 嵌入载荷），**判为不完整**，不当作可用安装包证据；**NSIS 仍受本机环境阻塞**（需用户在其
+   终端/管理员环境重打）。规范目录 `release/win-unpacked` 未替换（新包在 release-build2/，smoke 经
+   `UMI_PACKAGED_DIR` 验证 7/7）；
 
 ③ 用户确认 tag/push。当前准确措辞：**4.1 代码与验收目标完成；发布打包/C0.3/tag 待人工**。
 
 **C2 机械口径说明**：4.1 内 `f6a5a89`/`535bbbe` 的审查已做（task-31/32），仅提交信息未用「属实/前提不成立/
 无问题」三态措辞；此后提交严格执行三态。旧 44 提交 C1 38/44、C2 4/44 已在 4.0.0 段如实记录。
+
+**最终态版本级事实核对（第二份独立子代理，只读，快照 HEAD afc0216/6448568）**：
+- 逐条核用户 5 约束：① e2e flake 修复 + 32/607/0 ✓（产物晚于代码 HEAD；本轮再于 6448568 后重跑，
+  产物 06:01:58 > HEAD 06:01:24）；② 4.0.0 收尾：44 提交补审 ✓、文档 ✓、四件套 3/4（build 已在本轮补跑
+  并留 mtime）——**NSIS/规范 win-unpacked 未闭合**（见 tag 阻塞项②）；③ WP7 **8/8**（P1 4d27deb / P2 1f419d0 /
+  P3 6a4096b / P4 44906bd / P5 aa6277d / P6 f8eb7bb / P7+P8 c694261，均有代码行号+断言）；④ WP5 1,777≤1,800、
+  WP6 0/0 硬约束 ✓；⑤ 未 push（ahead 61）、tag 仅 v1.0.0、C0.3 未做 ✓。
+- 其 P2/P3（版本号未 bump、.gitignore 未忽略打包目录、4.1 段旧数字、NSIS 措辞）均已在本轮修复；
+  其唯一 P1（NSIS/规范 win-unpacked 未闭合）如实保留为发布阻塞项。
+
+**忽略规则独立复核（另一只读子代理，2026-11-03）**：`release-build2/`/`release-nsis/` 两行无误伤已跟踪文件、
+无脚本依赖被隐藏（`git check-ignore` 命中、`git ls-files` 无输出）；**不用** `release-*/` 通配（会静默吞掉
+任意层级 `release-notes` 类目录）；位置/风格与现有 7 条一致。P2-1（与版本元数据混在一个 chore）已知并
+接受（未 push，不为粒度 rebase；后续同类改动单独提交）；P2-3（NSIS 证据措辞）已按当前磁盘实测校正。
