@@ -29,6 +29,25 @@ import { dateOf, normalizeDate } from './todoManager'
 import { estimateTokens, sliceToTokenBudget } from '../services/context/tokens'
 export { estimateTokens, sliceToTokenBudget }
 
+import {
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
+  MIN_CONTEXT_WINDOW_TOKENS,
+  MAX_CONTEXT_WINDOW_TOKENS,
+  KNOWLEDGE_ITEM_MIN_TOKENS,
+  ITEM_TRUNCATE_MARKER,
+  DROPPED_TITLES_SHOWN,
+  DROPPED_TITLE_MAX_CHARS
+} from '../services/context/limits'
+export {
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
+  MIN_CONTEXT_WINDOW_TOKENS,
+  MAX_CONTEXT_WINDOW_TOKENS,
+  KNOWLEDGE_ITEM_MIN_TOKENS,
+  ITEM_TRUNCATE_MARKER,
+  DROPPED_TITLES_SHOWN,
+  DROPPED_TITLE_MAX_CHARS
+}
+
 // ── 常量（§六） ───────────────────────────────────────────────────────────────
 
 /** context.snapshot 的 scope（v0.7 枚举；§14.1 B1） */
@@ -41,10 +60,6 @@ export type SnapshotScope = (typeof SNAPSHOT_SCOPES)[number]
  */
 export const CONTEXT_BUDGET_RATIO = 0.7
 
-export const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000
-export const MIN_CONTEXT_WINDOW_TOKENS = 2_000
-export const MAX_CONTEXT_WINDOW_TOKENS = 2_000_000
-
 /** 画像摘要上限（§6.1：≤200 字） */
 export const PROFILE_SUMMARY_MAX_CHARS = 200
 /** 在跟事项上限（§6.1：≤20 条） */
@@ -56,12 +71,6 @@ export const READ_MAX_ITEMS = 5_000
 
 /** 区块固定开销（标题/分隔/字段名），估算先扣，避免「账面刚好、渲染超了」 */
 export const PACK_OVERHEAD_TOKENS = 48
-/** 裁剪模式下单条知识至少值得占用的 token（塞半句不如显式说「还有更多」） */
-export const KNOWLEDGE_ITEM_MIN_TOKENS = 120
-export const ITEM_TRUNCATE_MARKER = '\n……（本条资料已按上下文预算截断，完整内容见知识库原文）'
-/** 「未注入资料」最多展示的标题数（这串文字本身也占预算，必须有界） */
-export const DROPPED_TITLES_SHOWN = 3
-export const DROPPED_TITLE_MAX_CHARS = 20
 
 /** 第 5 段记录滚动窗口（天）：qa=近 3 天；latest=当天 */
 export const RECORD_WINDOW_DAYS_BY_SCOPE: Record<SnapshotScope, number> = {

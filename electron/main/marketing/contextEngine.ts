@@ -46,6 +46,25 @@ import { getPlatformRule } from './platformRules'
 import { estimateTokens, sliceToTokenBudget } from '../services/context/tokens'
 export { estimateTokens, sliceToTokenBudget }
 
+import {
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
+  MIN_CONTEXT_WINDOW_TOKENS,
+  MAX_CONTEXT_WINDOW_TOKENS,
+  KNOWLEDGE_ITEM_MIN_TOKENS,
+  ITEM_TRUNCATE_MARKER,
+  DROPPED_TITLES_SHOWN,
+  DROPPED_TITLE_MAX_CHARS
+} from '../services/context/limits'
+export {
+  DEFAULT_CONTEXT_WINDOW_TOKENS,
+  MIN_CONTEXT_WINDOW_TOKENS,
+  MAX_CONTEXT_WINDOW_TOKENS,
+  KNOWLEDGE_ITEM_MIN_TOKENS,
+  ITEM_TRUNCATE_MARKER,
+  DROPPED_TITLES_SHOWN,
+  DROPPED_TITLE_MAX_CHARS
+}
+
 // ── 常量（§六 / §七 Commit 06 / §十） ─────────────────────────────────────────
 
 /** §四 `contents.platform`：发布平台（xiaohongshu / douyin）；Commit 10 起规则模板挂 pack.platformRule */
@@ -58,40 +77,11 @@ export const CONTEXT_PACK_KEYS = ['business', 'knowledge', 'watchlist', 'custome
 /** **预算比例：business + knowledge 最多占上下文窗口的 60%**（§六 原文，其余留给对话历史/生成/平台规则） */
 export const CONTEXT_BUDGET_RATIO = 0.6
 
-/**
- * 默认上下文窗口（token）。选 128k 作为一期的保守默认值：
- * 07 拿到真实模型后应显式传入 `contextWindowTokens`（§六 说「具体阈值 06 按模型定」，
- * 而 §六 同时记录 `model` 取值是 `openclaw` / `openclaw/<agentId>`，**映射不到 provider 模型 id**，
- * 所以窗口必须由调用方给，不能在这张表里假装知道）。
- */
-export const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000
-/** 合法窗口下界（比这更小的窗口连一份资料都放不下，属于配置错误而不是缺省） */
-export const MIN_CONTEXT_WINDOW_TOKENS = 2_000
-/** 合法窗口上界（防手滑写 128000000 把预算变成无上限） */
-export const MAX_CONTEXT_WINDOW_TOKENS = 2_000_000
-
 /** 单次从 worker 读入的 ready 条目上限（worker `opList` 的 limit 上限就是 5000） */
 export const KNOWLEDGE_PACK_MAX_ITEMS = 5_000
 
 /** 每个区块的固定开销（标题、分隔、字段名）——估算时先扣掉，避免「账面上刚好、实际超了」 */
 export const PACK_OVERHEAD_TOKENS = 64
-
-/** 裁剪模式下单条知识至少要有这么多 token 才值得进包（塞半句话不如说明「还有更多资料」） */
-export const KNOWLEDGE_ITEM_MIN_TOKENS = 120
-
-/** 单条知识被预算截断时的显式标记（不静默丢内容，与 §七 05a 的截断精神一致） */
-export const ITEM_TRUNCATE_MARKER = '\n……（本条资料已按上下文预算截断，完整内容见知识库原文）'
-
-/**
- * 「本次未注入的资料」里最多列几个标题。
- *
- * 为什么要有上限：这段文字**也占上下文预算**。列表无界的话，被裁掉的条目越多、
- * 剩下的空间就越少，账本会变成自我强化的负数；固定 3 条 + 「等 N 条」既交代了「有东西没进」，
- * 又让成本有界（剩余条数看 `dropped` 字段 / UI）。
- */
-export const DROPPED_TITLES_SHOWN = 3
-/** 列表里单个标题的显示长度（超长标题不把预算吃掉） */
-export const DROPPED_TITLE_MAX_CHARS = 20
 
 /** `task` / `customer` 入参长度上限（防调用方把整篇对话塞进来） */
 export const PACK_TEXT_MAX_LENGTH = 500
