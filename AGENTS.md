@@ -243,14 +243,28 @@ export default { routes, nav, slot, setup } as PluginUiModule
 | `Recorder(suite)` + `.check(id, name, fn)` | 单点失败不中断整轮 |
 | `assert` / `assertEq` / `assertDeepEq` | 断言 |
 | `bundleEntry(entry, outName, {externals, alias})` | esbuild 把 TS 打成临时 ESM |
-| `domainSrc(pluginId, rel)` / `domainUiSrc(pluginId, rel)` | **域代码搬家时的双路径回落**（WP3 靠它做到脚本零改动） |
+| `domainSrc(pluginId, rel)` / `domainUiSrc(pluginId, rel)` | **域代码搬家的双路径回落**：`plugins/<id>/main/<rel>` 存在就用它，否则回落 `electron/main/<rel>`。返回**绝对路径**，不能直接传给 `bundleEntry`（它要仓库相对路径）。需要多候选回落时用 `anySrc([...])` |
 | `resolveNodePath()` | 便携 node 优先 |
 | `waitFor(fn, {timeout})` | 替代固定 `sleep`，避免并发下的假失败 |
 | `printResult` / `writeJson` | 结果输出与落盘 |
 
-### 7.3 搬家时不要改脚本
+### 7.3 搬家前先改硬编码，不是「不用改脚本」
 
-`domainSrc()` 的语义是「新路径存在就用新的，否则回落旧的」。**域代码搬迁（WP3）时验收脚本应当一行不改**。如果发现某个脚本硬编码了 `electron/main/work/...`，先改成 `domainSrc()`，再搬。
+`domainSrc()` 的语义是「`plugins/<id>/main/<rel>` 存在就用它，否则回落 `electron/main/<rel>`」，但它有两个硬限制：
+
+1. 表达不了「新位置在一棵树、旧位置在另一棵树」（如 `services/knowledge/parsers/X` ↔ `marketing/parsers/X`）：两个候选里只有第二个是自由的。
+2. 返回绝对路径，而 `bundleEntry()` 要仓库相对路径。
+
+而且它**只对调用它的脚本生效**。实测 `test/*.mjs` 里的硬编码（G7 口径）：
+
+| 写法 | 命中 |
+| --- | --- |
+| `join(..., 'electron','main', ...)` | 75 处 / 24 文件（域内 26 / 10，**全部是 marketing**，work 0） |
+| `bundleEntry('electron/main/...')` | 158 处 / 30 文件 |
+| 代码行含 `electron/main`（合计） | 177 处 / 31 文件 |
+| 域内（`work`\|`marketing`）全写法 | 93 处 / 22 文件 |
+
+所以流程是：**搬前先 `Select-String -Path test\*.mjs -Pattern "<被搬目录>"` 清出清单 → 改成 `anySrc([...])`（返回仓库相对路径，按顺序取第一个存在的候选；独立提交、绿了再搬）**。
 
 ---
 
@@ -314,14 +328,12 @@ npm run typecheck:node; npm run typecheck:web
 # ② 全量验收 31 套（accept×29 + e2e + smoke，582 条断言）
 npm run accept
 
-# ③ 插件越界 import（只数真违规，目标是只降不升）
-#    基线见 doc/PLAN-4.1-DEBT.md §一
+# ③ 插件越界 import（只数真违规：非 type-only、且不在 kernel/services 下；应为 15 或更少）
+#    权威定义与基线见 doc/PLAN-4.1-DEBT.md §三 V3 与 §一
 (Get-ChildItem plugins -Recurse -Include *.ts,*.vue |
-  Select-String -Pattern "from '.*electron/main/").Count
-
-# ④ Manager 层不得 import electron（应为 0）
-(Get-ChildItem electron\main\work,electron\main\marketing -Filter *.ts -Recurse |
-  Select-String -Pattern "^import .*from 'electron'" | Measure-Object).Count
+  Select-String -Pattern "from '.*electron/main/" |
+  Where-Object { $_.Line -notmatch 'electron/main/(kernel|services)' -and $_.Line -notmatch 'import type' } |
+  Measure-Object).Count
 
 # ⑤ 渲染端错误分支按 code（应为 0）
 (Select-String -Path src\**\*.vue,src\**\*.ts,plugins\**\*.vue,plugins\**\*.ts `
@@ -331,9 +343,13 @@ npm run accept
 Select-String -Path electron\**\*.ts,src\**\*.ts,src\**\*.vue `
   -Pattern "sk-[A-Za-z0-9]{16,}|Bearer [A-Za-z0-9\._-]{20,}" -ErrorAction SilentlyContinue
 
-# ⑦ 无不可见字符（0 命中）
-Get-ChildItem electron,src,plugins -Recurse -Include *.ts,*.vue,*.mjs | ForEach-Object {
+# ⑦ 无不可见字符（0 命中；含根目录 *.md 与 doc/）
+Get-ChildItem electron,src,plugins,doc -Recurse -Include *.ts,*.vue,*.mjs,*.md | ForEach-Object {
   if ((Get-Content $_.FullName -Raw -Encoding UTF8) -match "[\u200b\u200e\u200f\ufeff]") { $_.FullName }
+}
+Get-ChildItem *.md | ForEach-Object {
+  if ((Get-Content $_.FullName -Raw -Encoding UTF8) -match "[\u200b\u200e\u200f\ufeff]") { $_.FullName }
+}
 }
 ```
 
@@ -351,7 +367,64 @@ Get-ChildItem electron,src,plugins -Recurse -Include *.ts,*.vue,*.mjs | ForEach-
 
 ---
 
-## 12. 相关文档
+## 12. 对抗审查纪律（2026-11-02 立，硬规则）
+
+本仓库的改动**不得由同一个执行者自行放行**。以下两条是硬规则，违反即回退。
+
+### 12.1 每个 commit 前必须有子代理对抗审查
+
+流程固定为四步，不可跳步：
+
+1. **执行者自测**：双 typecheck + 相关 accept + `npm run build`，贴真实输出。
+2. **派子代理对抗审查**：把「改了什么 + 为什么 + 自测输出」交给独立子代理，要求它**主动找反例**——
+   路径漏改、断言被改松、边界越界、行为回退、文档数字与实测不一致。
+   指令里要写明「不要确认我做得对，找能推翻我的证据」。
+3. **逐条处置**：子代理的每条意见给三态结论——「属实→已修（附改动）」/「前提不成立→附实测证据」。
+   不接受「知道了但不改」。
+4. **通过后才 commit**：提交信息里写清「对抗审查已过」与否决项处置结果。
+
+**例外**：纯粹的提交信息错字修正可不走审查，但不得顺手夹带任何代码或文档内容改动。
+
+### 12.2 每个工作包收尾必须有两次独立子代理检查
+
+一个**工作包**（WP0–WP4）收尾时派**两次**子代理，两次**互不可见**（各自独立读仓库，不共享上下文）。
+WP 内部的「阶段 A / 阶段 B」不单独触发这两次检查。
+
+| 次序 | 检查什么 | 判据 |
+| --- | --- | --- |
+| 第一次 | **事实核对**：目标是否真的达成。逐条对比工作包的出口判据，自己跑命令取数字 | 每条判据都有实测证据，不接受「应该没问题」 |
+| 第二次 | **对抗复核**：找这次改动引入的新问题——残留死代码、被绕过的断言、没被覆盖的分支、回退的能力 | 列出的问题必须逐条处置或明确接受 |
+
+两次检查的结论都要写进 `doc/PROGRESS-4.0.md` 的阶段条目，**包括没被采纳的意见及理由**。
+
+### 12.3 子代理的边界
+
+- 子代理**只读**：不提交、不改文件、不跑 `git` 写操作。发现问题回报，由执行者改。
+- 子代理要看**真实文件**，不接受执行者的口述摘要作为唯一依据。
+- 子代理给出的结论必须带**可复查的命令或文件行号**，否则视为无效意见。
+
+### 12.4 校验方法（本条也要可机械检查）
+
+判据与命令分开放（命令里的 `|` 写进表格会把 GFM 表格拆坏）：
+
+| # | 检查 | 判据 |
+| --- | --- | --- |
+| C1 | 提交带审查记录 | 每个非「纯提交信息修正」的提交，`%b` 里含 `对抗审查:` |
+| C2 | 审查意见已处置 | `%b` 含 `属实` 或 `前提不成立`；审查无问题时写 `对抗审查: 无问题（<subagent runId>）` |
+| C3 | 工作包两次检查入档 | 该包的 PROGRESS 条目里 `事实核对` 与 `对抗复核` 各至少一次 |
+
+```powershell
+# C1/C2（从基线起逐条看，而不是只看 HEAD）
+git log 5cc072e..HEAD --format='--- %h%n%b' | Select-String '对抗审查|属实|前提不成立'
+# C3
+Select-String doc\PROGRESS-4.0.md -Pattern '事实核对|对抗复核'
+```
+
+> C3 对已经记为完成、但当时还没有这条规则的工作包（WP0）不算追溯红：在该包条目补一行「两次检查已补跑」即可。
+
+---
+
+## 13. 相关文档
 
 - 架构契约：[PLAN-4.0.md](PLAN-4.0.md)
 - 欠账执行：[doc/PLAN-4.1-DEBT.md](doc/PLAN-4.1-DEBT.md)

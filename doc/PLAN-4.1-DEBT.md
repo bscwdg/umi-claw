@@ -128,7 +128,7 @@ on:
 2. 故意删掉一个断言，`accept` 必须红。
 3. 两条都验证过了才算 C0.2 完成——**没验证过等于没做**。
 
-#### C0.3 NSIS 真机 7 步（`§18.2` 登记的未执行项）
+#### C0.3 NSIS 真机 7 步（`§18.2` 登记的未执行项）—— **由北执行**
 
 按 `doc/RUNBOOK-4.0.md §6` 执行：干净目录安装 → 首启 → 启停插件 → 覆盖升级 → 卸载残留检查。
 
@@ -163,10 +163,15 @@ electron/main/services/knowledge/
     └── urlParser.ts            # 唯一实现
 ```
 
-改动点（两类，各 3 处）：
+改动点（**5 个文件 / 10 条 import**，实测；`runtime.ts` 里没有任何 parser import，不要照旧印象改）：
 
-- `electron/main/work/runtime.ts`、`electron/main/marketing/runtime.ts` 的 import
-- `plugins/work/main.ts:12`、`plugins/marketing/main.ts:22` 的 import
+| 文件 | 行 |
+| --- | --- |
+| `electron/main/work/knowledgeManager.ts` | 30 / 36 / 37 |
+| `electron/main/marketing/knowledgeManager.ts` | 52 / 53 / 54 |
+| `electron/main/marketing/scanRecognizer.ts` | 55 / 56 |
+| `plugins/work/main.ts` | 12 |
+| `plugins/marketing/main.ts` | 22（顺手修：它引用的是 `work/parsers`，marketing 引 work 的路径） |
 
 #### C1.2 删除冗余目录
 
@@ -186,7 +191,23 @@ npm run typecheck:node; npm run typecheck:web
 
 **回滚**：单提交 revert，无数据影响（纯文件移动）。
 
-**注意**：`test/_lib.mjs:domainSrc()` 已经是「新路径存在就用新的、否则回落旧的」——所以**验收脚本一行都不用改**。这正是当初留这个 helper 的用途。
+**注意（v3 校正，经两轮对抗审查修正）**：`test/_lib.mjs:domainSrc(pluginId, rel)` 的实际行为是「`plugins/<id>/main/<rel>` 存在就用它，否则回落 `electron/main/<rel>`」。两点要说准：
+
+- 它**能**指向 `services/`（第二候选的 `rel` 是自由的：`domainSrc('work','services/pluginDb.ts')` 实测返回该路径），但**表达不了**「新位置在 `services/X`、旧位置在 `marketing/Y`」这种一对多的回落。
+- 它返回**绝对路径**，而 `bundleEntry()` 收的是**仓库相对路径**（内部 `join(repoRoot, entryRelPath)`）；直接把返回值传给 `bundleEntry()` 会拼成 `D:\repo\D:\repo\electron\...`（实测）。
+
+所以 WP1 的正确做法是新增一个通用 helper，而不是用 `domainSrc()`：
+
+1. 在 `test/_lib.mjs` 新增 `anySrc(candidates)`：按顺序返回**第一个存在的仓库相对路径**，不存在则返回第一个。WP1 用两个候选（`electron/main/services/knowledge/parsers/X` → `electron/main/marketing/parsers/X`）。
+   > WP3 要同时搬 `work/**` 与 `marketing/**` 两棵树，单一回落不够用；`anySrc` 接受数组，正好覆盖。
+2. 实测硬编码共 **8 处**（不是 4 处），两类都要改：
+
+| 类型 | 位置 |
+| --- | --- |
+| `bundleEntry('electron/main/marketing/parsers/...')` | `test/knowledge.marketing.accept.mjs:727`、`:747`、`:924`；`test/scan.accept.mjs:73` |
+| `join(repoRoot, 'electron','main','marketing','parsers',...)` + `readFileSync` | 定义在 `test/knowledge.marketing.accept.mjs:58`、`:59`、`:60`；`test/scan.accept.mjs:709`。读取点在 `:956`、`:963`、`:989`、`:995`、`:1008` |
+
+所以 C1 拆成两个提交：**先**加 `anySrc()` 并把 8 处改过去（独立提交、绿了再搬），**再**搬文件。这是规则 G7。
 
 ---
 
@@ -337,10 +358,10 @@ CI 加一步：`npm run lint`（= eslint + check-lint-budget）。
 
 **搬迁的技术前提（已验证）**：
 
-1. `test/_lib.mjs:domainSrc()` 已支持双路径回落 → **验收脚本零改动**。
+1. `test/_lib.mjs` 的 `domainSrc()` **只覆盖 `plugins/<id>/main/` ↔ `electron/main/`**：硬编码 `bundleEntry('electron/main/<域>/...')` / `join(repoRoot,'electron','main',...)` 的调用不受保护。WP3 搬前必须先把这些改成 `anySrc([...])`（见 WP1 的 8 处清单与 G7 的实测口径）。
 2. `tsconfig.node.json` 的 `include` 是 `plugins/*/main.ts`，需扩为 `plugins/*/main.ts` + `plugins/*/main/**/*.ts`。
 3. `plugins/*/plugin.json` 的 `id` 必须与目录名一致（`gen-plugin-entries.mjs` 已强制校验）。
-4. `qatool` / `context` / `knowledge` 的 accept 脚本里若有硬编码 `electron/main/work/...` 的相对路径，需改走 `domainSrc()`。**开工前先 grep 一遍确认。**
+4. **不是「改走 domainSrc」**：两域分别搬进 `plugins/work/main/**` 与 `plugins/marketing/main/**`，`anySrc` 的候选数组按域给：`['plugins/work/main/work/X','electron/main/work/X']`。开工前先 `Select-String -Path test\*.mjs -Pattern "electron/main/(work|marketing)"` 清出清单（实测域内全写法 93 处 / 22 文件）。
 
 **顺手清掉的小债**（都在本包）：
 
@@ -376,34 +397,46 @@ CI 加一步：`npm run lint`（= eslint + check-lint-budget）。
 
 ## 三、机械校验清单（每个 WP 结束都跑一遍）
 
-| # | 检查 | 命令 | 判据 |
-| --- | --- | --- | --- |
-| V1 | 双 typecheck | `npm run typecheck:node; npm run typecheck:web` | 0 错 |
-| V2 | 全量验收 | `npm run accept` | 31 套全绿（582 断言） |
-| V3 | 插件越界 import | 见下 | ≤ baseline |
-| V4 | 宿主代码量 | 见 §一 | ≤ 目标 |
-| V5 | 重复文件 | `Get-FileHash` 比对 `work/marketing` 同名文件 | 0 |
-| V6 | Manager 不 import electron | 见下 | 0 |
-| V7 | 构建产物不含插件代码 | `npm run build` 后查 `resources/plugins/*/` | 只有 manifest + migrations |
-| V8 | 渲染端无 `message.includes()` | 见下 | 0 |
-| V9 | 无明文密钥 | 见下 | 0 |
-| V10 | 无不可见字符 | 见下 | 0 |
+| # | 检查 | 判据 |
+| --- | --- | --- |
+| V1 | 双 typecheck | 0 错 |
+| V2 | 全量验收 | 31 套全绿（582 断言） |
+| V3 | 插件越界 import | ≤ `scripts/lint-baseline.json` 的 `pluginHostBoundary`（WP3 建；当前人工基线 15） |
+| V4 | 宿主代码量 | ≤ 目标（见 §一） |
+| V5 | 重复文件 | 0 |
+| V6 | Manager 不 import electron | 0 |
+| V7 | 构建产物不含插件代码 | 只有 manifest + migrations |
+| V8 | 渲染端无 `message.includes()` | 0 |
+| V9 | 无明文密钥 | 0（`Config.vue` 的 placeholder 除外） |
+| V10 | 无不可见字符 | 0 |
+
+命令（与上表逐项对应；命令里的 `|` 不要写进表格，否则 GFM 会把表格拆坏）：
 
 ```powershell
-# V3 插件越界 import（只数真违规：非 type-only，且不在 kernel/services 下）
+# V3 插件越界 import（只数真违规：非 type-only、且不在 kernel/services 下）
+(Get-ChildItem plugins -Recurse -Include *.ts,*.vue |
+  Select-String -Pattern "from '.*electron/main/" |
+  Where-Object { $_.Line -notmatch 'electron/main/(kernel|services)' -and $_.Line -notmatch 'import type' } |
+  Measure-Object).Count
+
 # V6 Manager 层
 (Get-ChildItem electron\main\work,electron\main\marketing -Filter *.ts -Recurse |
   Select-String -Pattern "^import .*from 'electron'" | Measure-Object).Count
+
 # V8
 (Select-String -Path src\**\*.vue,src\**\*.ts,plugins\**\*.vue,plugins\**\*.ts `
   -Pattern "message\.includes\(" -ErrorAction SilentlyContinue | Measure-Object).Count
+
 # V9（允许 Config.vue 的 placeholder 示例，其余一律 0）
 Select-String -Path electron\**\*.ts,src\**\*.ts,src\**\*.vue `
   -Pattern "sk-[A-Za-z0-9]{16,}|Bearer [A-Za-z0-9\._-]{20,}" -ErrorAction SilentlyContinue
-# V10
-Get-ChildItem electron\main -Recurse -Filter *.ts | ForEach-Object {
-  $t = Get-Content $_.FullName -Raw -Encoding UTF8
-  if ($t -match "[\u200b\u200e\u200f\ufeff]") { $_.Name }
+
+# V10（含根目录 *.md 与 doc/）
+Get-ChildItem electron,src,plugins,doc -Recurse -Include *.ts,*.vue,*.mjs,*.md | ForEach-Object {
+  if ((Get-Content $_.FullName -Raw -Encoding UTF8) -match "[\u200b\u200e\u200f\ufeff]") { $_.FullName }
+}
+Get-ChildItem *.md | ForEach-Object {
+  if ((Get-Content $_.FullName -Raw -Encoding UTF8) -match "[\u200b\u200e\u200f\ufeff]") { $_.FullName }
 }
 ```
 
@@ -421,6 +454,25 @@ Get-ChildItem electron\main -Recurse -Filter *.ts | ForEach-Object {
 | 停用即中止在途 SSE（work 未修） | 4.0.x 独立修复，不在本计划 |
 | 旧库导入失败可见 + 重试 | 4.0.x 独立修复，不在本计划 |
 | work 知识库原件写全局 `<dataDir>/knowledge` | 4.0.x 或 RUNBOOK 登记 |
+
+---
+
+## 四·五、执行规则（G1–G10，硬规则；违反即停下来重估）
+
+> 编号用 **G**（Gate）而不是 R：`doc/PROGRESS-4.0.md:88-101` 已有一套「R1–R12」指审查发现项，再叫 R9/R10 会歧义。
+
+| # | 规则 | 来源 |
+| --- | --- | --- |
+| G1 | **HEAD 不引入新的红**：双 typecheck 0 错 + build 通过 + **相关 accept 绿**；全量 31 套按 G8 在**工作包收尾**必绿。允许的中间态：同一交互内做绿，或 `git stash` / 临时分支（临时分支上的提交可以是红的，合回前必须绿） | 2026-11-02 实测：多文件搬家中途 typecheck 报 TS2307 |
+| G2 | **一次只推一个工作包**；包内每个提交都必须满足 G1（「不引入新的红」，不是「全量绿」），不跨包并行 | 避免 WP1/WP2 交叉；与 G1 取同一口径 |
+| G3 | **开工前把出口判据写进文档，完成后贴实测数字**，不接受「应该没问题」 | 防止自评 |
+| G4 | **搬家与改逻辑绝不放在同一个提交** | 出问题能判定是路径还是逻辑 |
+| G5 | **改验收断言必须单独提交**，并写明原断言错在哪 | 防止顺手改断言来绿 |
+| G6 | **工作包外发现的问题记进欠账表，不就地修** | 防止范围扩散 |
+| G7 | **搬家前先把硬编码路径改成解析 helper**（独立提交、绿了再搬） | `test/*.mjs` 实测：`join` 写法 `'electron','main'` **75 处 / 24 文件**（域内 26 处 / 10 文件，**全部是 marketing**，work 0）；`bundleEntry('electron/main/...')` **158 处 / 30 文件**；代码行合计 **177 处 / 31 文件**；域内全写法 **93 处 / 22 文件**。另有 `'electron','main','ipc'` **21 处**（WP3 搬 ipc 时受影响） |
+| G8 | **每包结束跑全量 accept（31 套）**，不是只跑相关套件 | context 是 today/report/qa 的上游 |
+| G9 | **每个 commit 前必须派子代理对抗审查**，逐条三态处置后才提交；提交信息带 `对抗审查:` 段（细则 `AGENTS.md §12.1`；纯提交信息修正按 §12.1 例外执行） | 2026-11-02 北拍板 |
+| G10 | **每个工作包收尾派两次独立子代理检查**（一次事实核对、一次对抗复核，两次互不可见），结论写进该包的 PROGRESS 条目（细则 `AGENTS.md §12.2`）。WP 内部的阶段 A/B 不单独触发 | 2026-11-02 北拍板 |
 
 ---
 
