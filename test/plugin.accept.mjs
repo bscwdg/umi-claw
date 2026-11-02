@@ -14,6 +14,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -48,6 +49,15 @@ const {
   availableServices,
   pluginIpcChannel
 } = kernelMod
+
+const kvMod = await import(
+  pathToFileURL(bundleEntry('electron/main/services/pluginKv.ts', 'plugin-kv.mjs')).href
+)
+const secretsMod = await import(
+  pathToFileURL(bundleEntry('electron/main/services/pluginSecrets.ts', 'plugin-secrets.mjs')).href
+)
+const { createPluginKvService } = kvMod
+const { PluginSecretStore } = secretsMod
 
 const helloMod = await import(pathToFileURL(bundleEntry('plugins/hello/main.ts', 'hello-main.mjs')).href)
 const mergeDir = (base, name) => join(base, name)
@@ -2406,6 +2416,121 @@ await r.check('P55', '激活超时：迟到返回的 cleanup 仍然执行（不�
   await host.disposeAll()
   return '迟到 cleanup 执行一次'
 })
+await r.check(
+  'P56',
+  'ctx.kv / ctx.secrets 契约真实可用：注入 + 命名空间隔离 + 加密不可用拒绝（4.0.1 P7）',
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'umi-kv-'))
+    const seen = {}
+    const encryption = {
+      isEncryptionAvailable: () => true,
+      encryptString: (v) => Buffer.from(v, 'utf8'),
+      decryptString: (b) => b.toString('utf8')
+    }
+    const factories = {
+      kv: (info) => createPluginKvService(root, info.id),
+      secrets: (info) =>
+        new PluginSecretStore(join(root, 'plugins', info.id, 'secrets.bin'), encryption)
+    }
+    const registry = new PluginRegistry({ hostServices: availableServices(factories) })
+    registry.register({
+      dir: '/fake/kv',
+      source: '<test>',
+      manifest: { ...manifest, id: 'kvtest', inject: ['host', 'kv', 'secrets'] },
+      loadMain: async () => ({
+        activate: async (ctx) => {
+          assertEq(Object.keys(ctx.services).sort().join(','), 'kv,secrets', '只注入声明的服务')
+          const kv = ctx.services.kv
+          const secrets = ctx.services.secrets
+          await kv.set('theme', 'dark')
+          await kv.set('gone', 'x')
+          await kv.set('gone', null)
+          seen.kvKeys = await kv.keys()
+          seen.kvTheme = await kv.get('theme')
+          await secrets.set('token', 's3cret')
+          seen.secretKeys = await secrets.keys()
+          seen.secretValue = await secrets.get('token')
+          return () => undefined
+        }
+      })
+    })
+    const host = makeHost(registry, createFakeIpc(), { services: factories })
+    const status = await host.activate('kvtest')
+    assertEq(status.state, 'activated', '激活成功：' + JSON.stringify(status.error))
+    assertEq(seen.kvKeys.join(','), 'theme', 'KV keys 过滤前缀，null 即删除')
+    assertEq(seen.kvTheme, 'dark', 'KV round-trip')
+    assertEq(seen.secretKeys.join(','), 'token', 'secrets keys 不返回值')
+    assertEq(seen.secretValue, 's3cret', 'secrets round-trip（加密器注入）')
+
+    // 命名空间隔离：另一个插件实例同 dataDir，键互不可见
+    const other = createPluginKvService(root, 'other')
+    await other.set('theme', 'light')
+    const back = createPluginKvService(root, 'kvtest')
+    assertEq(await back.get('theme'), 'dark', '其他插件改不到本插件键')
+    assertEq(await other.get('theme'), 'light', '对方命名空间独立')
+
+    // 加密不可用 → available=false 且 set 拒绝、不落明文
+    const unavailable = new PluginSecretStore(join(root, 'plugins', 'kvtest', 's2.bin'), {
+      isEncryptionAvailable: () => false,
+      encryptString: () => Buffer.alloc(0),
+      decryptString: () => ''
+    })
+    assertEq(unavailable.available(), false, '不可用可判定')
+    let threw = null
+    try {
+      await unavailable.set('k', 'v')
+    } catch (e) {
+      threw = e
+    }
+    assert(threw, '不可用时 set 拒绝')
+    assert(!existsSync(join(root, 'plugins', 'kvtest', 's2.bin')), '拒绝写入（不落明文）')
+    await host.disposeAll()
+    rmSync(root, { recursive: true, force: true })
+    return 'kv/secrets 契约 ✓'
+  }
+)
+
+await r.check(
+  'P57',
+  'pluginKv 并发写不丢键：同 dataDir 多实例共享缓存/串行队列（4.0.1 P8）',
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'umi-kvconc-'))
+    // 修复前：a/b 各持一份完整 map，a.set 会把 b 刚写的键整份抹掉
+    const a = createPluginKvService(root, 'work')
+    const b = createPluginKvService(root, 'marketing')
+    await a.set('x', '1')
+    await b.set('y', '2')
+    await a.set('x', '3')
+    assertEq(await createPluginKvService(root, 'work').get('x'), '3', 'a 本命名空间取到最新值')
+    assertEq(
+      await createPluginKvService(root, 'marketing').get('y'),
+      '2',
+      'b 的键没有被整份覆盖（修复前会丢）'
+    )
+
+    // 并发 20 次交替写：全部键都要在最终文件里
+    await Promise.all(Array.from({ length: 20 }, (_, i) => (i % 2 ? a : b).set('k' + i, String(i))))
+    const onDisk = JSON.parse(readFileSync(join(root, 'plugin-kv.json'), 'utf8'))
+    for (let i = 0; i < 20; i++) {
+      assert(
+        Object.keys(onDisk).some((k) => k.endsWith(':k' + i)),
+        '并发写保留 k' + i
+      )
+    }
+
+    // 跨 dataDir 隔离：不同 dataDir 各一份文件，互不覆盖
+    const root2 = mkdtempSync(join(tmpdir(), 'umi-kvconc2-'))
+    const otherDir = createPluginKvService(root2, 'work')
+    await otherDir.set('x', 'other')
+    assertEq(await otherDir.get('x'), 'other', '另一 dataDir 可写')
+    assertEq(await createPluginKvService(root, 'work').get('x'), '3', '不同 dataDir 互不影响')
+    assertEq(existsSync(join(root2, 'plugin-kv.json')), true, '另一 dataDir 独立文件')
+    rmSync(root2, { recursive: true, force: true })
+    rmSync(root, { recursive: true, force: true })
+    return '并发不丢键 ✓'
+  }
+)
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin.json'), result)
