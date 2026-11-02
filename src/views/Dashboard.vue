@@ -64,17 +64,17 @@
         @click="handleStart"
         :disabled="actionLoading"
         >
-        {{ actionLoading ? '启动中...' : '▶ 启动' }}
+         {{ pendingAction === 'start' ? '启动中...' : '▶ 启动' }}
       </button>
       <template v-else>
-          <button class="btn btn-success btn-lg" @click="handleFetchToken" :disabled="loading && actionLoading">
+          <button class="btn btn-success btn-lg" @click="handleFetchToken" :disabled="loading">
             {{ loading ? '正在获取...' : '获取 Token(网关令牌)' }}
           </button>
           <button class="btn btn-danger" @click="handleStop" :disabled="actionLoading">
-            {{ actionLoading ? '停止中...' : '⏹ 停止' }}
+            {{ pendingAction === 'stop' ? '停止中...' : '⏹ 停止' }}
           </button>
           <button class="btn" @click="handleRestart" :disabled="actionLoading || clawStore.starting">
-            {{ clawStore.starting ? '启动中…' : '🔄 重启' }}
+            {{ pendingAction === 'restart' ? '重启中…' : '🔄 重启' }}
           </button>
         </template>
       </div>
@@ -173,7 +173,13 @@ const api = window.api
 const shell = window.api.shell
 const loading = ref(false)
 
-const actionLoading = ref(false)
+/**
+ * 当前正在执行的动作。
+ * 之前只有一个 actionLoading 布尔值，导致「启动中」时「停止」按钮也显示「停止中…」；
+ * 按钮文案必须按动作区分，否则用户看到的状态与真实动作对不上。
+ */
+const pendingAction = ref<'start' | 'stop' | 'restart' | null>(null)
+const actionLoading = computed(() => pendingAction.value !== null)
 const errorMsg = ref('')
 const skillCount = ref(0)
 const logPreviewRef = ref<HTMLDivElement>()
@@ -205,28 +211,37 @@ async function handleStart() {
     errorMsg.value = '启动失败,请先初始化环境并到模型配置配置激活模型的apiKey'
     return
   }
-  actionLoading.value = true
+  pendingAction.value = 'start'
   errorMsg.value = ''
-  const result = await clawStore.start()
-  if (!result.success) errorMsg.value = result.error || '启动失败'
-  else if (result.warning) showToast(result.warning, 'warning')
-  actionLoading.value = false
+  try {
+    const result = await clawStore.start()
+    if (!result.success) errorMsg.value = result.error || '启动失败'
+    else if (result.warning) showToast(result.warning, 'warning')
+  } finally {
+    pendingAction.value = null
+  }
 }
 
 async function handleStop() {
-  actionLoading.value = true
-  const result = await clawStore.stop()
-  if (!result.success) errorMsg.value = result.error || '停止失败'
-  actionLoading.value = false
+  pendingAction.value = 'stop'
+  try {
+    const result = await clawStore.stop()
+    if (!result.success) errorMsg.value = result.error || '停止失败'
+  } finally {
+    pendingAction.value = null
+  }
 }
 
 async function handleRestart() {
-  actionLoading.value = true
+  pendingAction.value = 'restart'
   errorMsg.value = ''
-  const result = await clawStore.restart()
-  if (!result.success) errorMsg.value = result.error || '重启失败'
-  else if (result.warning) showToast(result.warning, 'warning')
-  actionLoading.value = false
+  try {
+    const result = await clawStore.restart()
+    if (!result.success) errorMsg.value = result.error || '重启失败'
+    else if (result.warning) showToast(result.warning, 'warning')
+  } finally {
+    pendingAction.value = null
+  }
 }
 
 function openWeb() {

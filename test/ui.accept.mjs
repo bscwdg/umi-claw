@@ -1156,6 +1156,38 @@ await r.check('U22', '环境初始化/更新完成后顶部版本状态会刷新
   return '初始化/更新完成后顶部状态会刷新为绿色已最新，且任务跨页面完成也能兜底'
 })
 
+await r.check('U23', '控制台按钮文案按动作区分：启动中不再把「停止」按钮写成「停止中…」', async () => {
+  const dashPath = join(repoRoot, 'src', 'views', 'Dashboard.vue')
+  const dashSrc = readFileSync(dashPath, 'utf-8')
+
+  assert(/pendingAction/.test(dashSrc), '启动/停止/重启要分别记录当前动作（pendingAction）')
+  assert(
+    /pendingAction === 'start' \? '启动中\.\.\.' : '▶ 启动'/.test(dashSrc),
+    '「启动」按钮只在真正启动时显示「启动中…」'
+  )
+  assert(
+    /pendingAction === 'stop' \? '停止中\.\.\.' : '⏹ 停止'/.test(dashSrc),
+    '「停止」按钮只在真正停止时显示「停止中…」（启动中必须仍显示「⏹ 停止」）'
+  )
+  assert(
+    /pendingAction === 'restart' \? '重启中…' : '🔄 重启'/.test(dashSrc),
+    '「重启」按钮不再把启动中误显示成「启动中…」'
+  )
+  assert(
+    !/actionLoading \? '停止中\.\.\.'/.test(dashSrc),
+    '不得再用通用 busy 标志决定「停止」按钮文案'
+  )
+  // 动作结束必须复位，否则按钮会永久卡在「…中」
+  const resets = (dashSrc.match(/pendingAction\.value = null/g) || []).length
+  assert(resets >= 3, `启动/停止/重启都要复位 pendingAction（实际 ${resets} 处）`)
+  assert(
+    /const actionLoading = computed\(\(\) => pendingAction\.value !== null\)/.test(dashSrc),
+    'actionLoading 必须是 pendingAction 的派生值（只用于禁用，不用于文案）'
+  )
+
+  return '按钮文案与真实动作一致（启动中显示「停止」，只有停止中才显示「停止中…」）'
+})
+
 const result = r.toJSON({})
 
 const ok = printResult(result)
