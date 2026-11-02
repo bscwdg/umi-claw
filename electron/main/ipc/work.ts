@@ -36,7 +36,7 @@ import type { KnowledgeManager } from '../../../plugins/work/domain/knowledgeMan
 import type { WizardManager } from '../../../plugins/work/domain/wizardManager'
 import type { ReminderManager, ReminderId, PushChannel } from '../../../plugins/work/domain/reminderManager'
 import type { OpenClawSummaryManager } from '../../../plugins/work/domain/openclawSummaryManager'
-import { forwardGatewayStream } from '../gatewayClient'
+import { forwardGatewayStream } from '../services/gateway/stream'
 
 /** IPC 统一返回信封（§14.2） */
 export type WorkIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
