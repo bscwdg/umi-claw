@@ -10,7 +10,7 @@
 // 流式增量走 07 定死的事件名（`marketing:gateway:chunk` / `done` / `error`，payload 带 `streamId`）：
 // 07 只提供 `forwardGatewayStream` 助手与事件名，**注册归业务提交**（§五 的两条边界之一）。
 //
-// 失败统一信封：`{ ok: false, error: { code, message, details? } }`（与 ipc/marketing.ts 同构）
+// 失败统一信封：`{ ok: false, error: { code, message, details? } }`（与同目录 marketing.ts 同构）
 
 import type { IpcMainInvokeEventLike as IpcMainInvokeEvent } from './ipcTypes'
 import { channelHandleEvent } from './channelRegistrar'

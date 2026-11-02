@@ -14,7 +14,7 @@
 // §五 扩面说明：`knowledge:` 的枚举里原只有 6 个方法，05a 已扩 import/pickFile；本提交再扩
 // recognize / recognize:abort / commitRecognized 三条（已写进 05b 汇报「新增通道」，待拍板补 §五）。
 //
-// 失败统一信封：`{ ok: false, error: { code, message, details? } }`（与 ipc/advisor.ts 同构）。
+// 失败统一信封：`{ ok: false, error: { code, message, details? } }`（与同目录 advisor.ts 同构）。
 // multimodal 未配置 → VALIDATION_ERROR + reason='multimodal-model-not-configured'：
 // 预检在栅格化前由 recognizer 抛（stage='precheck'），最终防线在 07（按次解析）——两处同 payload，
 // 这里**原样透传**（不包装、不降级）；渲染端翻成人话引导去配置。

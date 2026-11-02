@@ -1820,6 +1820,14 @@ await r.check('P41', 'marketing 插件：默认开启；启用后 marketing:* �
     assertEq(status.state, 'activated', 'marketing 激活：' + JSON.stringify(status.error))
     assert(status.channels.some((c) => c.startsWith('marketing:')), '注册了 marketing:* 通道')
     assert(status.channels.length > 20, '通道数量应覆盖 5 组 IPC：' + status.channels.length)
+    assert(
+      status.channels.includes('marketing:gateway:status'),
+      '注册了 marketing:gateway:status（WP6-b 拆域后仍随插件租约注册）'
+    )
+    assert(
+      status.channels.includes('marketing:gateway:ensureReady'),
+      '注册了 marketing:gateway:ensureReady（WP6-b 拆域后仍随插件租约注册）'
+    )
 
     const list = await ipc.invoke('marketing:project:list', {})
     assertEq(list.ok, true, '通道返回 ok')

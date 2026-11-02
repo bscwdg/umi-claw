@@ -110,7 +110,7 @@ const BUSINESS_WRITABLE_FIELDS: string[] = [
   'tone'
 ]
 
-/** IPC 统一信封（与 preload / ipc/marketing.ts 的 IpcResult 对应） */
+/** IPC 统一信封（与 preload / plugins/marketing/main/ipc/marketing.ts 的 IpcResult 对应） */
 type IpcEnvelope<T> =
   | { ok: true; data: T }
   | { ok: false; error?: { code?: string; message?: string; details?: unknown } }

@@ -40,7 +40,7 @@ function stopBackgroundWork(marketing: MarketingRuntime): void {
 }
 
 /**
- * 插件库 API → ipc/marketing.ts 需要的 DatabaseClient 形状。
+ * 插件库 API → plugins/marketing/main/ipc/marketing.ts 需要的 DatabaseClient 形状。
  *
  * 该文件只用到 dbStatus / ping / metaGet / metaSet / request 五个方法；
  * 其余依赖（project/business/knowledge）都走 Manager，不直接碰库。

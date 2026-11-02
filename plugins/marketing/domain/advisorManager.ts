@@ -16,7 +16,7 @@
 //   - **硬规则 13**：本模块不直接发 HTTP——出站全部经注入的 07 `GatewayClient`（token 只在主进程）；
 //     本模块也**不 import electron**（依赖注入 → 纯 Node 可测）。
 //   - 本提交**不注册 IPC**：渲染端面（`marketing:advisor:*`）与面板归本提交的 UI 半边，
-//     事件名沿用 07 的 `forwardGatewayStream` 约定（见 ipc/advisor.ts）。
+//     事件名沿用 07 的 `forwardGatewayStream` 约定（见 plugins/marketing/main/ipc/advisor.ts）。
 
 import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
 import { extractJsonArray } from './jsonExtract'

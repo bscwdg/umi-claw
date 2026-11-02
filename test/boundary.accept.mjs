@@ -118,6 +118,8 @@ await r.check('B7', 'live 扫描与基线一致（不高于基线，且基线文
   const baseline = JSON.parse(readFileSync(join(repoRoot, 'scripts', 'boundary-baseline.json'), 'utf8'))
   assertEq(typeof baseline.pluginHostBoundary, 'number', '基线应有 pluginHostBoundary')
   assertEq(typeof baseline.managerElectron, 'number', '基线应有 managerElectron')
+  // WP6 收尾：基线已收紧到 0 且是硬约束，禁止用 --update 悄悄改回 1
+  assertEq(baseline.pluginHostBoundary, 0, 'pluginHostBoundary 必须保持 0（硬约束）')
   const hits = findPluginHostViolations()
   assert(hits.length <= baseline.pluginHostBoundary, `实测 ${hits.length} 不得高于基线 ${baseline.pluginHostBoundary}`)
   // 命中项必须带可排障的 kind；清零后（WP6）也不该让本断言变红
