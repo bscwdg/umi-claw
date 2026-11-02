@@ -34,6 +34,11 @@ jobs:
       - name: Typecheck (web)
         run: npm run typecheck:web
 
+      # 边界门禁（零依赖、秒级）：ratchet 只有被自动执行才成立。
+      # accept 首套也会跑它，这里单列一步是为了失败时一眼定位、且不必等 build/accept。
+      - name: Boundary gate
+        run: npm run check:boundary
+
       # accept 里的 packaged.smoke S1 要求 dist-electron 存在，干净 checkout 里没有。
       # 所以必须先 build，再 accept。
       - name: Build (unpackaged)

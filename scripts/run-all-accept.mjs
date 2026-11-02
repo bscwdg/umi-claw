@@ -17,6 +17,8 @@ const repoRoot = join(here, '..')
 // 4.0 合并说明：context / knowledge 在 2.0 与 3.0 各自存在同名脚本（add/add），
 // 已按域拆到 test/work/* 与 test/marketing/*（见 MERGE-INVENTORY R5），两套都要跑。
 const ACCEPT = [
+  // 首套跑边界门禁：零依赖、秒级；它必须被自动链路执行，否则 ratchet 只是文档
+  ['boundary', 'test/boundary.accept.mjs'],
   ['db-worker', 'test/db-worker.accept.mjs'],
   ['gateway', 'test/gateway.accept.mjs'],
   ['node-runtime', 'test/node-runtime.accept.mjs'],
