@@ -61,6 +61,7 @@ import { registerChannelsIpc } from './ipc/host/channels'
 import { registerConfigIpc } from './ipc/host/config'
 import { registerClawIpc } from './ipc/host/claw'
 import { registerModelConnectionIpc } from './ipc/host/modelConnection'
+import { registerTerminalIpc } from './ipc/host/terminal'
 import {
   VoiceSecretStore,
   VoiceCloneManager,
@@ -1201,7 +1202,6 @@ function registerIpcHandlers(): void {
     openDataDir: (dir) => shell.openPath(dir)
   })
 
-
   // OpenClaw 进程管理（4.1 WP5-a 第四批拆到 ipc/host/claw.ts）
   registerClawIpc(ipcMain, {
     isEnvUpdateInFlight: () => envUpdateInFlight,
@@ -1221,7 +1221,6 @@ function registerIpcHandlers(): void {
     log: (line) => console.log(line)
   })
   registerModelConnectionIpc(ipcMain)
-
 
   // 环境初始化
   ipcMain.handle('env:check', () => downloadManager.checkEnvironment())
@@ -1447,161 +1446,31 @@ function registerIpcHandlers(): void {
     })
   )
 
-
-
-  // ─── 终端相关 IPC (统一使用 term:* 命名空间) ───
-
-  /**
-   * 执行一次性命令 (Snapshot)
-   */
-  const handleRunCommand = async (_e: any, args: string[], runtime?: TerminalRuntime) => {
-    const { nodePath, cwd } = getOpenClawRuntimeConfig()
-    const { entryJs, env, error } = resolveTerminalRuntime(runtime)
-
-    if (error) {
-      return { stdout: '', stderr: error, code: -1 }
-    }
-
-    // 基本的安全检查：限制参数长度，防止缓冲区溢出或极端情况
-    if (args.length > 100) {
-      return { stdout: '', stderr: '参数过多，拒绝执行', code: -1 }
-    }
-
-    return new Promise((resolve) => {
-      try {
-        const proc = spawn(nodePath, [entryJs, ...args], {
-          env,
-          cwd,
-          stdio: ['ignore', 'pipe', 'pipe'] // 明确指定 stdio
-        })
-
-        let stdout = ''
-        let stderr = ''
-
-        proc.stdout.on('data', (d) => (stdout += d.toString()))
-        proc.stderr.on('data', (d) => (stderr += d.toString()))
-
-        proc.on('exit', (code) => {
-          resolve({ stdout, stderr, code })
-        })
-
-        proc.on('error', (err) => {
-          resolve({ stdout: '', stderr: `子进程启动失败: ${err.message}`, code: -1 })
-        })
-      } catch (e: any) {
-        resolve({ stdout: '', stderr: `执行异常: ${e.message}`, code: -1 })
-      }
-    })
-  }
-
-  ipcMain.handle('term:run', handleRunCommand)
-
-  /**
-   * 启动交互式 PTY 会话
-   */
-  const handleStartPty = async (_event: any, args: string[], _cols?: number, _rows?: number, runtime?: TerminalRuntime) => {
-    // 如果已有活跃会话，先关闭它（单例模式策略，防止资源泄露）
-    // 如果需要多会话，应移除此步并使用 sessionId 区分
-    if (activeTerminalSessions.size > 0) {
-      console.warn('检测到活跃终端会话，正在强制关闭以启动新会话')
-      killAllTerminalSessions()
-    }
-
-    const { nodePath, cwd } = getOpenClawRuntimeConfig()
-    const { entryJs, env, error } = resolveTerminalRuntime(runtime)
-    const sessionId = `session_${Date.now()}`
-
-    if (error) {
-      // 返回带 error 字段的结果而非 null，让前端能拿到具体错误原因。
-      // 不走 pty-chunk 发错误消息：前端 listener 按 sessionId 过滤，
-      // 此时尚未建立 session，消息会被丢弃。
-      return { error }
-    }
-
-    try {
-      const ptyProc = spawn(nodePath, [entryJs, ...args], {
-        env,
-        cwd,
-        stdio: ['pipe', 'pipe', 'pipe'] // 需要 stdin 所以第一个是 pipe
-      })
-
-      // 保存会话
-      activeTerminalSessions.set(sessionId, { process: ptyProc, id: sessionId })
-
-      // 实时向前端推送数据
-      ptyProc.stdout.on('data', (data) => {
-        mainWindow?.webContents.send('term:pty-chunk', { sessionId, data: data.toString() })
-      })
-
-      ptyProc.stderr.on('data', (data) => {
-        mainWindow?.webContents.send('term:pty-chunk', { sessionId, data: data.toString() })
-      })
-
-      // 监听进程退出
-      ptyProc.on('exit', (exitCode) => {
-        mainWindow?.webContents.send('term:pty-exit', { sessionId, exitCode: exitCode || 0 })
-        // 自动清理
-        activeTerminalSessions.delete(sessionId)
-      })
-
-      ptyProc.on('error', (err) => {
-        console.error('PTY 进程错误:', err)
-        activeTerminalSessions.delete(sessionId)
-      })
-
-      return sessionId
-    } catch (err: any) {
-      console.error('PTY 启动失败:', err)
-      return null
-    }
-  }
-
-  ipcMain.handle('term:pty-start', handleStartPty)
-
-  /**
-   * 向 PTY 写入输入
-   */
-  const handlePtyInput = (_e: any, sessionId: string, data: string) => {
-    // 优先使用 sessionId 查找，如果没有提供 sessionId 或找不到，则兼容旧逻辑（查找最后一个）
-    let proc: ChildProcessWithoutNullStreams | undefined
-
-    if (sessionId && activeTerminalSessions.has(sessionId)) {
-      proc = activeTerminalSessions.get(sessionId)?.process
-    }
-
-    // 兼容旧代码：如果没有 sessionId 或者前端没传对，尝试找任意一个活跃进程（不推荐，但为了兼容）
-    if (!proc && activeTerminalSessions.size > 0) {
-      const firstKey = activeTerminalSessions.keys().next().value
-      if (firstKey) proc = activeTerminalSessions.get(firstKey)?.process
-    }
-
-    if (proc && proc.stdin && !proc.stdin.destroyed) {
-      proc.stdin.write(data)
-    }
-  }
-
-  ipcMain.handle('term:pty-input', handlePtyInput)
-
-  /**
-   * 停止 PTY 会话
-   */
-  const handleStopPty = (_e: any, sessionId: string) => {
-    // 如果前端传了 sessionId，杀特定的；否则杀所有的（兼容旧逻辑）
-    if (sessionId && activeTerminalSessions.has(sessionId)) {
-      return killTerminalSession(sessionId)
-    }
-
-    // 兼容旧的全局变量逻辑或无 ID 情况
-    killAllTerminalSessions()
-    return true
-  }
-
-  ipcMain.handle('term:pty-stop', handleStopPty)
-
-  ipcMain.handle('term:pty-resize', (_e, _sid: string, _cols: number, _rows: number) => {
-    // 如果需要支持 resize，这里应该查找进程并发送 SIGWINCH 或使用 pty.js 的 resize 方法
-    // 目前 spawn 的标准子进程不支持动态 resize，除非使用 node-pty
-    return true
+  // 终端 / PTY（4.1 WP5-a 第五批拆到 ipc/host/terminal.ts）
+  registerTerminalIpc(ipcMain, {
+    spawn,
+    getRuntimeConfig: () => getOpenClawRuntimeConfig(),
+    resolveRuntime: (runtime) =>
+      resolveTerminalRuntime(runtime as TerminalRuntime | undefined),
+    sessions: {
+      size: () => activeTerminalSessions.size,
+      has: (id) => activeTerminalSessions.has(id),
+      get: (id) => activeTerminalSessions.get(id),
+      set: (id, session) => {
+        activeTerminalSessions.set(id, session)
+      },
+      delete: (id) => {
+        activeTerminalSessions.delete(id)
+      },
+      firstKey: () => activeTerminalSessions.keys().next().value
+    },
+    killSession: (id) => killTerminalSession(id),
+    killAll: () => killAllTerminalSessions(),
+    send: (channel, payload) => {
+      mainWindow?.webContents.send(channel, payload as never)
+    },
+    log: (line) => console.log(line),
+    logError: (...args) => console.error(...args)
   })
 }
 

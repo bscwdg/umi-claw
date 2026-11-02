@@ -2043,7 +2043,18 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
     'index.ts 应调用 registerModelConnectionIpc(ipcMain'
   )
 
-  // handler 守恒：index 12 + misc 19 + skills 11 + channels 3 + config 8 + claw 7 + modelConnection 1 = 61
+  // 4.1 WP5-a 第五批：终端 5 通道拆到 ipc/host/terminal.ts
+  const terminalSrc = readFileSync(
+    join(repoRoot, 'electron', 'main', 'ipc', 'host', 'terminal.ts'),
+    'utf-8'
+  )
+  for (const ch of ['term:run', 'term:pty-start', 'term:pty-input', 'term:pty-stop', 'term:pty-resize']) {
+    assert(hasIpcHandler(terminalSrc, ch, 'ipc'), 'terminal.ts 应注册 ' + ch)
+  }
+  assert(!hostSrc.includes(`ipcMain.handle('term:`), 'index.ts 不应再直接注册 term:')
+  assert(/registerTerminalIpc\(\s*ipcMain/.test(hostSrc), 'index.ts 应调用 registerTerminalIpc(ipcMain')
+
+  // handler 守恒：index 7 + misc 19 + skills 11 + channels 3 + config 8 + claw 7 + modelConn 1 + term 5 = 61
   const countHandles = (src, api) => (src.match(new RegExp(`${api}\\.handle\\(`, 'g')) || []).length
   const hostCount = countHandles(hostSrc, 'ipcMain')
   const miscCount = countHandles(miscSrc, 'ipcMain')
@@ -2052,19 +2063,28 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
   const configCount = countHandles(configSrc, 'ipc')
   const clawCount = countHandles(clawSrc, 'ipc')
   const modelConnCount = countHandles(modelConnSrc, 'ipc')
-  assertEq(hostCount, 12, 'index.ts 应剩 12 个 ipcMain.handle')
+  const termCount = countHandles(terminalSrc, 'ipc')
+  assertEq(hostCount, 7, 'index.ts 应剩 7 个 ipcMain.handle')
   assertEq(miscCount, 19, 'misc.ts 应注册 19 个通道')
   assertEq(skillsCount, 11, 'skills.ts 应注册 11 个通道')
   assertEq(channelsCount, 3, 'channels.ts 应注册 3 个通道')
   assertEq(configCount, 8, 'config.ts 应注册 8 个通道')
   assertEq(clawCount, 7, 'claw.ts 应注册 7 个通道')
   assertEq(modelConnCount, 1, 'modelConnection.ts 应注册 1 个通道')
+  assertEq(termCount, 5, 'terminal.ts 应注册 5 个通道')
   assertEq(
-    hostCount + miscCount + skillsCount + channelsCount + configCount + clawCount + modelConnCount,
+    hostCount +
+      miscCount +
+      skillsCount +
+      channelsCount +
+      configCount +
+      clawCount +
+      modelConnCount +
+      termCount,
     61,
     '宿主 handler 总数应守恒为 61'
   )
-  return '宿主零注册 / 插件全注册 / 装配在 runtime / misc+skills+channels+config+claw 已拆 / 61 守恒'
+  return '宿主零注册 / 插件全注册 / 装配在 runtime / misc+skills+channels+config+claw+term 已拆 / 61 守恒'
 })
 
 // ── P43 旧库导入走服务注入（防「清单忘了 inject」导致死代码）─────────────────
