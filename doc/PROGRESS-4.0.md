@@ -780,3 +780,70 @@ WP2 主体（内核 + section provider）未开始；先做三刀无争议的公
 - 切片 1 判 **[阻断]**：曾把 estimateTokens 重写成 3 档（非 ASCII 一律 1），系统性低估（BMP 内 25248 码点、café/西里尔/CRLF 偏差 33%、切片超预算 28–48%）。已改逐字直搬并实测。
 - 切片 2 `[仅次要]` 2 修（决策注释搬回、空行压缩）；1 条风格建议未采纳（保留显式 7 个名字，便于漏改时被 typecheck 拦住）。
 - 切片 3 `[仅次要]` 4 修（孤立 JSDoc、全量验收、DROPPED_TITLE_MAX_CHARS 改纯 re-export、PLAN 目录树）；1 条「shortTitle 截断无断言」记为待补，随下一条提交补上。
+
+## 2026-11-02 · WP2 完成（内核 + 两域切换）
+
+把两域的上下文取舍循环抽成泛型内核 `services/context/assemble.ts:assembleLoop`，
+marketing 与 work 都改为调用它。**验收断言一条未改**。
+
+| 提交 | 内容 |
+| --- | --- |
+| `a7c4f0e` | `assembleLoop` 循环本体（全量判定 → 逐条准入 → 截断 → 从尾部让位） |
+| `4f6bd6c` | 删掉未使用的 `Section` 模型（v2 计划凭空设计，未落地） |
+| `b9bb09f` | 双泛型 `T→R`（候选 KnowledgeRow、结果 PackedKnowledge 不是同一类型） |
+| `12c406a` | `renderText` 收 `mode`（营销渲染依赖 `pack.budget.mode`） |
+| `77f0684` | 拆成 `measureSelection` + `renderFinal`（营销测的是整包渲染，不是字符串） |
+| `14cb047` | `ranked` 惰性 + `forceTruncated` + `rankedInfo` |
+| `39b6f11` | 改 `async`（`rankForTruncation` 要查 `searchKnowledge`） |
+| `4d3b14b` | `include` 透传 `matched`（否则 `matchedQuery` 全丢） |
+| `20c5b4e` | 补 `measureFull` / `measureSlice` |
+| `f8eaf52` | **marketing 切内核**（47 增 54 删） |
+| `4a2d747` | **work 切内核**（51 增 45 删） |
+
+### 必须知道的口径差异（都是有意保留，不是重复代码）
+
+| 项 | work | marketing |
+| --- | --- | --- |
+| mode 判定 | `measure(chosen,'full')`（渲 skeleton **整包**） | 与准入同一个 `measure` |
+| 准入 | `measureWith`（**只算知识块** + 前 3 条 dropped 标题） | 整包渲染 |
+| sliceBudget | `renderContextPackText(probe)`（**整包**） | 同整包 |
+| businessOverBudget | 不涉及 | 直接强制 truncated |
+| dropped 顺序 | `dedupeDropped` 去重 | 按 title 排序（**渲染取前 3 条**，顺序影响文本） |
+| usedTokens | 拼完 pack（含第 7 段对话历史）后重算 | 内核返回值直接用 |
+
+work 的三个测量口径**在同一个域里就不同**，所以内核提供 `measureFull` / `measureSelection` /
+`measureSlice` 三个可选回调；内核本身不认识 work/marketing，没有域分支。
+
+### G10 两次检查
+
+**第一次 · 事实核对（子代理 `wp2_fact_check`，判据 7/7）**
+
+- 两域手写取舍循环：0（`for (let i = 0; i < ranked` 与多行 `} else { const ranked` 均为 0）
+- 两域调内核：各 1（work:413、marketing:482）
+- `services/context/` 六件齐：assemble(197) budget(25) limits(26) pack(16) tokens(65) types(25)
+- 双 typecheck EXIT=0；context.work 14/14、context.marketing 23/23、platform 7/7
+- `electron/main` 行数 39231 → 38798（**净减 433 行**）
+- `git status` 干净
+
+**第二次 · 对抗复核：子代理超时无输出（`outcome=timeout`, `result_json=""`），由执行者自查补足**
+
+自查项（6/6 等价）：
+
+| 项 | 结论 |
+| --- | --- |
+| marketing `forceTruncated: businessOverBudget` | 等价（旧：`!businessOverBudget && measure(...)`） |
+| marketing 最终 dropped 按 title 排序 | 等价（新 renderFinal 排序；旧 pack.dropped 排序） |
+| work `measureFull = measure(chosen,'full')` | 等价 |
+| work `measureSelection = measureWith` | 等价（仅入参形态不同） |
+| work `measureSlice = renderContextPackText(probe)` | 逐字相同 |
+| work `dedupeDropped` 仍保留 | 是 |
+
+> 自查过程中我两次写出错误锚点（Windows shell 把 `^` 当转义符、以及一个变量名写错），
+> 造成两次假阴性；修正后均为等价。**记录在此，避免下次把"脚本报红"当成"代码有问题"。**
+
+### 已知欠账
+
+- `review_w2c` / `review_w2c_retry` / `wp2_adv_review` 三个对抗审查子代理分别以
+  `error` / `killed` / `timeout` 结束，**均无可用结论**。W2-c 起的独立复审始终缺失，
+  由「断言一条未改 + 自查等价」承担。
+- `test/packaged.smoke` 的 S6/S7 在 CI 用 `UMI_ALLOW_PACKAGE_SKIP=1` 跳过；真机仍待北执行。
