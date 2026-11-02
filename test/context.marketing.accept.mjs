@@ -624,6 +624,22 @@ try {
   await sleep(300)
 }
 
+// ── K22 shortTitle：dropped 标题截断（WP2 切片 3 下沉后补的钉子） ──
+await r.check('K22', 'shortTitle 截断：19/20/21 字边界、压空白、空值、省略号 U+2026', async () => {
+  const packMod = await import(
+    pathToFileURL(bundleEntry('electron/main/services/context/pack.ts', 'context-pack.mjs')).href
+  )
+  const short = packMod.shortTitle
+  assertEq(short('字'.repeat(19)), '字'.repeat(19), '19 字不截断')
+  assertEq(short('字'.repeat(20)), '字'.repeat(20), '20 字不截断（边界内）')
+  assertEq(short('字'.repeat(21)), '字'.repeat(20) + '…', '21 字截到 20 + 省略号')
+  assertEq(short('  a \n b  '), 'a b', '压空白并 trim')
+  assertEq(short(null), '', 'null → 空串')
+  assertEq(short(''), '', '空串 → 空串')
+  assertEq(short('字'.repeat(21)).slice(-1), '\u2026', '省略号必须是 U+2026')
+  return '19/20/21 边界 + 压空白 + 空值 + U+2026'
+})
+
 const result = r.toJSON({
   bundle: contextPath,
   dataDir,
