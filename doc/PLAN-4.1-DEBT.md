@@ -494,7 +494,7 @@ Get-ChildItem *.md | ForEach-Object {
 | `contributes.settings` / `commands` 无消费方 | 随 `AGENTS.md` 明确为「已校验、无消费方」，要么补实现要么移除校验——**归入 WP4 的收尾判断，不在本计划主线** |
 | 插件只经 `ctx`（无 lint 兜底） | **WP3 阶段 A**（C3.1/C3.2） |
 | 停用即中止在途 SSE（work 未修） | 4.0.x 独立修复，不在本计划 |
-| 旧库导入失败可见 + 重试 | **4.2 待做**（P2；仍需渲染端/IPC 入口；4.0.2 不阻塞） |
+| 旧库导入失败可见 + 重试 | **4.0.2 已实现**（P2：`plugin:import:status`/`retry` + `import-status.json` + App 全局横幅；插件停用即摘重试执行器） |
 | work 知识库原件写全局 `<dataDir>/knowledge` | **4.0.2 已修**（P3，`6a4096b`）：新导入写 `<dataDir>/plugins/work/knowledge/`；旧文件不迁移、旧条目仍可读，旧全局目录可手工清理 |
 
 ---
@@ -542,7 +542,7 @@ Get-ChildItem *.md | ForEach-Object {
 | WP3 | ✅ 完成 | 2026-11-02 | 并入 4.0.0 |
 | WP4 | ✅ 完成（C4.3 判据未达，见下） | 2026-11-02 | 并入 4.0.0 |
 | 阶段 A 收尾 | ✅ 完成（2026-11-02） | 2026-11-02 | 4.0.0 发布前 |
-| WP7（4.0.1/4.0.2） | 🟡 7/8 完成：P1/P4/P5/P6/P7/P8 ✅（P6 于 4.0.2 补完 5 处 waitFor）；P3 ✅（4.0.2 knowledge 原件隔离）；**P2 导入失败可见/重试仍顺延** | 见 PROGRESS 4.0.1/4.0.2 段 | 4.0.1/4.0.2 |
+| WP7（4.0.1/4.0.2） | ✅ 8/8 完成：P1/P4/P5/P6/P7/P8（4.0.1；P5 核心=检测+日志告警）+ P3（4.0.2 knowledge 隔离）+ P2（4.0.2 旧库导入失败可见/重试入口）；P5 GUI 延伸并入 4.2 | 见 PROGRESS 4.0.1/4.0.2 段 | 4.0.1/4.0.2 |
 | WP5（index.ts ≤1800） | ✅ W5-b（pluginRuntime）+ W5-a（6 批、61 个 handle 全下沉 `ipc/host/*`）；**出口判据达成：index 1,767 ≤ 1,800**；两轮独立检查结论见 PROGRESS 4.1 段 | 见 PROGRESS 4.1 段 | 4.1 |
 | WP6（边界清零） | ✅ W6-a（11→9）+ W6-b/c（9→0，域 ipc 搬插件、gateway 拆 host/plugin、基线 0）；两轮独立检查已入档 PROGRESS（事实核对 + 对抗复核） | 见 PROGRESS 4.1 段 | 4.1 |
 
@@ -586,10 +586,10 @@ Get-ChildItem *.md | ForEach-Object {
 | # | 修复 | 证据 |
 | --- | --- | --- |
 | P1 | work 停用中止在途 SSE/提醒 | marketing 有 `stopBackgroundWork()` + `abortAll*`；work 只有 `reminder.stop()`，通道摘了但流还在烧 token |
-| P2 | 旧库导入失败可见 + 重试入口 | work/marketing `main.ts` 现在只 `ctx.logger.warn('下次启动重试')`，插件管理页无入口 |
+| P2 | 旧库导入失败可见 + 重试入口 | ✅ 4.0.2：`pluginDataImport` 写 `import-status.json` + 重试执行器注册表；宿主 `plugin:import:status`/`retry` 通道 + preload + `App.vue` 全局横幅（失败原因 + 重试导入） |
 | P3 | knowledge 原件路径隔离 | ✅ 4.0.2（`6a4096b`）：work 新导入写 `<dataDir>/plugins/work/knowledge/`，`originalsSubdir` 默认仍 `knowledge`（旧文件不迁移、旧条目仍可读） |
 | P4 | 单实例锁（入口 `requestSingleInstanceLock`） | 两个实例同指 dataDir 时 `character/kv.json` 的 tmp+rename 无跨进程保护（阶段 A 明确接受，4.0.1） |
-| P5 | 便携 Node 低完整性自检 | 本机 `data/runtime/node.exe` 被标 Low IL，写不了 Medium 目录；打包/真机同类问题会表现为「数据存不上」。（4.0.1 只做**检测 + 日志级告警**（`dataDir/logs/runtime-probe.log`）；GUI 横幅/引导重装顺延 4.0.2。） |
+| P5 | 便携 Node 低完整性自检 | 本机 `data/runtime/node.exe` 被标 Low IL，写不了 Medium 目录；打包/真机同类问题会表现为「数据存不上」。（4.0.1 已完成**检测 + 日志级告警**（`dataDir/logs/runtime-probe.log`），P5 核心计 ✅；GUI 横幅/引导重装并入 4.2。） |
 | P6 | 测试 flake 台账 + 固定 sleep 清理 | e2e D3 已修（`d2f5ef9`）；`report.accept:281/305`、`content.accept:380` 等「固定 sleep + 读库断言」登记待改 |
 | P7 | `ctx.kv` / `ctx.secrets` 接测试断言 | ✅ 已补：`plugin.accept` P56/P57 覆盖注入 kv/secrets（命名空间隔离 / round-trip / 并发） |
 | P8 | `pluginKv` 并发承诺与实现对齐 | ✅ 已修：按 dataDir 共享单例 + 串行写队列（每文件 cache/queue），P57 并发断言锁住 |

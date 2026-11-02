@@ -1123,7 +1123,7 @@ CHANGELOG（4.0.0 条目、验收口径）、本文件（更正 WP4 的 954/476 
 
 ## 2026-11-03 · 4.0.1（WP7 修复；P2/P3 顺延 4.0.2）
 
-对应 WP7 八项：**P1 ✅ / P4 ✅ / P5 ✅ / P7 ✅ / P8 ✅**；**P6 ✅（4.0.2 收尾：台账 + 5 处固定 sleep 全部改 waitFor）**；**P2（旧库导入失败可见+重试入口）与 P3（knowledge 原件路径隔离）未做**，顺延 4.0.2——两者分别涉及渲染端/IPC 与数据目录迁移，塞进补丁版会重开验收面，按「一次只发可验证的修复」处理。
+对应 WP7 八项：**P1/P4/P5/P6/P7/P8 ✅（4.0.1；P5 核心=检测+日志告警）+ P3 ✅（4.0.2 knowledge 隔离）+ P2 ✅（4.0.2 旧库导入失败可见/重试）→ 8/8 完成**；P5 的 GUI 横幅/引导重装属延伸项，并入 4.2。
 
 ### 提交
 
@@ -1157,7 +1157,7 @@ CHANGELOG（4.0.0 条目、验收口径）、本文件（更正 WP4 的 954/476 
 
 ### 已知欠账（4.0.1 收尾）
 
-1. **P2/P3 顺延 4.0.2**：旧库导入失败可见 + 重试入口；knowledge 原件路径隔离（两域原件都进各自插件目录，需迁移既有文件）。
+1. **P2/P3 顺延 4.0.2** → **两项均已于 4.0.2 完成**（见 4.0.2 段）：旧库导入失败可见+重试入口；knowledge 原件路径隔离。
 2. **P5 只到日志级**：探针告警写 `dataDir/logs/runtime-probe.log`；GUI 诊断横幅/引导重装入 4.0.2。
 3. 4.0.0 的 tag 前置未完成：C0.3 真机 7 步（用户）、重打 NSIS（本会话环境阻塞）、旧 44 提交复核已入档但需随 tag 前最终留档。
 4. 便携 Node 低完整性在生产侧是否存在，仍需真机确认。
@@ -1231,10 +1231,18 @@ content C6（activeGenerationCount===0）。report 14/14 ×2、content 12/12 ×2
 - 验证：typecheck 0；knowledge.work 10/10（K2 断言新路径 + 旧全局目录未被写入 + `..` 拒）；
   knowledge.marketing 23/23（独立 manager 未动）
 
-### 仍未做（4.0.2 剩余）
+### P2 · 旧库导入失败可见 + 一键重试（4.0.2，2026-11-03）
 
-1. **P2 旧库导入失败可见 + 重试入口**：需渲染端/IPC 入口（工作量大，单独提交）。
-2. **P5 GUI 诊断/引导重装**：目前只有 `<dataDir>/logs/runtime-probe.log` 日志级告警。
+- `services/pluginDataImport.ts`：导入结果写 `<dataDir>/plugins/<id>/import-status.json`（ok/skipped/failed +
+  error/counts/at）；新增 `force` 选项（重试绕过 `.imported`，幂等 upsert）；新增重试执行器注册表
+  （`registerLegacyImportRetry/clearLegacyImportRetry/runLegacyImportRetry`）
+- 宿主：`ipc/host/importStatus.ts` 暴露 `plugin:import:status` / `plugin:import:retry`；preload 增加
+  `api.pluginImports`；`App.vue` 顶部全局横幅展示失败原因 + 「重试导入」（成功后自动消失）
+- 插件：work/marketing 在 activate 注册执行器（force 重跑），cleanup/deactivate 摘除
+- 测试：P43 扩断言覆盖 状态落盘(ok/failed+error/skipped)/force 绕过标记/重试执行器注册→执行→清理拒绝/并发单飞/preload 通道/App 横幅
+- 口径：宿主通道 61 → **63**（新增 plugin:import:status/retry 2 条），preload 108 → 110；P44 守恒断言已更新为 63
+- 验证：plugin 63/63（P43 新断言）、ui 23/23、双 typecheck 0、build 通过
+- **WP7 至此 8/8 完成**；剩余仅 P5（便携 Node GUI 诊断）并入 4.2
 
 ### W5-b · 插件宿主装配抽离（`services/pluginRuntime.ts`）
 

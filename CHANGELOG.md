@@ -13,7 +13,7 @@
 ### 重构
 - **插件边界清零**：域 IPC 全部搬进 `plugins/<id>/main/ipc/`（work 1 个文件 + marketing 8 个文件：6 个搬迁 + gateway 拆分 + ipcTypes，另 services 新增 hostUi），`check:boundary` 从 9 条越界收紧到 **0（硬约束）**；插件不再 import electron，
   宿主 electron 能力经 `services/hostUi`、流透传经 `services/gateway/stream` 注入。
-- **宿主装配瘦身**：`electron/main/index.ts` 2,551 → **1,767 行**（≤1,800 目标达成）；61 个 host IPC
+- **宿主装配瘦身**：`electron/main/index.ts` 2,551 → **1,767 行**（≤1,800 目标达成）；61 个 host IPC（4.0.2 P2 起 +2 条 import 通道 = 63）
   拆到 `electron/main/ipc/host/*`，插件装配抽到 `services/pluginRuntime`，宿主服务适配器抽到
   `services/pluginServiceAdapters`。
 - 副作用：宿主 `electron/main` 27,463 → **26,253 行**（离 V4 ≤26,000 仅差 253，后续删减）。
@@ -35,12 +35,14 @@
   **旧文件不自动迁移**：旧条目照常可读（原件只作溯源），旧 `<dataDir>/knowledge` 可手工清理；
   只有新导入进插件目录。
 - 测试稳定性：report/content 收尾处 5 处固定 sleep 改 `waitFor`（异步落库/断连/注册表清空不再赌时间）。
+- **旧库导入失败对用户可见 + 一键重试**：导入结果写 `<dataDir>/plugins/<id>/import-status.json`；宿主壳
+  顶部横幅展示失败原因并提供「重试导入」（`plugin:import:status` / `plugin:import:retry`），重试走插件
+  注册的执行器（强制绕过 `.imported` 标记，幂等 upsert）；插件停用即摘除执行器。
 
 ### 测试
 - 全量验收 32 套 / **607 条断言**；knowledge.work 10/10、knowledge.marketing 23/23
 
 ### 已知未做（并入 4.2，4.0.2 不阻塞）
-- P2 旧库导入失败的用户可见提示 + 「重试导入」入口（当前只有日志）
 - P5 便携 Node 探针的 GUI 诊断横幅/引导重装入口（当前写日志文件）
 
 ---
@@ -68,7 +70,7 @@
 - 修复跨午夜假失败（`openclaw-summary` S12 假时钟）与 e2e 固定 sleep 时序 flake（waitFor）
 - 全量验收 32 套 / **607 条断言**
 
-### 已知未做（顺延 4.0.2）
+### 已知未做（顺延 4.0.2；其中 knowledge 隔离与 P2 已在 4.0.2 完成，P5 GUI 延伸并入 4.2）
 - 旧库导入失败的用户可见状态与「重试导入」入口（当前只有日志）
 - work 知识库原件路径隔离（仍在全局 `<dataDir>/knowledge`）
 - 便携 Node 探针的 GUI 诊断横幅/引导重装入口（当前写日志文件）

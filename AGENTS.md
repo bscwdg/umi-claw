@@ -144,7 +144,7 @@ export const WORK_TODOS_CHANNELS = {
 
 **返回**：统一信封，成功 `{ ok: true, data }`，失败 `{ ok: false, error: { code, message, details? } }`。
 
-**错误**：抛 `AppError(code, message, details?)`；`code` 必须来自 `electron/main/services/errors.ts` 的 `ERROR_CODES`（**唯一来源，当前 13 项**）。IPC 层用 `toErrorEnvelope(e)` 翻译，未知异常兜底 `DB_ERROR`。
+**错误**：抛 `AppError(code, message, details?)`；`code` 必须来自 `electron/main/services/errors.ts` 的 `ERROR_CODES`（**唯一来源，当前 14 项**；4.0.2 P2 新增 `PLUGIN_OPERATION_FAILED`）。IPC 层用 `toErrorEnvelope(e)` 翻译，未知异常兜底 `DB_ERROR`。
 
 **渲染端**：**只按 `code` 分支，禁止 `message.includes()`**。
 
