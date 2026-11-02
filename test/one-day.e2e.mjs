@@ -22,7 +22,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   Recorder, __dirname, assert, assertEq, bundleEntry, printResult,
-  resolveNodePath, sleep, tmpDir, workerScriptPath, writeJson,
+  resolveNodePath, sleep, tmpDir, waitFor, workerScriptPath, writeJson,
   workSrc
 } from './_lib.mjs'
 
@@ -209,9 +209,23 @@ try {
     const before = (await records.list({ status: 'candidate' })).length
     const h = tools2.run({ toolId: 'minutes', text: '一大段会议转写文字，内容足够长以满足薄边界' })
     await h.stream.result
-    await sleep(120)
+    // 固定 sleep 在重负载机器上会读早（2026-11-03 用户实跑偶发：提取 2 待办实际 1）；
+    // 改为轮询等待落库，语义与断言不变。
+    await waitFor(
+      async () => (await records.list({ status: 'candidate' })).length >= before + 1,
+      { timeout: 5000, label: 'D3 纪要候选落库' }
+    )
     const after = (await records.list({ status: 'candidate' })).length
     assertEq(after, before + 1, '纪要进候选')
+    await waitFor(
+      async () => {
+        const rows = await todos.list({ state: 'candidate' })
+        return rows.length >= 2 ? rows : null
+      },
+      { timeout: 5000, label: 'D3 待办提取落库' }
+    )
+    // 重新读一次做精确断言：extractTodos 是逐条串行 create，waitFor 条件刚满足时
+    // 可能还有第 3 条在写；用返回快照断言会漏掉「多写了」的情况。
     const extracted = await todos.list({ state: 'candidate' })
     assertEq(extracted.length, 2, `提取 2 待办（实际 ${extracted.length}）`)
     assert(extracted.some((t) => t.due_date === '2026-09-25'), '带截止日期')
@@ -239,7 +253,10 @@ try {
     const created = await todos.create({ title: '给团队做同步', dueDate: TODAY })
     const before = (await records.list({ date: TODAY })).length
     await todos.complete(created.id)
-    await sleep(50)
+    await waitFor(
+      async () => (await records.list({ date: TODAY })).length >= before + 1,
+      { timeout: 5000, label: 'D5 完成联动记录落库' }
+    )
     const after = await records.list({ date: TODAY })
     assertEq(after.length, before + 1, '联动新增 1 记录')
     const linked = after.find((x) => x.content === '给团队做同步')
@@ -272,8 +289,15 @@ try {
     const handle = await reports.generate({ type: 'daily', period: TODAY })
     const res = await handle.stream.result
     assertEq(res.aborted, false, '正常生成')
-    await sleep(120)
     reportId = handle.reportId
+    await waitFor(
+      async () => {
+        const d = await reports.get(reportId)
+        return d.versions.length >= 1
+      },
+      { timeout: 5000, label: 'D7 日报 generation 落库' }
+    )
+    // 重新读一次做精确断言（waitFor 的快照可能是「刚好 1 个」的中间态）
     const detail = await reports.get(reportId)
     assertEq(detail.versions.length, 1, '落 1 generation')
     await reports.confirm(reportId)

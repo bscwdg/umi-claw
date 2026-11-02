@@ -292,14 +292,20 @@ export { sleep }
  */
 export async function waitFor(fn, { timeout = 5000, interval = 25, label = '条件' } = {}) {
   const t0 = Date.now()
+  let lastError = null
   for (;;) {
     try {
       const v = await fn()
       if (v) return v
-    } catch {
-      // 瞬时错误（如行尚未写入导致的读取异常）不应中断轮询
+      lastError = null
+    } catch (e) {
+      // 瞬时错误（行尚未写入/恰好读不到）继续轮询；但保留最后一次错误用于超时诊断
+      lastError = e
     }
-    if (Date.now() - t0 >= timeout) throw new Error(`waitFor 超时（${timeout}ms）：${label}`)
+    if (Date.now() - t0 >= timeout) {
+      const detail = lastError ? `；最后一次错误：${lastError?.message ?? String(lastError)}` : ''
+      throw new Error(`waitFor 超时（${timeout}ms）：${label}${detail}`)
+    }
     await sleep(interval)
   }
 }
