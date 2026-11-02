@@ -75,8 +75,7 @@ import {
   registerVoiceIpc
 } from './fish/voice'
 import { registerCharacter } from './character/wiring'
-import { filterCharacterHits } from './character/searchContext'
-import { scrubForLog } from './character/safety'
+import { buildCharacterDeps } from './services/characterHost'
 import type { CharacterManager } from './character/manager'
 import { AppError, ERROR_CODES } from './services/errors'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
@@ -2231,156 +2230,29 @@ app.whenReady().then(async () => {
     if (!workDatabase) throw new Error('workDatabase 尚未初始化')
     const characterDb = workDatabase
     const characterDataDir = configManager.getDataDir()
-    const characterNodePath = openClawPaths.nodeBinary(characterDataDir)
-    const characterPromise = registerCharacter({
-      kv: {
-        get: (key) => characterDb.metaGet(key),
-        set: (key, value) => characterDb.metaSet(key, value)
-      },
-      dataDir: characterDataDir,
-      personaSourceDir: app.isPackaged
-        ? join(process.resourcesPath, 'resources', 'character', 'persona')
-        : join(app.getAppPath(), 'resources', 'character', 'persona'),
-      configPath: openClawPaths.openClawConfig(characterDataDir),
-      cli: {
-        nodePath: characterNodePath,
-        cliPath: join(characterDataDir, 'openclaw', 'node_modules', 'openclaw', 'openclaw.mjs'),
-        env: buildOpenClawEnv(characterDataDir, characterNodePath, {
-          NODE_CONFIG_DIR: openClawPaths.portableHome(characterDataDir)
-        }),
-        cwd: openClawPaths.installDir(characterDataDir)
-      },
-      chat: (input) => {
-        if (!workGatewayClient) throw new Error('gateway 客户端尚未初始化')
-        return workGatewayClient.createChatStream(input as never)
-      },
-      generateDiary: async (prompt: string, meta: { date: string }) => {
-        if (!workGatewayClient) throw new Error('gateway 客户端尚未初始化')
-        // 必须给会话键：gateway 的 resolver 对空 project/conversation 会直接抛错（否则日记必失败）
-        const result = await workGatewayClient.chat({
-          messages: [{ role: 'user', content: prompt }],
-          stream: false,
-          model: 'openclaw/feiyu',
-          conversationKey: `conv:fish:daily-memory:${meta.date}`
+      const characterPromise = registerCharacter(
+        buildCharacterDeps({
+          kv: {
+            get: (key) => characterDb.metaGet(key),
+            set: (key, value) => characterDb.metaSet(key, value)
+          },
+          dataDir: characterDataDir,
+          isPackaged: app.isPackaged,
+          appPath: app.getAppPath(),
+          resourcesPath: process.resourcesPath,
+          configManager,
+          obsidianManager,
+          voiceManager,
+          gateway: workGatewayClient,
+          gatewayReady: () => Boolean(clawManager?.getStatus().ready),
+          onEvent: (event) => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('character:event', event)
+            }
+          },
+          logger: (message) => console.log(message)
         })
-        return result.text
-      },
-      // 预检索：直接复用「知识库」页同一条 search.mjs 链路（实测 200–500ms）
-      // 隔离红线（PLAN-FISH-CHARACTER §13.2-9）：角色只能看 vault 里的「大肥鱼/」，
-      // 工作/隐私笔记不得进入角色上下文；命中正文统一脱敏。
-      searchKnowledge: async (query: string) => {
-        try {
-          const obs = configManager.getConfig().obsidian
-          if (!obs?.enabled) return []
-          const result = await obsidianManager.testSearch({ query, limit: 8 })
-          return filterCharacterHits(
-            (result.hits ?? []).map((hit) => ({
-              path: hit.filePath,
-              content: hit.content,
-              score: hit.score
-            }))
-          ).map((hit) => ({ ...hit, content: scrubForLog(hit.content) }))
-        } catch {
-          return []
-        }
-      },
-      voice: {
-        speakPcm: async (text: string) => {
-          if (!voiceManager) throw new Error('语音模块未初始化')
-          const result = await voiceManager.speak({
-            text,
-            options: { format: 'pcm', sampleRate: 16000 }
-          })
-          const payload = await voiceManager.readAudio(result.audioId)
-          return payload.bytes
-        },
-        // 凭据只读：openclaw.json 才是 qqbot 的真源（app.json 只是 UI 副本）
-        creds: () => {
-          const channels = configManager.getOpenClawChannels()
-          const qq = (channels?.qqbot ?? {}) as Record<string, unknown>
-          const accounts = (qq.accounts ?? {}) as Record<string, Record<string, unknown>>
-          const candidates: Record<string, unknown>[] = [qq, ...Object.values(accounts ?? {})]
-          const pickString = (obj: Record<string, unknown>, keys: string[]): string => {
-            for (const key of keys) {
-              const value = obj[key]
-              if (typeof value === 'string' && value.trim()) return value.trim()
-            }
-            return ''
-          }
-          for (const candidate of candidates) {
-            const appId = pickString(candidate, ['appId', 'appid', 'app_id'])
-            const secret = pickString(candidate, ['clientSecret', 'secret', 'appSecret'])
-            const openid = pickString(candidate, ['openid', 'userOpenid', 'c2cOpenid', 'ownerOpenid'])
-            // 计划 §13.2-10：只接受 32 位 clientSecret，避免 16 位 AppSecret 写坏通道
-            if (appId && secret.length === 32 && openid) return { appId, clientSecret: secret, openid }
-          }
-          const envApp = process.env.UMI_QQBOT_APP_ID
-          const envSecret = process.env.UMI_QQBOT_CLIENT_SECRET
-          const envOpenid = process.env.UMI_QQBOT_OPENID
-          if (envApp && envSecret && envSecret.length === 32 && envOpenid) {
-            return { appId: envApp, clientSecret: envSecret, openid: envOpenid }
-          }
-          return null
-        }
-      },
-      obsidianVaultPath: () => configManager.getConfig().obsidian?.vaultPath,
-      // 桌宠暂时下线（M2 重做形象后再启用）：不创建桌宠窗口，页面也不再提供入口
-      gatewayReady: () => Boolean(clawManager?.getStatus().ready),
-      // 「外部渠道」就绪：QQ/飞书/微信任一配置即可（不强制 QQ）
-      qqReady: () => {
-        try {
-          const channels = configManager.getOpenClawChannels() as Record<
-            string,
-            Record<string, unknown>
-          >
-          const nonEmpty = (value: unknown): boolean =>
-            typeof value === 'string' && value.trim().length > 0
-          // 只认「有真实凭据且未被禁用」的渠道：首启骨架里的空凭据/disabled 不算
-          const configured = (name: string, fields: string[]): boolean => {
-            const channel = channels?.[name]
-            if (!channel || channel.enabled === false) return false
-            const scopes: Record<string, unknown>[] = [channel]
-            const accounts = channel.accounts
-            if (accounts && typeof accounts === 'object') {
-              for (const account of Object.values(accounts as Record<string, unknown>)) {
-                if (account && typeof account === 'object') {
-                  scopes.push(account as Record<string, unknown>)
-                }
-              }
-            }
-            return scopes.some((scope) => fields.some((field) => nonEmpty(scope?.[field])))
-          }
-          return (
-            configured('qqbot', ['appId', 'appid', 'app_id', 'clientSecret', 'secret']) ||
-            configured('feishu', ['appId', 'appSecret']) ||
-            configured('wecom', ['corpId', 'corpSecret', 'secret', 'token']) ||
-            configured('openclaw-weixin', ['appId', 'appSecret', 'token'])
-          )
-        } catch {
-          return false
-        }
-      },
-      ttsReady: () => voiceManager !== null,
-      // 记忆检索就绪 = Obsidian 集成开启 + MCP 已注入 + 索引有数据 + vault 存在
-      memorySearchReady: () => {
-        try {
-          const obs = configManager.getConfig().obsidian
-          if (!obs?.enabled || !obs.vaultPath || !existsSync(obs.vaultPath)) return false
-          const mcp = obsidianManager?.buildMcpServerConfig?.()
-          const status = obsidianManager?.getIndexStatus?.()
-          const chunkCount = Number((status as { chunkCount?: number } | undefined)?.chunkCount ?? 0)
-          return Boolean(mcp && chunkCount > 0)
-        } catch {
-          return false
-        }
-      },
-      logger: (message) => console.log(message),
-      onEvent: (event) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('character:event', event)
-        }
-      }
-    })
+      )
     // 启动体验：角色初始化最多等 3s；超时先开窗口，角色后台就绪后再接线
     let characterTimeoutId: NodeJS.Timeout | null = null
     const characterTimeout = new Promise<'timeout'>((resolve) => {
