@@ -349,6 +349,37 @@ try {
   await sleep(200)
 }
 
+// ── E12 预算公式（W2-b：services/context/budget.ts 纯函数） ──
+await r.check('E12', 'computeBudget：floor(window×ratio) / reserved=window-budget / 0 与 ratio=1 边界', async () => {
+  const budgetMod = await import(
+    pathToFileURL(bundleEntry('electron/main/services/context/budget.ts', 'context-budget.mjs')).href
+  )
+  const { computeBudget } = budgetMod
+  const a = computeBudget(128_000, 0.7)
+  assertEq(a.budgetTokens, 89_600, '128k × 0.7 → 89600')
+  assertEq(a.reservedTokens, 38_400, '128k × 0.7 → reserved 38400')
+  const b = computeBudget(128_000, 0.6)
+  assertEq(b.budgetTokens, 76_800, '128k × 0.6 → 76800')
+  assertEq(b.reservedTokens, 51_200, '128k × 0.6 → reserved 51200')
+  const c = computeBudget(1, 0.7)
+  assertEq(c.budgetTokens, 0, 'floor 向下取整')
+  assertEq(c.reservedTokens, 1, 'reserved 补齐差额')
+  const d = computeBudget(0, 0.7)
+  assertEq(d.budgetTokens, 0, '0 窗口')
+  assertEq(d.reservedTokens, 0, '0 窗口 reserved')
+  const e = computeBudget(2_000, 1)
+  assertEq(e.budgetTokens, 2_000, 'ratio=1 时全额进预算')
+  assertEq(e.reservedTokens, 0, 'ratio=1 reserved')
+  // 非整数 / 负数窗口：上游 requireWindow 已拒绝，这里锁定纯数学行为（不兜底）
+  const f = computeBudget(10.5, 0.7)
+  assertEq(f.budgetTokens, 7, '非整数窗口：只对 budgetTokens 取 floor')
+  assertEq(f.reservedTokens, 3.5, '非整数窗口：reserved 取差额，可为小数')
+  const g = computeBudget(-100, 0.7)
+  assertEq(g.budgetTokens, -70, '负数窗口：纯数学，不兜底')
+  assertEq(g.reservedTokens, -30, '负数窗口：reserved 同为负')
+  return '7 组：128k×0.7 / 128k×0.6 / 向下取整 / 0 / ratio=1 / 10.5 / -100'
+})
+
 const result = r.toJSON({ nodePath, dbPath })
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-context-work.json'), result)
