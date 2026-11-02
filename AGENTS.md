@@ -49,7 +49,7 @@ electron/main/
 ├── work/            # 已删除：work 域代码在 plugins/work/domain/
 ├── marketing/       # 已删除：marketing 域代码在 plugins/marketing/domain/
 ├── clawManager.ts / configManager.ts / downloadManager.ts / channelManager.ts ...
-└── index.ts         # 只做组装；目标 ≤ 1,800 行（现状 2,311）
+└── index.ts         # 只做组装；目标 ≤ 1,800 行（现状 2,287）
 
 plugins/             # 官方内置插件（同仓源码，参与宿主构建）
 ├── work/  main.ts + renderer.ts + ui/

@@ -1287,3 +1287,16 @@ term 5、channels 3、test-connection 1。env 批含 update 大段逻辑（局�
 - 已知 flake 登记：`plugin.accept` P8 激活超时偶发一次（复跑绿），与本批无关
 
 剩余 28 个 handle：`config` 8、`claw` 7、`env` 7、`term` 5、`test-connection` 1。
+
+### W5-a · 第三批（config 8）
+
+`ipc/host/config.ts`：config:get/save/reset/getDataDir/getPresetModels/refreshModelPresets/
+getModelPresetsInfo/openDataDir；save/reset 共用 `toSaveResult`（剥 4 个状态字段，
+`!== false` / `?? null` 语义与旧内联逐字等价；applyLoginItemSettings 仍在 save 之后）。
+
+- handler 28 → 20（19+11+3+8+20=61 守恒）；index 2,311 → 2,287；宿主 27,238（只搬不删）
+- 类型收紧：`ConfigIpcDeps` 直接收 `AppConfig`/`ConfigWithStatus`，去掉 `as never` 与死类型
+- `plugin.accept` P44 增 handler 守恒断言（20/19/11/3/8 与总和 61）与 config 8 通道匹配
+- 盲区：配置保存/重置的状态透出仍无行为级测试（config.ts 纯模块，可 fake registrar 补，
+  与前两批一起登记为 P45）；寄存器装配层无行为测试
+- 行数：index 2,287（差 487 到 1,800）；剩余 20 个 handle（claw 7/env 7/term 5/test-connection 1）
