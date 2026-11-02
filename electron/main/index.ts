@@ -56,6 +56,8 @@ import {
 } from './gatewayClient'
 import { registerWorkGatewayIpc } from './ipc'
 import { registerMiscIpc } from './ipc/host/misc'
+import { registerSkillsIpc } from './ipc/host/skills'
+import { registerChannelsIpc } from './ipc/host/channels'
 import {
   VoiceSecretStore,
   VoiceCloneManager,
@@ -1162,6 +1164,28 @@ function registerIpcHandlers(): void {
     clearLogs: () => clawManager.clearLogs(),
     obsidian: () => obsidianManager
   })
+  // 技能 / 渠道插件（4.1 WP5-a 第二批拆到 ipc/host/{skills,channels}.ts）
+  registerSkillsIpc(ipcMain, {
+    listSkills: () => clawManager.listSkills(),
+    installSkill: (skillId) => clawManager.installSkill(skillId as never),
+    uninstallSkill: (skillId) => clawManager.uninstallSkill(skillId as never),
+    getInstalledSkills: () => configManager.getInstalledSkills(),
+    toggleSkillStatus: (id, enabled) =>
+      configManager.toggleSkillStatus(id as never, enabled as never),
+    removeSkill: (id) => configManager.removeSkill(id),
+    importSkillZip: () => configManager.importSkillZip(),
+    dropPendingUpdate: (id) => skillSyncService.dropPendingUpdate(id),
+    probeFromRemote: () => skillSyncService.probeFromRemote(),
+    installSkills: (ids) => skillSyncService.installSkills(ids),
+    applyUpdates: (ids) => skillSyncService.applyUpdates(ids),
+    getPendingUpdates: () => skillSyncService.getPendingUpdates()
+  })
+  registerChannelsIpc(ipcMain, {
+    isPluginInstalled: (pluginId) => channelManager.isPluginInstalled(pluginId),
+    installPlugin: (pluginPkg) => channelManager.installPlugin(pluginPkg),
+    getChannelStatuses: () => channelManager.getChannelStatuses()
+  })
+
 
   // OpenClaw 进程管理
   // 硬性闸门（北 2026-09-24）：启动前必须已同意用户协议，否则拒绝并让前端弹回协议弹窗。
@@ -1482,50 +1506,7 @@ function registerIpcHandlers(): void {
     })
   )
 
-  // 技能管理
-  ipcMain.handle('skills:list', () => clawManager.listSkills())
-  ipcMain.handle('skills:install', (_e, skillId) => clawManager.installSkill(skillId))
-  ipcMain.handle('skills:uninstall', (_e, skillId) => clawManager.uninstallSkill(skillId))
-  ipcMain.handle('skills:getInstalledSkills', () => configManager.getInstalledSkills());
-  ipcMain.handle('skills:toggleSkillStatus', async (_event, id, enabled) => {
-    // 返回 {ok:false} 时转成 reject：前端 Skills.vue 按 try/catch 弹失败提示
-    const result = await configManager.toggleSkillStatus(id, enabled)
-    if (!result.ok) throw new Error(result.error || '技能开关切换失败')
-    return result
-  })
-  ipcMain.handle('skills:removeSkill', async (_event, id: unknown) => {
-    const result = await configManager.removeSkill(typeof id === 'string' ? id : '')
-    // 移除成功：顺带从云端更新缓存剔除，避免跳页回来又提示更新一个已删的技能
-    if (result.success && typeof id === 'string') skillSyncService.dropPendingUpdate(id)
-    return result
-  })
-  ipcMain.handle('skills:importSkillZip', async () => {
-    return await configManager.importSkillZip()
-  })
-  // 拉取改为两阶段：先只读探测（不下载），前端弹窗勾选后再按 ids 下载安装
-  ipcMain.handle('skills:probeRemote', () => skillSyncService.probeFromRemote())
-  ipcMain.handle('skills:installSkills', (_e, ids: unknown) =>
-    skillSyncService.installSkills(Array.isArray(ids) ? ids.filter((i): i is string => typeof i === 'string') : []))
-  // 勾选更新：主进程先过滤非 string 项，service 内再做白名单校验与去重
-  ipcMain.handle('skills:applyUpdates', (_e, ids: unknown) =>
-    skillSyncService.applyUpdates(Array.isArray(ids) ? ids.filter((i): i is string => typeof i === 'string') : []))
-  ipcMain.handle('skills:getPendingUpdates', () => skillSyncService.getPendingUpdates())
 
-  // 外部链接 - 增加简单的协议校验，防止 file:// 等危险协议
-  // channels: plugin install for native long-connection channels (e.g. feishu)
-  ipcMain.handle('channels:isPluginInstalled', (_e, pluginId: string) =>
-    channelManager.isPluginInstalled(pluginId)
-  )
-  ipcMain.handle('channels:installPlugin', async (_e, pluginPkg: string) => {
-    try {
-      await channelManager.installPlugin(pluginPkg)
-      return { success: true }
-    } catch (err: any) {
-      return { success: false, error: err?.message || String(err) }
-    }
-  })
-  // 渠道已接入状态（只读，依据 openclaw.json 与插件登录态）
-  ipcMain.handle('channels:getStatuses', () => channelManager.getChannelStatuses())
 
   // 一键获取token - 优化安全性与逻辑
   ipcMain.handle('claw:get-token', async () => {

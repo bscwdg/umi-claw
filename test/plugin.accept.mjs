@@ -1944,14 +1944,55 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
     'obsidian:getEmbeddingPresets',
     'obsidian:testSearch'
   ]
+  // 通道注册是「api.handle(\s*'<channel>'」形状（可能换行），不能只匹配单行字面量
+  const hasIpcHandler = (src, ch, api = 'ipcMain') =>
+    new RegExp(`${api}\\.handle\\(\\s*'${ch}'`).test(src)
   for (const ch of miscChannels) {
-    assert(miscSrc.includes(`'${ch}'`), 'misc.ts 应注册 ' + ch)
+    assert(hasIpcHandler(miscSrc, ch), 'misc.ts 应注册 ' + ch)
   }
   for (const prefix of ['window:', 'app:', 'log:', 'shell:', 'dialog:', 'obsidian:']) {
     assert(!hostSrc.includes(`ipcMain.handle('${prefix}`), 'index.ts 不应再直接注册 ' + prefix)
   }
   assert(/registerMiscIpc\(\{/.test(hostSrc), 'index.ts 应调用 registerMiscIpc')
-  return '宿主零注册 / 插件全注册 / 装配在 runtime / misc 已拆'
+
+  // 4.1 WP5-a 第二批：技能 11 + 渠道 3 拆到 ipc/host/{skills,channels}.ts
+  const skillsSrc = readFileSync(
+    join(repoRoot, 'electron', 'main', 'ipc', 'host', 'skills.ts'),
+    'utf-8'
+  )
+  const skillsChannels = [
+    'skills:list',
+    'skills:install',
+    'skills:uninstall',
+    'skills:getInstalledSkills',
+    'skills:toggleSkillStatus',
+    'skills:removeSkill',
+    'skills:importSkillZip',
+    'skills:probeRemote',
+    'skills:installSkills',
+    'skills:applyUpdates',
+    'skills:getPendingUpdates'
+  ]
+  for (const ch of skillsChannels) {
+    assert(hasIpcHandler(skillsSrc, ch, 'ipc'), 'skills.ts 应注册 ' + ch)
+  }
+  const channelsSrc = readFileSync(
+    join(repoRoot, 'electron', 'main', 'ipc', 'host', 'channels.ts'),
+    'utf-8'
+  )
+  for (const ch of [
+    'channels:isPluginInstalled',
+    'channels:installPlugin',
+    'channels:getStatuses'
+  ]) {
+    assert(hasIpcHandler(channelsSrc, ch, 'ipc'), 'channels.ts 应注册 ' + ch)
+  }
+  for (const prefix of ['skills:', 'channels:']) {
+    assert(!hostSrc.includes(`ipcMain.handle('${prefix}`), 'index.ts 不应再直接注册 ' + prefix)
+  }
+  assert(/registerSkillsIpc\(\s*ipcMain/.test(hostSrc), 'index.ts 应调用 registerSkillsIpc(ipcMain')
+  assert(/registerChannelsIpc\(\s*ipcMain/.test(hostSrc), 'index.ts 应调用 registerChannelsIpc(ipcMain')
+  return '宿主零注册 / 插件全注册 / 装配在 runtime / misc+skills+channels 已拆'
 })
 
 // ── P43 旧库导入走服务注入（防「清单忘了 inject」导致死代码）─────────────────
