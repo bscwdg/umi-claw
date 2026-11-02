@@ -27,6 +27,7 @@ import { AppError, ERROR_CODES } from '../database/errors'
 import type { WorkDatabase } from './database'
 import { dateOf, normalizeDate } from './todoManager'
 import { estimateTokens, sliceToTokenBudget } from '../services/context/tokens'
+import { assembleLoop } from '../services/context/assemble'
 export { estimateTokens, sliceToTokenBudget }
 import { shortTitle } from '../services/context/pack'
 
@@ -399,54 +400,59 @@ export class ContextEngine {
       }
     }
 
-    const allPacked = knowledgeCandidates.map((row) => packKnowledge(row, false, false))
-    const mode: PackMode = measure(allPacked, 'full') <= budgetTokens ? 'full' : 'truncated'
-
-    let knowledge: PackedKnowledge[]
-    let retrieval: ContextPack['retrieval']
-    if (mode === 'full') {
-      knowledge = allPacked
-      retrieval = { mode: 'full', query: null, hits: 0 }
-    } else {
-      const ranked = this.rankKnowledge(knowledgeCandidates, query)
-      retrieval = { mode: ranked.mode, query, hits: ranked.hits }
-      const chosen: PackedKnowledge[] = []
-      for (let i = 0; i < ranked.entries.length; i++) {
-        const rest = ranked.entries.slice(i + 1).map((e) => asDropped(e))
-        const packed = packKnowledge(ranked.entries[i], false, ranked.matched[i])
-        const restDropped = [...dropped, ...rest]
-        if (measureWith([...chosen, packed], restDropped, budgetTokens) <= budgetTokens) {
-          chosen.push(packed)
-          continue
+    // ── 5. 取舍（WP2-e：改走 services/context 的 assembleLoop） ──
+    //
+    // work 与 marketing 的口径差异（切域前逐条核对，必须保真）：
+    //   - 判断 mode 用 measure(chosen,'full')（渲 skeleton **整包**）
+    //   - 准入用 measureWith(只算知识块正文 + 前 3 条 dropped 标题)**不是整包**
+    //   - sliceBudget 用 renderContextPackText(probe)（**整包**）
+    // 所以分别接 measureFull / measureSelection / measureSlice 三个回调。
+    //
+    // usedTokens 由本域在拼完最终 pack（含第 7 段对话历史）后重算（旧实现 486 行），
+    // 内核返回的那份丢弃——工作域的第 7 段是独立预算、不进 70%。
+    const loop = await assembleLoop<Record<string, unknown>, PackedKnowledge>({
+      budgetTokens,
+      markerTokens: estimateTokens(ITEM_TRUNCATE_MARKER),
+      overheadTokens: PACK_OVERHEAD_TOKENS,
+      minSliceTokens: KNOWLEDGE_ITEM_MIN_TOKENS,
+      allCandidates: knowledgeCandidates,
+      initialDropped: dropped,
+      ranked: () => {
+        const ranked = this.rankKnowledge(knowledgeCandidates, query)
+        return {
+          entries: ranked.entries.map((row, idx) => ({ item: row, matched: ranked.matched[idx] })),
+          info: { mode: ranked.mode, query, hits: ranked.hits }
         }
-        // 放不下整条：剩余空间够一段有意义内容就截断收入，否则收手
+      },
+      measureFull: (chosen) => measure(chosen, 'full'),
+      measureSelection: (chosen, droppedList) =>
+        measureWith(chosen, droppedList as DroppedItem[], budgetTokens),
+      measureSlice: (chosen, droppedList) => {
         const probe = skeleton([], 'truncated', records.length)
         probe.knowledge = chosen
-        probe.dropped = restDropped
-        const sliceBudget =
-          budgetTokens -
-          estimateTokens(renderContextPackText(probe)) -
-          PACK_OVERHEAD_TOKENS -
-          estimateTokens(String(ranked.entries[i].title ?? '')) -
-          estimateTokens(ITEM_TRUNCATE_MARKER)
-        if (sliceBudget >= KNOWLEDGE_ITEM_MIN_TOKENS) {
-          chosen.push(packKnowledge(ranked.entries[i], true, ranked.matched[i], sliceBudget))
-        }
-        break
-      }
-      // 保险丝：估算/渲染极小差值也不许越界，按同序从尾部让位
-      let count = chosen.length
-      const rebuildDropped = (): DroppedItem[] => [
-        ...dropped,
-        ...ranked.entries.slice(count).map((e) => asDropped(e))
-      ]
-      let currentDropped = rebuildDropped()
-      while (count > 0 && measureWith(chosen.slice(0, count), currentDropped, budgetTokens) > budgetTokens) {
-        count -= 1
-        currentDropped = rebuildDropped()
-      }
-      knowledge = chosen.slice(0, count)
-      dropped.push(...currentDropped.filter((d) => d.reason === 'budget'))
+        probe.dropped = droppedList as DroppedItem[]
+        return estimateTokens(renderContextPackText(probe))
+      },
+      // 收尾由本域在拼完 pack 后重算（含对话历史），这里不产出文本
+      renderFinal: () => ({ text: '', usedTokens: 0 }),
+      include: (row, o) => packKnowledge(row, o.truncate, Boolean(o.matched), o.sliceBudget),
+      toDropped: (row) => asDropped(row),
+      titleTokens: (row) => estimateTokens(String(row.title ?? ''))
+    })
+
+    const mode = loop.mode
+    const knowledge = loop.chosen
+    const retrieval = (loop.rankedInfo as ContextPack['retrieval'] | undefined) ?? {
+      mode: 'full' as const,
+      query: null,
+      hits: 0
+    }
+    dropped.push(
+      ...loop.dropped
+        .filter((d) => d.reason === 'budget')
+        .map((d) => ({ ...d, section: d.section ?? 6 }))
+    )
+    if (mode === 'truncated') {
       this.log(
         `[context] scope=${scope} 裁剪：注入 ${knowledge.length}/${knowledgeCandidates.length} 条知识` +
           `（mode=truncated, query=${query ?? '（无，按时间）'}）`
