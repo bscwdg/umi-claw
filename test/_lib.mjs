@@ -60,6 +60,22 @@ export function domainSrc(pluginId, relPath) {
  *
  * 一个候选都不存在时返回第一个（让 esbuild/readFileSync 报出真实缺失路径，而不是静默取错）。
  */
+/**
+ * 域源码的仓库相对路径（WP3 搬家前后都可用）。
+ *
+ * 与 domainSrc() 的区别：domainSrc 返回**绝对路径**，而 bundleEntry/readFileSync(join(repoRoot,...))
+ * 要**仓库相对路径**——两者混用会拼成 `D:\repo\D:\repo\...`（实测过）。
+ *
+ * 候选顺序：搬家后的 plugins/<id>/main/<rel> → 搬家前的 electron/main/<rel>。
+ */
+export function workSrc(rel) {
+  return anySrc([`plugins/work/main/${rel}`, `electron/main/${rel}`])
+}
+
+export function mkSrc(rel) {
+  return anySrc([`plugins/marketing/main/${rel}`, `electron/main/${rel}`])
+}
+
 export function anySrc(candidates) {
   if (!Array.isArray(candidates) || candidates.length === 0) {
     throw new Error('anySrc 需要非空候选数组')
