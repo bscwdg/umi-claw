@@ -406,7 +406,6 @@ let pluginDbService: ReturnType<typeof createPluginDbService> | null = null
 
 // ── 服务适配器（Phase 1 WP1）：窄接口，不把 manager 递给插件 ─────────────────
 
-/** 宿主副作用（过渡服务，Phase 4 拆细）：通知 / 渠道外发 / 旧库只读 */
 /**
  * 插件 KV：宿主持久化，按插件命名空间隔离（WP4 C4.1）。
  *
@@ -459,6 +458,7 @@ function createPluginKvService(dataDir: string, pluginId: string): PluginKvApi {
   }
 }
 
+/** 宿主副作用（过渡服务，Phase 4 拆细）：通知 / 渠道外发 / 旧库只读 */
 function createHostOpsService(): HostOpsApi {
   return {
     notify: (id, payload) => showReminderNotification(id, payload as never),
