@@ -41,6 +41,7 @@ import {
   assertEq,
   anySrc,
   bundleEntry,
+  mkSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -62,16 +63,16 @@ mkdirSync(runDir, { recursive: true })
 const EXTERNALS = ['mammoth', 'exceljs']
 const SCANNED_FIXTURE = join(__dirname, 'fixtures', 'min-scanned.pdf')
 
-const scanPath = bundleEntry('electron/main/marketing/scanRecognizer.ts', 'scan-manager.mjs', {
+const scanPath = bundleEntry(mkSrc('scanRecognizer.ts'), 'scan-manager.mjs', {
   externals: EXTERNALS
 })
 const gatewayPath = bundleEntry('electron/main/gatewayClient.ts', 'scan-gateway-client.mjs')
-const knowledgePath = bundleEntry('electron/main/marketing/knowledgeManager.ts', 'scan-knowledge-manager.mjs', {
+const knowledgePath = bundleEntry(mkSrc('knowledgeManager.ts'), 'scan-knowledge-manager.mjs', {
   externals: EXTERNALS
 })
-const projectPath = bundleEntry('electron/main/marketing/projectManager.ts', 'scan-project-manager.mjs')
+const projectPath = bundleEntry(mkSrc('projectManager.ts'), 'scan-project-manager.mjs')
 const databasePath = bundleEntry('electron/main/database/database.ts', 'scan-database.mjs')
-const assetsPath = bundleEntry(anySrc(['electron/main/services/knowledge/parsers/pdfjsAssets.ts', 'electron/main/marketing/parsers/pdfjsAssets.ts']), 'scan-pdfjs-assets.mjs')
+const assetsPath = bundleEntry('electron/main/services/knowledge/parsers/pdfjsAssets.ts', 'scan-pdfjs-assets.mjs')
 
 const scanMod = await import(pathToFileURL(scanPath).href)
 const gwMod = await import(pathToFileURL(gatewayPath).href)
@@ -303,7 +304,7 @@ try {
   // ── S1 契约与纯函数 ──
   await r.check('S1', 'scanRecognizer 纯 Node 可 import；缺 gateway 即 VALIDATION_ERROR；不 import electron/不发 HTTP/不碰库', async () => {
     assertEq(typeof createScanRecognizer, 'function', '应导出工厂')
-    const src = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'scanRecognizer.ts'), 'utf-8')
+    const src = readFileSync(join(repoRoot, mkSrc('scanRecognizer.ts')), 'utf-8')
     const code = stripComments(src)
     const bundled = readFileSync(scanPath, 'utf-8')
     assert(!/from\s*["']electron["']/.test(code), '源码不应 import electron')
@@ -466,7 +467,7 @@ try {
     assertEq(res.code, 'VALIDATION_ERROR', '按 07 口径 VALIDATION_ERROR')
     assertEq(res.details.reason, 'multimodal-model-not-configured', 'reason 原样透传（UI 据此翻人话）')
     assertEq(fake.state.bodies.length, before, '绝不能把图偷偷用纯文本模型发出去')
-    const scanSrc = stripComments(readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'scanRecognizer.ts'), 'utf-8'))
+    const scanSrc = stripComments(readFileSync(join(repoRoot, mkSrc('scanRecognizer.ts')), 'utf-8'))
     assert(!/instanceof\s+AppError\s*[\s\S]{0,40}retriable/.test(scanSrc), '可恢复判定不得依赖跨 bundle instanceof')
     return '预检 + 最终防线双保险，0 请求 ✓'
   })
@@ -633,7 +634,7 @@ try {
     assertEq(detectPriceSuspect('我们主打轻奢外景'), false, '无价格不误报')
     assertEq(detectPriceSuspect('2024 年开业'), false, '年份不算价格')
     const storeSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'ui', 'store.ts'), 'utf-8')
-    const scanSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'scanRecognizer.ts'), 'utf-8')
+    const scanSrc = readFileSync(join(repoRoot, mkSrc('scanRecognizer.ts')), 'utf-8')
     // 跨行安全的字面量提取：`= /…/flags`（声明名开头、到第一个「regex 字面量收尾」）
     const litOf = (src, decl) => {
       const m = new RegExp(`${decl}\\s*=\\s*/([\\s\\S]+?)/[a-z]*(?:\\r?\\n|\\s;|\\s*$)`).exec(src)
@@ -676,10 +677,10 @@ try {
     const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
     const mainSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
 const pluginMainSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
-const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+const runtimeSrc = readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
     const storeSrc = stripComments(readFileSync(join(repoRoot, 'plugins', 'marketing', 'ui', 'store.ts'), 'utf-8'))
     const vueSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'ui', 'pages', 'KnowledgeBase.vue'), 'utf-8')
-    const knowledgeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'knowledgeManager.ts'), 'utf-8')
+    const knowledgeSrc = readFileSync(join(repoRoot, mkSrc('knowledgeManager.ts')), 'utf-8')
 
     const channels = [
       'marketing:knowledge:recognize',
@@ -707,7 +708,7 @@ const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 
     }
     assert(/资料图/.test(marketIpcSrc), 'picker 应把资料图单列并提示需 AI 识别')
     // 05a 联动：scanned-pdf 不落行现状不变
-    assert(/reason:\s*'scanned-pdf'/.test(readFileSync(join(repoRoot, anySrc(['electron/main/services/knowledge/parsers/documentParsers.ts', 'electron/main/marketing/parsers/documentParsers.ts'])), 'utf-8')), '05a 扫描件检测保持')
+    assert(/reason:\s*'scanned-pdf'/.test(readFileSync(join(repoRoot, 'electron/main/services/knowledge/parsers/documentParsers.ts'), 'utf-8')), '05a 扫描件检测保持')
     assert(!/commitRecognized/.test(knowledgeSrc.match(/async importKnowledge[\s\S]*?\n  \}/)?.[0] ?? ''), 'importKnowledge 未被 05b 改动（不落行现状不变）')
 
     // store 契约

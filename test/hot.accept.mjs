@@ -35,6 +35,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  mkSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -58,8 +59,8 @@ const NOW_ISO = '2026-09-19T04:00:00Z'
 const clock = { t: Date.parse(NOW_ISO) }
 
 // ── bundle 真源码 ────────────────────────────────────────────────────────────
-const hotPath = bundleEntry('electron/main/marketing/hotManager.ts', 'hot-manager.mjs')
-const projectPath = bundleEntry('electron/main/marketing/projectManager.ts', 'hot-project-manager.mjs')
+const hotPath = bundleEntry(mkSrc('hotManager.ts'), 'hot-manager.mjs')
+const projectPath = bundleEntry(mkSrc('projectManager.ts'), 'hot-project-manager.mjs')
 const databasePath = bundleEntry('electron/main/database/database.ts', 'hot-database.mjs')
 const hotMod = await import(pathToFileURL(hotPath).href)
 const projMod = await import(pathToFileURL(projectPath).href)
@@ -697,7 +698,7 @@ try {
       assert(!imports.includes('electron'), f + ' 不 import electron')
     }
 
-    const mgrSrc = read('electron/main/marketing/hotManager.ts')
+    const mgrSrc = read(mkSrc('hotManager.ts'))
     assert(!/from 'electron'/.test(mgrSrc), 'manager 不 import electron')
     assert(!/globalThis\.fetch|\brequire\s*\(/.test(mgrSrc), 'manager 不发 HTTP / 不 require')
     assert(!/INSERT INTO|UPDATE\s+\w+\s+SET|prepare\(/.test(mgrSrc), 'manager 不直写 SQL（硬规则 8）')
@@ -709,7 +710,7 @@ try {
     const mainSrc =
       read('electron/main/index.ts') +
       readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8') +
-      readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+      readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
     for (const token of ['registerHotIpc', 'ctx.jobs.every', 'abortHotCollectors']) {
       assert(mainSrc.includes(token), '主进程接线含 ' + token)
     }

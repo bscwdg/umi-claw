@@ -19,6 +19,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  mkSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -37,7 +38,7 @@ const projectsDir = join(dataDir, 'projects')
 const altRoot = join(runDir, 'alt')
 mkdirSync(runDir, { recursive: true })
 
-const managerPath = bundleEntry('electron/main/marketing/projectManager.ts', 'projectManager.mjs')
+const managerPath = bundleEntry(mkSrc('projectManager.ts'), 'projectManager.mjs')
 const databasePath = bundleEntry('electron/main/database/database.ts', 'project-database.mjs')
 const mod = await import(pathToFileURL(managerPath).href)
 const dbMod = await import(pathToFileURL(databasePath).href)

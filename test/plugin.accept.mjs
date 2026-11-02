@@ -17,6 +17,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  mkSrc,
   workSrc,
   printResult,
   writeJson,
@@ -2159,7 +2160,7 @@ await r.check('P50', '扫描件识别在栅格化前预检：hostOps 暴露能�
   const pluginSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
   assert(/multimodalConfigured:/.test(pluginSrc), '插件把预检注入 runtime')
 
-  const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+  const runtimeSrc = readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
   assert(/multimodalConfigured: deps\.multimodalConfigured/.test(runtimeSrc), 'runtime 透传给 scanRecognizer')
   return '预检链完整'
 })

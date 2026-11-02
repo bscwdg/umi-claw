@@ -24,6 +24,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  mkSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -41,7 +42,7 @@ const backupDir = join(dataDir, 'backup')
 mkdirSync(runDir, { recursive: true })
 
 const repoRoot = join(__dirname, '..')
-const contextSrcPath = join(repoRoot, 'electron', 'main', 'marketing', 'contextEngine.ts')
+const contextSrcPath = join(repoRoot, mkSrc('contextEngine.ts'))
 const mainSrcPath = join(repoRoot, 'electron', 'main', 'index.ts')
 
 // knowledgeManager 会经 documentParsers 静态引入 mammoth / exceljs（内含动态 require('fs')），
@@ -49,14 +50,14 @@ const mainSrcPath = join(repoRoot, 'electron', 'main', 'index.ts')
 // （与 test/knowledge.accept.mjs 同口径；生产构建是 CJS，不受影响）
 const EXTERNALS = ['mammoth', 'exceljs']
 
-const contextPath = bundleEntry('electron/main/marketing/contextEngine.ts', 'context-engine.mjs', {
+const contextPath = bundleEntry(mkSrc('contextEngine.ts'), 'context-engine.mjs', {
   externals: EXTERNALS
 })
-const projectPath = bundleEntry('electron/main/marketing/projectManager.ts', 'project-manager-for-context.mjs')
-const businessPath = bundleEntry('electron/main/marketing/businessManager.ts', 'business-manager-for-context.mjs', {
+const projectPath = bundleEntry(mkSrc('projectManager.ts'), 'project-manager-for-context.mjs')
+const businessPath = bundleEntry(mkSrc('businessManager.ts'), 'business-manager-for-context.mjs', {
   externals: EXTERNALS
 })
-const knowledgePath = bundleEntry('electron/main/marketing/knowledgeManager.ts', 'knowledge-manager-for-context.mjs', {
+const knowledgePath = bundleEntry(mkSrc('knowledgeManager.ts'), 'knowledge-manager-for-context.mjs', {
   externals: EXTERNALS
 })
 const databasePath = bundleEntry('electron/main/database/database.ts', 'context-database.mjs')
@@ -530,7 +531,7 @@ try {
   // ── C19 主进程 wiring ──
   await r.check('C19', '主进程 wiring：构造 Context Engine 并注入四个 Manager；不新增 §五 之外的 IPC 通道', async () => {
     const mainSrc = readFileSync(mainSrcPath, 'utf-8')
-    const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+    const runtimeSrc = readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
     const runtimeCode = flat(runtimeSrc)
     // Phase 3 装箱：引擎装配搬进 marketing/runtime.ts（插件调用它），宿主不再直接引入
     assert(/from '\.\/contextEngine'/.test(runtimeCode), 'runtime 应引入 contextEngine')

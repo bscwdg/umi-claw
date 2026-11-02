@@ -25,6 +25,7 @@ import {
   assertDeepEq,
   assertEq,
   bundleEntry,
+  mkSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -44,24 +45,24 @@ mkdirSync(runDir, { recursive: true })
 
 const EXTERNALS = ['mammoth', 'exceljs']
 
-const rulesPath = bundleEntry('electron/main/marketing/platformRules.ts', 'platform-rules.mjs')
-const contentPath = bundleEntry('electron/main/marketing/contentManager.ts', 'platform-content-manager.mjs', {
+const rulesPath = bundleEntry(mkSrc('platformRules.ts'), 'platform-rules.mjs')
+const contentPath = bundleEntry(mkSrc('contentManager.ts'), 'platform-content-manager.mjs', {
   externals: EXTERNALS
 })
-const contextPath = bundleEntry('electron/main/marketing/contextEngine.ts', 'platform-context-engine.mjs', {
+const contextPath = bundleEntry(mkSrc('contextEngine.ts'), 'platform-context-engine.mjs', {
   externals: EXTERNALS
 })
-const advisorPath = bundleEntry('electron/main/marketing/advisorManager.ts', 'platform-advisor-manager.mjs', {
+const advisorPath = bundleEntry(mkSrc('advisorManager.ts'), 'platform-advisor-manager.mjs', {
   externals: EXTERNALS
 })
 const gatewayPath = bundleEntry('electron/main/gatewayClient.ts', 'platform-gateway-client.mjs')
-const businessPath = bundleEntry('electron/main/marketing/businessManager.ts', 'platform-business-manager.mjs', {
+const businessPath = bundleEntry(mkSrc('businessManager.ts'), 'platform-business-manager.mjs', {
   externals: EXTERNALS
 })
-const knowledgePath = bundleEntry('electron/main/marketing/knowledgeManager.ts', 'platform-knowledge-manager.mjs', {
+const knowledgePath = bundleEntry(mkSrc('knowledgeManager.ts'), 'platform-knowledge-manager.mjs', {
   externals: EXTERNALS
 })
-const projectPath = bundleEntry('electron/main/marketing/projectManager.ts', 'platform-project-manager.mjs')
+const projectPath = bundleEntry(mkSrc('projectManager.ts'), 'platform-project-manager.mjs')
 const databasePath = bundleEntry('electron/main/database/database.ts', 'platform-database.mjs')
 
 const rulesMod = await import(pathToFileURL(rulesPath).href)
@@ -241,7 +242,7 @@ try {
     assert(getPlatformScope('douyin').includes('口播脚本'), 'scope 给 UI/日志的一句话')
     const bad = await outcome(Promise.resolve().then(() => getPlatformRule('weibo')))
     assert(!bad.ok && bad.code === 'VALIDATION_ERROR', '非法平台 VALIDATION_ERROR')
-    const src = stripComments(readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'platformRules.ts'), 'utf-8'))
+    const src = stripComments(readFileSync(join(repoRoot, mkSrc('platformRules.ts')), 'utf-8'))
     assert(!/from\s*["']electron["']/.test(src), '不 import electron')
     assert(!/\bfetch\s*\(|node:(http|https|net)/.test(src), '不发 HTTP')
     assert(!/database\.request|db\.request|INSERT INTO/.test(src), '不落库（纯数据模块）')

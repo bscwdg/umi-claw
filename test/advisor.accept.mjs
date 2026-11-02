@@ -25,6 +25,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  mkSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -44,20 +45,20 @@ mkdirSync(runDir, { recursive: true })
 const repoRoot = join(__dirname, '..')
 const EXTERNALS = ['mammoth', 'exceljs']
 
-const advisorPath = bundleEntry('electron/main/marketing/advisorManager.ts', 'advisor-manager.mjs', {
+const advisorPath = bundleEntry(mkSrc('advisorManager.ts'), 'advisor-manager.mjs', {
   externals: EXTERNALS
 })
-const contextPath = bundleEntry('electron/main/marketing/contextEngine.ts', 'advisor-context-engine.mjs', {
+const contextPath = bundleEntry(mkSrc('contextEngine.ts'), 'advisor-context-engine.mjs', {
   externals: EXTERNALS
 })
 const gatewayPath = bundleEntry('electron/main/gatewayClient.ts', 'advisor-gateway-client.mjs')
-const businessPath = bundleEntry('electron/main/marketing/businessManager.ts', 'advisor-business-manager.mjs', {
+const businessPath = bundleEntry(mkSrc('businessManager.ts'), 'advisor-business-manager.mjs', {
   externals: EXTERNALS
 })
-const knowledgePath = bundleEntry('electron/main/marketing/knowledgeManager.ts', 'advisor-knowledge-manager.mjs', {
+const knowledgePath = bundleEntry(mkSrc('knowledgeManager.ts'), 'advisor-knowledge-manager.mjs', {
   externals: EXTERNALS
 })
-const projectPath = bundleEntry('electron/main/marketing/projectManager.ts', 'advisor-project-manager.mjs')
+const projectPath = bundleEntry(mkSrc('projectManager.ts'), 'advisor-project-manager.mjs')
 const databasePath = bundleEntry('electron/main/database/database.ts', 'advisor-database.mjs')
 
 const advMod = await import(pathToFileURL(advisorPath).href)
@@ -240,7 +241,7 @@ try {
   await r.check('A1', 'advisorManager 可纯 Node import；依赖缺失即 VALIDATION_ERROR；不 import electron', async () => {
     assert(typeof AdvisorManager === 'function', '应导出 AdvisorManager')
     assertEq(typeof createAdvisorManager, 'function', '应导出工厂')
-    const src = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'advisorManager.ts'), 'utf-8')
+    const src = readFileSync(join(repoRoot, mkSrc('advisorManager.ts')), 'utf-8')
     const bundled = readFileSync(advisorPath, 'utf-8')
     assert(!/from\s*["']electron["']/.test(src), '源码不应 import electron')
     assert(!/from\s*["']electron["']/.test(bundled), 'bundle 内不应存在 electron')

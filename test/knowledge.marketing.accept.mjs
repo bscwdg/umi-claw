@@ -29,6 +29,7 @@ import {
   assertEq,
   anySrc,
   bundleEntry,
+  mkSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -55,18 +56,18 @@ const samplesV2Dir = join(runDir, 'samples-v2')
 mkdirSync(samplesDir, { recursive: true })
 mkdirSync(samplesV2Dir, { recursive: true })
 
-const knowledgeSrcPath = join(repoRoot, 'electron', 'main', 'marketing', 'knowledgeManager.ts')
+const knowledgeSrcPath = join(repoRoot, mkSrc('knowledgeManager.ts'))
 const parsersSrcPath = join(
   repoRoot,
-  anySrc(['electron/main/services/knowledge/parsers/documentParsers.ts', 'electron/main/marketing/parsers/documentParsers.ts'])
+  'electron/main/services/knowledge/parsers/documentParsers.ts'
 )
-const urlParserSrcPath = join(repoRoot, anySrc(['electron/main/services/knowledge/parsers/urlParser.ts', 'electron/main/marketing/parsers/urlParser.ts']))
-const pdfjsAssetsSrcPath = join(repoRoot, anySrc(['electron/main/services/knowledge/parsers/pdfjsAssets.ts', 'electron/main/marketing/parsers/pdfjsAssets.ts']))
+const urlParserSrcPath = join(repoRoot, 'electron/main/services/knowledge/parsers/urlParser.ts')
+const pdfjsAssetsSrcPath = join(repoRoot, 'electron/main/services/knowledge/parsers/pdfjsAssets.ts')
 
-const knowledgeBundlePath = bundleEntry('electron/main/marketing/knowledgeManager.ts', 'knowledge-manager.mjs', {
+const knowledgeBundlePath = bundleEntry(mkSrc('knowledgeManager.ts'), 'knowledge-manager.mjs', {
   externals: EXTERNALS
 })
-const projectBundlePath = bundleEntry('electron/main/marketing/projectManager.ts', 'project-manager-for-knowledge.mjs')
+const projectBundlePath = bundleEntry(mkSrc('projectManager.ts'), 'project-manager-for-knowledge.mjs')
 const databaseBundlePath = bundleEntry('electron/main/database/database.ts', 'knowledge-database.mjs')
 
 const knw = await import(pathToFileURL(knowledgeBundlePath).href)
@@ -728,7 +729,7 @@ try {
     )
 
     // 纯函数断言（离线）：URL 校验 + HTML→文本 + 编码解码
-    const urlMod = await import(pathToFileURL(bundleEntry(anySrc(['electron/main/services/knowledge/parsers/urlParser.ts', 'electron/main/marketing/parsers/urlParser.ts']), 'url-parser.mjs')).href)
+    const urlMod = await import(pathToFileURL(bundleEntry('electron/main/services/knowledge/parsers/urlParser.ts', 'url-parser.mjs')).href)
     assertEq(urlMod.assertImportableUrl(' https://a.com/x '), 'https://a.com/x', '应 trim 并接受 https')
     for (const bad of ['ftp://a/b', 'javascript:alert(1)', 'file:///c:/x', '不是URL', '']) {
       const res = await outcome(Promise.resolve().then(() => urlMod.assertImportableUrl(bad)))
@@ -748,7 +749,7 @@ try {
   // ── K17b 抓取 Content-Type 守卫 + 总时长总闸（2026-09-16 补强） ──
   await r.check('K17b', 'url 抓取：非文本 Content-Type 拒收（不把二进制当正文）+ 总时长总闸', async () => {
     const urlMod = await import(
-      pathToFileURL(bundleEntry(anySrc(['electron/main/services/knowledge/parsers/urlParser.ts', 'electron/main/marketing/parsers/urlParser.ts']), 'url-parser.mjs')).href
+      pathToFileURL(bundleEntry('electron/main/services/knowledge/parsers/urlParser.ts', 'url-parser.mjs')).href
     )
     // 纯函数：文本类型放行、缺 Content-Type 放行（老站点）、二进制类型拒收
     urlMod.assertSupportedContentType('text/html; charset=utf-8', 'https://a.com')
@@ -824,9 +825,9 @@ try {
     const mainSrc =
       readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8') +
       readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8') +
-      readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+      readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
 const pluginMainSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
-const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+const runtimeSrc = readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
     const storeSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'ui', 'store.ts'), 'utf-8')
     const storeCode = stripComments(storeSrc)
 
@@ -925,7 +926,7 @@ const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 
   // ── K20 pdfjs 资产就位 + 双路径解析 + 不被打包器静态引入 ──
   await r.check('K20', 'pdfjs 运行时资产就位（cmaps/standard_fonts/worker/本体）+ dev|打包双路径解析', async () => {
     const { resolvePdfjsAssets, resolveResourcesRoot, PDFJS_ASSETS_SUBDIR } = await import(
-      pathToFileURL(bundleEntry(anySrc(['electron/main/services/knowledge/parsers/pdfjsAssets.ts', 'electron/main/marketing/parsers/pdfjsAssets.ts']), 'pdfjs-assets.mjs')).href
+      pathToFileURL(bundleEntry('electron/main/services/knowledge/parsers/pdfjsAssets.ts', 'pdfjs-assets.mjs')).href
     )
     const dev = resolvePdfjsAssets({ isPackaged: false, appPath: 'C:\\repo', resourcesPath: 'C:\\ignored' })
     assertEq(dev.root, join('C:\\repo', 'resources', PDFJS_ASSETS_SUBDIR), 'dev 应取 app.getAppPath()/resources')

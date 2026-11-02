@@ -22,6 +22,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  mkSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -39,10 +40,10 @@ const backupDir = join(dataDir, 'backup')
 mkdirSync(runDir, { recursive: true })
 
 const repoRoot = join(__dirname, '..')
-const businessSrcPath = join(repoRoot, 'electron', 'main', 'marketing', 'businessManager.ts')
+const businessSrcPath = join(repoRoot, mkSrc('businessManager.ts'))
 
-const businessPath = bundleEntry('electron/main/marketing/businessManager.ts', 'businessManager.mjs')
-const projectPath = bundleEntry('electron/main/marketing/projectManager.ts', 'project-manager-for-business.mjs')
+const businessPath = bundleEntry(mkSrc('businessManager.ts'), 'businessManager.mjs')
+const projectPath = bundleEntry(mkSrc('projectManager.ts'), 'project-manager-for-business.mjs')
 const databasePath = bundleEntry('electron/main/database/database.ts', 'business-database.mjs')
 
 const bizMod = await import(pathToFileURL(businessPath).href)
@@ -492,9 +493,9 @@ try {
     const mainSrc =
       readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8') +
       readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8') +
-      readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+      readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
 const pluginMainSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
-const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+const runtimeSrc = readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
     const storeSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'ui', 'store.ts'), 'utf-8')
     const storeCode = stripComments(storeSrc)
 

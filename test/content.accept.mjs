@@ -35,6 +35,7 @@ import {
   assertDeepEq,
   assertEq,
   bundleEntry,
+  mkSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -54,20 +55,20 @@ mkdirSync(runDir, { recursive: true })
 
 const EXTERNALS = ['mammoth', 'exceljs']
 
-const contentPath = bundleEntry('electron/main/marketing/contentManager.ts', 'content-manager.mjs', {
+const contentPath = bundleEntry(mkSrc('contentManager.ts'), 'content-manager.mjs', {
   externals: EXTERNALS
 })
-const contextPath = bundleEntry('electron/main/marketing/contextEngine.ts', 'content-context-engine.mjs', {
+const contextPath = bundleEntry(mkSrc('contextEngine.ts'), 'content-context-engine.mjs', {
   externals: EXTERNALS
 })
 const gatewayPath = bundleEntry('electron/main/gatewayClient.ts', 'content-gateway-client.mjs')
-const businessPath = bundleEntry('electron/main/marketing/businessManager.ts', 'content-business-manager.mjs', {
+const businessPath = bundleEntry(mkSrc('businessManager.ts'), 'content-business-manager.mjs', {
   externals: EXTERNALS
 })
-const knowledgePath = bundleEntry('electron/main/marketing/knowledgeManager.ts', 'content-knowledge-manager.mjs', {
+const knowledgePath = bundleEntry(mkSrc('knowledgeManager.ts'), 'content-knowledge-manager.mjs', {
   externals: EXTERNALS
 })
-const projectPath = bundleEntry('electron/main/marketing/projectManager.ts', 'content-project-manager.mjs')
+const projectPath = bundleEntry(mkSrc('projectManager.ts'), 'content-project-manager.mjs')
 const databasePath = bundleEntry('electron/main/database/database.ts', 'content-database.mjs')
 
 const contentMod = await import(pathToFileURL(contentPath).href)
@@ -278,7 +279,7 @@ try {
   await r.check('C1', 'contentManager 可纯 Node import；缺依赖 VALIDATION_ERROR；不 import electron/不发 HTTP/不直写 SQL；三角度与护栏写死', async () => {
     assertEq(typeof createContentManager, 'function', '工厂导出')
     assertEq(typeof ContentManager, 'function', '类导出')
-    const src = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'contentManager.ts'), 'utf-8')
+    const src = readFileSync(join(repoRoot, mkSrc('contentManager.ts')), 'utf-8')
     const code = stripComments(src)
     assert(!/from\s*["']electron["']/.test(code), '不 import electron')
     assert(!/\bfetch\s*\(|node:(http|https|net)/.test(code), '不发 HTTP（出站只经 07）')
@@ -568,9 +569,9 @@ try {
     const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
     const mainSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8') +
   + readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
-  + readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+  + readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
 const pluginMainSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
-const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'runtime.ts'), 'utf-8')
+const runtimeSrc = readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
     const storeSrc = stripComments(readFileSync(join(repoRoot, 'plugins', 'marketing', 'ui', 'store.ts'), 'utf-8'))
     const vueSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'ui', 'pages', 'ContentCenter.vue'), 'utf-8')
     const routeSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'renderer.ts'), 'utf-8')

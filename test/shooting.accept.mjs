@@ -31,6 +31,7 @@ import {
   assertDeepEq,
   assertEq,
   bundleEntry,
+  mkSrc,
   printResult,
   resolveNodePath,
   writeJson,
@@ -50,21 +51,21 @@ mkdirSync(runDir, { recursive: true })
 
 const EXTERNALS = ['mammoth', 'exceljs']
 
-const contentPath = bundleEntry('electron/main/marketing/contentManager.ts', 'shoot-content-manager.mjs', {
+const contentPath = bundleEntry(mkSrc('contentManager.ts'), 'shoot-content-manager.mjs', {
   externals: EXTERNALS
 })
-const purePath = bundleEntry('electron/main/marketing/shootingScript.ts', 'shooting-pure.mjs')
-const contextPath = bundleEntry('electron/main/marketing/contextEngine.ts', 'shoot-context-engine.mjs', {
+const purePath = bundleEntry(mkSrc('shootingScript.ts'), 'shooting-pure.mjs')
+const contextPath = bundleEntry(mkSrc('contextEngine.ts'), 'shoot-context-engine.mjs', {
   externals: EXTERNALS
 })
 const gatewayPath = bundleEntry('electron/main/gatewayClient.ts', 'shoot-gateway-client.mjs')
-const businessPath = bundleEntry('electron/main/marketing/businessManager.ts', 'shoot-business-manager.mjs', {
+const businessPath = bundleEntry(mkSrc('businessManager.ts'), 'shoot-business-manager.mjs', {
   externals: EXTERNALS
 })
-const knowledgePath = bundleEntry('electron/main/marketing/knowledgeManager.ts', 'shoot-knowledge-manager.mjs', {
+const knowledgePath = bundleEntry(mkSrc('knowledgeManager.ts'), 'shoot-knowledge-manager.mjs', {
   externals: EXTERNALS
 })
-const projectPath = bundleEntry('electron/main/marketing/projectManager.ts', 'shoot-project-manager.mjs')
+const projectPath = bundleEntry(mkSrc('projectManager.ts'), 'shoot-project-manager.mjs')
 const databasePath = bundleEntry('electron/main/database/database.ts', 'shoot-database.mjs')
 
 const contentMod = await import(pathToFileURL(contentPath).href)
@@ -258,7 +259,7 @@ try {
 
   // ── S1 纯模块 ──
   await r.check('S1', 'shootingScript：无 electron/HTTP；提取/解析/校验/序列化/渲染/推导/归一/契约', async () => {
-    const src = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'shootingScript.ts'), 'utf8')
+    const src = readFileSync(join(repoRoot, mkSrc('shootingScript.ts')), 'utf8')
     const code = stripComments(src)
     assert(!/from\s*["']electron["']/.test(code), '不 import electron')
     assert(!/\bfetch\s*\(|node:(http|https|net)/.test(code), '不发 HTTP')
@@ -569,7 +570,7 @@ try {
     assert(preSrc.includes('businessLine?: string | null'), 'preload 含 businessLine')
     const channelCount = (ipcSrc.match(/marketing:content:[a-z:]+/g) ?? []).filter((v, i, a) => a.indexOf(v) === i)
     assertEq(channelCount.length, 9, '仍是 9 通道（不新增）')
-    const mgrSrc = stripComments(readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'contentManager.ts'), 'utf8'))
+    const mgrSrc = stripComments(readFileSync(join(repoRoot, mkSrc('contentManager.ts')), 'utf8'))
     assert(!/from\s*["']electron["']/.test(mgrSrc), 'manager 不 import electron')
     return '静态契约一致 ✓'
   })

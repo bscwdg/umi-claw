@@ -30,6 +30,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  mkSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -49,12 +50,12 @@ mkdirSync(runDir, { recursive: true })
 const repoRoot = join(__dirname, '..')
 const EXTERNALS = ['mammoth', 'exceljs']
 
-const scorePath = bundleEntry('electron/main/marketing/hotScoreManager.ts', 'score-manager.mjs', { externals: EXTERNALS })
-const hotManagerPath = bundleEntry('electron/main/marketing/hotManager.ts', 'score-hot-manager.mjs')
-const contextPath = bundleEntry('electron/main/marketing/contextEngine.ts', 'score-context-engine.mjs', { externals: EXTERNALS })
-const businessPath = bundleEntry('electron/main/marketing/businessManager.ts', 'score-business-manager.mjs', { externals: EXTERNALS })
-const knowledgePath = bundleEntry('electron/main/marketing/knowledgeManager.ts', 'score-knowledge-manager.mjs', { externals: EXTERNALS })
-const projectPath = bundleEntry('electron/main/marketing/projectManager.ts', 'score-project-manager.mjs')
+const scorePath = bundleEntry(mkSrc('hotScoreManager.ts'), 'score-manager.mjs', { externals: EXTERNALS })
+const hotManagerPath = bundleEntry(mkSrc('hotManager.ts'), 'score-hot-manager.mjs')
+const contextPath = bundleEntry(mkSrc('contextEngine.ts'), 'score-context-engine.mjs', { externals: EXTERNALS })
+const businessPath = bundleEntry(mkSrc('businessManager.ts'), 'score-business-manager.mjs', { externals: EXTERNALS })
+const knowledgePath = bundleEntry(mkSrc('knowledgeManager.ts'), 'score-knowledge-manager.mjs', { externals: EXTERNALS })
+const projectPath = bundleEntry(mkSrc('projectManager.ts'), 'score-project-manager.mjs')
 const databasePath = bundleEntry('electron/main/database/database.ts', 'score-database.mjs')
 
 const scoreMod = await import(pathToFileURL(scorePath).href)
@@ -403,13 +404,13 @@ try {
     for (const src of [ipcSrc, preloadSrc]) {
       assert(src.includes('marketing:hot:score'), '通道 marketing:hot:score：' + (src === ipcSrc ? 'ipc' : 'preload'))
     }
-    const mgrSrc = read('electron/main/marketing/hotScoreManager.ts')
+    const mgrSrc = read(mkSrc('hotScoreManager.ts'))
     assert(!/from 'electron'/.test(mgrSrc), 'scoreManager 不 import electron')
     assert(!/globalThis[.]fetch|child_process|INSERT INTO|prepare[(]/.test(mgrSrc), 'scoreManager 不发裸 HTTP/不 spawn/不直写 SQL')
     assert(mgrSrc.includes('createChatStream') && mgrSrc.includes('hot-score-'), '评分走 SSE 独立会话（防 120s 整体超时、不污染 Advisor 历史）')
     assert(mgrSrc.includes('资料不足') && mgrSrc.includes('JSON 数组'), '事实护栏 + JSON 契约在 prompt')
     assert(mgrSrc.includes("origin !== 'calendar'"), '日历节点不评分')
-    const hotSrc = read('electron/main/marketing/hotManager.ts')
+    const hotSrc = read(mkSrc('hotManager.ts'))
     assert(!hotSrc.includes('gatewayClient') && !hotSrc.includes('createChatStream'), '边界：hotManager 源码不引用 Gateway（采集独立于 AI）')
 
     // 4.0 合并：营销域 11 表 schema 独立在 db-worker-marketing.mjs（work 的 db-worker.mjs 只有 8 表）
@@ -435,7 +436,7 @@ try {
     assert(viewSrc.includes('windowHours'), '视图 windowHours 透传 listRadar')
 
     // 复审 6/8：分页/排序单一真相 hotShared
-    const sharedSrc = read('electron/main/marketing/hotShared.ts')
+    const sharedSrc = read(mkSrc('hotShared.ts'))
     assert(sharedSrc.includes('listAllRows') && sharedSrc.includes('compareHeatRank'), 'hotShared 导出分页/排序共用件')
     assert(mgrSrc.includes("from './hotShared'") && hotSrc.includes("from './hotShared'"), '两个 manager 都 import hotShared')
     assert(!mgrSrc.includes('private async listAllRows'), 'scoreManager 不再私藏分页实现')
