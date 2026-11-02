@@ -1300,3 +1300,22 @@ getModelPresetsInfo/openDataDir；save/reset 共用 `toSaveResult`（剥 4 个�
 - 盲区：配置保存/重置的状态透出仍无行为级测试（config.ts 纯模块，可 fake registrar 补，
   与前两批一起登记为 P45）；寄存器装配层无行为测试
 - 行数：index 2,287（差 487 到 1,800）；剩余 20 个 handle（claw 7/env 7/term 5/test-connection 1）
+
+### W5-a · 第四批（claw 7 + test-connection 1）
+
+`ipc/host/claw.ts`（start/stop/restart/status/waitReady/openWeb/get-token）与
+`ipc/host/modelConnection.ts`（test-connection）拆出，共 **8 个通道**：
+
+- 安全约束原样保留：start/restart 两处都有 consent 闸门 + envUpdateInFlight 拒绝；
+  get-token 只扫 3 条标准路径（configDir → ~/.openclaw → dataDir/openclaw），
+  **token 只进返回值，日志只打路径/失败消息**
+- test-connection 的 URL 拼接 / 默认 900s / 上限 86400 / HTTP 状态 / 超时分类逐字等价
+- handler 20 → 12（19+11+3+8+7+1+12=61 守恒）；index 2,287 → 2,162；宿主 27,302
+- **已知细节差异（非回退，记录在案）**：① claw:openWeb 现在返回 Promise（旧 undefined，
+  renderer 是 fire-and-forget）；② test-connection apiKey 缺失时头从 `Bearer undefined`
+  变 `Bearer `（两边都无效）；③ get-token 失败日志 console.error→console.log、错误消息加 `?? String(err)`
+- 测试：ui U19 改读 `ipc/host/claw.ts` 作主进程接线断言；P44 加 claw 7 + test-connection
+  通道/残留/守恒断言（61 实测一致）
+- 盲区：两文件都是纯模块（claw 仅依赖 node:path、modelConnection 零依赖），可 fake
+  registrar + fake deps/fetch 做行为断言（P45 待补）
+- 行数：index 2,162（差 362）；剩余 12 个 handle（env 7 / term 5）
