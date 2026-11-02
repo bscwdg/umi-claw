@@ -25,6 +25,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  workSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -43,13 +44,13 @@ const repoRoot = join(__dirname, '..')
 
 // ── bundle ──
 const dbBundled = bundleEntry('electron/main/database/database.ts', 'ctx-database.mjs')
-const engineBundled = bundleEntry('electron/main/work/contextEngine.ts', 'ctx-engine.mjs')
-const managerBundled = bundleEntry('electron/main/work/contextManager.ts', 'ctx-manager.mjs')
+const engineBundled = bundleEntry(workSrc('contextEngine.ts'), 'ctx-engine.mjs')
+const managerBundled = bundleEntry(workSrc('contextManager.ts'), 'ctx-manager.mjs')
 // profileManager / matterManager / todoManager / recordManager 用于造数据
-const profileBundled = bundleEntry('electron/main/work/profileManager.ts', 'ctx-profile.mjs')
-const matterBundled = bundleEntry('electron/main/work/matterManager.ts', 'ctx-matter.mjs')
-const todoBundled = bundleEntry('electron/main/work/todoManager.ts', 'ctx-todo.mjs')
-const recordBundled = bundleEntry('electron/main/work/recordManager.ts', 'ctx-record.mjs')
+const profileBundled = bundleEntry(workSrc('profileManager.ts'), 'ctx-profile.mjs')
+const matterBundled = bundleEntry(workSrc('matterManager.ts'), 'ctx-matter.mjs')
+const todoBundled = bundleEntry(workSrc('todoManager.ts'), 'ctx-todo.mjs')
+const recordBundled = bundleEntry(workSrc('recordManager.ts'), 'ctx-record.mjs')
 
 const dbMod = await import(pathToFileURL(dbBundled).href)
 const engineMod = await import(pathToFileURL(engineBundled).href)

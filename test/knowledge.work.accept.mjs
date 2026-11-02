@@ -22,7 +22,8 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   Recorder, __dirname, assert, assertEq, bundleEntry, printResult,
-  resolveNodePath, sleep, tmpDir, workerScriptPath, writeJson
+  resolveNodePath, sleep, tmpDir, workerScriptPath, writeJson,
+  workSrc
 } from './_lib.mjs'
 import { buildMinimalPdf } from './fixtures/make-minimal-pdf.mjs'
 
@@ -36,7 +37,7 @@ const samplesDir = join(runDir, 'samples')
 mkdirSync(samplesDir, { recursive: true })
 
 const dbB = bundleEntry('electron/main/database/database.ts', 'kn-database.mjs')
-const knowledgeB = bundleEntry('electron/main/work/knowledgeManager.ts', 'kn-manager.mjs', {
+const knowledgeB = bundleEntry(workSrc('knowledgeManager.ts'), 'kn-manager.mjs', {
   externals: ['mammoth', 'exceljs']
 })
 

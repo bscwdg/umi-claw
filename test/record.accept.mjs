@@ -26,6 +26,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  workSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -45,8 +46,8 @@ const repoRoot = join(__dirname, '..')
 
 // ── bundle 真源码 ─────────────────────────────────────────────────────────────
 const dbBundled = bundleEntry('electron/main/database/database.ts', 'rec-database.mjs')
-const recordBundled = bundleEntry('electron/main/work/recordManager.ts', 'rec-record.mjs')
-const matterBundled = bundleEntry('electron/main/work/matterManager.ts', 'rec-matter.mjs')
+const recordBundled = bundleEntry(workSrc('recordManager.ts'), 'rec-record.mjs')
+const matterBundled = bundleEntry(workSrc('matterManager.ts'), 'rec-matter.mjs')
 
 const dbMod = await import(pathToFileURL(dbBundled).href)
 const recordMod = await import(pathToFileURL(recordBundled).href)

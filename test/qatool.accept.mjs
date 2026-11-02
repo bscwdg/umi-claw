@@ -28,6 +28,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  workSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -46,12 +47,12 @@ mkdirSync(runDir, { recursive: true })
 
 const dbB = bundleEntry('electron/main/database/database.ts', 'qt-database.mjs')
 const gwB = bundleEntry('electron/main/gatewayClient.ts', 'qt-gateway.mjs')
-const engineB = bundleEntry('electron/main/work/contextEngine.ts', 'qt-engine.mjs')
-const recordB = bundleEntry('electron/main/work/recordManager.ts', 'qt-record.mjs')
-const todoB = bundleEntry('electron/main/work/todoManager.ts', 'qt-todo.mjs')
-const qaB = bundleEntry('electron/main/work/qaManager.ts', 'qt-qa.mjs')
-const toolB = bundleEntry('electron/main/work/toolManager.ts', 'qt-tool.mjs')
-const ctxB = bundleEntry('electron/main/work/contextManager.ts', 'qt-ctxmgr.mjs')
+const engineB = bundleEntry(workSrc('contextEngine.ts'), 'qt-engine.mjs')
+const recordB = bundleEntry(workSrc('recordManager.ts'), 'qt-record.mjs')
+const todoB = bundleEntry(workSrc('todoManager.ts'), 'qt-todo.mjs')
+const qaB = bundleEntry(workSrc('qaManager.ts'), 'qt-qa.mjs')
+const toolB = bundleEntry(workSrc('toolManager.ts'), 'qt-tool.mjs')
+const ctxB = bundleEntry(workSrc('contextManager.ts'), 'qt-ctxmgr.mjs')
 
 const { DatabaseClient } = await import(pathToFileURL(dbB).href)
 const { createGatewayClient, GATEWAY_ENDPOINTS } = await import(pathToFileURL(gwB).href)

@@ -23,6 +23,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  workSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -42,9 +43,9 @@ const repoRoot = join(__dirname, '..')
 
 // ── bundle 真源码 ─────────────────────────────────────────────────────────────
 const dbPathBundled = bundleEntry('electron/main/database/database.ts', 'work-database.mjs')
-const profilePath = bundleEntry('electron/main/work/profileManager.ts', 'work-profile.mjs')
-const matterPath = bundleEntry('electron/main/work/matterManager.ts', 'work-matter.mjs')
-const todoPath = bundleEntry('electron/main/work/todoManager.ts', 'work-todo.mjs')
+const profilePath = bundleEntry(workSrc('profileManager.ts'), 'work-profile.mjs')
+const matterPath = bundleEntry(workSrc('matterManager.ts'), 'work-matter.mjs')
+const todoPath = bundleEntry(workSrc('todoManager.ts'), 'work-todo.mjs')
 
 const dbMod = await import(pathToFileURL(dbPathBundled).href)
 const profileMod = await import(pathToFileURL(profilePath).href)

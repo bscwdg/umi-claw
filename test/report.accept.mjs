@@ -24,6 +24,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  workSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -42,8 +43,8 @@ mkdirSync(runDir, { recursive: true })
 // ── bundle 真源码 ──
 const dbB = bundleEntry('electron/main/database/database.ts', 'rep-database.mjs')
 const gwB = bundleEntry('electron/main/gatewayClient.ts', 'rep-gateway.mjs')
-const engineB = bundleEntry('electron/main/work/contextEngine.ts', 'rep-engine.mjs')
-const reportB = bundleEntry('electron/main/work/reportManager.ts', 'rep-report.mjs')
+const engineB = bundleEntry(workSrc('contextEngine.ts'), 'rep-engine.mjs')
+const reportB = bundleEntry(workSrc('reportManager.ts'), 'rep-report.mjs')
 
 const dbMod = await import(pathToFileURL(dbB).href)
 const gwMod = await import(pathToFileURL(gwB).href)

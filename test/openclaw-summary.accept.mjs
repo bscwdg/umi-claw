@@ -29,6 +29,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  workSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -47,13 +48,13 @@ const { DatabaseClient } = await import(
   pathToFileURL(bundleEntry('electron/main/database/database.ts', 'os-database.mjs')).href
 )
 const { createRecordManager } = await import(
-  pathToFileURL(bundleEntry('electron/main/work/recordManager.ts', 'os-record.mjs')).href
+  pathToFileURL(bundleEntry(workSrc('recordManager.ts'), 'os-record.mjs')).href
 )
 const summaryMod = await import(
-  pathToFileURL(bundleEntry('electron/main/work/openclawSummaryManager.ts', 'os-summary.mjs')).href
+  pathToFileURL(bundleEntry(workSrc('openclawSummaryManager.ts'), 'os-summary.mjs')).href
 )
 const reminderMod = await import(
-  pathToFileURL(bundleEntry('electron/main/work/reminderManager.ts', 'os-reminder.mjs')).href
+  pathToFileURL(bundleEntry(workSrc('reminderManager.ts'), 'os-reminder.mjs')).href
 )
 const { createOpenClawSummaryManager, MAX_AUTO_ATTEMPTS_PER_DAY, AUTO_RETRY_GAP_MS } = summaryMod
 const { createReminderManager, SUMMARY_LEAD_MS } = reminderMod

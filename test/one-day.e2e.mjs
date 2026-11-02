@@ -22,7 +22,8 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   Recorder, __dirname, assert, assertEq, bundleEntry, printResult,
-  resolveNodePath, sleep, tmpDir, workerScriptPath, writeJson
+  resolveNodePath, sleep, tmpDir, workerScriptPath, writeJson,
+  workSrc
 } from './_lib.mjs'
 
 const nodePath = resolveNodePath()
@@ -35,20 +36,20 @@ mkdirSync(join(runDir, 'samples'), { recursive: true })
 const bundles = {}
 bundles.db = bundleEntry('electron/main/database/database.ts', 'day-database.mjs')
 bundles.gw = bundleEntry('electron/main/gatewayClient.ts', 'day-gateway.mjs')
-bundles.engine = bundleEntry('electron/main/work/contextEngine.ts', 'day-engine.mjs')
-bundles.profile = bundleEntry('electron/main/work/profileManager.ts', 'day-profile.mjs')
-bundles.matter = bundleEntry('electron/main/work/matterManager.ts', 'day-matter.mjs')
-bundles.todo = bundleEntry('electron/main/work/todoManager.ts', 'day-todo.mjs')
-bundles.record = bundleEntry('electron/main/work/recordManager.ts', 'day-record.mjs')
-bundles.report = bundleEntry('electron/main/work/reportManager.ts', 'day-report.mjs')
-bundles.qa = bundleEntry('electron/main/work/qaManager.ts', 'day-qa.mjs')
-bundles.tool = bundleEntry('electron/main/work/toolManager.ts', 'day-tool.mjs')
-bundles.knowledge = bundleEntry('electron/main/work/knowledgeManager.ts', 'day-knowledge.mjs', {
+bundles.engine = bundleEntry(workSrc('contextEngine.ts'), 'day-engine.mjs')
+bundles.profile = bundleEntry(workSrc('profileManager.ts'), 'day-profile.mjs')
+bundles.matter = bundleEntry(workSrc('matterManager.ts'), 'day-matter.mjs')
+bundles.todo = bundleEntry(workSrc('todoManager.ts'), 'day-todo.mjs')
+bundles.record = bundleEntry(workSrc('recordManager.ts'), 'day-record.mjs')
+bundles.report = bundleEntry(workSrc('reportManager.ts'), 'day-report.mjs')
+bundles.qa = bundleEntry(workSrc('qaManager.ts'), 'day-qa.mjs')
+bundles.tool = bundleEntry(workSrc('toolManager.ts'), 'day-tool.mjs')
+bundles.knowledge = bundleEntry(workSrc('knowledgeManager.ts'), 'day-knowledge.mjs', {
   externals: ['mammoth', 'exceljs']
 })
-bundles.wizard = bundleEntry('electron/main/work/wizardManager.ts', 'day-wizard.mjs')
-bundles.ctxMgr = bundleEntry('electron/main/work/contextManager.ts', 'day-ctxmgr.mjs')
-bundles.reminder = bundleEntry('electron/main/work/reminderManager.ts', 'day-reminder.mjs')
+bundles.wizard = bundleEntry(workSrc('wizardManager.ts'), 'day-wizard.mjs')
+bundles.ctxMgr = bundleEntry(workSrc('contextManager.ts'), 'day-ctxmgr.mjs')
+bundles.reminder = bundleEntry(workSrc('reminderManager.ts'), 'day-reminder.mjs')
 
 async function imp(key) {
   return import(pathToFileURL(bundles[key]).href)

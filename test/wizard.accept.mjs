@@ -23,7 +23,8 @@ import { pathToFileURL } from 'node:url'
 import { execFile as execFileCb } from 'node:child_process'
 import {
   Recorder, __dirname, assert, assertEq, bundleEntry, printResult,
-  resolveNodePath, sleep, tmpDir, workerScriptPath, writeJson
+  resolveNodePath, sleep, tmpDir, workerScriptPath, writeJson,
+  workSrc
 } from './_lib.mjs'
 
 const nodePath = resolveNodePath()
@@ -35,9 +36,9 @@ const legacyDir = join(runDir, 'legacy2', 'data')
 mkdirSync(legacyDir, { recursive: true })
 
 const dbB = bundleEntry('electron/main/database/database.ts', 'wz-database.mjs')
-const wizardB = bundleEntry('electron/main/work/wizardManager.ts', 'wz-wizard.mjs')
-const reminderB = bundleEntry('electron/main/work/reminderManager.ts', 'wz-reminder.mjs')
-const todoB = bundleEntry('electron/main/work/todoManager.ts', 'wz-todo.mjs')
+const wizardB = bundleEntry(workSrc('wizardManager.ts'), 'wz-wizard.mjs')
+const reminderB = bundleEntry(workSrc('reminderManager.ts'), 'wz-reminder.mjs')
+const todoB = bundleEntry(workSrc('todoManager.ts'), 'wz-todo.mjs')
 
 const { DatabaseClient } = await import(pathToFileURL(dbB).href)
 const wizardMod = await import(pathToFileURL(wizardB).href)

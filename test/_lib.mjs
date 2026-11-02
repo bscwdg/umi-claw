@@ -69,11 +69,11 @@ export function domainSrc(pluginId, relPath) {
  * 候选顺序：搬家后的 plugins/<id>/main/<rel> → 搬家前的 electron/main/<rel>。
  */
 export function workSrc(rel) {
-  return anySrc([`plugins/work/main/${rel}`, `electron/main/${rel}`])
+  return anySrc([`plugins/work/main/${rel}`, `electron/main/work/${rel}`])
 }
 
 export function mkSrc(rel) {
-  return anySrc([`plugins/marketing/main/${rel}`, `electron/main/${rel}`])
+  return anySrc([`plugins/marketing/main/${rel}`, `electron/main/marketing/${rel}`])
 }
 
 export function anySrc(candidates) {

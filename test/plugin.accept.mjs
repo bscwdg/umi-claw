@@ -17,6 +17,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  workSrc,
   printResult,
   writeJson,
   __dirname,
@@ -695,7 +696,7 @@ const genericImportMod = await import(
 )
 
 const migrateMod = await import(
-  pathToFileURL(bundleEntry('electron/main/work/migrate.ts', 'work-migrate.mjs')).href
+  pathToFileURL(bundleEntry(workSrc('migrate.ts'), 'work-migrate.mjs')).href
 )
 
 await r.check('P25', 'schema 解析：从 hello 的 migrations 推出表/列/主键/目标版本', async () => {

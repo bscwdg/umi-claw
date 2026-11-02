@@ -25,6 +25,7 @@ import {
   assert,
   assertEq,
   bundleEntry,
+  workSrc,
   printResult,
   resolveNodePath,
   sleep,
@@ -42,9 +43,9 @@ mkdirSync(runDir, { recursive: true })
 
 // ── bundle ──
 const dbBundled = bundleEntry('electron/main/database/database.ts', 'tod-database.mjs')
-const routerBundled = bundleEntry('electron/main/work/routerManager.ts', 'tod-router.mjs')
-const todayBundled = bundleEntry('electron/main/work/todayManager.ts', 'tod-today.mjs')
-const todoBundled = bundleEntry('electron/main/work/todoManager.ts', 'tod-todo.mjs')
+const routerBundled = bundleEntry(workSrc('routerManager.ts'), 'tod-router.mjs')
+const todayBundled = bundleEntry(workSrc('todayManager.ts'), 'tod-today.mjs')
+const todoBundled = bundleEntry(workSrc('todoManager.ts'), 'tod-todo.mjs')
 
 const dbMod = await import(pathToFileURL(dbBundled).href)
 const routerMod = await import(pathToFileURL(routerBundled).href)
