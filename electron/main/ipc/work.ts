@@ -16,26 +16,26 @@
 
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { toErrorEnvelope, type ErrorEnvelope } from '../services/errors'
-import type { ProfileManager, UpdateProfileInput } from '../work/profileManager'
-import type { CreateMatterInput, MatterManager, UpdateMatterInput } from '../work/matterManager'
-import type { CreateTodoInput, ListTodosParams, TodoManager, UpdateTodoInput } from '../work/todoManager'
+import type { ProfileManager, UpdateProfileInput } from '../../../plugins/work/domain/profileManager'
+import type { CreateMatterInput, MatterManager, UpdateMatterInput } from '../../../plugins/work/domain/matterManager'
+import type { CreateTodoInput, ListTodosParams, TodoManager, UpdateTodoInput } from '../../../plugins/work/domain/todoManager'
 import type {
   CreateRecordInput,
   ListRecordsParams,
   ProposeCandidateInput,
   RecordManager,
   UpdateRecordInput
-} from '../work/recordManager'
-import type { ContextManager, SnapshotRequest } from '../work/contextManager'
-import type { RouterManager } from '../work/routerManager'
-import type { TodayManager } from '../work/todayManager'
-import type { ReportManager } from '../work/reportManager'
-import type { QaManager } from '../work/qaManager'
-import type { ToolManager } from '../work/toolManager'
-import type { KnowledgeManager } from '../work/knowledgeManager'
-import type { WizardManager } from '../work/wizardManager'
-import type { ReminderManager, ReminderId, PushChannel } from '../work/reminderManager'
-import type { OpenClawSummaryManager } from '../work/openclawSummaryManager'
+} from '../../../plugins/work/domain/recordManager'
+import type { ContextManager, SnapshotRequest } from '../../../plugins/work/domain/contextManager'
+import type { RouterManager } from '../../../plugins/work/domain/routerManager'
+import type { TodayManager } from '../../../plugins/work/domain/todayManager'
+import type { ReportManager } from '../../../plugins/work/domain/reportManager'
+import type { QaManager } from '../../../plugins/work/domain/qaManager'
+import type { ToolManager } from '../../../plugins/work/domain/toolManager'
+import type { KnowledgeManager } from '../../../plugins/work/domain/knowledgeManager'
+import type { WizardManager } from '../../../plugins/work/domain/wizardManager'
+import type { ReminderManager, ReminderId, PushChannel } from '../../../plugins/work/domain/reminderManager'
+import type { OpenClawSummaryManager } from '../../../plugins/work/domain/openclawSummaryManager'
 import { forwardGatewayStream } from '../gatewayClient'
 
 /** IPC 统一返回信封（§14.2） */

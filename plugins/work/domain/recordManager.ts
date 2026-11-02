@@ -19,7 +19,7 @@
 //
 // 设计约束：本模块**不 import electron**，依赖注入，可在纯 Node 下测试。
 
-import { AppError, ERROR_CODES } from '../services/errors'
+import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
 import type { WorkDatabase } from './database'
 import { dateOf, normalizeDate } from './todoManager'
 

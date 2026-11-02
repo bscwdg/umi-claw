@@ -8,11 +8,11 @@
 //
 // 本模块不 import electron；DB / ContextEngine / GatewayClient 注入，纯 Node 可测。
 
-import { AppError, ERROR_CODES } from '../services/errors'
+import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
 import type { WorkDatabase } from './database'
 import { type ContextEngine, type ContextPack, type SnapshotScope, renderContextPackText } from './contextEngine'
 import { toView } from './contextManager'
-import type { GatewayClient, GatewayStreamHandle } from '../gatewayClient'
+import type { GatewayClient, GatewayStreamHandle } from '../../../electron/main/gatewayClient'
 
 /** QA 会话键（长期、滚动摘要，§6.4） */
 export const QA_CONVERSATION_KEY = 'conv:work:qa'

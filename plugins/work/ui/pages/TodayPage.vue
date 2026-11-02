@@ -168,8 +168,8 @@ import { workApi } from '../../../shared/hostBridge'
 /** 桥接层是 any 结构，这里只声明本页用到的字段（状态机在 openclawSummaryManager 里） */
 type SummaryRunToday = () => Promise<{ date: string; proposed: number; empty: boolean }>
 import { useRouter } from 'vue-router'
-import type { TodayView } from '../../../../electron/main/work/todayManager'
-import type { SummaryStatus } from '../../../../electron/main/work/openclawSummaryManager'
+import type { TodayView } from '../../domain/todayManager'
+import type { SummaryStatus } from '../../domain/openclawSummaryManager'
 import { useToast } from '@/composables/useToast'
 
 const router = useRouter()

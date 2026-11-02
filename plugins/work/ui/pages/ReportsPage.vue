@@ -117,7 +117,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { workApi } from '../../../shared/hostBridge'
 import { useRoute, useRouter } from 'vue-router'
-import type { ReportDetail, ReportSummary } from '../../../../electron/main/work/reportManager'
+import type { ReportDetail, ReportSummary } from '../../domain/reportManager'
 import { useWorkStream } from '@/composables/useWorkStream'
 import { useToast } from '@/composables/useToast'
 

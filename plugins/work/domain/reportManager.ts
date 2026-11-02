@@ -9,7 +9,7 @@
 //
 // 本模块不 import electron；DB / ContextEngine / GatewayClient 全注入，纯 Node 可测。
 
-import { AppError, ERROR_CODES } from '../services/errors'
+import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
 import type { WorkDatabase } from './database'
 import {
   type ContextEngine,
@@ -24,7 +24,7 @@ import {
   type FactMatterInfo,
   type FactRecord
 } from './factAggregator'
-import type { GatewayClient, GatewayStreamHandle } from '../gatewayClient'
+import type { GatewayClient, GatewayStreamHandle } from '../../../electron/main/gatewayClient'
 import { dateOf, normalizeDate } from './todoManager'
 import { addDays } from './contextEngine'
 

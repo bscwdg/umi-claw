@@ -23,13 +23,13 @@
 // 本模块**不 import electron、不做 HTTP、不碰 GATEWAY_TOKEN**；只通过注入的 DatabaseClient 读库，
 // 因此纯 Node 可 bundle 测试。
 
-import { AppError, ERROR_CODES } from '../services/errors'
+import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
 import type { WorkDatabase } from './database'
 import { dateOf, normalizeDate } from './todoManager'
-import { estimateTokens, sliceToTokenBudget } from '../services/context/tokens'
-import { assembleLoop } from '../services/context/assemble'
+import { estimateTokens, sliceToTokenBudget } from '../../../electron/main/services/context/tokens'
+import { assembleLoop } from '../../../electron/main/services/context/assemble'
 export { estimateTokens, sliceToTokenBudget }
-import { shortTitle } from '../services/context/pack'
+import { shortTitle } from '../../../electron/main/services/context/pack'
 
 import {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
@@ -38,8 +38,8 @@ import {
   KNOWLEDGE_ITEM_MIN_TOKENS,
   ITEM_TRUNCATE_MARKER,
   DROPPED_TITLES_SHOWN,
-} from '../services/context/limits'
-export { DROPPED_TITLE_MAX_CHARS } from '../services/context/limits'
+} from '../../../electron/main/services/context/limits'
+export { DROPPED_TITLE_MAX_CHARS } from '../../../electron/main/services/context/limits'
 export {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
   MIN_CONTEXT_WINDOW_TOKENS,

@@ -690,8 +690,8 @@ function resourcesRoot(): string {
  * 版本隔离：1.0 = %APPDATA%/umi-claw/data；2.0 = %APPDATA%/<2.0 dir>/data；
  * 便携态旧库在各自安装目录的 data/。这里只判断 db 文件是否存在，不打开。
  */
-function locateLegacyDbs(currentDataDir: string): import('./work/wizardManager').OldDbInfo[] {
-  const out: import('./work/wizardManager').OldDbInfo[] = []
+function locateLegacyDbs(currentDataDir: string): import('../../plugins/work/domain/wizardManager').OldDbInfo[] {
+  const out: import('../../plugins/work/domain/wizardManager').OldDbInfo[] = []
 
   const candidates: Array<{ version: '1.0' | '2.0'; dir: string }> = []
   // 1.0 固定 appData 名
@@ -725,8 +725,8 @@ function locateLegacyDbs(currentDataDir: string): import('./work/wizardManager')
  * 失败（退出码非0）一律抛错，绝不静默当成功（硬规则 17）。
  */
 function readLegacyDb(
-  info: import('./work/wizardManager').OldDbInfo
-): Promise<import('./work/wizardManager').OldDbMapping> {
+  info: import('../../plugins/work/domain/wizardManager').OldDbInfo
+): Promise<import('../../plugins/work/domain/wizardManager').OldDbMapping> {
   return new Promise((resolve, reject) => {
     const nodePath = configManager.getNodePath()
     const script = join(resourcesRoot(), 'database', 'read-old-db.mjs')
@@ -774,7 +774,7 @@ function asString(v: unknown): string | undefined {
  */
 function showReminderNotification(
   id: string,
-  payload: import('./work/reminderManager').ReminderPayload
+  payload: import('../../plugins/work/domain/reminderManager').ReminderPayload
 ): void {
   // 本机通知现在是**必达主通道**（待办到点提醒不看外发配置），所以这里必须**不抛**：
   // 抛出去会被 reminderManager 的逐条兜底当成「未消费」→ 每 30s 重试一次，
@@ -841,8 +841,8 @@ async function triggerVoiceAutoSpeak(text: string, eventId?: string): Promise<vo
  */
 function pushReminderMessage(
   dest: { channel: string; target: string },
-  payload: import('./work/reminderManager').ReminderPayload
-): Promise<import('./work/reminderManager').PushResult> {
+  payload: import('../../plugins/work/domain/reminderManager').ReminderPayload
+): Promise<import('../../plugins/work/domain/reminderManager').PushResult> {
   return new Promise((resolve) => {
     const dataDir = configManager.getDataDir()
     const nodePath = configManager.getNodePath()
@@ -878,7 +878,7 @@ function pushReminderMessage(
  * - dingtalk：OpenClaw 无实现，永远 supported=false（仅用于提示）
  */
 async function listPushChannelOptions(): Promise<
-  import('./work/reminderManager').PushChannelOption[]
+  import('../../plugins/work/domain/reminderManager').PushChannelOption[]
 > {
   const appCfg = configManager.getConfig()
   const uiChannels = (appCfg.channels ?? {}) as Record<string, Record<string, unknown> | undefined>
@@ -919,7 +919,7 @@ async function listPushChannelOptions(): Promise<
  */
 async function listPushTargetOptions(
   channel: string
-): Promise<import('./work/reminderManager').PushTargetOption[]> {
+): Promise<import('../../plugins/work/domain/reminderManager').PushTargetOption[]> {
   const dataDir = configManager.getDataDir()
   const nodePath = configManager.getNodePath()
   if (!existsSync(nodePath)) return []
@@ -972,7 +972,7 @@ async function listPushTargetOptions(
           const raw = JSON.parse(String(stdout || '[]')) as Array<Record<string, unknown>>
           // 去重（同一目标可能出现在多个 agent 库），保留最新
           const seen = new Set<string>()
-          const out: import('./work/reminderManager').PushTargetOption[] = []
+          const out: import('../../plugins/work/domain/reminderManager').PushTargetOption[] = []
           for (const r of raw) {
             const target = String(r.delivery_target ?? '').trim()
             if (!target || seen.has(target)) continue

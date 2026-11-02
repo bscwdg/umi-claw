@@ -25,7 +25,7 @@ import {
   createOpenClawSummaryManager,
   type OpenClawSummaryManager
 } from './openclawSummaryManager'
-import type { GatewayClient } from '../gatewayClient'
+import type { GatewayClient } from '../../../electron/main/gatewayClient'
 import type { OldDbLocator, OldDbReader } from './wizardManager'
 import type { Notifier, PushChannelProvider, Pusher } from './reminderManager'
 export type { WorkDatabase } from './database'

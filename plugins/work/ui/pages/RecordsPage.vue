@@ -157,8 +157,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { workApi } from '../../../shared/hostBridge'
-import type { RecordRow } from '../../../../electron/main/work/recordManager'
-import type { MatterRow } from '../../../../electron/main/work/matterManager'
+import type { RecordRow } from '../../domain/recordManager'
+import type { MatterRow } from '../../domain/matterManager'
 import { useToast } from '@/composables/useToast'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 

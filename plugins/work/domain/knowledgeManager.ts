@@ -16,7 +16,7 @@
 import { randomUUID } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
-import { AppError, ERROR_CODES } from '../services/errors'
+import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
 import type { WorkDatabase } from './database'
 import {
   FILE_TYPE_EXTENSIONS,
@@ -32,7 +32,7 @@ import {
   fetchHtmlPage,
   type HtmlFetcher,
   type PdfjsAssets
-} from '../services/knowledge'
+} from '../../../electron/main/services/knowledge'
 
 export const KNOWLEDGE_TYPES = ['text', 'markdown', 'url', 'faq', 'docx', 'xlsx', 'pdf'] as const
 export type KnowledgeType = (typeof KNOWLEDGE_TYPES)[number]

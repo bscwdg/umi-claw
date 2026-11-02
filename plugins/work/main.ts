@@ -7,10 +7,10 @@
 // 由宿主以 `ctx.services.db` 注入；下一步切到 `<dataDir>/plugins/work/data.db`。
 
 import { definePlugin, type PluginContext } from '../../electron/main/kernel'
-import { createWorkRuntime, type WorkRuntime } from '../../electron/main/work/runtime'
+import { createWorkRuntime, type WorkRuntime } from './domain/runtime'
 import { registerWorkIpc, setWorkIpcRegistrar, type WorkIpcDeps } from '../../electron/main/ipc/work'
 import { resolvePdfjsAssets } from '../../electron/main/services/knowledge/parsers/pdfjsAssets'
-import { importWorkDataIfNeeded } from '../../electron/main/work/migrate'
+import { importWorkDataIfNeeded } from './domain/migrate'
 import type { GatewayClient } from '../../electron/main/gatewayClient'
 import { join } from 'node:path'
 
