@@ -1,7 +1,8 @@
-// electron/main/ipc/index.ts —— IPC 注册聚合入口（PLAN-3.0.md §14）
+// electron/main/ipc/index.ts —— 域 IPC 注册聚合入口（PLAN-3.0.md §14）
 //
-// 现有 1.0 的 IPC 处理器仍平铺在 electron/main/index.ts 的 registerIpcHandlers() 里
-// （1.0 能力一个不删）；3.0 新代码从这里聚合注册。
+// 4.1 WP5 起：宿主通道（window/app/log/shell/dialog/obsidian/skills/channels/config/
+// claw/test-connection/term/env）已全部下沉 `electron/main/ipc/host/*`；本文件只聚合
+// 域 IPC（work / marketing）的 registrar 与通道表，供插件入口与测试引用。
 //
 // 已注册：
 //   Commit 01 → work.gateway（status / ensureReady 两条只读面，见 ipc/gateway.ts）

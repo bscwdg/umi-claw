@@ -1353,3 +1353,29 @@ send / log 全部注入。
 - 盲区：env 三任务行为零 accept 覆盖（env.ts 现已无运行时 electron 依赖，decideRollback 可注入，
   P45 可补）；单飞闸作用域已注释「每注册一次一把」的前提
 - WP5 收尾仍待：最终 HEAD 全量 accept 复跑 + 两次独立子代理检查（事实核对/对抗复核）入档
+
+### WP5 收尾 · 两次独立检查（C3 入档）
+
+**第一次：事实核对（独立子代理，只读）** —— 结论：WP5 达成（4/4 硬判据）：
+- index.ts **1,767 行** ≤ 1,800（实测 `(Get-Content electron\main\index.ts).Count`）
+- 通道集合：基线 `606dd38` 的 61 个 `ipcMain.handle` vs 当前 index+ipc/host 的 61 个 → **差集为空、无重复**
+- 全量 accept：32 份产物、Σtotal=607、Σfailed=0、产物 mtime（04:33:41 起）晚于 HEAD（04:33:34）
+- 双 typecheck 0/0；边界门禁 9/0（WP6 清零未达，非 WP5）
+- **方法层更正**：任务口述基线 `5fa44a1` 有误（其 index 只剩 12 个 handle）；正确拆分前快照为 `606dd38`
+- 口径说明：607 为 32 份 JSON 合计，不含 openclaw-config-writer 的 21 条 node:test 断言（既有约定）
+- 顺带发现的非 WP5 文档漂移：character 79 vs PLAN A1 78/78（C23 缺号/C80 新增）；plugin 63 vs AGENTS §5.2「61 项」→ 后者已修
+
+**第二次：对抗复核（另一独立子代理，互不可见）** —— 结论：无 P0/P1/P2 代码问题；P2-1（PLAN 提前标 ✅ 而 C3 未入档）由本节闭环；P3 处置：
+- P3-1 `ipc/index.ts` 头注释过期 → **已修**（改为「宿主通道已下沉 host/，本文件只聚合域 IPC」）
+- P3-2 `types.ts` 的「纯 registrar 可单测」只兑现一半 → **已修注释**（channels/config/skills 可假 registrar；misc/claw/modelConnection/terminal/env 仍持 electron 依赖，P45 测试需注入）
+- P3-3 PLAN 漂移（W5-a 标「进行中」、124→125 行、W6-b 行号 701–983/11 处） → **已修**（125 行；W6-b 改为 514–796 / 10 处）
+- P3-4 「index 只剩 registrar 与 deps」表述 → **已限定**为「registerIpcHandlers 内」（index 仍有 16 个被 deps 使用的顶层 helper）
+- P3-5 静态断言口径 → 本节明确：**行为等价依据 = 逐提交人工对照 + P44/N7 静态断言 + accept**，env/terminal/claw/config 的行为级测试登记 P45
+- P3-6 AGENTS services 列表漏 pluginServiceAdapters → **已补**，并注明 services 允许 electron 运行时依赖
+
+**对抗复核的正向证据**：通道零漂移（集合相等）、preload 108 通道全部有对应 handle、
+8 个 registrar 各调用 1 次、单飞闸/在途标记同一变量、适配器逐条一致、初始化时序未变、
+未发现被改松的断言（旧断言均有更强替代）。
+
+**对 WP6-b 的影响**：9 条越界未变差；`ipc/host/*` 与域 `ipc/*` 物理分离后归属更清楚；
+W6-b 仍需拍板 `work:gateway` 归属并拆 `ipc/index.ts` barrel（域/host 分开）。

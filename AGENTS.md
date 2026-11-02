@@ -41,7 +41,7 @@ npm run build          # 构建（含 plugin:gen）
 ```
 electron/main/
 ├── kernel/          # 插件内核：manifest / registry / lifecycle / plugin / services
-├── services/        # 宿主能力（pluginDb / pluginRuntime / knowledge / context / gateway / errors / pluginKv / pluginSecrets / characterKv / characterHost）
+├── services/        # 宿主能力（pluginDb / pluginRuntime / pluginServiceAdapters / knowledge / context / gateway / errors / pluginKv / pluginSecrets / characterKv / characterHost；允许 electron 运行时依赖，如 Notification）
 ├── database/        # 数据层：schema / migration / schemas（错误码唯一来源在 services/errors.ts）
 ├── ipc/             # IPC 注册，按域分文件；host/ 子目录放宿主杂项通道（4.1 WP5-a 起）
 ├── character/       # 大肥鱼宿主模块
@@ -200,7 +200,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 - 禁止运行时从磁盘/网络加载可执行模块（`PLAN-4.0 §17.3`）
 - 注册物一律返回 disposer，停用由宿主 LIFO 清理；不要在 `deactivate` 里才擦屁股
 
-**现状证据**：`lifecycle.ts` 已实现 LIFO + 激活超时 + 迟到注册拒绝 + 失败隔离；`plugin.accept` **61 项**。
+**现状证据**：`lifecycle.ts` 已实现 LIFO + 激活超时 + 迟到注册拒绝 + 失败隔离；`plugin.accept` **63 项**。
 
 ### 5.3 大肥鱼为什么不是插件
 

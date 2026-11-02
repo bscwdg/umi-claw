@@ -543,7 +543,7 @@ Get-ChildItem *.md | ForEach-Object {
 | WP4 | ✅ 完成（C4.3 判据未达，见下） | 2026-11-02 | 并入 4.0.0 |
 | 阶段 A 收尾 | ✅ 完成（2026-11-02） | 2026-11-02 | 4.0.0 发布前 |
 | WP7（4.0.1/4.0.2） | 🟡 7/8 完成：P1/P4/P5/P6/P7/P8 ✅（P6 于 4.0.2 补完 5 处 waitFor）；P3 ✅（4.0.2 knowledge 原件隔离）；**P2 导入失败可见/重试仍顺延** | 见 PROGRESS 4.0.1/4.0.2 段 | 4.0.1/4.0.2 |
-| WP5（index.ts ≤1800） | ✅ W5-b ✅（pluginRuntime，2,551→2,394）；W5-a ✅（6 批、61 个 handle 全下沉到 ipc/host/*）；W5-b ✅；**WP5 ✅：index 1,767 ≤ 1,800**（宿主 27,463，V4 ≤26,000 另做删减） | 见 PROGRESS 4.1 段 | 4.1 |
+| WP5（index.ts ≤1800） | ✅ W5-b（pluginRuntime）+ W5-a（6 批、61 个 handle 全下沉 `ipc/host/*`）；**出口判据达成：index 1,767 ≤ 1,800**（宿主 27,463，V4 ≤26,000 另做删减）；两轮独立检查结论见 PROGRESS 4.1 段 | 见 PROGRESS 4.1 段 | 4.1 |
 | WP6（边界清零） | 🟡 W6-a 完成（11→9）；W6-b 域 ipc 搬插件 / W6-c 基线 0 待做 | 见 PROGRESS 4.1 段 | 4.1 |
 
 > 发布点已重排：原「WP1→4.0.1 / WP2→4.0.2 / WP3→4.0.3 / WP4→4.1」不再成立——四包全部合入同一棵未发布的 `release/4.0`，且 `v1.0.0` 之后没有 tag。现在按 **4.0.0（当前 HEAD + 阶段 A 收尾）/ 4.0.1（WP7）/ 4.1（WP5+WP6）** 发布。
@@ -596,7 +596,7 @@ Get-ChildItem *.md | ForEach-Object {
 
 ### WP5 · index.ts ≤ 1800（3–4 人天）
 
-- **W5-a**（分批进行中）：`registerIpcHandlers`（HEAD 实测 `index.ts:1087–1211`，124 行 / 0 个 `ipcMain.handle`，原 61 个）按前缀拆到 `electron/main/ipc/host/*.ts`，`index.ts` 只留 registrar 调用；`deps` 用 **getter** 形状保住晚初始化语义。
+- **W5-a**（分批进行中）：`registerIpcHandlers`（HEAD 实测 `index.ts:1087–1211`，125 行 / 0 个 `ipcMain.handle`，原 61 个）按前缀拆到 `electron/main/ipc/host/*.ts`，`index.ts` 只留 registrar 调用；`deps` 用 **getter** 形状保住晚初始化语义。
   - **第一批 ✅（2026-11-03）**：`ipc/host/misc.ts` —— 窗口 5 / 版本 1 / 日志 2 / 外链 1 / 对话框 1 / Obsidian 9 = **19 个通道**，`registerMiscIpc(deps)`；handler 总数 61 → 42（42+19 守恒）；
   - **第二批 ✅（2026-11-03）**：`ipc/host/skills.ts`（11）+ `ipc/host/channels.ts`（3）= 14 个通道；handler 42→28（19+11+3+28=61 守恒）；
   - **第三批 ✅（2026-11-03）**：`ipc/host/config.ts` —— 8 个通道（get/save/reset/getDataDir/getPresetModels/refreshModelPresets/getModelPresetsInfo/openDataDir），save/reset 共用 `toSaveResult` 拆包；handler 28→20（19+11+3+8+20=61 守恒）；`config.ts` 用 `HostIpcRegistrar` 且 deps 收窄到 `AppConfig`（无 `as never`）；
@@ -612,6 +612,6 @@ Get-ChildItem *.md | ForEach-Object {
 ### WP6 · 边界清零（2.5–3.5 人天）
 
 - **W6-a（parts）✅ 部分完成（2026-11-03）**：gateway 纯工具已下沉 `services/gateway/parts.ts`（`textPart`/`imageDataPart`/`imageUrlPart`/`GATEWAY_ABORT_REASON` + `GatewayContentPart`），`gatewayClient` 保留 re-export；marketing 两个域 Manager 改从 services 取 → **11 → 9**。原计划中的 `constants/normalize/stream` 三个拆分**未做**（不影响边界目标，可选）。
-- **W6-b**：域 ipc 文件搬进 `plugins/<id>/main/ipc/`（`ipc/*.ts` 现在反向 import 插件域类型，搬走同时消掉宿主→插件依赖）→ 9 → **0**。**需拍板**：`work:gateway` 两条通道随插件启停（与 marketing 对齐），按 G4 单独提交 + CHANGELOG 登记。清账时一并处理 `index.ts:701-983` 的 11 处 `import('plugins/work/domain/{wizardManager,reminderManager}')` 内联类型导入，以及 `electron/main/ipc/*` 的 `import type ... from plugins/<id>/domain/*`（均 type-only，运行时无耦合，但属反向依赖）。
+- **W6-b**：域 ipc 文件搬进 `plugins/<id>/main/ipc/`（`ipc/*.ts` 现在反向 import 插件域类型，搬走同时消掉宿主→插件依赖）→ 9 → **0**。**需拍板**：`work:gateway` 两条通道随插件启停（与 marketing 对齐），按 G4 单独提交 + CHANGELOG 登记。清账时一并处理 `index.ts:514–796` 的 10 处 `import('plugins/work/domain/…')` 内联类型导入（行号/处数已按 WP5 后 HEAD 重测），以及 `electron/main/ipc/*` 的 `import type ... from plugins/<id>/domain/*`（均 type-only，运行时无耦合，但属反向依赖）。
 - **W6-c**：基线写 0，`check:boundary` 从 ratchet 升为硬 error。
 
