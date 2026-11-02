@@ -24,6 +24,7 @@
 // （见 ipc/gateway.ts）；业务流通道（qa / tools / reports）归各自 Commit，本模块不预建。
 
 import { AppError, ERROR_CODES, errorCodeOf, type ErrorEnvelope } from './services/errors'
+import { toEnvelope, type GatewayStreamDelta } from './services/gateway/stream'
 import {
   GATEWAY_ABORT_REASON,
   imageDataPart,
@@ -36,6 +37,18 @@ import {
 export { GATEWAY_ABORT_REASON, imageDataPart, imageUrlPart, textPart }
 export type { GatewayContentPart }
 
+// 4.1 WP6-b：流透传助手与事件名已下沉 services/gateway/stream（插件 IPC 只能 import services）
+export {
+  GATEWAY_STREAM_EVENTS,
+  MARKETING_STREAM_EVENTS,
+  forwardGatewayStream
+} from './services/gateway/stream'
+export type {
+  GatewayStreamDelta,
+  GatewayStreamEventSet,
+  GatewayStreamSink
+} from './services/gateway/stream'
+
 // ── 端点与事件名（§六 已实测事实） ────────────────────────────────────────────
 
 /** §六 实测：`GET /health` → 200 {"ok":true,"status":"live"}；OpenAI 兼容面在 /v1/* */
@@ -45,36 +58,6 @@ export const GATEWAY_ENDPOINTS = {
   chatCompletions: '/v1/chat/completions'
 } as const
 
-/**
- * SSE → IPC 透传的事件名（主进程 → 渲染进程）。
- *
- * 08/09 的渲染端按 `runId` 归并自己的流：chunk* → done | error。
- * `cancel` 刻意**没有**事件：中止由渲染端发起，它自己知道，不需要回执。
- */
-export const GATEWAY_STREAM_EVENTS = {
-  chunk: 'work:stream:chunk',
-  done: 'work:stream:done',
-  error: 'work:stream:error'
-} as const
-
-/**
- * 营销域的流事件名（2.0 定死，渲染端 `stores/marketing.ts` 按它订阅）。
- *
- * 4.0 合并（MERGE-INVENTORY C-1）：work 与 marketing 各有一套事件名，**都保留**；
- * `forwardGatewayStream` 的第 4 个参数决定用哪套，默认 work。
- * 之所以不统一改名：两套渲染端订阅代码已在各自域里稳定运行，改名要同时动两域的 store 与测试。
- */
-export const MARKETING_STREAM_EVENTS = {
-  chunk: 'marketing:gateway:chunk',
-  done: 'marketing:gateway:done',
-  error: 'marketing:gateway:error'
-} as const
-
-export interface GatewayStreamEventSet {
-  chunk: string
-  done: string
-  error: string
-}
 
 /** §六 实测：`model` 取值是 `openclaw`（默认 agent）或 `openclaw/<agentId>` */
 export const GATEWAY_MODEL_DEFAULT = 'openclaw'
@@ -171,13 +154,6 @@ export interface GatewayChatInput {
   temperature?: number
   /** 外部中止信号（组件卸载 / 切换会话）；与 `handle.cancel()` 等价 */
   signal?: AbortSignal
-}
-
-export interface GatewayStreamDelta {
-  /** 增量序号（从 1 开始，顺序即 SSE 顺序） */
-  index: number
-  /** 本次增量文本（可能为空串——只有 usage/finish 帧时） */
-  delta: string
 }
 
 export interface GatewayStreamResult {
@@ -1281,95 +1257,6 @@ export function createGatewayClient(options: GatewayClientOptions): GatewayClien
   return new GatewayClient(options)
 }
 
-// ── SSE → IPC 透传助手（07 交付、08/09 使用） ──────────────────────────────────
-
-/** 只需要 `send` 的结构化 webContents（不 import electron：纯 Node 可测，假对象只打点 send） */
-export interface GatewayStreamSink {
-  send(channel: string, payload: unknown): void
-  isDestroyed?(): boolean
-  /** 可选：渲染进程销毁时自动中止上游（避免白烧 token） */
-  once?(event: string, listener: () => void): void
-}
-
-function isStreamHandle(source: unknown): source is GatewayStreamHandle {
-  return Boolean(source) && typeof (source as GatewayStreamHandle).cancel === 'function'
-}
-
-/**
- * 把流式增量按事件名推给渲染进程（**07 只提供助手，不注册业务流通道**；通道归 08/09）。
- *
- * - `work:stream:chunk` → `{ runId, index, delta }`
- * - `work:stream:done`  → `{ runId, chunks, text, aborted }`
- * - `work:stream:error` → `{ runId, error: { code, message, details? } }`
- * - `cancel()`：**先中止上游，再停止推送**；cancel 之后一个事件都不再发（UI 自己知道是它停的）
- */
-export function forwardGatewayStream(
-  webContents: GatewayStreamSink,
-  runId: string,
-  source: AsyncIterable<GatewayStreamDelta> | GatewayStreamHandle,
-  events: GatewayStreamEventSet = GATEWAY_STREAM_EVENTS
-): { cancel: () => void; done: Promise<void> } {
-  const id = String(runId)
-  let cancelled = false
-  const handle = isStreamHandle(source) ? source : null
-  const iterator: AsyncIterable<GatewayStreamDelta> = handle ? handle.iterator : (source as AsyncIterable<GatewayStreamDelta>)
-
-  const done = (async () => {
-    let chunks = 0
-    try {
-      for await (const delta of iterator) {
-        if (cancelled) break
-        if (webContents.isDestroyed?.()) {
-          cancelled = true
-          handle?.cancel()
-          break
-        }
-        chunks += 1
-        webContents.send(events.chunk, {
-          runId: id,
-          // 兼容键：2.0 的营销流（advisor / content / scan / hot-score）按 `streamId` 归并，
-          // 3.0 的 work 流按 `runId`。合并后两域共用这一个助手（MERGE-INVENTORY C-1），
-          // 所以两个键都发——语义相同（一次执行只有一个 ID），渲染端各取所需。
-          streamId: id,
-          index: delta.index,
-          delta: delta.delta
-        })
-      }
-      if (cancelled) return
-      // `handle.result` 的拒绝**不能吞**（2.0 的 A1 修复）：落版本 / 解析结构化产物失败发生在
-      // done 之前，吞掉会让渲染端收到一次「成功 done」，把未解析的原始输出当正文「采用」。
-      // 让它落到下面的 catch → error 事件；渲染端已累积的 chunk 仍在，可走「复制原文」兜底。
-      const res = handle ? await handle.result : null
-      if (cancelled) return
-      webContents.send(events.done, {
-        runId: id,
-        streamId: id,
-        chunks: res?.chunks ?? chunks,
-        text: res?.text ?? null,
-        aborted: res?.aborted ?? false,
-        deliverable: res?.deliverable ?? null
-      })
-    } catch (e) {
-      if (cancelled) return
-      webContents.send(events.error, { runId: id, streamId: id, error: toEnvelope(e) })
-    }
-  })()
-  done.catch(() => undefined)
-
-  const cancelStream = (): void => {
-    if (cancelled) return
-    cancelled = true
-    handle?.cancel()
-  }
-  // 渲染进程销毁 → 立刻中止上游（冷启动静默期实测最长 80s，窗口关了还在生成＝白烧 token）。
-  // 只靠「每个 chunk 到达时查 isDestroyed()」不够：冷启动静默期根本没有 chunk 到达（复审指出）。
-  webContents.once?.('destroyed', cancelStream)
-
-  return {
-    cancel: cancelStream,
-    done
-  }
-}
 
 // ── 小工具 ───────────────────────────────────────────────────────────────────
 
@@ -1407,14 +1294,6 @@ function parseUpstreamError(raw: string): { type?: string; message?: string } | 
   return null
 }
 
-function toEnvelope(e: unknown): ErrorEnvelope {
-  const code = errorCodeOf(e) ?? ERROR_CODES.OPENCLAW_NOT_READY
-  const message = e instanceof Error && e.message ? e.message : String(e)
-  const details = (e as { details?: unknown } | null | undefined)?.details
-  const envelope: ErrorEnvelope = { code, message }
-  if (details !== undefined) envelope.details = details
-  return envelope
-}
 
 function normalizeMessages(messages: unknown): GatewayChatMessage[] {
   if (!Array.isArray(messages) || messages.length === 0) {

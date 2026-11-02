@@ -50,6 +50,7 @@ const repoRoot = join(__dirname, '..')
 
 // ── bundle 真源码 ─────────────────────────────────────────────────────────────
 const gatewayPath = bundleEntry('electron/main/gatewayClient.ts', 'gateway-client.mjs')
+const streamPath = bundleEntry('electron/main/services/gateway/stream.ts', 'gateway-stream.mjs')
 const databasePath = bundleEntry('electron/main/database/database.ts', 'gateway-database.mjs')
 // configManager 顶层 import { app, dialog } from 'electron' → 在该边界打桩（其余全是真源码）
 // 另外它静态引入 adm-zip（内含 `require('fs')`），打进 ESM bundle 会变成
@@ -65,6 +66,7 @@ const downloadPath = bundleEntry('electron/main/downloadManager.ts', 'gateway-do
 })
 
 const gw = await import(pathToFileURL(gatewayPath).href)
+const streamMod = await import(pathToFileURL(streamPath).href)
 const dbMod = await import(pathToFileURL(databasePath).href)
 const cfgMod = await import(pathToFileURL(configPath).href)
 const dlMod = await import(pathToFileURL(downloadPath).href)
@@ -804,6 +806,18 @@ try {
   // G15 编号刻意未用：曾把「截断」与「流内 error」写在同一个用例里，拆分后留下了空号（仅编号观感）
   // ── G16 SSE→IPC 透传助手 ──
   await r.check('G16', '透传助手：chunk*N → done 事件序；cancel 后静默；错误走 error 事件；销毁自动中止', async () => {
+    // 4.1 WP6-b：助手已下沉 services/gateway/stream，插件可直接 import services 路径
+    assertEq(typeof streamMod.forwardGatewayStream, 'function', 'stream.ts 应直接导出 forwardGatewayStream')
+    assertEq(
+      streamMod.MARKETING_STREAM_EVENTS.chunk,
+      'marketing:gateway:chunk',
+      'stream.ts 应导出营销事件名'
+    )
+    assertEq(
+      streamMod.GATEWAY_STREAM_EVENTS.done,
+      GATEWAY_STREAM_EVENTS.done,
+      'gatewayClient re-export 与 stream.ts 事件名一致'
+    )
     const events = []
     const sink = { send: (channel, payload) => events.push({ channel, payload }) }
     fake.state.mode = 'ok'
