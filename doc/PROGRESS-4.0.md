@@ -1436,3 +1436,5 @@ W6-b 仍需拍板 `work:gateway` 归属并拆 `ipc/index.ts` barrel（域/host �
   未采纳：P3-2 dead 兼容面（registerGatewayIpc/withMarketingBackup 等）与 P3-3 registrar 未注入负向分支，
   按约定登记 4.2/接受（当前无消费方、生产路径必先注入）。
 - **结论**：WP6 代码出口达成；最终 HEAD 后全量 accept 重跑作为收尾证据（见下条）。
+
+**WP6 收尾验收（post-commit）**：HEAD `a82ac88` 之后重跑全量 accept —— **32/32 套、607 条断言、failed=0、exit 0**，产物最早 mtime `05:25:18` 晚于 HEAD `05:25:11`；`check:boundary` 0（基线 0）、双 typecheck 0 → **WP6 正式收尾（C3 达成）**。4.1 剩余：V4 ≤26,000（宿主 26,253，差 253，登记 4.2 删减；非用户 4.1 目标）、4.0.2 P2/P5 并入 4.2、tag 受 C0.3 阻塞。
