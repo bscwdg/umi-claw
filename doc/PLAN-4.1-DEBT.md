@@ -35,9 +35,10 @@
 | context/knowledge 双实现 | 2 对（各 761/776、490/807 行） | `(Get-FileHash).Hash` 不同即双实现 | 1 份内核 + 域侧 section |
 | lint 门禁 | **不存在**（无 `.eslintrc*` / `eslint.config.*` / `.editorconfig`） | `Test-Path` | ratchet 门禁 |
 | CI 门禁 | 仅 `npm ci` + `build` | `Get-Content .github/workflows/release.yml` | typecheck + accept |
-| accept 套件 | 28 + e2e + smoke = 30 套 | `npm run accept` | 不减少 |
+| accept 套件 | 29 + e2e + smoke = **31 套 / 582 条断言**（2026-11-02 实跑全绿） | `npm run accept` | 不减少 |
 | `test/*.accept.mjs` 数量 | 30 个（`db-client` 由 `db-worker` 子进程串跑） | `Get-ChildItem test -Filter *.accept.mjs` | 不减少 |
 | 双 typecheck | 0 错（2026-11-02 实跑） | `npm run typecheck:node` / `:web` | 保持 0 |
+| 全量验收 | **31 套 / 582 断言全绿**（2026-11-02 实跑） | `npm run accept` | 保持全绿 |
 | 明文密钥字面量 | 0（仅 `Config.vue` 的 placeholder 示例） | 见 §三 校验清单 V9 | 0 |
 
 **已确认成立、不要在减负时破坏的东西**：
@@ -108,7 +109,7 @@ npm run accept:ui
     UMI_ALLOW_PACKAGE_SKIP: '1'   # CI 不产出 NSIS，packaged.smoke 的 S6 显式跳过
 ```
 
-`UMI_ALLOW_PACKAGE_SKIP=1` 的理由：`test/packaged.smoke.mjs:92` 在缺 `release/win-unpacked` 时允许显式跳过；CI 里先只保证「源码级 30 套绿」，真机安装留 WP0-C0.3 人工。
+`UMI_ALLOW_PACKAGE_SKIP=1` 的理由：`test/packaged.smoke.mjs` 在缺 `release/win-unpacked` 时允许显式跳过 S6/S7；CI 里先只保证「源码级 31 套绿」，真机安装留 WP0-C0.3 人工。**注意 accept 前必须先 `npm run build`**：`packaged.smoke` 的 S1 断言 `dist-electron/` 存在，干净 checkout 里没有。
 
 另外新增 PR 触发（现在只有 tag 触发，日常提交无门禁）：
 
@@ -378,7 +379,7 @@ CI 加一步：`npm run lint`（= eslint + check-lint-budget）。
 | # | 检查 | 命令 | 判据 |
 | --- | --- | --- | --- |
 | V1 | 双 typecheck | `npm run typecheck:node; npm run typecheck:web` | 0 错 |
-| V2 | 全量验收 | `npm run accept` | 30 套全绿 |
+| V2 | 全量验收 | `npm run accept` | 31 套全绿（582 断言） |
 | V3 | 插件越界 import | 见下 | ≤ baseline |
 | V4 | 宿主代码量 | 见 §一 | ≤ 目标 |
 | V5 | 重复文件 | `Get-FileHash` 比对 `work/marketing` 同名文件 | 0 |
@@ -431,7 +432,7 @@ Get-ChildItem electron\main -Recurse -Filter *.ts | ForEach-Object {
 | D2 | WP2 现在就做，不等第三个域 | 2026-11-02 | WP1 的三个 parsers 已证明重复实现真实存在；67 条断言是现成验收网。等第三个域才做，成本是三个域同时改 |
 | D3 | 引 eslint，只装 `eslint` + `@typescript-eslint` 两个包 | 2026-11-02 | 守 import 边界不需要 vue 支持；依赖越少越容易在 CI 上跑稳 |
 | D4 | 用 ratchet baseline，不直接开 error | 2026-11-02 | 直接开 error 会逼出"一次性搬 14,500 行"的大爆炸，与 WP2 撞车 |
-| D5 | CI 里 `UMI_ALLOW_PACKAGE_SKIP=1` | 2026-11-02 | CI 不产出 NSIS；真机安装是 WP0-C0.3 的人工项。先保证源码级 30 套绿 |
+| D5 | CI 里 `UMI_ALLOW_PACKAGE_SKIP=1` + accept 前先 build | 2026-11-02 | CI 不产出 NSIS；真机安装是 WP0-C0.3 的人工项。先保证源码级 31 套绿。accept 前必须 build，否则 packaged.smoke S1 在干净 checkout 失败 |
 
 ---
 

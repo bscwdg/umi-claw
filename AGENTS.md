@@ -13,7 +13,7 @@
 cd D:\work2026\umi-claw
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 30 套验收（accept×28 + e2e + smoke）
+npm run accept         # 31 套验收（accept×29 + e2e + smoke，582 条断言）
 npm run build          # 构建（含 plugin:gen）
 ```
 
@@ -108,7 +108,7 @@ doc/                 # 计划、施工日志、运维手册、调研
 
 **规则**：`electron/main/{work,marketing}/**/*Manager.ts` 与 `contextEngine.ts` **禁止** `import ... from 'electron'`。
 
-**现状证据**：0 / 39 个文件命中。这是 30 套验收能在纯 Node 里跑真源码的前提。
+**现状证据**：0 / 40 个文件命中。这是 31 套验收能在纯 Node 里跑真源码的前提。
 
 **写法**：工厂函数 + 显式 options，不 `new`、不单例、不从全局推。
 
@@ -311,7 +311,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 30 套
+# ② 全量验收 31 套（accept×29 + e2e + smoke，582 条断言）
 npm run accept
 
 # ③ 插件越界 import（只数真违规，目标是只降不升）
