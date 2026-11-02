@@ -27,8 +27,8 @@
 
 | 指标 | 实测 | 复核命令 | 目标 / 状态 |
 | --- | --- | --- | --- |
-| 宿主 `electron/main` 代码量 | 26,797 行 | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 797，WP5） |
-| `electron/main/index.ts` | 2,491 行 | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800（差 691，WP5） |
+| 宿主 `electron/main` 代码量 | 26,943 行 | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 943，WP5） |
+| `electron/main/index.ts` | 2,551 行 | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800（差 751，WP5） |
 | 插件越界 import（非 type、非 kernel/services） | **11 条** | `npm run check:boundary` | 0（WP6） |
 | 门禁可绕过写法 | 已覆盖 static/export-from/dynamic/require + 路径穿越 + 注释掩码/正则字面量/字符串文案/模板字面量/非字面量/typeof | `node test/boundary.accept.mjs` | 8/8 保持 |
 | Manager 层 import electron | 0（扫描 `plugins/*/domain` 共 2 个目录） | `npm run check:boundary` | 0 |
@@ -542,13 +542,13 @@ Get-ChildItem *.md | ForEach-Object {
 | WP3 | ✅ 完成 | 2026-11-02 | 并入 4.0.0 |
 | WP4 | ✅ 完成（C4.3 判据未达，见下） | 2026-11-02 | 并入 4.0.0 |
 | 阶段 A 收尾 | ✅ 完成（2026-11-02） | 2026-11-02 | 4.0.0 发布前 |
-| WP7（4.0.1） | 🟡 6/8 完成（P1/P4/P5/P6/P7/P8）；P2 导入失败可见/P3 知识库路径顺延 4.0.2 | 见 PROGRESS 4.0.1 段 | 4.0.1 |
+| WP7（4.0.1） | 🟡 6/8 完成：P1/P4/P5/P7/P8 ✅；P6 部分（台账 ✅、3 处固定 sleep 清理顺延 4.0.2）；P2/P3 顺延 4.0.2 | 见 PROGRESS 4.0.1 段 | 4.0.1 |
 | WP5（index.ts ≤1800） | ⬜ 未开始 | — | 4.1 |
 | WP6（边界清零） | ⬜ 未开始 | — | 4.1 |
 
 > 发布点已重排：原「WP1→4.0.1 / WP2→4.0.2 / WP3→4.0.3 / WP4→4.1」不再成立——四包全部合入同一棵未发布的 `release/4.0`，且 `v1.0.0` 之后没有 tag。现在按 **4.0.0（当前 HEAD + 阶段 A 收尾）/ 4.0.1（WP7）/ 4.1（WP5+WP6）** 发布。
 >
-> WP4 的判据 `index.ts ≤ 1,800` 仍未达成（2,491），已如实登记，归 WP5，不算 WP4 过关。
+> WP4 的判据 `index.ts ≤ 1,800` 仍未达成（2,551），已如实登记，归 WP5，不算 WP4 过关。
 
 ---
 
@@ -570,7 +570,7 @@ Get-ChildItem *.md | ForEach-Object {
 
 **阶段 A 明确接受/未修的已知边界**（不阻塞 tag，登记备查）：
 
-- **单实例锁缺失**：全仓无 `requestSingleInstanceLock`，两个应用实例同指一个 dataDir 时 `character/kv.json` 的 `tmp+rename` 无跨进程保护（旧 work.db 走 worker 串行）。建议 4.0.1 补入口单实例锁或文件锁。
+- **单实例锁缺失**：全仓无 `requestSingleInstanceLock`，两个应用实例同指一个 dataDir 时 `character/kv.json` 的 `tmp+rename` 无跨进程保护（旧 work.db 走 worker 串行）。（**4.0.1 已修**：`44906bd` 补锁，2 轮复核后改为「在 `setPath('userData')` 之后请求」→ 锁按实际 userData 生效；仍需 C0.3 真机双实例验证。）
 - **部分丢失不重导**：只修「kv.json 缺失/损坏」；用户手工删掉部分键不会触发重导（无法与「用户主动重置」区分，有意保守）。
 - **marker 损坏**：打日志并跳过（提示删除 marker+kv 后重启可重导）；不自动重导，避免误覆盖用户重置结果。
 - **门禁两条已登记边界**（B8 断言锁住）：模板字符串 `${}` 内的动态 import/require 检不出；`if (cond) /re/` 这种 `)` 后的正则字面量不识别——修时同步改 B8 与 AGENTS §5.1。
@@ -589,7 +589,7 @@ Get-ChildItem *.md | ForEach-Object {
 | P2 | 旧库导入失败可见 + 重试入口 | work/marketing `main.ts` 现在只 `ctx.logger.warn('下次启动重试')`，插件管理页无入口 |
 | P3 | knowledge 原件路径隔离 | work 写全局 `<dataDir>/knowledge`；marketing 写 `<dataDir>/projects/<id>`；卸载/迁移会漏 |
 | P4 | 单实例锁（入口 `requestSingleInstanceLock`） | 两个实例同指 dataDir 时 `character/kv.json` 的 tmp+rename 无跨进程保护（阶段 A 明确接受，4.0.1） |
-| P5 | 便携 Node 低完整性自检 | 本机 `data/runtime/node.exe` 被标 Low IL，写不了 Medium 目录；打包/真机同类问题会表现为「数据存不上」，启动时检测并给明确提示/引导重装 |
+| P5 | 便携 Node 低完整性自检 | 本机 `data/runtime/node.exe` 被标 Low IL，写不了 Medium 目录；打包/真机同类问题会表现为「数据存不上」。（4.0.1 只做**检测 + 日志级告警**（`dataDir/logs/runtime-probe.log`）；GUI 横幅/引导重装顺延 4.0.2。） |
 | P6 | 测试 flake 台账 + 固定 sleep 清理 | e2e D3 已修（`d2f5ef9`）；`report.accept:281/305`、`content.accept:380` 等「固定 sleep + 读库断言」登记待改 |
 | P7 | `ctx.kv` / `ctx.secrets` 接测试断言 | 契约已补但 **0 消费 / 0 accept 断言**（2026-11-03 task-10 P2-1）；在 `plugin.accept` 加注入 kv/secrets 的 P-check（命名空间隔离 / round-trip / safeStorage 不可用语义） |
 | P8 | `pluginKv` 并发承诺与实现对齐 | 契约承诺「宿主保证并发安全」，实现是每实例整份 cache + 整文件 rename，可复现丢键（task-10 P2-2）；改为按 dataDir 共享单例 + 串行写队列，或降级承诺并写约束；补断言 |
@@ -598,7 +598,7 @@ Get-ChildItem *.md | ForEach-Object {
 
 - **W5-a**：`registerIpcHandlers`（`index.ts:1304–1991`，688 行 / 61 个 `ipcMain.handle`）按前缀拆到 `electron/main/ipc/host/{window,claw,config,env,skills,obsidian,terminal}.ts`，`index.ts` 只留 `registerHostIpc(deps)`；`deps` 用 **getter** 形状（`getMainWindow()` 等）保住晚初始化语义。
 - **W5-b**：`initPlugins`（472–634，163 行）+ 三个服务工厂 → `electron/main/services/pluginRuntime.ts`，legacy 读库回调显式注入。
-- 推演：现状 2,491 → a+b 后约 **1,670 行**；宿主 26,797 → 约 25,985（顺带达成 V4 ≤26,000）。
+- 推演：现状 2,551 → a+b 后约 **1,730 行**；宿主 26,943 → 约 26,130（顺带达成 V4 ≤26,000）；实际以拆完为准。
 - 出口判据：`(Get-Content electron\main\index.ts).Count -le 1800`；全量 32 套；61 个通道名逐条不变；双 typecheck 0。
 - **不要**引 DI 容器：要注入的只有 ~10 个模块级单例，getter 形状足够且不引入无类型注册表。
 

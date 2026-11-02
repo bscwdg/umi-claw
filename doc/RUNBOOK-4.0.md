@@ -115,3 +115,19 @@ npm run accept              # 全量验收（本仓库 19 个脚本套件，含 
 node test/packaged.smoke.mjs# 打包态静态冒烟
 node test/one-day.e2e.mjs   # 「一天」端到端
 ```
+
+## 8. 便携 Node / DB 写入排查（4.0.1 P5）
+
+**症状**：保存工作记录/插件数据报 `DB_ERROR`，日志出现 `readonly database` / `unable to open database file`；
+或启动后 `data/logs/runtime-probe.log` 出现「便携 Node 写入探针失败」。
+
+**常见原因**：
+1. `data/runtime/node-win32-x64/node.exe` 被 Windows/安全软件标成低完整性（Low IL），能启动但写不了普通目录；
+2. `data` 目录只读 / 被同步工具锁定；
+3. 安全软件拦截 Node 子进程写文件。
+
+**处理**：
+- 看 `data/logs/runtime-probe.log` 的 reason：`probe-failed`（EPERM/只读）或 `timeout`（慢盘/安全软件）；
+- 确认 `data` 目录可写：手动建一个文件再删掉即可（不需要命令行工具）；
+- 重装运行环境（应用内「环境初始化/更新」或删除 `data/runtime` 后重新初始化），并检查安全软件白名单；
+- 测试机若 `npm run accept` 报 SQLite 14/EPERM：验收脚本会自动把便携 Node 复制到系统临时目录规避（`test/_lib.mjs:resolveNodePath`），与产品问题无关，但要在用户终端复跑一次确认。
