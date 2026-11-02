@@ -9,10 +9,28 @@
 import type { PluginConfigApi } from './plugin'
 
 /** 可注入的服务名（`host` 是伪服务：对应 ctx.host 元信息，保留以兼容早期清单） */
-export type ServiceId = 'host' | 'config' | 'db' | 'openclaw' | 'notifications' | 'voice'
+export type ServiceId =
+  | 'host'
+  | 'config'
+  | 'db'
+  | 'openclaw'
+  | 'notifications'
+  | 'voice'
+  | 'secrets'
+  | 'kv'
 
 /** 真实服务名（不含 host）；availableServices 与解析共用这一份 */
-export const SERVICE_NAMES = ['config', 'db', 'openclaw', 'notifications', 'voice', 'hostOps', 'legacyDb'] as const
+export const SERVICE_NAMES = [
+  'config',
+  'db',
+  'openclaw',
+  'notifications',
+  'voice',
+  'secrets',
+  'kv',
+  'hostOps',
+  'legacyDb'
+] as const
 export type ServiceName = (typeof SERVICE_NAMES)[number]
 
 /** 工厂入参：插件身份与目录（db 用它定位 migrations） */
@@ -105,6 +123,35 @@ export interface VoiceApi {
 }
 
 /**
+ * 插件密钥（PLAN-4.0 §8.2 / §4.2）。
+ *
+ * 兑现 §18.3 登记的欠账：契约里一直没有 secrets，插件只能用宿主私有通道。
+ * 按 `plugin:<id>:<key>` 命名空间隔离——插件拿不到别的插件的密钥。
+ * 只走 safeStorage；加密不可用时拒绝写入（不静默降级成明文）。
+ */
+export interface PluginSecretsApi {
+  get(key: string): Promise<string | null>
+  set(key: string, value: string): Promise<void>
+  clear(key: string): Promise<void>
+  /** 已设置的 key 列表（不返回值本体） */
+  keys(): Promise<string[]>
+  /** 当前环境是否支持加密（false 时 set 会抛错） */
+  available(): boolean
+}
+
+/**
+ * 插件键值偏好（替代直接把宿主 app_meta 的 metaGet/metaSet 递出去）。
+ *
+ * 与 db.metaGet/metaSet 的区别：那是「插件自己库里的 app_meta」，
+ * 这是「宿主持久化的偏好」，由宿主保证命名空间隔离与并发安全。
+ */
+export interface PluginKvApi {
+  get(key: string): Promise<string | null>
+  set(key: string, value: string | null): Promise<void>
+  keys(): Promise<string[]>
+}
+
+/**
  * 宿主副作用集合（过渡服务，Phase 4 会拆细）。
  *
  * work 装箱时遇到的三类宿主能力：系统通知、渠道外发（spawn OpenClaw CLI）、旧库只读定位。
@@ -144,6 +191,8 @@ export interface PluginServiceBag {
   openclaw?: OpenClawApi
   notifications?: NotificationsApi
   voice?: VoiceApi
+  secrets?: PluginSecretsApi
+  kv?: PluginKvApi
   hostOps?: HostOpsApi
   legacyDb?: LegacyDbApi
 }
@@ -155,6 +204,8 @@ export interface ServiceFactories {
   openclaw?: (info: ServiceInfo) => OpenClawApi
   notifications?: (info: ServiceInfo) => NotificationsApi
   voice?: (info: ServiceInfo) => VoiceApi
+  secrets?: (info: ServiceInfo) => PluginSecretsApi
+  kv?: (info: ServiceInfo) => PluginKvApi
   hostOps?: (info: ServiceInfo) => HostOpsApi
   legacyDb?: (info: ServiceInfo) => LegacyDbApi
 }

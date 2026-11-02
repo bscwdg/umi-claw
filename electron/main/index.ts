@@ -24,7 +24,7 @@ import { ObsidianManager } from './obsidian/obsidianManager'
 import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv, toPosix, GATEWAY_TOKEN } from './openClawPaths'
 import { shouldSpeakInApp } from './fish/voice/core/openclawTts'
-import { readFileSync, existsSync, readdirSync } from 'fs'
+import { readFileSync, existsSync, readdirSync, writeFileSync, renameSync } from 'fs'
 import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process'
 
 // ── 4.0 插件内核（Phase 0/1）──────────────────────────────────────────────────
@@ -39,6 +39,7 @@ import {
   type LegacyDbApi,
   type NotificationsApi,
   type OpenClawApi,
+  type PluginKvApi,
   type PluginStatus,
   type ServiceFactories
 } from './kernel'
@@ -76,6 +77,7 @@ import {
 } from './fish/voice'
 import { registerCharacter } from './character/wiring'
 import { buildCharacterDeps } from './services/characterHost'
+import { PluginSecretStore } from './services/pluginSecrets'
 import type { CharacterManager } from './character/manager'
 import { AppError, ERROR_CODES } from './services/errors'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
@@ -404,6 +406,58 @@ let pluginDbService: ReturnType<typeof createPluginDbService> | null = null
 // ── 服务适配器（Phase 1 WP1）：窄接口，不把 manager 递给插件 ─────────────────
 
 /** 宿主副作用（过渡服务，Phase 4 拆细）：通知 / 渠道外发 / 旧库只读 */
+/**
+ * 插件 KV：宿主持久化，按插件命名空间隔离（WP4 C4.1）。
+ *
+ * 与 plugin 的 db.metaGet/metaSet 的区别——那是插件自己库里的 app_meta；
+ * 这里是宿主统一持久化的偏好（插件换库也不会丢），键前缀 plugin:<id>:。
+ */
+function createPluginKvService(dataDir: string, pluginId: string): PluginKvApi {
+  const fileOf = () => join(dataDir, 'plugin-kv.json')
+  const prefix = `plugin:${pluginId}:`
+  let cache: Record<string, string> | null = null
+
+  const load = (): Record<string, string> => {
+    if (cache) return cache
+    try {
+      const raw = readFileSync(fileOf(), 'utf8')
+      const parsed = JSON.parse(raw) as unknown
+      cache = parsed && typeof parsed === 'object' ? (parsed as Record<string, string>) : {}
+    } catch {
+      cache = {}
+    }
+    return cache
+  }
+
+  const flush = (map: Record<string, string>): void => {
+    cache = map
+    const tmp = fileOf() + '.tmp'
+    writeFileSync(tmp, JSON.stringify(map, null, 2), 'utf8')
+    renameSync(tmp, fileOf())
+  }
+
+  return {
+    async get(key) {
+      const map = load()
+      const value = map[prefix + key]
+      return typeof value === 'string' ? value : null
+    },
+    async set(key, value) {
+      const map = { ...load() }
+      if (value === null) delete map[prefix + key]
+      else map[prefix + key] = value
+      flush(map)
+    },
+    async keys() {
+      const map = load()
+      return Object.keys(map)
+        .filter((k) => k.startsWith(prefix))
+        .map((k) => k.slice(prefix.length))
+        .sort()
+    }
+  }
+}
+
 function createHostOpsService(): HostOpsApi {
   return {
     notify: (id, payload) => showReminderNotification(id, payload as never),
@@ -485,6 +539,11 @@ async function initPlugins(): Promise<void> {
       // 宿主 work.db 只剩 voice 的 app_meta（见 whenReady 的语音段）。
       db: (info) => pluginDbService!.forPlugin(info),
       hostOps: () => createHostOpsService(),
+      // 插件密钥（PLAN-4.0 §8.2）：safeStorage 按 plugin:<id>:<key> 隔离
+      secrets: (info) =>
+        new PluginSecretStore(join(dataDir, 'plugins', info.id, 'secrets.bin'), safeStorage),
+      // 插件偏好：宿主持久化，按插件命名空间隔离
+      kv: (info) => createPluginKvService(dataDir, info.id),
       // 旧库只读：work → work.db，marketing → umi-claw.db（都是宿主老库，插件自己决定怎么搬）
       legacyDb: (info) => {
         const client =
