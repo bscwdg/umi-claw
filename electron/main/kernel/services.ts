@@ -8,17 +8,6 @@
 
 import type { PluginConfigApi } from './plugin'
 
-/** 可注入的服务名（`host` 是伪服务：对应 ctx.host 元信息，保留以兼容早期清单） */
-export type ServiceId =
-  | 'host'
-  | 'config'
-  | 'db'
-  | 'openclaw'
-  | 'notifications'
-  | 'voice'
-  | 'secrets'
-  | 'kv'
-
 /** 真实服务名（不含 host）；availableServices 与解析共用这一份 */
 export const SERVICE_NAMES = [
   'config',
@@ -32,6 +21,12 @@ export const SERVICE_NAMES = [
   'legacyDb'
 ] as const
 export type ServiceName = (typeof SERVICE_NAMES)[number]
+
+/**
+ * 可注入的服务名（`host` 是伪服务：对应 ctx.host 元信息，保留以兼容早期清单）。
+ * 从 SERVICE_NAMES 派生，避免再出现「类型里少了 hostOps/legacyDb」的漂移。
+ */
+export type ServiceId = 'host' | ServiceName
 
 /** 工厂入参：插件身份与目录（db 用它定位 migrations） */
 export interface ServiceInfo {

@@ -1,4 +1,4 @@
-// electron/main/marketing/jsonExtract.ts —— 模型输出里的 JSON 块提取（09 抽出来共用）
+// plugins/marketing/domain/jsonExtract.ts —— 模型输出里的 JSON 块提取（09 抽出来共用）
 //
 // 模型经常不老实：夹 ``` 围栏、前后加解释文字，甚至解释文字里还带花括号/方括号
 // （「如需调整可回复 {加镜头}」）。因此**不能**用「第一个 { 到最后一个 }」这种朴素取法——

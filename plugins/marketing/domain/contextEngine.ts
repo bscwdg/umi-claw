@@ -45,6 +45,7 @@ import type { ProjectManager } from './projectManager'
 import { getPlatformRule } from './platformRules'
 import { estimateTokens, sliceToTokenBudget } from '../../../electron/main/services/context/tokens'
 import { assembleLoop } from '../../../electron/main/services/context/assemble'
+import { computeBudget } from '../../../electron/main/services/context/budget'
 export { estimateTokens, sliceToTokenBudget }
 import { shortTitle } from '../../../electron/main/services/context/pack'
 
@@ -405,7 +406,7 @@ export class ContextEngine {
     }
 
     // ── 5. 预算与取舍 ──
-    const budgetTokens = Math.floor(window * CONTEXT_BUDGET_RATIO)
+    const budgetTokens = computeBudget(window, CONTEXT_BUDGET_RATIO).budgetTokens
     const businessSummary = summarizeBusiness(business)
     const completeness = computeBusinessCompleteness(business)
 

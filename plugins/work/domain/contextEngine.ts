@@ -28,6 +28,7 @@ import type { WorkDatabase } from './database'
 import { dateOf, normalizeDate } from './todoManager'
 import { estimateTokens, sliceToTokenBudget } from '../../../electron/main/services/context/tokens'
 import { assembleLoop } from '../../../electron/main/services/context/assemble'
+import { computeBudget } from '../../../electron/main/services/context/budget'
 export { estimateTokens, sliceToTokenBudget }
 import { shortTitle } from '../../../electron/main/services/context/pack'
 
@@ -84,7 +85,7 @@ export const RECORD_WINDOW_DAYS_BY_SCOPE: Record<SnapshotScope, number> = {
 
 export type PackMode = 'full' | 'truncated'
 export type RetrievalMode = 'full' | 'like' | 'recency'
-export type DroppedReason = 'budget' | 'empty-content' | 'cut-order'
+export type DroppedReason = 'budget' | 'empty-content'
 
 export interface ProfileSummary {
   text: string
@@ -344,7 +345,7 @@ export class ContextEngine {
     }
 
     // ── 预算（账本 = 实际渲染文本，沿用 2.0 探针法）──
-    const budgetTokens = Math.floor(window * CONTEXT_BUDGET_RATIO)
+    const budgetTokens = computeBudget(window, CONTEXT_BUDGET_RATIO).budgetTokens
 
     const skeleton = (
       knowledge: PackedKnowledge[],

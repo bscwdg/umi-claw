@@ -13,7 +13,7 @@
 
 export type PackMode = 'full' | 'truncated'
 
-export type DroppedReason = 'budget' | 'empty-content' | 'cut-order'
+export type DroppedReason = 'budget' | 'empty-content'
 
 export interface DroppedEntry {
   /** 条目 id（两域现有数据都有；映射时不需 ?? '' 兜底） */

@@ -68,7 +68,7 @@ export interface WatchItem {
 
 /**
  * 资料完整度（**Business 维度**，§七 Commit 04）计分字段：六个等权。
- * 与 `electron/main/marketing/businessManager.ts` 的 `BUSINESS_COMPLETENESS_FIELDS` 必须一致
+ * 与 `plugins/marketing/domain/businessManager.ts` 的 `BUSINESS_COMPLETENESS_FIELDS` 必须一致
  * （跨 tsconfig 无法共享常量，由 test/business.accept.mjs 做静态一致性核对）。
  */
 export const BUSINESS_COMPLETENESS_FIELDS: string[] = [
