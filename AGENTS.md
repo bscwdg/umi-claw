@@ -41,7 +41,7 @@ npm run build          # 构建（含 plugin:gen）
 ```
 electron/main/
 ├── kernel/          # 插件内核：manifest / registry / lifecycle / plugin / services
-├── services/        # 宿主能力（pluginDb / knowledge / context / gateway / errors / pluginKv / pluginSecrets / characterKv / characterHost）
+├── services/        # 宿主能力（pluginDb / pluginRuntime / knowledge / context / gateway / errors / pluginKv / pluginSecrets / characterKv / characterHost）
 ├── database/        # 数据层：schema / migration / schemas（错误码唯一来源在 services/errors.ts）
 ├── ipc/             # IPC 注册，按域分文件
 ├── character/       # 大肥鱼宿主模块
@@ -49,7 +49,7 @@ electron/main/
 ├── work/            # 已删除：work 域代码在 plugins/work/domain/
 ├── marketing/       # 已删除：marketing 域代码在 plugins/marketing/domain/
 ├── clawManager.ts / configManager.ts / downloadManager.ts / channelManager.ts ...
-└── index.ts         # 只做组装；目标 ≤ 1,800 行（现状 2,551）
+└── index.ts         # 只做组装；目标 ≤ 1,800 行（现状 2,394）
 
 plugins/             # 官方内置插件（同仓源码，参与宿主构建）
 ├── work/  main.ts + renderer.ts + ui/

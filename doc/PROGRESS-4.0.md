@@ -1233,3 +1233,24 @@ content C6（activeGenerationCount===0）。report 14/14 ×2、content 12/12 ×2
 
 1. **P2 旧库导入失败可见 + 重试入口**：需渲染端/IPC 入口（工作量大，单独提交）。
 2. **P5 GUI 诊断/引导重装**：目前只有 `<dataDir>/logs/runtime-probe.log` 日志级告警。
+
+### W5-b · 插件宿主装配抽离（`services/pluginRuntime.ts`）
+
+`initPlugins` 主体 + `hostOps/notifications/openclaw` 适配器 + 插件状态（host/registry/configStore/dbService）
+从 `index.ts` 抽到 `createPluginRuntime(deps)`（2026-11-03）：
+
+- deps 全注入：dataDir/nodePath/resourcesRoot/workDatabase/openLegacyDatabase/hostOps/notifications/openclaw/
+  safeStorage/ipc/appInfo/onResume/broadcast/logger；deps 用 getter，保住「晚初始化取最新值」语义
+- 对外窄接口：`init/statuses/isEnabled/pluginDbFor/disposeHost/flushConfig/disposeDb`；会话键解析、
+  `assertConsent`、退出清理改走它
+- **index.ts 2,551 → 2,394（净 −157）**；宿主总行数 26,960 → 27,090（只搬不删，宿主不会因拆分下降）
+- 等价性核对（task-22）：初始化顺序、零插件模式异常语义、`activationTimeoutMs=20000`、paths、
+  onResume、`plugin:list`/`setEnabled` 注册与 `stateStore.save` 时点、`plugin:changed` 广播、
+  退出清理顺序（disposeHost→flushConfig→disposeDb）逐条与旧实现一致
+- 回归保护：`plugin.accept` P44 增静态断言（index 只经 `createPluginRuntime` 并调 `.init()`；
+  runtime 含 IPC/广播/store 关键调用；index 不再直接 import pluginDb/pluginSecrets/pluginKv）
+- **已知盲区**：这层装配没有行为级单测（packaged.smoke 是静态冒烟、e2e 不跑 Electron），
+  目前靠 P44 静态断言 + dev 手动；行为级覆盖待后续 smoke 启动路径。
+
+剩余：**W5-a** —— `registerIpcHandlers`（`index.ts:1153–1838`，686 行 / 61 个 handle）拆到
+`ipc/host/*` 后预计 1,830–1,900 行，要 ≤1,800 还需再抽 ~100 行（角色/语音装配段）。
