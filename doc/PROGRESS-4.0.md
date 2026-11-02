@@ -1475,7 +1475,12 @@ index **1,777** ≤1,800；宿主 **26,373**（V4 差 373，登记 4.2）。
 
 **tag 状态（不代打）**：本地仅 `v1.0.0`；未 push（ahead 59）；候选顺序 v4.0.0 → v4.0.1 → v4.0.2 → v4.1 均从
 `release/4.0` 同一棵树切（4.0.0/4.0.1 从未发布）。**tag 阻塞项**：① C0.3 NSIS 真机 7 步（需人工/GUI）；
-② 重打 NSIS + 刷新 `release/win-unpacked`（现产物 01:57 早于本批，smoke S6/S7 验的是旧包；环境阻塞已登记）；
+② **打包状态（本轮实测，2026-11-03 05:55）**：`npx electron-builder --win --dir --config.directories.output=release-build2`
+   成功刷新 win-unpacked（app.asar 98 MB，05:55:42）；以 `UMI_PACKAGED_DIR=release-build2/win-unpacked` 跑
+   packaged.smoke **7/7 通过**（验证的是本批代码，不再是旧包）。`npx electron-builder --win nsis
+   --config.directories.output=release-nsis` 在 NSIS 阶段失败：`Exit code: null. Command failed:
+   release-nsis/Umi Claw Setup 4.0.0.exe` → **NSIS 安装包仍受本机环境阻塞**（需用户在其终端/管理员环境重打）；
+
 ③ 用户确认 tag/push。当前准确措辞：**4.1 代码与验收目标完成；发布打包/C0.3/tag 待人工**。
 
 **C2 机械口径说明**：4.1 内 `f6a5a89`/`535bbbe` 的审查已做（task-31/32），仅提交信息未用「属实/前提不成立/
