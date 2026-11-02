@@ -228,70 +228,54 @@ npm run typecheck:node; npm run typecheck:web
 1. work 的 `measureWith` 是「代餐测量」：知识块当全包计费，固定五段的占用不在账上；实跑 E4 是 `used=1481 / budget=1540`（余量 59 token），站住是数字凑巧。若无超长条目、循环走完不 break，`usedTokens` 可以真的超预算。
 2. `cut-order` 只有类型定义、没有实现；§6.2 写的「6→5→4→3→2 裁剪」也不存在（2–5 段从不裁）。
 
-#### 拆分方案：结构化 section + 内核驱动循环
+#### 拆分方案：泛型取舍循环（已实现，以代码为准）
 
-**关键修正（v2）**：内核不能只产出 `text`。域的 `ContextPack` 需要**逐条**结果（`content` 是否被切、`truncated`、`estimatedTokens`、`matchedQuery`、`knowledgeIncluded`、`truncatedItems`、`businessOverBudget`）。所以 section 必须返回结构，不是字符串。
+> **v3 校正**：v2 写的 `Section`（每段先分配 token 再渲染）是**凭空设计**，
+> 读两域真实代码后确认它们不是这个结构。v2 的 `Section`/`SectionContext`/
+> `AssembleOptions` 从未被使用，已从 `types.ts` 删除，避免第三个口径。
+> 下面是与 `assemble.ts` 实际一致的设计。
+
+两域的真实结构（逐行读 marketing:475-522 / work:402-449 后确认）：
+
+```
+mode = 全量渲染是否超预算（marketing 另有 businessOverBudget → 直接 truncated）
+for 每条候选（按域侧排序：LIKE 命中优先 / 时间）：
+  rest = 剩余候选 → 先按 budget 计入 dropped（未注入清单本身也占预算）
+  放得下 → 收下，continue
+  放不下 → sliceBudget = budget − 已选渲染 − PACK_OVERHEAD − marker − title
+           够 minSliceTokens 就截断收入；然后 break
+从尾部让位（保险丝）
+```
+
+内核就按这个实现，**泛型**（不认域）：
 
 ```ts
-// services/context/types.ts
-export interface SectionContext {
-  /** 当前预算（渲染后可被内核重测；不要假设它单调） */
+// services/context/assemble.ts（已提交 a7c4f0e）
+export interface AssembleLoopOptions<T> {
   budgetTokens: number
-  mode: PackMode
-  /** 当前已产生的 dropped（供「未注入清单」段渲染；这是循环依赖的唯一解法） */
-  dropped: DroppedEntry[]
+  markerTokens: number
+  overheadTokens: number        // work 48 / marketing 64
+  minSliceTokens: number
+  allCandidates: T[]
+  ranked: Array<{ item: T; matched?: boolean }>
+  renderText(chosen: T[], dropped: DroppedEntry[]): string
+  measure(text: string): number
+  include(item: T, opts: { truncate: boolean; sliceBudget?: number }): T
+  toDropped(item: T, reason: DroppedReason): DroppedEntry
+  titleTokens(item: T): number
+  initialDropped?: DroppedEntry[]
 }
-
-export interface SectionResult {
-  /** 本段渲染文本（可为空串） */
-  text: string
-  /** 逐条结果：域侧组装 ContextPack 用 */
-  items?: Array<{ id: string; text: string; tokens: number; truncated?: boolean; matched?: boolean }>
-  /** 本段产生的 dropped（含 empty-content） */
-  drops?: DroppedEntry[]
-  /** 本段的固定开销（标题/分隔符），内核计费用 */
-  fixedTokens?: number
-}
-
-export interface Section {
-  key: string
-  /** 渲染顺序（文本拼接顺序） */
-  order: number
-  /** 截断优先级：数字小的先保；与 order 分离 */
-  priority: number
-  /** 永不裁（任务指令 / 画像 / business）；超预算时让位给低优先级段 */
-  fixed?: boolean
-  /** 单段上限（防一段吃光预算）；缺省不限 */
-  maxTokens?: number
-  render(ctx: SectionContext): SectionResult
-}
+export function assembleLoop<T>(opts: AssembleLoopOptions<T>): AssembleLoopResult<T>
 ```
 
-```ts
-// services/context/budget.ts —— 只有公式，不做分配
-export function computeBudget(windowTokens: number, ratio: number): { budgetTokens: number; reservedTokens: number }
-// budgetTokens = Math.floor(window * ratio)；reserved = window - budgetTokens
-```
+域侧只需要提供 5 个回调（怎么渲染、怎么打包一条、怎么变 dropped、标题多长、怎么量）。
+**域内的 `packItem`/`packKnowledge`/`skeleton`/`probePack` 全部留在域里**——
+它们是域语义，不是内核语义。
 
-```ts
-// services/context/assemble.ts —— 纯函数，驱动循环 + 记账
-export interface AssembleResult {
-  text: string
-  usedTokens: number
-  budgetTokens: number
-  fixedTokens: number
-  fixedOverBudget: boolean
-  mode: PackMode
-  sections: Array<{ key: string; text: string; items?: unknown[]; dropped: DroppedEntry[] }>
-  dropped: DroppedEntry[]   // 已按「标题升序 + 同标题按插入序」去重排序
-}
-export function assemble(opts: { windowTokens; ratio; overheadTokens; sections; measure: (text: string) => number }): AssembleResult
-```
-
-**不变量**（写死，验收断言）：
-- `usedTokens ≤ budgetTokens` **只对「进预算的段」成立**；work 的对话历史段是内核外独立预算，不计入这条（域侧另记）。
-- `dropped` 不静默丢；顺序 = 标题升序，同标题按插入序（tie-break 写进契约）。
-- `mode` 由「全量渲染是否超预算」决定，不由逐段累加决定。
+交接点（W2-d/W2-e 要做的）：
+1. 域内 `mode` 决策改成调 `assembleLoop`；
+2. `businessOverBudget` 由域算好后作为「强制 truncated」传给内核（内核只接受结论）；
+3. `dropped` 的累积语义按域保留：marketing 整体重建，work 累积 push + 过滤。
 
 #### 分步执行（每步单独提交、每步可回滚）
 
