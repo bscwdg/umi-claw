@@ -27,7 +27,7 @@
 
 | 指标 | 实测 | 复核命令 | 目标 / 状态 |
 | --- | --- | --- | --- |
-| 宿主 `electron/main` 代码量 | 27,463 行 | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 1,463；WP5 只搬不删，宿主不会因拆分下降） |
+| 宿主 `electron/main` 代码量 | 26,253 行（WP6 搬家后） | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 253，V4 待 4.2 删减） |
 | `electron/main/index.ts` | 1,767 行 | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800（✅ 已达成，WP5） |
 | 插件越界 import（非 type、非 kernel/services） | **0 条**（WP6-b/c 已把域 ipc 搬进 `plugins/<id>/main/ipc/`；仅存 14 处 type-only 宿主类型引用，按门禁口径放行，收敛登记 4.2） | `npm run check:boundary` | 0（已达成，基线 0 硬约束） |
 | 门禁可绕过写法 | 已覆盖 static/export-from/dynamic/require + 路径穿越 + 注释掩码/正则字面量/字符串文案/模板字面量/非字面量/typeof | `node test/boundary.accept.mjs` | 8/8 保持 |
@@ -494,7 +494,7 @@ Get-ChildItem *.md | ForEach-Object {
 | `contributes.settings` / `commands` 无消费方 | 随 `AGENTS.md` 明确为「已校验、无消费方」，要么补实现要么移除校验——**归入 WP4 的收尾判断，不在本计划主线** |
 | 插件只经 `ctx`（无 lint 兜底） | **WP3 阶段 A**（C3.1/C3.2） |
 | 停用即中止在途 SSE（work 未修） | 4.0.x 独立修复，不在本计划 |
-| 旧库导入失败可见 + 重试 | **4.0.2 待做**（P2；仍需渲染端/IPC 入口） |
+| 旧库导入失败可见 + 重试 | **4.2 待做**（P2；仍需渲染端/IPC 入口；4.0.2 不阻塞） |
 | work 知识库原件写全局 `<dataDir>/knowledge` | **4.0.2 已修**（P3，`6a4096b`）：新导入写 `<dataDir>/plugins/work/knowledge/`；旧文件不迁移、旧条目仍可读，旧全局目录可手工清理 |
 
 ---
@@ -543,8 +543,8 @@ Get-ChildItem *.md | ForEach-Object {
 | WP4 | ✅ 完成（C4.3 判据未达，见下） | 2026-11-02 | 并入 4.0.0 |
 | 阶段 A 收尾 | ✅ 完成（2026-11-02） | 2026-11-02 | 4.0.0 发布前 |
 | WP7（4.0.1/4.0.2） | 🟡 7/8 完成：P1/P4/P5/P6/P7/P8 ✅（P6 于 4.0.2 补完 5 处 waitFor）；P3 ✅（4.0.2 knowledge 原件隔离）；**P2 导入失败可见/重试仍顺延** | 见 PROGRESS 4.0.1/4.0.2 段 | 4.0.1/4.0.2 |
-| WP5（index.ts ≤1800） | ✅ W5-b（pluginRuntime）+ W5-a（6 批、61 个 handle 全下沉 `ipc/host/*`）；**出口判据达成：index 1,767 ≤ 1,800**（宿主 27,463，V4 ≤26,000 另做删减）；两轮独立检查结论见 PROGRESS 4.1 段 | 见 PROGRESS 4.1 段 | 4.1 |
-| WP6（边界清零） | ✅ W6-a（11→9）+ W6-b/c（9→0，域 ipc 搬插件、gateway 拆 host/plugin、基线 0）；两轮独立检查待入档 | 见 PROGRESS 4.1 段 | 4.1 |
+| WP5（index.ts ≤1800） | ✅ W5-b（pluginRuntime）+ W5-a（6 批、61 个 handle 全下沉 `ipc/host/*`）；**出口判据达成：index 1,767 ≤ 1,800**；两轮独立检查结论见 PROGRESS 4.1 段 | 见 PROGRESS 4.1 段 | 4.1 |
+| WP6（边界清零） | ✅ W6-a（11→9）+ W6-b/c（9→0，域 ipc 搬插件、gateway 拆 host/plugin、基线 0）；两轮独立检查已入档 PROGRESS（事实核对 + 对抗复核） | 见 PROGRESS 4.1 段 | 4.1 |
 
 > 发布点已重排：原「WP1→4.0.1 / WP2→4.0.2 / WP3→4.0.3 / WP4→4.1」不再成立——四包全部合入同一棵未发布的 `release/4.0`，且 `v1.0.0` 之后没有 tag。现在按 **4.0.0（当前 HEAD + 阶段 A 收尾）/ 4.0.1（WP7）/ 4.1（WP5+WP6）** 发布。
 >
@@ -591,8 +591,8 @@ Get-ChildItem *.md | ForEach-Object {
 | P4 | 单实例锁（入口 `requestSingleInstanceLock`） | 两个实例同指 dataDir 时 `character/kv.json` 的 tmp+rename 无跨进程保护（阶段 A 明确接受，4.0.1） |
 | P5 | 便携 Node 低完整性自检 | 本机 `data/runtime/node.exe` 被标 Low IL，写不了 Medium 目录；打包/真机同类问题会表现为「数据存不上」。（4.0.1 只做**检测 + 日志级告警**（`dataDir/logs/runtime-probe.log`）；GUI 横幅/引导重装顺延 4.0.2。） |
 | P6 | 测试 flake 台账 + 固定 sleep 清理 | e2e D3 已修（`d2f5ef9`）；`report.accept:281/305`、`content.accept:380` 等「固定 sleep + 读库断言」登记待改 |
-| P7 | `ctx.kv` / `ctx.secrets` 接测试断言 | 契约已补但 **0 消费 / 0 accept 断言**（2026-11-03 task-10 P2-1）；在 `plugin.accept` 加注入 kv/secrets 的 P-check（命名空间隔离 / round-trip / safeStorage 不可用语义） |
-| P8 | `pluginKv` 并发承诺与实现对齐 | 契约承诺「宿主保证并发安全」，实现是每实例整份 cache + 整文件 rename，可复现丢键（task-10 P2-2）；改为按 dataDir 共享单例 + 串行写队列，或降级承诺并写约束；补断言 |
+| P7 | `ctx.kv` / `ctx.secrets` 接测试断言 | ✅ 已补：`plugin.accept` P56/P57 覆盖注入 kv/secrets（命名空间隔离 / round-trip / 并发） |
+| P8 | `pluginKv` 并发承诺与实现对齐 | ✅ 已修：按 dataDir 共享单例 + 串行写队列（每文件 cache/queue），P57 并发断言锁住 |
 
 ### WP5 · index.ts ≤ 1800（3–4 人天）
 
@@ -612,6 +612,6 @@ Get-ChildItem *.md | ForEach-Object {
 ### WP6 · 边界清零（2.5–3.5 人天）
 
 - **W6-a（parts）✅ 部分完成（2026-11-03）**：gateway 纯工具已下沉 `services/gateway/parts.ts`（`textPart`/`imageDataPart`/`imageUrlPart`/`GATEWAY_ABORT_REASON` + `GatewayContentPart`），`gatewayClient` 保留 re-export；marketing 两个域 Manager 改从 services 取 → **11 → 9**。原计划中的 `constants/normalize/stream` 三个拆分**未做**（不影响边界目标，可选）。
-- **W6-b（第一步 ✅ 2026-11-03）**：`services/gateway/stream.ts` 已下沉（`forwardGatewayStream`/`GATEWAY_STREAM_EVENTS`/`MARKETING_STREAM_EVENTS` + 结构类型；gatewayClient re-export 兼容），供插件 IPC 直接 import services；越界数不变（仍 9）。**后续**：域 ipc 文件搬进 `plugins/<id>/main/ipc/`（`ipc/*.ts` 现在反向 import 插件域类型，搬走同时消掉宿主→插件依赖）→ 9 → **0**。**需拍板**：`work:gateway` 两条通道随插件启停（与 marketing 对齐），按 G4 单独提交 + CHANGELOG 登记。清账时一并处理 `index.ts:514–796` 的 10 处 `import('plugins/work/domain/…')` 内联类型导入（行号/处数已按 WP5 后 HEAD 重测），以及 `electron/main/ipc/*` 的 `import type ... from plugins/<id>/domain/*`（均 type-only，运行时无耦合，但属反向依赖）。
-- **W6-c ✅（2026-11-03）**：基线已写 0（`--update`），`check:boundary` 自此是硬约束——任何新增插件越界直接 exit 1；`_note` 已记录 WP6-b/c 构成。
+- **W6-b ✅（2026-11-03）**：域 ipc 全部搬进 `plugins/<id>/main/ipc/`（work 1 + marketing 6 + gateway 按域拆分）；`services/gateway/stream.ts`（流透传）、`services/hostUi.ts`（宿主 electron 适配）、插件 `ipcTypes.ts` 下沉；**拍板结果：`work:gateway` 两条通道保留宿主注册**（网关是宿主级能力，插件停用也要能看状态），marketing 面随插件租约启停。搬前/后通道集合守恒（全量 188=188；扣除宿主 work:gateway 后 186=186），非 type 越界 9→0。
+- **W6-c ✅（2026-11-03）**：基线已写 0（`--update`），`check:boundary` 自此是硬约束——任何新增插件越界直接 exit 1；`_note` 已记录 WP6-b/c 构成；`boundary.accept` B7 增「基线必须 0」断言防 `--update` 回退。
 

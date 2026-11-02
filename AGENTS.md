@@ -43,7 +43,7 @@ electron/main/
 ├── kernel/          # 插件内核：manifest / registry / lifecycle / plugin / services
 ├── services/        # 宿主能力（pluginDb / pluginRuntime / pluginServiceAdapters / gateway(parts,stream) / hostUi / knowledge / context / errors / pluginKv / pluginSecrets / characterKv / characterHost；允许 electron 运行时依赖，如 Notification）
 ├── database/        # 数据层：schema / migration / schemas（错误码唯一来源在 services/errors.ts）
-├── ipc/             # IPC 注册，按域分文件；host/ 子目录放宿主杂项通道（4.1 WP5-a 起）
+├── ipc/             # 宿主 IPC：host/ 放宿主通道（WP5-a）；域 IPC 已在 4.1 WP6-b 搬进 plugins/<id>/main/ipc/
 ├── character/       # 大肥鱼宿主模块
 ├── fish/voice/      # 语音服务
 ├── work/            # 已删除：work 域代码在 plugins/work/domain/
@@ -125,7 +125,7 @@ export function createTodoManager(options: TodoManagerOptions): TodoManager { ..
 
 **禁止**：
 - 在 Manager 里 `import { app } from 'electron'` 取路径 → 由 `runtime.ts` 解析后注入
-- 在 Manager 里 `ipcMain.handle` → IPC 归 `electron/main/ipc/*`
+- 在 Manager 里 `ipcMain.handle` → IPC 归 `electron/main/ipc/host/*`（宿主通道）/ `plugins/<id>/main/ipc/*`（域通道）
 - 在 Manager 里读 `process.env` 判定行为 → 由调用方注入配置
 
 ### 4.2 IPC 层：只做透传与信封
@@ -173,6 +173,8 @@ export const WORK_TODOS_CHANNELS = {
 **读这条规则时要知道**：现状是「新代码不得新增越界，旧越界按 WP6 逐步清零」，不是「现在已经合规」。`scripts/boundary-baseline.json` 的 ratchet 会锁死这个数（只准降不准升，`--update` 才写，上调必须 `--allow-raise --note "<原因>"`）。
 
 **非字面量引用**：`import(someVar)` / `require(someVar)` 无法静态判定目标，记成 `<non-literal>` **按违规处理**（宁可多报）；`typeof import(...)` 是类型查询，放行。注释与字符串/模板文案里的示例 `import(...)` 不算引用（门禁先做词法掩码）。
+
+**反向依赖（host→plugin）**：4.1 WP6-b 后宿主 `electron/main/ipc/index.ts` 仍 re-export 插件 registrar、宿主退出清理从插件模块取 `abortAll*`。当前无环、无顶层副作用、未激活时安全；但这是登记在 4.2 的清理项，新代码不得再依赖 host→plugin 值导出（类型可 type-only）。
 
 **已登记的门禁边界**（2026-11-02 G10 复核接受，B8 有断言锁住）：① 模板字符串 `${}` 内的动态 `import`/`require` 暂被视为模板内容、检不出；② `if (cond) /re/` 这种 `)` 后的正则字面量不识别（补 `)` 会带来除法误判，权衡后保留）。修这两条时同步改 `test/boundary.accept.mjs` 的 B8 断言。
 

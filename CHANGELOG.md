@@ -11,8 +11,7 @@
 > 主题：**架构收口（无用户可见行为变化）**。完成 4.0 遗留的组装层与插件边界两块欠账。
 
 ### 重构
-- **插件边界清零**：域 IPC 全部搬进 `plugins/<id>/main/ipc/`（work 1 个文件 + marketing 7 个文件 +
-  gateway 按域拆分），`check:boundary` 从 9 条越界收紧到 **0（硬约束）**；插件不再 import electron，
+- **插件边界清零**：域 IPC 全部搬进 `plugins/<id>/main/ipc/`（work 1 个文件 + marketing 8 个文件：6 个搬迁 + gateway 拆分 + ipcTypes，另 services 新增 hostUi），`check:boundary` 从 9 条越界收紧到 **0（硬约束）**；插件不再 import electron，
   宿主 electron 能力经 `services/hostUi`、流透传经 `services/gateway/stream` 注入。
 - **宿主装配瘦身**：`electron/main/index.ts` 2,551 → **1,767 行**（≤1,800 目标达成）；61 个 host IPC
   拆到 `electron/main/ipc/host/*`，插件装配抽到 `services/pluginRuntime`，宿主服务适配器抽到
@@ -40,7 +39,7 @@
 ### 测试
 - 全量验收 32 套 / **607 条断言**；knowledge.work 10/10、knowledge.marketing 23/23
 
-### 已知未做（顺延 4.0.3）
+### 已知未做（并入 4.2，4.0.2 不阻塞）
 - P2 旧库导入失败的用户可见提示 + 「重试导入」入口（当前只有日志）
 - P5 便携 Node 探针的 GUI 诊断横幅/引导重装入口（当前写日志文件）
 

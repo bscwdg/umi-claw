@@ -1410,7 +1410,7 @@ W6-b 仍需拍板 `work:gateway` 归属并拆 `ipc/index.ts` barrel（域/host �
 
 **验证**：
 - `check-boundaries = 0`（基线由 9 `--update` 收紧到 0，此后硬约束）；`managerElectron=0`
-- 通道守恒：搬家前后通道字面量集合 **121 = 121**（无增缺、无重复、无改名）；preload 108 通道全有句柄
+- 通道守恒：搬家前后**全量通道字面量集合 188 = 188**（含宿主 work:gateway 2 条与 marketing gateway 2 条；扣除宿主 work:gateway 后 186 = 186；域文件口径 121 = 121，各口径均无增缺/重复/改名）；preload 108 通道全有句柄
 - 全量 accept（本批工作区、post-move）：**32/32 套、607 条断言、failed=0、exit 0**
 - 测试更新：6 个仍读旧路径的套件改到插件路径（work/record/context.work/knowledge.work/wizard/shooting）；
   hot/hotscore/platform/business/content/scan/project/context.marketing/knowledge.marketing 读路径同步；
@@ -1420,9 +1420,19 @@ W6-b 仍需拍板 `work:gateway` 归属并拆 `ipc/index.ts` barrel（域/host �
 **残差（登记，不阻塞 4.1 代码目标）**：
 1. host→plugin 反向值依赖：`electron/main/ipc/index.ts` re-export 插件 registrar + 宿主 index 取 abort*；
    无环、无顶层副作用，建议 4.2 拆 host-only barrel / 清理函数下沉 services。
-2. 14 处 type-only 宿主类型引用（含本批新增 2 处）：门禁按「非 type」口径放行；措辞统一为
-   「非 type 越界 0」，共享类型下沉 services 登记 4.2。
+2. type-only 宿主引用 16 处：14 处指向非白名单宿主模块（gatewayClient 13 + database/database 1，含本批新增 2 处），另 2 处 `import ... from kernel` 属允许范围；门禁按「非 type」口径放行，措辞统一为「非 type 越界 0」，共享类型下沉 services 登记 4.2。
 3. `registerGatewayIpc` 兼容入口收窄为 work-only（无生产/测试依赖 marketing 面）；`channelRegistrar`
    离开注入 registrar 即抛错（预期语义变化，测试必须注入）。
 
-**WP6 收尾仍待**：工作包级两次独立检查（事实核对 + 对抗复核）入档（C3），本轮只有 commit 级审查。
+**WP6 收尾 · 两次独立检查（C3，2026-11-03）**
+
+- **事实核对**（独立子代理，只读，核对基线 HEAD 09ff474）：技术判据 4/4 达成 —— 边界 0/0 且硬约束成立
+  （脚本 current>baseline 即 exit 1 + B6/B7 + CI/accept 首套三处证据）、全量通道 188=188（域口径 121=121）、
+  非 type 越界 0（type-only 16 处、14 处登记 4.2）、双 typecheck 0；发现的偏差：accept 产物早于 HEAD 34s
+  （形式不合格，已在最终 HEAD 后重跑留档）、PLAN 宿主数 27,463/口径漂移（已修）、CHANGELOG 文件数措辞（已修）。
+- **对抗复核**（另一独立子代理，互不可见）：无 P0/P1 代码问题；P2-1「C3 可假绿」由本段闭环；P3 处置 ——
+  P41 补 marketing:gateway:status/ensureReady 行为断言 ✅、B7 增「基线必须 0」断言 ✅、过期注释与 AGENTS §2/§4.1
+  规则锚 ✅（并补 host→plugin 反向依赖规则行）、PLAN §八 W6-b 明细与拍板结果 ✅、4.0.2 未做项口径并入 4.2 ✅；
+  未采纳：P3-2 dead 兼容面（registerGatewayIpc/withMarketingBackup 等）与 P3-3 registrar 未注入负向分支，
+  按约定登记 4.2/接受（当前无消费方、生产路径必先注入）。
+- **结论**：WP6 代码出口达成；最终 HEAD 后全量 accept 重跑作为收尾证据（见下条）。
