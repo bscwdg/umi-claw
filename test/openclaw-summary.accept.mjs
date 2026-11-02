@@ -438,8 +438,16 @@ try {
 
   await r.check('S16', 'abortAll：停用插件时中止在途总结（4.0.1 P1）', async () => {
     let cancelled = 0
+    let mode = 'stuck'
     const gw = {
       createChatStream() {
+        if (mode === 'fail') {
+          return {
+            result: Promise.reject(new Error('网关真的挂了')),
+            iterator: (async function* () {})(),
+            cancel() {}
+          }
+        }
         let settle
         const result = new Promise((resolve) => {
           settle = resolve
@@ -471,6 +479,20 @@ try {
     assertEq(after.attempts, before.attempts, '停用中止不消耗自动尝试配额')
     assertEq(after.lastStatus, before.lastStatus, '停用中止不写失败状态')
     assertEq(m.abortAll(), 0, '收尾后没有在途')
+
+    // 同一 manager 的下一轮「真实失败」仍要记 attempts：aborting 不得残留
+    // （复现窗口：上一轮 result 已 resolve、activeStream 还没清的微任务里被 abortAll 命中）
+    mode = 'fail'
+    await m.setAutoEnabled(true)
+    const before2 = (await m.getStatus()).attempts
+    const rr = await m.runScheduled()
+    assertEq(rr.status, 'error', '真实失败仍返回 error')
+    assertEq(
+      (await m.getStatus()).attempts,
+      before2 + 1,
+      '真实失败仍计 attempts（aborting 未残留）'
+    )
+    await m.setAutoEnabled(false)
   })
 } catch (e) {
   console.error('验收脚本自身异常:', e)

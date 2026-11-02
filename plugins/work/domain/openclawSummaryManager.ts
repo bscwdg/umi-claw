@@ -419,6 +419,10 @@ export class OpenClawSummaryManager {
   }
 
   private async doSummarize(trigger: SummaryTrigger): Promise<SummaryRunResult> {
+    // 每轮开始复位：上一轮若在「result 已 resolve、activeStream 还没清」的微任务窗口被
+    // abortAll 命中，aborting 会残留 true；不复位的话下一次真实失败会被误判成「停用中止」
+    // （不写失败状态、不消耗自动配额）。
+    this.aborting = false
     const now = this.now()
     const date = dateOf(now)
     const state = await this.readState(date)
