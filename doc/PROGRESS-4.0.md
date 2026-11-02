@@ -1146,6 +1146,7 @@ CHANGELOG（4.0.0 条目、验收口径）、本文件（更正 WP4 的 954/476 
 | `report.accept:390`、`content.accept:697`（sleep(80)→收尾后计数断言） | **已修（4.0.2）**：改 `waitFor`（abortAll 幂等 / 注册表清空），同上连跑 2 次全绿 |
 | `qatool.accept:221`（sleep→断言「不产候选」） | **保留**：断言「无写入」不能用轮询证明不存在 |
 | `ui.accept` U13/U14「取消后弹窗关闭」（固定 flush 次数） | **已修（4.1 期间，`33beebd`）**：改 `waitFor`（墙钟 2s）+ 打开方向按钮计数同批保护；ui 23/23 连跑 2 次 |
+| `plugin.accept` P8「激活超时」偶发 fail（单跑首轮 62/63，复跑 63/63） | **登记观察**：负载下 `activationTimeout` 临界；非 WP5-a 引入，复现后按 waitFor/放宽阈值处理 |
 | `voice.accept:584/608`、`scan.accept:500/503` | 保留观察（后台状态推进 / 服务端断连 IO 时序，非 DB 写后读） |
 
 ### 验证（2026-11-03 实跑）
@@ -1269,3 +1270,20 @@ obsidian getter 注入）。
 **剩余 42 个 handle**（`index.ts:1150–1774`，625 行）：config 8、claw 7、env 7、skills 11、
 term 5、channels 3、test-connection 1。env 批含 update 大段逻辑（局部 helper 需一并下沉或注入）。
 拆完预计约 1,800–1,900 行，以实测为准。
+
+### W5-a · 第二批（skills 11 + channels 3）
+
+`2619acc` 之后继续拆：`ipc/host/skills.ts`（OpenClaw 技能 3 + 本地/云同步 8）与
+`ipc/host/channels.ts`（渠道插件 3），共 **14 个通道**，`registerXxxIpc(ipcMain, deps)` 注入：
+
+- skills 保留既有语义：`{ok:false}` → reject「技能开关切换失败」、removeSkill 成功才
+  `dropPendingUpdate`、两阶段拉取、ids 只收 string；channels 的 installPlugin 异常仍转
+  `{success:false,error}`
+- handler 42 → 28（19+11+3+28=61 守恒）；index 2,330 → 2,311；宿主 27,204（只搬不删）
+- 抽 `ipc/host/types.ts` 的 `HostIpcRegistrar`，两个新文件不再重复行内类型
+- `plugin.accept` P44 断言加强：通道按 `ipc.handle(\s*'<ch>'` 匹配（防注释/字符串假绿）、
+  registrar 用正则匹配 `(ipcMain`、index 不再直注册 skills:/channels:
+- 盲区：仍无行为级测试（两文件纯模块，可 fake registrar + deps 补 P45，已登记待做）
+- 已知 flake 登记：`plugin.accept` P8 激活超时偶发一次（复跑绿），与本批无关
+
+剩余 28 个 handle：`config` 8、`claw` 7、`env` 7、`term` 5、`test-connection` 1。
