@@ -28,6 +28,7 @@ import type { WorkDatabase } from './database'
 import { dateOf, normalizeDate } from './todoManager'
 import { estimateTokens, sliceToTokenBudget } from '../services/context/tokens'
 export { estimateTokens, sliceToTokenBudget }
+import { shortTitle } from '../services/context/pack'
 
 import {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
@@ -36,8 +37,8 @@ import {
   KNOWLEDGE_ITEM_MIN_TOKENS,
   ITEM_TRUNCATE_MARKER,
   DROPPED_TITLES_SHOWN,
-  DROPPED_TITLE_MAX_CHARS
 } from '../services/context/limits'
+export { DROPPED_TITLE_MAX_CHARS } from '../services/context/limits'
 export {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
   MIN_CONTEXT_WINDOW_TOKENS,
@@ -45,7 +46,6 @@ export {
   KNOWLEDGE_ITEM_MIN_TOKENS,
   ITEM_TRUNCATE_MARKER,
   DROPPED_TITLES_SHOWN,
-  DROPPED_TITLE_MAX_CHARS
 }
 
 // ── 常量（§六） ───────────────────────────────────────────────────────────────
@@ -650,13 +650,6 @@ export function renderContextPackText(pack: ContextPack): string {
   }
 
   return parts.join('\n')
-}
-
-function shortTitle(title: string): string {
-  const t = String(title ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return t.length > DROPPED_TITLE_MAX_CHARS ? t.slice(0, DROPPED_TITLE_MAX_CHARS) + '…' : t
 }
 
 // ── 工具 ──────────────────────────────────────────────────────────────────────

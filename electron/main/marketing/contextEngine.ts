@@ -45,6 +45,7 @@ import type { ProjectManager } from './projectManager'
 import { getPlatformRule } from './platformRules'
 import { estimateTokens, sliceToTokenBudget } from '../services/context/tokens'
 export { estimateTokens, sliceToTokenBudget }
+import { shortTitle } from '../services/context/pack'
 
 import {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
@@ -53,8 +54,8 @@ import {
   KNOWLEDGE_ITEM_MIN_TOKENS,
   ITEM_TRUNCATE_MARKER,
   DROPPED_TITLES_SHOWN,
-  DROPPED_TITLE_MAX_CHARS
 } from '../services/context/limits'
+export { DROPPED_TITLE_MAX_CHARS } from '../services/context/limits'
 export {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
   MIN_CONTEXT_WINDOW_TOKENS,
@@ -62,7 +63,6 @@ export {
   KNOWLEDGE_ITEM_MIN_TOKENS,
   ITEM_TRUNCATE_MARKER,
   DROPPED_TITLES_SHOWN,
-  DROPPED_TITLE_MAX_CHARS
 }
 
 // ── 常量（§六 / §七 Commit 06 / §十） ─────────────────────────────────────────
@@ -307,14 +307,6 @@ export function renderContextPackText(pack: ContextPack): string {
   }
 
   return parts.join('\n')
-}
-
-/** 列表里的短标题（截长 + 压空白；只在渲染层用，不改数据） */
-function shortTitle(title: string): string {
-  const t = String(title ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return t.length > DROPPED_TITLE_MAX_CHARS ? t.slice(0, DROPPED_TITLE_MAX_CHARS) + '…' : t
 }
 
 // ── 引擎 ────────────────────────────────────────────────────────────────────

@@ -758,3 +758,25 @@ documentParsers `1f3c42c`、pdfjsAssets `9f2c34b`、urlParser `7ea3456`）。合
 
 - WP1 完成，可发 **4.0.1**（WP0 的 C0.3 真机 7 步仍待北执行：阻塞打 tag，不阻塞本包）。
 - 下一步 WP2：context / knowledge 真下沉（内核 + section provider）。
+
+## 2026-11-02 · WP2 切片 1–3（context 公共面）
+
+WP2 主体（内核 + section provider）未开始；先做三刀无争议的公共部分。
+
+| 切片 | 提交 | 内容 | 证据 |
+| --- | --- | --- | --- |
+| 1 | `7dc541b` | `services/context/tokens.ts`：estimateTokens / sliceToTokenBudget | 与 HEAD 逐输入对比 **0 差异 / 0 超预算** |
+| 2 | `47e5785` | `services/context/limits.ts`：7 个同值常量 | context.work 12/12、context.marketing 22/22、platform 7/7 |
+| 3 | 本提交 | `services/context/pack.ts`：shortTitle | 26 组输入 0 差异；全量 **31 套 / 582 断言 / 0 失败** |
+
+### 边界（刻意没有合并的）
+
+- `CONTEXT_BUDGET_RATIO`（0.7 / 0.6）与 `PACK_OVERHEAD_TOKENS`（48 / 64）**留在各域**：取值不同，不是复制粘贴。
+- `requireWindow` **不下沉**：work 只有两条文案，marketing 接受 `field` 并带 `details`，属有意差异。
+- `ContextBudget` / `ContextPack` 两个接口结构不同，仍各域保留。
+
+### 对抗复核（review_wp2_slice1/2/3）
+
+- 切片 1 判 **[阻断]**：曾把 estimateTokens 重写成 3 档（非 ASCII 一律 1），系统性低估（BMP 内 25248 码点、café/西里尔/CRLF 偏差 33%、切片超预算 28–48%）。已改逐字直搬并实测。
+- 切片 2 `[仅次要]` 2 修（决策注释搬回、空行压缩）；1 条风格建议未采纳（保留显式 7 个名字，便于漏改时被 typecheck 拦住）。
+- 切片 3 `[仅次要]` 4 修（孤立 JSDoc、全量验收、DROPPED_TITLE_MAX_CHARS 改纯 re-export、PLAN 目录树）；1 条「shortTitle 截断无断言」记为待补，随下一条提交补上。

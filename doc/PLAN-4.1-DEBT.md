@@ -234,6 +234,8 @@ npm run typecheck:node; npm run typecheck:web
 electron/main/services/context/
 ├── budget.ts       预算分配 / 裁剪 / dropped 记账 / pack 文本渲染
 ├── tokens.ts       estimateTokens / sliceToTokenBudget（两域逐字相同，直搬）
+├── limits.ts       共享常量（窗口上下界 / 单条最小占用 / 截断标记 / 标题长度）
+├── pack.ts         共享小工具（shortTitle：dropped 标题截断；不含预算逻辑）
 └── engine.ts       ContextEngine 骨架：调 provider 收 section → 组装 → 预算内截断
 
 plugins/<id>/context/
