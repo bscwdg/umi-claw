@@ -15,7 +15,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
-import { basename, extname, join } from 'node:path'
+import { basename, extname, isAbsolute, join } from 'node:path'
 import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
 import type { WorkDatabase } from './database'
 import {
@@ -100,8 +100,14 @@ export interface ListKnowledgeParams {
 
 export interface KnowledgeManagerOptions {
   database: WorkDatabase
-  /** 原件落点根目录（data）；本 manager 写 data/knowledge/ */
+  /** 原件落点根目录（data）；本 manager 写 data/<originalsSubdir>/ */
   dataDir: string
+  /**
+   * 原件相对 dataDir 的子目录（默认 `knowledge`）。
+   * 4.0.2 P3：work 插件传入 `plugins/work/knowledge`，把原件收进插件自己的目录，
+   * 与 marketing 的 `projects/<id>/` 一样可随插件备份/迁移；source_path 仍存相对 dataDir。
+   */
+  originalsSubdir?: string
   pdfjsAssets: PdfjsAssets
   htmlFetcher?: HtmlFetcher
   listLimit?: number
@@ -112,6 +118,7 @@ export interface KnowledgeManagerOptions {
 export class KnowledgeManager {
   private readonly database: WorkDatabase
   private readonly knowledgeDir: string
+  private readonly originalsSubdir: string
   private readonly pdfjsAssets: PdfjsAssets
   private readonly htmlFetcher: HtmlFetcher
   private readonly listLimit: number
@@ -128,7 +135,18 @@ export class KnowledgeManager {
     if (!options.dataDir) throw new AppError(ERROR_CODES.VALIDATION_ERROR, '缺少 dataDir')
     if (!options.pdfjsAssets) throw new AppError(ERROR_CODES.VALIDATION_ERROR, '缺少 pdfjsAssets')
     this.database = options.database
-    this.knowledgeDir = join(options.dataDir, KNOWLEDGE_SUBDIR)
+    const subdir =
+      typeof options.originalsSubdir === 'string' && options.originalsSubdir.trim()
+        ? options.originalsSubdir.trim()
+        : KNOWLEDGE_SUBDIR
+    // 只允许 dataDir 下的相对子目录：绝对路径或 `..` 会逃出数据目录（导出契约，不能靠调用方自觉）
+    if (isAbsolute(subdir) || subdir.split(/[\\/]/).includes('..')) {
+      throw new AppError(ERROR_CODES.VALIDATION_ERROR, 'originalsSubdir 必须是 dataDir 下的相对子目录', {
+        field: 'originalsSubdir'
+      })
+    }
+    this.originalsSubdir = subdir
+    this.knowledgeDir = join(options.dataDir, this.originalsSubdir)
     this.pdfjsAssets = options.pdfjsAssets
     this.htmlFetcher = options.htmlFetcher ?? fetchHtmlPage
     this.listLimit = clamp(options.listLimit ?? DEFAULT_LIST_LIMIT, DEFAULT_LIST_LIMIT, 1, 5000)
@@ -314,7 +332,7 @@ export class KnowledgeManager {
 
   // ── 内部 ───────────────────────────────────────────────────────────────────
 
-  /** 拷原件进 data/knowledge/<id>/，返回相对/文件名（source_path 存相对，可溯源） */
+  /** 拷原件进 data/<originalsSubdir>/<id>/，返回相对路径（source_path 相对 dataDir，可溯源） */
   private copySourceFile(absFilePath: string): { relPath: string; name: string } {
     const name = sanitizeFileName(basename(absFilePath))
     const id = this.newId()
@@ -322,8 +340,8 @@ export class KnowledgeManager {
     mkdirSync(destDir, { recursive: true })
     const dest = join(destDir, name)
     copyFileSync(absFilePath, dest)
-    // source_path 存 data/knowledge/<id>/<name> 的相对（相对 dataDir），与 2.0 口径一致
-    return { relPath: join(KNOWLEDGE_SUBDIR, id, name), name }
+    // source_path 存相对 dataDir 的路径（work 为 plugins/work/knowledge/<id>/<name>）
+    return { relPath: join(this.originalsSubdir, id, name), name }
   }
 
   /** 有 source_path → 按 UNIQUE(source_path) upsert；无 → create */

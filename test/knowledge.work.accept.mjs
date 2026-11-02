@@ -122,7 +122,14 @@ try {
     return `pid=${st.workerPid}`
   })
 
-  const knowledge = createKnowledgeManager({ database, dataDir, pdfjsAssets, logger })
+  const knowledge = createKnowledgeManager({
+    database,
+    dataDir,
+    // 4.0.2 P3：与生产 runtime 同口径（原件收进插件目录）
+    originalsSubdir: join('plugins', 'work', 'knowledge'),
+    pdfjsAssets,
+    logger
+  })
 
   // ── create 手工类型 ──
   await r.check('K1', 'create：text/markdown/faq 直存，source_path=null；faq 结构化', async () => {
@@ -138,6 +145,21 @@ try {
     const faq = await knowledge.create({ type: 'faq', content: 'Q：怎么请假？\nA：系统提交。' })
     assert(faq.content.includes('Q：') && faq.content.includes('A：'), 'faq 结构化')
 
+    // originalsSubdir 是导出契约：绝对路径/.. 必须拒绝（不能靠调用方自觉）
+    let badSubdir = null
+    try {
+      createKnowledgeManager({
+        database,
+        dataDir,
+        pdfjsAssets,
+        logger,
+        originalsSubdir: '../escape'
+      })
+    } catch (e) {
+      badSubdir = e
+    }
+    assertEq(badSubdir?.code, 'VALIDATION_ERROR', 'originalsSubdir 拒绝 .. 逃逸')
+
     const badType = await outcome(knowledge.create({ type: 'docx', content: 'x' }))
     assertEq(badType.code, 'VALIDATION_ERROR', '手工不支持 docx')
     const noContent = await outcome(knowledge.create({ type: 'text', content: '  ' }))
@@ -148,14 +170,18 @@ try {
   })
 
   // ── import docx/xlsx/pdf ──
-  await r.check('K2', 'import docx：真解析，中文 content 可检索；原件落 data/knowledge/', async () => {
+  await r.check('K2', 'import docx：真解析，中文 content 可检索；原件落插件目录', async () => {
     const row = await knowledge.importKnowledge({ type: 'docx', filePath: docxPath })
     assert(row.content.includes('Q3') && row.content.includes('12800'), `解析出中文/数字（实际：${row.content.replace(/\s+/g, ' ').slice(0, 60)}）`)
     assertEq(row.type, 'docx', 'type')
-    assert(row.source_path && row.source_path.includes('knowledge'), 'source_path 相对落 data/knowledge/')
+    assert(
+      row.source_path && /^plugins[\\/]work[\\/]knowledge/.test(row.source_path),
+      `source_path 收进插件目录（实际：${row.source_path}）`
+    )
     assert(existsSync(join(dataDir, ...row.source_path.split(/[\\/]/))), '原件磁盘存在')
+    assert(!existsSync(join(dataDir, 'knowledge')), '旧全局 data/knowledge 未被写入（4.0.2 P3）')
     assert(row.source_name === '立项书.docx', 'source_name')
-    return 'docx 解析+落盘 ✓'
+    return 'docx 解析+落盘（插件目录）✓'
   })
 
   await r.check('K3', 'import xlsx：Markdown 表/数字不串行；import 文字层 PDF', async () => {

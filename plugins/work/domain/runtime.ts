@@ -7,6 +7,8 @@
 //   - 通知、外发、旧库定位、pdfjs 路径这些宿主能力由调用方注入（deps）。
 // 插件化后由 plugins/work 调用它；未装箱前由 main 调用，行为不变。
 
+import { join } from 'node:path'
+
 import { createProfileManager, type ProfileManager } from './profileManager'
 import { createMatterManager, type MatterManager } from './matterManager'
 import { createTodoManager, type TodoManager } from './todoManager'
@@ -125,6 +127,8 @@ export function createWorkRuntime(deps: WorkRuntimeDeps): WorkRuntime {
   const knowledge = createKnowledgeManager({
     database,
     dataDir: deps.dataDir,
+    // 4.0.2 P3：原件收进插件自己的目录（与 marketing 的 projects/<id>/ 同口径）
+    originalsSubdir: join('plugins', 'work', 'knowledge'),
     pdfjsAssets: deps.pdfjsAssets,
     logger: log
   })
