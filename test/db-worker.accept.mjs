@@ -404,13 +404,15 @@ try {
     const rawSql = await main.call('p', { sql: 'DROP TABLE matters' })
     assertEq(rawSql.ok, false, '前端传 SQL 必须被拒')
 
-    // 错误码必须全部落在 §14.2 的 13 项内（4.0：HOT_SOURCE_ERROR 以 deprecated 身份回归，
-    // 供 marketing 热点采集调用点继续编译，见 MERGE-INVENTORY R1）
+    // 错误码必须全部落在 §14.2 的 14 项内（4.0：HOT_SOURCE_ERROR 以 deprecated 身份回归，
+    // 供 marketing 热点采集调用点继续编译，见 MERGE-INVENTORY R1；4.0.2 P2 新增
+    // PLUGIN_OPERATION_FAILED：宿主插件管理面错误码，原为字符串常量散落，现收口）
     const envelopeMod = await import(
       pathToFileURL(bundleEntry('electron/main/services/errors.ts', 'errors.mjs')).href
     )
     const allowedCodes = Object.keys(envelopeMod.ERROR_CODES)
-    assertEq(allowedCodes.length, 13, `§14.2 应为 13 项，实际 ${allowedCodes.length}`)
+    assertEq(allowedCodes.length, 14, `§14.2 应为 14 项，实际 ${allowedCodes.length}`)
+    assert(allowedCodes.includes('PLUGIN_OPERATION_FAILED'), 'PLUGIN_OPERATION_FAILED 应已加入（4.0.2 P2）')
     assert(allowedCodes.includes('HOT_SOURCE_ERROR'), 'HOT_SOURCE_ERROR 应以 deprecated 身份保留')
     assert(allowedCodes.includes('STREAM_TRUNCATED'), 'STREAM_TRUNCATED 应已加入')
     // v0.18 桥接式当日总结新增一项（PLAN §14.2 表同步）
