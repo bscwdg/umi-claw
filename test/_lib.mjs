@@ -4,7 +4,19 @@
 // esbuild bundle（把 TS 真源码打成临时 ESM 供纯 Node import）、结果落盘。
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -93,13 +105,108 @@ export function anySrc(candidates) {
   return candidates[0]
 }
 
-/** 便携 Node（data/runtime/node-<platform>-<arch>）优先，缺失时回退当前 node */
+/**
+ * 便携 Node 解析（生产同款优先）。
+ *
+ * 为什么需要写探针（2026-11-02 本机实测）：便携 Node 可能被下载/放置成**低完整性标签**
+ * （`data/runtime/node-win32-x64/node.exe` 以 Low Mandatory Level 运行，只能写 Low IL 目录），
+ * 而 `test/.tmp` 是 Medium —— 直接用它跑 db-worker 会报 `SQLITE_ERROR 14 unable to open database file`
+ * （文件写探针则是 EPERM）。做法：探针失败时把便携 Node 复制到系统临时目录（继承 Medium）再用，
+ * 保持与生产同样的 Node 版本；只有便携 Node 不存在（如 CI）才退回当前进程 Node。
+ *
+ * 可用 `UMI_ACCEPT_NODE` 显式覆盖。
+ */
+let resolvedNodeCache = null
+
 export function resolveNodePath() {
+  if (resolvedNodeCache) return resolvedNodeCache
+  const override = process.env.UMI_ACCEPT_NODE
+  if (override && existsSync(override)) {
+    resolvedNodeCache = override
+    return override
+  }
   const platform = process.platform
   const arch = process.arch
   const name = platform === 'win32' ? 'node.exe' : join('bin', 'node')
   const portable = join(repoRoot, 'data', 'runtime', `node-${platform}-${arch}`, name)
-  return existsSync(portable) ? portable : process.execPath
+  if (!existsSync(portable)) {
+    resolvedNodeCache = process.execPath
+    return resolvedNodeCache
+  }
+  if (canWriteFrom(portable)) {
+    resolvedNodeCache = portable
+    return resolvedNodeCache
+  }
+  resolvedNodeCache = copyPortableToTemp(portable) ?? process.execPath
+  return resolvedNodeCache
+}
+
+/** 用便携 Node 自身写一个探针文件，判断它能否在 test/.tmp 落盘（低完整性标签会失败） */
+function canWriteFrom(nodePath) {
+  try {
+    mkdirSync(tmpDir, { recursive: true })
+    const probe = join(tmpDir, `.node-write-probe-${process.pid}`)
+    const res = spawnSync(
+      nodePath,
+      ['-e', "require('node:fs').writeFileSync(process.argv[1], 'ok')", probe],
+      { encoding: 'utf8', timeout: 15000, windowsHide: true }
+    )
+    const ok = res.status === 0 && existsSync(probe)
+    try {
+      rmSync(probe, { force: true })
+    } catch {
+      /* 探针清理失败不影响判断 */
+    }
+    return ok
+  } catch {
+    return false
+  }
+}
+
+/** 复制便携 Node 到系统临时目录（脱离 Low IL 目录；复用同大小/时间的副本） */
+function copyPortableToTemp(nodePath) {
+  try {
+    const info = statSync(nodePath)
+    const key = `umi-accept-node-${info.size}-${Math.floor(info.mtimeMs)}`
+    const dir = join(tmpdir(), key)
+    // Windows 下必须保持文件名为 node.exe：db-client 的「单例/重启」断言按
+    // Win32_Process Name='node.exe' + 命令行里的 db 路径来数进程；换文件名会让计数恒为 0
+    // （2026-11-02 实测踩过）。
+    const fileName = process.platform === 'win32' ? 'node.exe' : 'node'
+    const dest = join(dir, fileName)
+
+    // 已存在且大小一致 → 直接复用；大小不一致说明上次复制被中断，重建
+    if (existsSync(dest) && statSync(dest).size === info.size) return dest
+
+    mkdirSync(dir, { recursive: true })
+    const partial = dest + '.incomplete'
+    copyFileSync(nodePath, partial)
+    if (statSync(partial).size !== info.size) {
+      throw new Error('复制的 Node 大小与原文件不一致')
+    }
+    renameSync(partial, dest)
+    if (process.platform !== 'win32') chmodSync(dest, 0o755)
+
+    // 清理其它版本副本（只保留当前 key）：每个副本约 100MB，不清理会越积越多；
+    // 失败（例如副本正被其它进程占用）不影响本次使用。
+    try {
+      for (const name of readdirSync(tmpdir())) {
+        if (name.startsWith('umi-accept-node-') && name !== key) {
+          rmSync(join(tmpdir(), name), { recursive: true, force: true })
+        }
+      }
+    } catch {
+      /* 清理失败忽略 */
+    }
+    console.log(
+      `[accept] 便携 Node 在 test/.tmp 不可写（低完整性标签，SQLite/EPERM 会失败），` +
+        `已复制到临时目录使用：${dest}`
+    )
+    return dest
+  } catch (e) {
+    console.log(`[accept] 复制便携 Node 到临时目录失败，回退当前进程 Node：${e?.message ?? e}`)
+    return null
+  }
 }
 
 export const workerScriptPath = join(repoRoot, 'resources', 'database', 'db-worker.mjs')

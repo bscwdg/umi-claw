@@ -279,7 +279,11 @@ try {
 
   await r.check('S12', 'runScheduled：失败计数 + 最小间隔 + 耗尽后停手', async () => {
     await database.metaSet('openclaw_summary_state', '0')
-    let clock = Date.now()
+    // 假时钟取「今天中午」：直接用 Date.now() 在 23:5x 起步、再累加 5 分钟会跨午夜，
+    // runScheduled 的 dateOf 会切到第二天、读不到刚写的状态 → 跨午夜假失败（2026-11-02 实测）。
+    const base = new Date()
+    base.setHours(12, 0, 0, 0)
+    let clock = base.getTime()
     const gw = throwingGateway('网关未就绪')
     const m = makeManager(gw, { now: () => clock })
     const a = await m.runScheduled()
