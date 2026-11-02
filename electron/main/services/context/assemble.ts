@@ -47,7 +47,9 @@ export interface AssembleLoopOptions<T, R> {
    *
    * `info` 由内核原样带回（营销用它填 `pack.retrieval`），内核不解读。
    */
-  ranked: () => { entries: LoopCandidate<T>[]; info?: unknown }
+  ranked: () =>
+    | { entries: LoopCandidate<T>[]; info?: unknown }
+    | Promise<{ entries: LoopCandidate<T>[]; info?: unknown }>
   /**
    * 强制走 truncated（不看全量是否装得下）。
    *
@@ -106,7 +108,9 @@ export interface AssembleLoopResult<R> {
  *
  * 纯函数（除了调用方注入的 render/measure/include），可重复调用、无副作用。
  */
-export function assembleLoop<T, R>(opts: AssembleLoopOptions<T, R>): AssembleLoopResult<R> {
+export async function assembleLoop<T, R>(
+  opts: AssembleLoopOptions<T, R>
+): Promise<AssembleLoopResult<R>> {
   const initial = opts.initialDropped ?? []
 
   // ── 1. 全量能否装下 ──
@@ -127,7 +131,7 @@ export function assembleLoop<T, R>(opts: AssembleLoopOptions<T, R>): AssembleLoo
   }
 
   // ── 2. 逐条准入 + 截断 ──
-  const ranked = opts.ranked()
+  const ranked = await opts.ranked()
   const rankedEntries = ranked.entries
   const chosen: R[] = []
   for (let i = 0; i < rankedEntries.length; i++) {
