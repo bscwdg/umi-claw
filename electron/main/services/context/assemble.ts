@@ -74,6 +74,23 @@ export interface AssembleLoopOptions<T, R> {
    */
   measureSelection(chosen: R[], dropped: DroppedEntry[], mode: PackMode): number
   /**
+   * 判断 mode 时用的测量（不传则退回 measureSelection(..., 'full')）。
+   *
+   * 为什么单独一个：两域在这一步口径不同——
+   *   - marketing：mode 与准入用**同一个** measure（只差 mode 参数）；
+   *   - work：mode 用 `measure`（渲 skeleton 全包），准入用 `measureWith`（只算知识块）。
+   * 混用会让 work 的 full/truncated 判定变化（同一窗口少收几条知识）。
+   */
+  measureFull?: (chosen: R[], dropped: DroppedEntry[]) => number
+  /**
+   * 算 sliceBudget 时用的测量（不传则退回 measureSelection(..., 'truncated')）。
+   *
+   * 为什么单独一个：work 的 sliceBudget 用的是 `renderContextPackText(probe)`（整包），
+   * 而准入用的是 `measureWith`（只算知识块）——同一域里这两个口径本来就不同。
+   * 统一成一个会让 work 的截断阈值变松/变紧。
+   */
+  measureSlice?: (chosen: R[], dropped: DroppedEntry[]) => number
+  /**
    * 收尾渲染：返回最终文本与实际用量。
    * usedTokens 必须等于 measureSelection(chosen, dropped, mode) 的结果（同源）。
    */
@@ -117,7 +134,9 @@ export async function assembleLoop<T, R>(
   const allPacked = opts.allCandidates.map((item) =>
     opts.include(item, { truncate: false, matched: false })
   )
-  const fullTokens = opts.measureSelection(allPacked, initial, 'full')
+  const fullTokens = opts.measureFull
+    ? opts.measureFull(allPacked, initial)
+    : opts.measureSelection(allPacked, initial, 'full')
   const mode: PackMode = fullTokens <= opts.budgetTokens ? 'full' : 'truncated'
 
   if (mode === 'full') {
@@ -151,7 +170,9 @@ export async function assembleLoop<T, R>(
     // 放不下整条：剩余空间够一段有意义的内容就截断收入，否则收手
     const sliceBudget =
       opts.budgetTokens -
-      opts.measureSelection(chosen, probeDropped, 'truncated') -
+      (opts.measureSlice
+        ? opts.measureSlice(chosen, probeDropped)
+        : opts.measureSelection(chosen, probeDropped, 'truncated')) -
       opts.overheadTokens -
       opts.markerTokens -
       opts.titleTokens(entry.item)
