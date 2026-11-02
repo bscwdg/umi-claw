@@ -19,7 +19,13 @@ import { abortAllScanStreams } from './main/ipc/scan'
 import { join } from 'node:path'
 import { resolvePdfjsAssets } from '../../electron/main/services/knowledge/parsers/pdfjsAssets'
 import { buildOpenClawGateway } from './gatewayAdapter'
-import { importTableData, MARKETING_TABLES, HOST_APP_META_PREFIXES } from '../../electron/main/services/pluginDataImport'
+import {
+  clearLegacyImportRetry,
+  registerLegacyImportRetry,
+  importTableData,
+  MARKETING_TABLES,
+  HOST_APP_META_PREFIXES
+} from '../../electron/main/services/pluginDataImport'
 
 let runtime: MarketingRuntime | null = null
 
@@ -92,14 +98,26 @@ export default definePlugin({
     // 旧库数据一次性导入（只读 umi-claw.db → 插件库）：后台跑，失败不写标记
     const legacy = ctx.services.legacyDb
     if (legacy) {
-      void importTableData({
-        source: { request: (method, params) => legacy.list(method.split('.')[0], params) },
-        target: db,
-        pluginDataDir: join(ctx.host.dataDir, 'plugins', 'marketing'),
-        tables: MARKETING_TABLES,
-        skipKeyPrefixes: HOST_APP_META_PREFIXES,
-        logger: (line) => ctx.logger.info(line)
-      }).catch((e) => ctx.logger.warn('旧库数据导入失败（下次启动重试）', e))
+      const runLegacyImport = (force = false) =>
+        importTableData({
+          source: { request: (method, params) => legacy.list(method.split('.')[0], params) },
+          target: db,
+          pluginDataDir: join(ctx.host.dataDir, 'plugins', 'marketing'),
+          tables: MARKETING_TABLES,
+          skipKeyPrefixes: HOST_APP_META_PREFIXES,
+          force,
+          logger: (line) => ctx.logger.info(line)
+        })
+      void runLegacyImport().catch((e) =>
+        ctx.logger.warn('旧库数据导入失败（可点顶部横幅重试）', e)
+      )
+      // 4.0.2 P2：宿主的「重试导入」按钮经 services 注册表调到这里
+      registerLegacyImportRetry('marketing', async () => {
+        const result = await runLegacyImport(true)
+        ctx.logger.info('旧库数据导入重试完成：' + JSON.stringify(result.counts))
+      })
+      // 激活失败时内核只跑 disposers（不调 deactivate）：必须靠 onDispose 摘掉执行器
+      ctx.onDispose(() => clearLegacyImportRetry('marketing'))
     }
 
     // 所有 marketing:* 通道走同一注册器：停用插件时由内核统一摘除
@@ -166,12 +184,14 @@ export default definePlugin({
     return () => {
       // 停用要把后台任务一起收掉：collector 最长 45s、SSE 还在烧 token，
       // 而通道已摘除（用户连停止按钮都点不了）——必须先 abort 再让内核 dispose 库（审查 #5）。
+      clearLegacyImportRetry('marketing')
       stopBackgroundWork(marketing)
       runtime = null
       setChannelRegistrar(null)
     }
   },
   deactivate() {
+    clearLegacyImportRetry('marketing')
     if (runtime) stopBackgroundWork(runtime)
     runtime = null
     setChannelRegistrar(null)

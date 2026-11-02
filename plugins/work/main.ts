@@ -11,6 +11,7 @@ import { createWorkRuntime, type WorkRuntime } from './domain/runtime'
 import { registerWorkIpc, setWorkIpcRegistrar, type WorkIpcDeps } from './main/ipc/work'
 import { resolvePdfjsAssets } from '../../electron/main/services/knowledge/parsers/pdfjsAssets'
 import { importWorkDataIfNeeded } from './domain/migrate'
+import { clearLegacyImportRetry, registerLegacyImportRetry } from '../../electron/main/services/pluginDataImport'
 import type { GatewayClient } from '../../electron/main/gatewayClient'
 import { join } from 'node:path'
 
@@ -135,12 +136,22 @@ export default definePlugin({
     // 旧库数据一次性导入（只读宿主 work.db → 插件库）：后台跑，失败不写标记、下次启动重试
     const legacy = ctx.services.legacyDb
     if (legacy) {
-      void importWorkDataIfNeeded({
-        source: { request: (method, params) => legacy.list(method.split('.')[0], params) },
-        target: db,
-        pluginDataDir: join(ctx.host.dataDir, 'plugins', 'work'),
-        logger: (line) => ctx.logger.info(line)
-      }).catch((e) => ctx.logger.warn('旧库数据导入失败（下次启动重试）', e))
+      const runLegacyImport = (force = false) =>
+        importWorkDataIfNeeded({
+          source: { request: (method, params) => legacy.list(method.split('.')[0], params) },
+          target: db,
+          pluginDataDir: join(ctx.host.dataDir, 'plugins', 'work'),
+          force,
+          logger: (line) => ctx.logger.info(line)
+        })
+      void runLegacyImport().catch((e) => ctx.logger.warn('旧库数据导入失败（可点顶部横幅重试）', e))
+      // 4.0.2 P2：宿主的「重试导入」按钮经 services 注册表调到这里
+      registerLegacyImportRetry('work', async () => {
+        const result = await runLegacyImport(true)
+        ctx.logger.info('旧库数据导入重试完成：' + JSON.stringify(result.counts))
+      })
+      // 激活失败时内核只跑 disposers（不调 deactivate）：必须靠 onDispose 摘掉执行器
+      ctx.onDispose(() => clearLegacyImportRetry('work'))
     }
 
     // 提醒循环属于域行为：随插件启停（30s 检查、到点通知/外发、日报草稿）
@@ -148,6 +159,7 @@ export default definePlugin({
     ctx.logger.info(`工作域就绪（库 ${db.path}）`)
 
     return () => {
+      clearLegacyImportRetry('work')
       stopBackgroundWork(work)
       runtime = null
       setWorkIpcRegistrar(null)
@@ -161,6 +173,7 @@ export default definePlugin({
     } catch {
       // 停用路径上不阻塞
     }
+    clearLegacyImportRetry('work')
     runtime = null
     setWorkIpcRegistrar(null)
   }

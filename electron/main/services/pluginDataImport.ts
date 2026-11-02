@@ -8,8 +8,8 @@
 //
 // work 与 marketing 各有一份旧库（work.db / umi-claw.db）和一套表，这里只做通用部分。
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 
 /** 旧库只需要 list */
 export interface LegacyReader {
@@ -40,6 +40,8 @@ export interface ImportOptions {
   skipKeyPrefixes?: readonly string[]
   pageSize?: number
   logger?: (line: string) => void
+  /** 重试入口用：忽略 .imported 标记强制再导一次（幂等 upsert，不删旧数据） */
+  force?: boolean
 }
 
 export interface ImportResult {
@@ -49,11 +51,94 @@ export interface ImportResult {
   skipped: string[]
 }
 
+/** 旧库导入状态（宿主持久化到插件目录 import-status.json，供 UI 展示「失败 + 重试」） */
+export interface ImportStatusRecord {
+  pluginId: string
+  state: 'ok' | 'skipped' | 'failed'
+  error?: string
+  counts?: Record<string, number>
+  at: number
+}
+
+const IMPORT_STATUS_FILE = 'import-status.json'
+
+export function readImportStatus(pluginDataDir: string): ImportStatusRecord | null {
+  try {
+    return JSON.parse(readFileSync(join(pluginDataDir, IMPORT_STATUS_FILE), 'utf-8')) as ImportStatusRecord
+  } catch {
+    return null
+  }
+}
+
+function writeImportStatus(pluginDataDir: string, record: ImportStatusRecord): void {
+  try {
+    mkdirSync(pluginDataDir, { recursive: true })
+    // 错误信息可能很长且含路径/数据片段：截断后再落盘（UI 只展示摘要）
+    const safe: ImportStatusRecord = {
+      ...record,
+      error: record.error ? record.error.slice(0, 300) : undefined
+    }
+    // tmp + rename：避免进程崩溃时留下半截 JSON（readImportStatus 会当成无状态）
+    const target = join(pluginDataDir, IMPORT_STATUS_FILE)
+    const tmp = `${target}.tmp`
+    writeFileSync(tmp, JSON.stringify(safe, null, 2), 'utf-8')
+    renameSync(tmp, target)
+  } catch {
+    // 状态写入失败不影响导入主流程
+  }
+}
+
+/** 各插件的「重试导入」实际执行器（插件 activate 时注册，停用即摘） */
+const retryHandlers = new Map<string, () => Promise<void>>()
+/** 同一插件的重试串行化：连点两次只跑一次，第二次复用在途 Promise */
+const retryInflight = new Map<string, Promise<void>>()
+
+export function registerLegacyImportRetry(pluginId: string, handler: () => Promise<void>): void {
+  retryHandlers.set(pluginId, handler)
+}
+
+export function clearLegacyImportRetry(pluginId: string): void {
+  retryHandlers.delete(pluginId)
+  retryInflight.delete(pluginId)
+}
+
+export async function runLegacyImportRetry(pluginId: string): Promise<void> {
+  const inflight = retryInflight.get(pluginId)
+  if (inflight) return inflight
+  const handler = retryHandlers.get(pluginId)
+  if (!handler) throw new Error('插件 ' + pluginId + ' 未注册旧库导入重试（插件未激活或已停用）')
+  const run = handler().finally(() => retryInflight.delete(pluginId))
+  retryInflight.set(pluginId, run)
+  return run
+}
+
 export async function importTableData(options: ImportOptions): Promise<ImportResult> {
+  const pluginId = basename(options.pluginDataDir)
+  try {
+    const result = await importTableDataInner(options)
+    writeImportStatus(options.pluginDataDir, {
+      pluginId,
+      state: result.imported ? 'ok' : 'skipped',
+      counts: result.counts,
+      at: Date.now()
+    })
+    return result
+  } catch (e) {
+    writeImportStatus(options.pluginDataDir, {
+      pluginId,
+      state: 'failed',
+      error: e instanceof Error ? e.message : String(e),
+      at: Date.now()
+    })
+    throw e
+  }
+}
+
+async function importTableDataInner(options: ImportOptions): Promise<ImportResult> {
   const marker = join(options.pluginDataDir, '.imported')
   const log = options.logger ?? (() => undefined)
 
-  if (existsSync(marker)) {
+  if (existsSync(marker) && !options.force) {
     return { imported: false, counts: {}, pages: {}, skipped: ['already-imported'] }
   }
 

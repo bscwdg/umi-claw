@@ -1536,7 +1536,7 @@ await r.check('P38', 'work 插件启停循环：停用摘通道，重新启用�
     }
     // 只数函数体字符串挡不住「函数还在但调用点退回 reminder.stop()」——再钉住两处调用上下文
     assert(
-      /return \(\) => \{\s*stopBackgroundWork\(work\)/.test(workMainSrc),
+      /return \(\) => \{[\s\S]{0,240}?stopBackgroundWork\(work\)/.test(workMainSrc),
       'cleanup 必须调 stopBackgroundWork'
     )
     assert(
@@ -2081,7 +2081,11 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
   assert(!hostSrc.includes(`ipcMain.handle('env:`), 'index.ts 不应再直接注册 env:')
   assert(/registerEnvIpc\(\s*ipcMain/.test(hostSrc), 'index.ts 应调用 registerEnvIpc(ipcMain')
 
-  // handler 守恒：index 0 + misc 19 + skills 11 + channels 3 + config 8 + claw 7 + modelConn 1 + term 5 + env 7 = 61
+  // handler 守恒：index 0 + misc 19 + skills 11 + channels 3 + config 8 + claw 7 + modelConn 1 + term 5 + env 7 + importStatus 2 = 63
+  const importStatusSrc = readFileSync(
+    join(repoRoot, 'electron', 'main', 'ipc', 'host', 'importStatus.ts'),
+    'utf-8'
+  )
   const countHandles = (src, api) => (src.match(new RegExp(`${api}\\.handle\\(`, 'g')) || []).length
   const hostCount = countHandles(hostSrc, 'ipcMain')
   const miscCount = countHandles(miscSrc, 'ipcMain')
@@ -2092,6 +2096,7 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
   const modelConnCount = countHandles(modelConnSrc, 'ipc')
   const termCount = countHandles(terminalSrc, 'ipc')
   const envCount = countHandles(envSrc, 'ipc')
+  const importCount = countHandles(importStatusSrc, 'ipc')
   assertEq(hostCount, 0, 'index.ts 应不再直接注册 ipcMain.handle')
   assertEq(miscCount, 19, 'misc.ts 应注册 19 个通道')
   assertEq(skillsCount, 11, 'skills.ts 应注册 11 个通道')
@@ -2101,6 +2106,7 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
   assertEq(modelConnCount, 1, 'modelConnection.ts 应注册 1 个通道')
   assertEq(termCount, 5, 'terminal.ts 应注册 5 个通道')
   assertEq(envCount, 7, 'env.ts 应注册 7 个通道')
+  assertEq(importCount, 2, 'importStatus.ts 应注册 2 个通道（4.0.2 P2）')
   assertEq(
     hostCount +
       miscCount +
@@ -2110,11 +2116,12 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
       clawCount +
       modelConnCount +
       termCount +
-      envCount,
-    61,
-    '宿主 handler 总数应守恒为 61'
+      envCount +
+      importCount,
+    63,
+    '宿主 handler 总数应为 61+2（4.0.2 P2 import 通道）'
   )
-  return '宿主零注册 / 插件全注册 / 装配在 runtime / misc+skills+channels+config+claw+term 已拆 / 61 守恒'
+  return '宿主零注册 / 插件全注册 / 装配在 runtime / 61+2 通道守恒'
 })
 
 // ── P43 旧库导入走服务注入（防「清单忘了 inject」导致死代码）─────────────────
@@ -2237,6 +2244,84 @@ await r.check('P43', '两个插件都在 inject 里声明 legacyDb，且激活�
       '旧库 projects 被 upsert 进插件库'
     )
     assert(!upserts.some((u) => u.data?.key === 'voice:v1:settings'), 'voice 配置仍被排除')
+
+    // 4.0.2 P2：导入状态落盘（ok），供宿主横幅读取
+    const statusPath = join(root, 'plugins', 'marketing', 'import-status.json')
+    const importStatus = JSON.parse(readFileSync(statusPath, 'utf-8'))
+    assertEq(importStatus.state, 'ok', '导入成功后状态文件 state=ok')
+    assertEq(importStatus.pluginId, 'marketing', '状态文件记录 pluginId')
+    assert((importStatus.counts?.projects ?? 0) >= 1, '状态文件带 counts.projects')
+
+    // 失败路径：reader 抛错 → 状态 failed 且错误继续冒泡（失败不写 .imported 的既有语义不变）
+    const failDir = mkdtempSync(join(tmpdir(), 'umi-import-fail-'))
+    let failed = null
+    try {
+      await genericImportMod.importTableData({
+        source: {
+          request: async () => {
+            throw new Error('boom-read')
+          }
+        },
+        target: { request: async () => ({ changes: 1 }) },
+        pluginDataDir: failDir,
+        tables: ['projects']
+      })
+    } catch (e) {
+      failed = e
+    }
+    assert(failed, 'reader 抛错应冒泡')
+    const failStatus = JSON.parse(readFileSync(join(failDir, 'import-status.json'), 'utf-8'))
+    assertEq(failStatus.state, 'failed', '失败路径状态文件 state=failed')
+    assert(/boom-read/.test(failStatus.error ?? ''), '失败状态记录错误信息')
+
+    // 重试注册表：注册 → 可执行 → 清理后拒绝（插件停用即摘）
+    let retried = 0
+    genericImportMod.registerLegacyImportRetry('retry-p2', async () => {
+      retried += 1
+    })
+    await genericImportMod.runLegacyImportRetry('retry-p2')
+    assertEq(retried, 1, '重试执行器被调用一次')
+    genericImportMod.clearLegacyImportRetry('retry-p2')
+    let retryError = null
+    try {
+      await genericImportMod.runLegacyImportRetry('retry-p2')
+    } catch (e) {
+      retryError = e
+    }
+    assert(retryError, '清理后重试应抛错（插件未激活/已停用）')
+
+    // skipped：已有 .imported 且未 force → 不导入，状态 skipped
+    const skipDir = mkdtempSync(join(tmpdir(), 'umi-import-skip-'))
+    writeFileSync(join(skipDir, '.imported'), '{}')
+    const skipResult = await genericImportMod.importTableData({
+      source: { request: async () => [{ id: 'p9' }] },
+      target: { request: async () => ({ changes: 1 }) },
+      pluginDataDir: skipDir,
+      tables: ['projects']
+    })
+    assertEq(skipResult.imported, false, '已有标记且未 force → skipped')
+    const skipStatus = JSON.parse(readFileSync(join(skipDir, 'import-status.json'), 'utf-8'))
+    assertEq(skipStatus.state, 'skipped', 'skipped 状态落盘')
+
+    // force：绕过 .imported 真重跑（幂等 upsert），状态回到 ok
+    const forceResult = await genericImportMod.importTableData({
+      source: { request: async () => [{ id: 'p9' }] },
+      target: { request: async () => ({ changes: 1 }) },
+      pluginDataDir: skipDir,
+      tables: ['projects'],
+      force: true
+    })
+    assertEq(forceResult.imported, true, 'force 应绕过 .imported 再导一次')
+    assertEq(forceResult.counts.projects, 1, 'force 导入计数正确')
+    const forceStatus = JSON.parse(readFileSync(join(skipDir, 'import-status.json'), 'utf-8'))
+    assertEq(forceStatus.state, 'ok', 'force 成功后状态回到 ok')
+
+    // 宿主壳接线：preload 暴露通道、App 横幅有重试按钮
+    const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
+    assert(preloadSrc.includes("'plugin:import:status'"), 'preload 暴露 plugin:import:status')
+    assert(preloadSrc.includes("'plugin:import:retry'"), 'preload 暴露 plugin:import:retry')
+    const appSrc = readFileSync(join(repoRoot, 'src', 'App.vue'), 'utf-8')
+    assert(appSrc.includes('重试导入') && appSrc.includes('importFailures'), 'App 有失败横幅 + 重试按钮')
   } finally {
     await host.disposeAll()
   }

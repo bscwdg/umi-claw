@@ -23,6 +23,16 @@
       </div>
     </div>
 
+    <!-- 4.0.2 P2：旧库导入失败横幅（可见 + 一键重试；成功后自动消失） -->
+    <div v-for="f in importFailures" :key="f.pluginId" class="import-banner">
+      <span class="import-banner-text">
+        旧数据导入失败（{{ f.pluginId }}）：{{ f.error || '未知错误' }}
+      </span>
+      <button class="import-banner-retry" :disabled="importRetrying === f.pluginId" @click="retryImport(f.pluginId)">
+        {{ importRetrying === f.pluginId ? '重试中…' : '重试导入' }}
+      </button>
+    </div>
+
     <!-- 主体 -->
     <div class="app-body">
       <!-- 侧边栏 -->
@@ -134,6 +144,37 @@ const isPetWindow = computed(() => router.currentRoute.value.path === '/characte
 const clawStore = useClawStore()
 const configStore = useConfigStore()
 const version = ref('')
+// 4.0.2 P2：旧库导入失败可见 + 重试入口（宿主壳全局横幅）
+type ImportFailure = { pluginId: string; error?: string; at: number }
+const importFailures = ref<ImportFailure[]>([])
+const importRetrying = ref('')
+let importPollTimer: ReturnType<typeof setInterval> | null = null
+
+async function refreshImportStatus(): Promise<void> {
+  try {
+    const rows = await (window.api as { pluginImports?: { status?: () => Promise<ImportFailure[]> } })
+      .pluginImports?.status?.()
+    if (!Array.isArray(rows)) return
+    importFailures.value = rows
+      .filter((r) => r && r.state === 'failed')
+      .map((r) => ({ pluginId: r.pluginId, error: r.error, at: r.at }))
+  } catch {
+    // 横幅是增强提示，读不到状态不影响主流程
+  }
+}
+
+async function retryImport(pluginId: string): Promise<void> {
+  importRetrying.value = pluginId
+  try {
+    await (window.api as { pluginImports?: { retry?: (id: string) => Promise<boolean> } })
+      .pluginImports?.retry?.(pluginId)
+  } catch (e) {
+    console.warn('[App] 旧库导入重试失败：', e)
+  } finally {
+    importRetrying.value = ''
+    void refreshImportStatus()
+  }
+}
 
 // 分组导航：work 组来自 3.0，营销组来自 2.0；`/dashboard` 标签已拍板为「控制台」，
 // `/skills` 标签已拍板为「能力中心」（2026-10-30）。
@@ -221,6 +262,18 @@ onMounted(async () => {
   })
   // 侧栏「🐟 大肥鱼」入口跟随启用状态：停用后自动隐藏（插件管理卡片仍可启用）
   void refreshCharacterNav()
+  // 4.0.2 P2：启动时检查旧库导入是否失败；导入是后台跑，短轮询到失败出现或 16s 后停
+  void refreshImportStatus()
+  let importPolls = 0
+  importPollTimer = setInterval(() => {
+    importPolls += 1
+    if (importFailures.value.length > 0 || importPolls >= 8) {
+      if (importPollTimer) clearInterval(importPollTimer)
+      importPollTimer = null
+      return
+    }
+    void refreshImportStatus()
+  }, 2000)
   // 初始化慢/失败时 status 可能读不到：短轮询直到拿到结果，避免停用入口一直显示
   const navRetryTimer = setInterval(() => {
     if (characterNavKnown.value) {
@@ -269,6 +322,8 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  if (importPollTimer) clearInterval(importPollTimer)
+  importPollTimer = null
   cleanup?.()
   closeCleanup?.()
   autoSpeakCleanup?.()
@@ -467,6 +522,38 @@ async function onAgreementAgreed(): Promise<void> {
   flex: 1;
   overflow-y: auto;
   padding: 24px;
+}
+
+/* 4.0.2 P2：旧库导入失败横幅 */
+.import-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  background: rgba(245, 158, 11, 0.12);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.35);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.import-banner-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.import-banner-retry {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(245, 158, 11, 0.55);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 12px;
+}
+.import-banner-retry:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 /* 关闭确认对话框：记住选择 */

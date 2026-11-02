@@ -63,6 +63,8 @@ import { registerClawIpc } from './ipc/host/claw'
 import { registerModelConnectionIpc } from './ipc/host/modelConnection'
 import { registerTerminalIpc } from './ipc/host/terminal'
 import { registerEnvIpc } from './ipc/host/env'
+import { registerImportStatusIpc } from './ipc/host/importStatus'
+import { readImportStatus, runLegacyImportRetry } from './services/pluginDataImport'
 import {
   VoiceSecretStore,
   VoiceCloneManager,
@@ -1207,6 +1209,14 @@ function registerIpcHandlers(): void {
     },
     log: (line) => console.log(line),
     logError: (...args) => console.error(...args)
+  })
+  // 旧库导入状态 / 重试入口（4.0.2 P2：失败对用户可见 + 一键重试）
+  registerImportStatusIpc(ipcMain, {
+    listStatuses: () =>
+      ['work', 'marketing']
+        .map((id) => readImportStatus(join(configManager.getDataDir(), 'plugins', id)))
+        .filter((s) => Boolean(s)),
+    retry: (pluginId) => runLegacyImportRetry(pluginId)
   })
 }
 

@@ -789,6 +789,20 @@ const api = {
       ipcRenderer.on('character:event', handler)
       return () => ipcRenderer.off('character:event', handler)
     }
+  },
+  // 4.0.2 P2：旧库导入失败可见 + 重试入口（宿主壳全局横幅用）
+  pluginImports: {
+    status: () =>
+      call<
+        Array<{
+          pluginId: string
+          state: 'ok' | 'skipped' | 'failed'
+          error?: string
+          counts?: Record<string, number>
+          at: number
+        }>
+      >('plugin:import:status'),
+    retry: (pluginId: string) => call<boolean>('plugin:import:retry', pluginId)
   }
 }
 

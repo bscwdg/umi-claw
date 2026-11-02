@@ -15,6 +15,8 @@ export const ERROR_CODES = {
   NOT_FOUND: 'NOT_FOUND',
   /** 冲突（如 business 已存在） */
   CONFLICT: 'CONFLICT',
+  /** 插件运行时操作失败（宿主/插件管理面） */
+  PLUGIN_OPERATION_FAILED: 'PLUGIN_OPERATION_FAILED',
   /** Worker 查询失败（重试后仍败） */
   DB_ERROR: 'DB_ERROR',
   /** 便携 Node 不存在，Worker 无法启动 */

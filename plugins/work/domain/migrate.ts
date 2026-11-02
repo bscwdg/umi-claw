@@ -21,6 +21,8 @@ export async function importWorkDataIfNeeded(options: {
   source: LegacyReader
   target: ImportTarget
   pluginDataDir: string
+  /** 重试入口用：忽略 .imported 标记强制再导 */
+  force?: boolean
   pageSize?: number
   logger?: (line: string) => void
 }): Promise<ImportResult> {
