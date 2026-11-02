@@ -29,7 +29,7 @@
 | --- | --- | --- | --- |
 | 宿主 `electron/main` 代码量 | 27,463 行 | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 1,463；WP5 只搬不删，宿主不会因拆分下降） |
 | `electron/main/index.ts` | 1,767 行 | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800（✅ 已达成，WP5） |
-| 插件越界 import（非 type、非 kernel/services） | **9 条**（全部是插件 `main.ts` 直引宿主 `ipc/*`；W6-a 已下沉 gateway 纯工具） | `npm run check:boundary` | 0（WP6-b） |
+| 插件越界 import（非 type、非 kernel/services） | **0 条**（WP6-b/c 已把域 ipc 搬进 `plugins/<id>/main/ipc/`；仅存 14 处 type-only 宿主类型引用，按门禁口径放行，收敛登记 4.2） | `npm run check:boundary` | 0（已达成，基线 0 硬约束） |
 | 门禁可绕过写法 | 已覆盖 static/export-from/dynamic/require + 路径穿越 + 注释掩码/正则字面量/字符串文案/模板字面量/非字面量/typeof | `node test/boundary.accept.mjs` | 8/8 保持 |
 | Manager 层 import electron | 0（扫描 `plugins/*/domain` 共 2 个目录） | `npm run check:boundary` | 0 |
 | 门禁是否自动执行 | `npm run accept` 首套 + CI verify job | `Select-String .github/workflows/release.yml -Pattern 'check:boundary'` | 必须有（已满足） |
@@ -392,7 +392,7 @@ CI 加一步：`npm run lint`（= eslint + check-lint-budget）。
 
 | 提交 | 动作 | 守它的测试 |
 | --- | --- | --- |
-| C3.3 | `electron/main/work/**`（22 文件 7,028 行）→ `plugins/work/domain/**`（实际落地路径；原计划写 `main/**`，已在 WP3 校正）；`ipc/work.ts` 跟着走：**未做**，留 WP6（现 9 条越界） | `accept:work` `accept:record` `accept:today` `accept:report` `accept:qatool` `accept:wizard` `accept:context:work` `accept:knowledge:work` |
+| C3.3 | `electron/main/work/**`（22 文件 7,028 行）→ `plugins/work/domain/**`（实际落地路径；原计划写 `main/**`，已在 WP3 校正）；`ipc/work.ts` 跟着走：**已做（4.1 WP6-b）**，现为 `plugins/work/main/ipc/work.ts`，越界 0 | `accept:work` `accept:record` `accept:today` `accept:report` `accept:qatool` `accept:wizard` `accept:context:work` `accept:knowledge:work` |
 | C3.4 | `electron/main/marketing/**`（18 文件 7,430 行）→ `plugins/marketing/domain/**`（同上）；5 个 ipc 文件跟着走：**未做**，留 WP6 | `accept:project` `accept:business` `accept:advisor` `accept:scan` `accept:content` `accept:hot` `accept:hotscore` `accept:platform` `accept:shooting` |
 | C3.5 | baseline 归零，规则升 error；`index.ts` 删域装配段 | 全量 `npm run accept`；宿主 ≤ 26,000 行 |
 
@@ -443,7 +443,7 @@ CI 加一步：`npm run lint`（= eslint + check-lint-budget）。
 | --- | --- | --- |
 | V1 | 双 typecheck | 0 错 |
 | V2 | 全量验收 | 32 套全绿（607 断言；本机已实跑含 hot） |
-| V3 | 插件越界 import | ≤ `scripts/boundary-baseline.json` 的 `pluginHostBoundary`（当前 11；跑 `npm run check:boundary`，已接入 accept/CI） |
+| V3 | 插件越界 import | 必须为 0（`scripts/boundary-baseline.json` 的 `pluginHostBoundary` 已收紧到 0；`npm run check:boundary` 任何新增越界直接红，已接入 accept/CI） |
 | V4 | 宿主代码量 | ≤ 目标（见 §一） |
 | V5 | 重复文件 | 0 |
 | V6 | Manager 不 import electron | 0 |
@@ -544,7 +544,7 @@ Get-ChildItem *.md | ForEach-Object {
 | 阶段 A 收尾 | ✅ 完成（2026-11-02） | 2026-11-02 | 4.0.0 发布前 |
 | WP7（4.0.1/4.0.2） | 🟡 7/8 完成：P1/P4/P5/P6/P7/P8 ✅（P6 于 4.0.2 补完 5 处 waitFor）；P3 ✅（4.0.2 knowledge 原件隔离）；**P2 导入失败可见/重试仍顺延** | 见 PROGRESS 4.0.1/4.0.2 段 | 4.0.1/4.0.2 |
 | WP5（index.ts ≤1800） | ✅ W5-b（pluginRuntime）+ W5-a（6 批、61 个 handle 全下沉 `ipc/host/*`）；**出口判据达成：index 1,767 ≤ 1,800**（宿主 27,463，V4 ≤26,000 另做删减）；两轮独立检查结论见 PROGRESS 4.1 段 | 见 PROGRESS 4.1 段 | 4.1 |
-| WP6（边界清零） | 🟡 W6-a 完成（11→9）；W6-b 域 ipc 搬插件 / W6-c 基线 0 待做 | 见 PROGRESS 4.1 段 | 4.1 |
+| WP6（边界清零） | ✅ W6-a（11→9）+ W6-b/c（9→0，域 ipc 搬插件、gateway 拆 host/plugin、基线 0）；两轮独立检查待入档 | 见 PROGRESS 4.1 段 | 4.1 |
 
 > 发布点已重排：原「WP1→4.0.1 / WP2→4.0.2 / WP3→4.0.3 / WP4→4.1」不再成立——四包全部合入同一棵未发布的 `release/4.0`，且 `v1.0.0` 之后没有 tag。现在按 **4.0.0（当前 HEAD + 阶段 A 收尾）/ 4.0.1（WP7）/ 4.1（WP5+WP6）** 发布。
 >
@@ -613,5 +613,5 @@ Get-ChildItem *.md | ForEach-Object {
 
 - **W6-a（parts）✅ 部分完成（2026-11-03）**：gateway 纯工具已下沉 `services/gateway/parts.ts`（`textPart`/`imageDataPart`/`imageUrlPart`/`GATEWAY_ABORT_REASON` + `GatewayContentPart`），`gatewayClient` 保留 re-export；marketing 两个域 Manager 改从 services 取 → **11 → 9**。原计划中的 `constants/normalize/stream` 三个拆分**未做**（不影响边界目标，可选）。
 - **W6-b（第一步 ✅ 2026-11-03）**：`services/gateway/stream.ts` 已下沉（`forwardGatewayStream`/`GATEWAY_STREAM_EVENTS`/`MARKETING_STREAM_EVENTS` + 结构类型；gatewayClient re-export 兼容），供插件 IPC 直接 import services；越界数不变（仍 9）。**后续**：域 ipc 文件搬进 `plugins/<id>/main/ipc/`（`ipc/*.ts` 现在反向 import 插件域类型，搬走同时消掉宿主→插件依赖）→ 9 → **0**。**需拍板**：`work:gateway` 两条通道随插件启停（与 marketing 对齐），按 G4 单独提交 + CHANGELOG 登记。清账时一并处理 `index.ts:514–796` 的 10 处 `import('plugins/work/domain/…')` 内联类型导入（行号/处数已按 WP5 后 HEAD 重测），以及 `electron/main/ipc/*` 的 `import type ... from plugins/<id>/domain/*`（均 type-only，运行时无耦合，但属反向依赖）。
-- **W6-c**：基线写 0，`check:boundary` 从 ratchet 升为硬 error。
+- **W6-c ✅（2026-11-03）**：基线已写 0（`--update`），`check:boundary` 自此是硬约束——任何新增插件越界直接 exit 1；`_note` 已记录 WP6-b/c 构成。
 

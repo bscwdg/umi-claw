@@ -6,6 +6,26 @@
 
 ---
 
+## [4.1]（未发布，4.0.2 之后）— 2026-11-03
+
+> 主题：**架构收口（无用户可见行为变化）**。完成 4.0 遗留的组装层与插件边界两块欠账。
+
+### 重构
+- **插件边界清零**：域 IPC 全部搬进 `plugins/<id>/main/ipc/`（work 1 个文件 + marketing 7 个文件 +
+  gateway 按域拆分），`check:boundary` 从 9 条越界收紧到 **0（硬约束）**；插件不再 import electron，
+  宿主 electron 能力经 `services/hostUi`、流透传经 `services/gateway/stream` 注入。
+- **宿主装配瘦身**：`electron/main/index.ts` 2,551 → **1,767 行**（≤1,800 目标达成）；61 个 host IPC
+  拆到 `electron/main/ipc/host/*`，插件装配抽到 `services/pluginRuntime`，宿主服务适配器抽到
+  `services/pluginServiceAdapters`。
+- 副作用：宿主 `electron/main` 27,463 → **26,253 行**（离 V4 ≤26,000 仅差 253，后续删减）。
+
+### 已知残差（登记 4.2）
+- `electron/main/ipc/index.ts` 仍 re-export 插件 registrar（host→plugin 兼容依赖，无环）；
+- 14 处 type-only 宿主类型引用（门禁口径「非 type 越界 0」）；
+- 拆分后 env/claw/terminal/config 等宿主通道的行为级测试仍待补（P45）。
+
+---
+
 ## [4.0.2]（未发布，4.0.1 之后）— 2026-11-03
 
 > 主题：**数据归属收口 + 测试稳定性**。

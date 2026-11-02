@@ -1393,3 +1393,36 @@ W6-b 仍需拍板 `work:gateway` 归属并拆 `ipc/index.ts` barrel（域/host �
 
 下一步（W6-b 主体）：拆 `ipc/index.ts` barrel（host/域分开）、把 marketing 8 个域 ipc 文件搬进
 `plugins/marketing/main/ipc/` 并改 import 到 services；`work:gateway` 归属按「宿主保留 work 面」推进。
+
+### WP6-b/c · 域 ipc 搬进插件，插件边界 9 → 0（2026-11-03）
+
+**搬家清单**（`git mv`，行为不变）：
+- `electron/main/ipc/work.ts` → `plugins/work/main/ipc/work.ts`
+- `electron/main/ipc/{channelRegistrar,advisor,scan,content,hot,marketing}.ts` → `plugins/marketing/main/ipc/`
+- `gateway.ts` 拆分：宿主 `electron/main/ipc/gateway.ts` 只留 work 面（`hostHandle` + 宿主 ipcMain）；
+  营销面新增 `plugins/marketing/main/ipc/gateway.ts`（`channelHandle` 租约，停用即摘）
+- 新 `services/hostUi.ts`（hostIpcMain / getFocusedWindow / showOpenDialog）：插件 IPC 不再 import
+  electron，`work.ts`/`marketing.ts` 的 ipcMain/dialog/BrowserWindow 全改经它
+- 新 `plugins/marketing/main/ipc/ipcTypes.ts`（IpcMainInvokeEventLike）：替代 type-only electron import
+- `channelRegistrar` 去掉 `require('electron')` 兜底：未注入 registrar 时抛错（生产 activate 必先注入）
+- 宿主 `ipc/index.ts` 变兼容聚合：域 registrar/通道表 re-export 插件路径（**host→plugin 反向值依赖，
+  仅测试/兼容，收敛归 4.2**；宿主启动/退出用到的 abort* 清理函数仍从这里取）
+
+**验证**：
+- `check-boundaries = 0`（基线由 9 `--update` 收紧到 0，此后硬约束）；`managerElectron=0`
+- 通道守恒：搬家前后通道字面量集合 **121 = 121**（无增缺、无重复、无改名）；preload 108 通道全有句柄
+- 全量 accept（本批工作区、post-move）：**32/32 套、607 条断言、failed=0、exit 0**
+- 测试更新：6 个仍读旧路径的套件改到插件路径（work/record/context.work/knowledge.work/wizard/shooting）；
+  hot/hotscore/platform/business/content/scan/project/context.marketing/knowledge.marketing 读路径同步；
+  K19 dialog 断言改为宿主 `showOpenDialog` 适配（仍验证 openFile/title/filters）；P52 fixture 改插件路径
+- 行数副作用：宿主 `electron/main` 27,463 → **26,253**（离 V4 ≤26,000 只差 253，另做删减）；index 仍 1,767
+
+**残差（登记，不阻塞 4.1 代码目标）**：
+1. host→plugin 反向值依赖：`electron/main/ipc/index.ts` re-export 插件 registrar + 宿主 index 取 abort*；
+   无环、无顶层副作用，建议 4.2 拆 host-only barrel / 清理函数下沉 services。
+2. 14 处 type-only 宿主类型引用（含本批新增 2 处）：门禁按「非 type」口径放行；措辞统一为
+   「非 type 越界 0」，共享类型下沉 services 登记 4.2。
+3. `registerGatewayIpc` 兼容入口收窄为 work-only（无生产/测试依赖 marketing 面）；`channelRegistrar`
+   离开注入 registrar 即抛错（预期语义变化，测试必须注入）。
+
+**WP6 收尾仍待**：工作包级两次独立检查（事实核对 + 对抗复核）入档（C3），本轮只有 commit 级审查。
