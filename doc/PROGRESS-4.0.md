@@ -1010,12 +1010,24 @@ AGENTS（32 套/600 断言、index.ts 2491、边界 11、门禁命令、目录�
 PLAN-4.1-DEBT（§一基线表、C3.1 eslint 校正、V2/V3、D6/D7、§六进度表与发布点重排、新增 §七/§八）、
 CHANGELOG（4.0.0 条目、验收口径）、本文件（更正 WP4 的 954/476 两个不可复现数字，以及 G10 发现的三处二次错误）。
 
-### 验证（2026-11-02 实跑）
+### A5 · 环境修复（用户在自己终端实跑暴露，2026-11-02 深夜）
+
+用户按文档跑 `npm run accept` 时在 db-worker 0/22 中止（`SQLITE_ERROR 14 unable to open database file` + `readonly database`）。根因（实测）：
+
+- `data/runtime/node-win32-x64/node.exe` 以 **Low Mandatory Integrity Level** 运行（同一二进制复制到 `%TEMP%` 后变 Medium；`data`/根目录可写、`test/.tmp`/TEMP 不可写）。低完整性进程写 Medium 目录一律 EPERM/SQLite 14，与代码无关。
+- 修复 `test/_lib.mjs:resolveNodePath()`：先用便携 Node 自身做一次**写探针**；探针失败则把便携 Node 复制到系统临时目录（保持 `node.exe` 文件名——db-client C4/C5 按 `Win32_Process Name='node.exe'` 数进程）再使用；复制用 `.incomplete` + `rename` + 大小校验，清理旧版本副本；`UMI_ACCEPT_NODE` 可覆盖；无便携 Node（CI）仍回退当前进程 Node。
+- 另修一处**跨午夜假失败**：`openclaw-summary S12` 假时钟从 `Date.now()` 改为「今天 12:00」——原实现从 23:5x 起步再累加 16 分钟会跨午夜，`dateOf` 切日读不到状态，导致 S12/S13 红。断言一条未改。
+
+修复后 `npm run accept` 本机 **32/32 全绿（含 hot）**，产物 `test/accept-result-*.json` 共 33 份、断言合计 600；`runtimeNode` 实测指向 `%TEMP%/umi-accept-node-<size>-<mtime>/node.exe`。
+
+> 生产侧提示：若真机/打包环境的便携 Node 也被标成低完整性，DB 写入会失败（不止测试）。打包前需确认 runtime 的完整性级别（见 RUNBOOK 环境排查）。
+
+### 验证（2026-11-02 深夜实跑，最终一轮在提交后补跑）
 
 - 双 typecheck：0 错 / 0 错；`npm run build` 通过。
 - 边界门禁：`pluginHostBoundary=11（基线 11）、managerElectron=0（扫描 2 个域目录）`，exit 0；boundary 套件 8/8。
-- character 78/78；voice 21/21（含新增落盘）；与基线对比：db-worker 38/38、gateway 29/29、plugin 61/61、ui 23/23、wizard 17/17、hotscore 14/14、platform 7/7、e2e 11/11、smoke 7/7。
-- 全量验收：**除 hot 外的 31 套（accept 29 + e2e + smoke）全绿**；`hot` 未能在本会话复现（本会话沙箱里便携 Node 被限制写 `test/.tmp`，改系统 Node 24 跑 collector 会撞 libuv 断言；hot 相关代码本次未改，待 CI/真机首跑确认）。断言累计 **600**（accept×30 + e2e + smoke 完整口径，含 hot 的 16；config-writer 的 node:test 断言不计入，与此前 585 同口径）。**不写成「全量全绿」——hot 未跑。**
+- character 78/78；voice 21/21；plugin 61/61；db-worker 38/38；hot 16/16；e2e 11/11；smoke 7/7。
+- **全量验收：32/32 套全绿（accept×30 + e2e + smoke），断言累计 600**；`npm run accept` 退出码 0（用户终端在修复前失败、修复后同样条件应全绿）。
 
 ### 提交前对抗审查（独立子代理 task-3）
 
@@ -1077,7 +1089,7 @@ CHANGELOG（4.0.0 条目、验收口径）、本文件（更正 WP4 的 954/476 
 
 ### 已知欠账（阶段 A）
 
-1. `hot` 套件本机未复现（环境限制），待 CI/真机首跑；CI 无 `data/runtime` 时 collector 用系统 Node 22，结果未验证。
+1. **便携 Node 低完整性（环境）**：本机 `data/runtime/node.exe` 被标 Low Mandatory Level，写不了 Medium 目录；测试已用「写探针 + 复制到系统临时目录」规避（A5）。**生产侧若真机 runtime 同样被标低完整性，DB 写入会失败**——打 tag 前需按 RUNBOOK 确认打包/便携 runtime 的完整性级别。
 2. 单实例锁缺失（两个实例同指 dataDir 时 kv 无跨进程保护）→ 4.0.1。
 3. 部分丢失不重导、marker 损坏跳过（保守策略，已写入 PLAN §七）。
 4. 四件套留档需在最终 HEAD 之后重跑（见 PLAN §七 第 4 条）。

@@ -250,7 +250,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 | `domainSrc(pluginId, rel)` / `domainUiSrc(pluginId, rel)` | **旧路径兼容回落**：`plugins/<id>/main/<rel>` 存在就用它，否则回落 `electron/main/<rel>`。返回**绝对路径**，不能直接传给 `bundleEntry`（它要仓库相对路径）。**WP3 起域代码在 `plugins/<id>/domain/`，`domainSrc` 的第一候选恒不存在，实际总回落旧路径——新脚本用 `workSrc()` / `mkSrc()` / `anySrc([...])`（仓库相对路径）** |
 | `workSrc(rel)` / `mkSrc(rel)` | 域源码定位（WP3 后）：`plugins/work/domain/<rel>` → `electron/main/work/<rel>`；返回**仓库相对路径**，可直接给 `bundleEntry` |
 | `anySrc(candidates)` | 多候选定位：返回第一个存在的仓库相对路径（用于 `services/X` ↔ 旧域路径这类一对多回落） |
-| `resolveNodePath()` | 便携 node 优先 |
+| `resolveNodePath()` | 便携 Node 优先；若它带**低完整性标签**（写不了 `test/.tmp`，表现为 SQLite 14 / EPERM），自动复制到系统临时目录再用（保持 `node.exe` 文件名，供进程计数断言）；`UMI_ACCEPT_NODE` 可覆盖；无便携 Node（CI）回退当前进程 Node |
 | `waitFor(fn, {timeout})` | 替代固定 `sleep`，避免并发下的假失败 |
 | `printResult` / `writeJson` | 结果输出与落盘 |
 
@@ -331,7 +331,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 32 套（accept×30 + e2e + smoke，600 条断言；hot 依赖本机便携 Node，CI 无 data/runtime 时退化为系统 Node，待首跑确认）
+# ② 全量验收 32 套（accept×30 + e2e + smoke，600 条断言）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）

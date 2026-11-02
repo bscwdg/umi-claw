@@ -34,7 +34,7 @@
 | Manager 层 import electron | 0（扫描 `plugins/*/domain` 共 2 个目录） | `npm run check:boundary` | 0 |
 | 门禁是否自动执行 | `npm run accept` 首套 + CI verify job | `Select-String .github/workflows/release.yml -Pattern 'check:boundary'` | 必须有（已满足） |
 | CI 门禁 | typecheck×2 + boundary + build + accept（Windows），push release/** / tags v* / PR 触发 | `.github/workflows/release.yml` | 保持 |
-| accept 套件 | accept×30 + e2e + smoke = **32 套 / 600 条断言** | `npm run accept`（hot 依赖本机便携 Node；CI 无 data/runtime 时退化为系统 Node 22，待首跑确认） | 不减少 |
+| accept 套件 | accept×30 + e2e + smoke = **32 套 / 600 条断言** | `npm run accept`（本机已 32/32 全绿，含 hot） | 不减少 |
 | 唯一实现 | parsers 3 份合并为 1；context 双实现收敛为 `services/context` 内核 | `Get-FileHash` / 目录结构 | 保持 |
 | 明文密钥字面量 | 0（仅 `Config.vue` 的 placeholder 示例） | 见 §三 校验清单 V9 | 0 |
 
@@ -441,7 +441,7 @@ CI 加一步：`npm run lint`（= eslint + check-lint-budget）。
 | # | 检查 | 判据 |
 | --- | --- | --- |
 | V1 | 双 typecheck | 0 错 |
-| V2 | 全量验收 | 32 套全绿（600 断言；hot 依赖本机便携 Node/CI 首跑确认） |
+| V2 | 全量验收 | 32 套全绿（600 断言；本机已实跑含 hot） |
 | V3 | 插件越界 import | ≤ `scripts/boundary-baseline.json` 的 `pluginHostBoundary`（当前 11；跑 `npm run check:boundary`，已接入 accept/CI） |
 | V4 | 宿主代码量 | ≤ 目标（见 §一） |
 | V5 | 重复文件 | 0 |
@@ -573,7 +573,7 @@ Get-ChildItem *.md | ForEach-Object {
 - **部分丢失不重导**：只修「kv.json 缺失/损坏」；用户手工删掉部分键不会触发重导（无法与「用户主动重置」区分，有意保守）。
 - **marker 损坏**：打日志并跳过（提示删除 marker+kv 后重启可重导）；不自动重导，避免误覆盖用户重置结果。
 - **门禁两条已登记边界**（B8 断言锁住）：模板字符串 `${}` 内的动态 import/require 检不出；`if (cond) /re/` 这种 `)` 后的正则字面量不识别——修时同步改 B8 与 AGENTS §5.1。
-- **hot 套件**：本机验证会话因运行环境限制未复现（collector/便携 Node），待 CI/真机首跑确认。
+- **便携 Node 低完整性（环境）**：本机 `data/runtime/node.exe` 被标 Low Mandatory Level，写不了 Medium 目录（测试已自动复制到系统临时目录规避）。**生产侧若真机 runtime 同样被标低完整性，DB 写入会失败**——打 tag 前需按 RUNBOOK 确认打包/便携 runtime 的完整性级别。
 
 ---
 

@@ -43,7 +43,7 @@
 
 ### 验收
 - 32 套（accept×30 + e2e + smoke）/ 600 条断言；双 typecheck 0 错、build 通过
-- `hot` 套件依赖本机便携 Node 跑 collector；本机验证时 hot 未复现（沙箱限制），其余 31 套全绿，待 CI/真机首跑确认
+- 本机 `npm run accept` 全绿（含 hot）；便携 Node 若带低完整性标签（写不了 `test/.tmp`），验收会自动复制到系统临时目录再用（见 `test/_lib.mjs:resolveNodePath`）
 
 ---
 ## [2.0.0]（release/2.0 分支，待发布）
