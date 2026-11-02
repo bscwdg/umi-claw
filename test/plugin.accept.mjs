@@ -1992,7 +1992,45 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
   }
   assert(/registerSkillsIpc\(\s*ipcMain/.test(hostSrc), 'index.ts 应调用 registerSkillsIpc(ipcMain')
   assert(/registerChannelsIpc\(\s*ipcMain/.test(hostSrc), 'index.ts 应调用 registerChannelsIpc(ipcMain')
-  return '宿主零注册 / 插件全注册 / 装配在 runtime / misc+skills+channels 已拆'
+
+  // 4.1 WP5-a 第三批：应用配置 8 个通道拆到 ipc/host/config.ts
+  const configSrc = readFileSync(
+    join(repoRoot, 'electron', 'main', 'ipc', 'host', 'config.ts'),
+    'utf-8'
+  )
+  for (const ch of [
+    'config:get',
+    'config:save',
+    'config:reset',
+    'config:getDataDir',
+    'config:getPresetModels',
+    'config:refreshModelPresets',
+    'config:getModelPresetsInfo',
+    'config:openDataDir'
+  ]) {
+    assert(hasIpcHandler(configSrc, ch, 'ipc'), 'config.ts 应注册 ' + ch)
+  }
+  assert(!hostSrc.includes(`ipcMain.handle('config:`), 'index.ts 不应再直接注册 config:')
+  assert(/registerConfigIpc\(\s*ipcMain/.test(hostSrc), 'index.ts 应调用 registerConfigIpc(ipcMain')
+
+  // handler 守恒：index 20 + misc 19 + skills 11 + channels 3 + config 8 = 61（原总数）
+  const countHandles = (src, api) => (src.match(new RegExp(`${api}\\.handle\\(`, 'g')) || []).length
+  const hostCount = countHandles(hostSrc, 'ipcMain')
+  const miscCount = countHandles(miscSrc, 'ipcMain')
+  const skillsCount = countHandles(skillsSrc, 'ipc')
+  const channelsCount = countHandles(channelsSrc, 'ipc')
+  const configCount = countHandles(configSrc, 'ipc')
+  assertEq(hostCount, 20, 'index.ts 应剩 20 个 ipcMain.handle')
+  assertEq(miscCount, 19, 'misc.ts 应注册 19 个通道')
+  assertEq(skillsCount, 11, 'skills.ts 应注册 11 个通道')
+  assertEq(channelsCount, 3, 'channels.ts 应注册 3 个通道')
+  assertEq(configCount, 8, 'config.ts 应注册 8 个通道')
+  assertEq(
+    hostCount + miscCount + skillsCount + channelsCount + configCount,
+    61,
+    '宿主 handler 总数应守恒为 61'
+  )
+  return '宿主零注册 / 插件全注册 / 装配在 runtime / misc+skills+channels+config 已拆 / 61 守恒'
 })
 
 // ── P43 旧库导入走服务注入（防「清单忘了 inject」导致死代码）─────────────────

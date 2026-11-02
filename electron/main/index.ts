@@ -58,6 +58,7 @@ import { registerWorkGatewayIpc } from './ipc'
 import { registerMiscIpc } from './ipc/host/misc'
 import { registerSkillsIpc } from './ipc/host/skills'
 import { registerChannelsIpc } from './ipc/host/channels'
+import { registerConfigIpc } from './ipc/host/config'
 import {
   VoiceSecretStore,
   VoiceCloneManager,
@@ -1185,6 +1186,18 @@ function registerIpcHandlers(): void {
     installPlugin: (pluginPkg) => channelManager.installPlugin(pluginPkg),
     getChannelStatuses: () => channelManager.getChannelStatuses()
   })
+  // 应用配置（4.1 WP5-a 第三批拆到 ipc/host/config.ts）
+  registerConfigIpc(ipcMain, {
+    getConfig: () => configManager.getConfig(),
+    saveConfig: (config) => configManager.saveConfig(config),
+    resetConfig: () => configManager.resetConfig(),
+    applyLoginItemSettings,
+    getDataDir: () => configManager.getDataDir(),
+    getPresetModels: (configName) => configManager.getPresetModels(configName),
+    refreshModelPresets: () => configManager.refreshModelPresets(),
+    getModelPresetsInfo: () => configManager.getModelPresetsInfo(),
+    openDataDir: (dir) => shell.openPath(dir)
+  })
 
 
   // OpenClaw 进程管理
@@ -1244,43 +1257,6 @@ function registerIpcHandlers(): void {
     shell.openExternal(`http://localhost:${port}`)
   })
 
-  // 配置管理
-  ipcMain.handle('config:get', () => configManager.getConfig())
-  ipcMain.handle('config:save', async (_e, config) => {
-    const saved = await configManager.saveConfig(config)
-    // 配置保存后同步开机自启项
-    applyLoginItemSettings(saved.launchOnBoot)
-    // 拆分：前端 store 只拿干净的 AppConfig，同步状态单独透出供 UI 提示。
-    // appConfigSavedOk=false 表示 app.json 本地落盘失败——「已保存」不能再说谎。
-    const { openClawSyncOk, openClawSyncError, appConfigSavedOk, appConfigSaveError, ...appConfig } = saved
-    return {
-      config: appConfig,
-      openClawSyncOk: openClawSyncOk !== false,
-      openClawSyncError: openClawSyncError ?? null,
-      appConfigSavedOk: appConfigSavedOk !== false,
-      appConfigSaveError: appConfigSaveError ?? null
-    }
-  })
-  ipcMain.handle('config:reset', async () => {
-    const reset = await configManager.resetConfig()
-    applyLoginItemSettings(reset.launchOnBoot)
-    // 与 config:save 同口径：把同步/落盘状态随返回值透出，前端重置后能像保存一样看到警告/失败
-    const { openClawSyncOk, openClawSyncError, appConfigSavedOk, appConfigSaveError, ...appConfig } = reset
-    return {
-      config: appConfig,
-      openClawSyncOk: openClawSyncOk !== false,
-      openClawSyncError: openClawSyncError ?? null,
-      appConfigSavedOk: appConfigSavedOk !== false,
-      appConfigSaveError: appConfigSaveError ?? null
-    }
-  })
-  ipcMain.handle('config:getDataDir', () => configManager.getDataDir())
-  ipcMain.handle('config:getPresetModels', (_e, configName: string) =>
-    configManager.getPresetModels(configName)
-  )
-  ipcMain.handle('config:refreshModelPresets', () => configManager.refreshModelPresets())
-  ipcMain.handle('config:getModelPresetsInfo', () => configManager.getModelPresetsInfo())
-  ipcMain.handle('config:openDataDir', () => shell.openPath(configManager.getDataDir()))
 
   // 环境初始化
   ipcMain.handle('env:check', () => downloadManager.checkEnvironment())
