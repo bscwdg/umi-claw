@@ -351,7 +351,7 @@ try {
 
 const result = r.toJSON({ nodePath, dbPath })
 const ok = printResult(result)
-writeJson(join(__dirname, 'accept-result-context.json'), result)
+writeJson(join(__dirname, 'accept-result-context-work.json'), result)
 console.log('')
 console.log(`----- ${result.suite}: ${result.passed}/${result.total}，失败 ${result.failed} -----`)
 process.exit(ok ? 0 : 1)

@@ -647,8 +647,8 @@ const result = r.toJSON({
   logSample: logs.slice(0, 20)
 })
 const ok = printResult(result)
-writeJson(join(__dirname, 'accept-result-context.json'), result)
-console.log('结果已写入 test/accept-result-context.json')
+writeJson(join(__dirname, 'accept-result-context-marketing.json'), result)
+console.log('结果已写入 test/accept-result-context-marketing.json')
 
 if (ok && !process.argv.includes('--keep-tmp')) {
   try {

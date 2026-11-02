@@ -1041,8 +1041,8 @@ const result = r.toJSON({
   logSample: logs.slice(0, 20)
 })
 const ok = printResult(result)
-writeJson(join(__dirname, 'accept-result-knowledge.json'), result)
-console.log('结果已写入 test/accept-result-knowledge.json')
+writeJson(join(__dirname, 'accept-result-knowledge-marketing.json'), result)
+console.log('结果已写入 test/accept-result-knowledge-marketing.json')
 if (skipped.length) console.log(`⚠️ 跳过（未假装通过）: ${skipped.join(', ')}`)
 
 if (ok && !process.argv.includes('--keep-tmp')) {

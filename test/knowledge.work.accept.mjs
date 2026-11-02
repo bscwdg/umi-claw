@@ -288,7 +288,7 @@ function foreach_assert(src) {
 
 const result = r.toJSON({ nodePath, dbPath })
 const ok = printResult(result)
-writeJson(join(__dirname, 'accept-result-knowledge.json'), result)
+writeJson(join(__dirname, 'accept-result-knowledge-work.json'), result)
 console.log('')
 console.log(`----- ${result.suite}: ${result.passed}/${result.total}，失败 ${result.failed} -----`)
 process.exit(ok ? 0 : 1)
