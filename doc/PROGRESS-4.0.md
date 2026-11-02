@@ -1190,3 +1190,21 @@ CHANGELOG（4.0.0 条目、验收口径）、本文件（更正 WP4 的 954/476 
 | PROGRESS 曾写「S16/C80 均能抓回归」 | **属实→已修**：改为「原有断言可抓；新增子断言二轮加固」 |
 
 自测：typecheck 0；openclaw-summary 16/16（S16 PASS）；character 79/79（C80 PASS）。
+
+## 2026-11-03 · 4.1 开工（WP6-a：gateway 纯工具下沉）
+
+W6-a（parts）部分完成：`textPart` / `imageDataPart` / `imageUrlPart` / `GATEWAY_ABORT_REASON` +
+`GatewayContentPart` 从 `gatewayClient.ts` 下沉到 `services/gateway/parts.ts`；`gatewayClient`
+保留 re-export（既有调用方零改动）；marketing 两个域 Manager（contentManager / scanRecognizer）
+改从 `services/gateway` 取 → 插件值越界 **11 → 9**（剩余 9 条全是插件 `main.ts` 直引宿主 `ipc/*`，W6-b 清零）。
+
+- 门禁：`node scripts/check-boundaries.mjs` = 9（基线 9）、managerElectron=0、扫描 2 个域目录、exit 0
+- 基线 `scripts/boundary-baseline.json` 已 --update（附 `_note` 说明 11→9 的构成）
+- 验证：typecheck 0；gateway 29/29；boundary 8/8；content 12/12；scan 18/18
+
+### 剩余（4.1 未完）
+
+1. **WP5**：index.ts 2,551 → ≤1,800（W5-a host ipc 拆分 + W5-b pluginRuntime），未开始。
+2. **WP6-b**：9 条插件 `main.ts` 直引宿主 ipc/* 搬进 `plugins/<id>/main/ipc/` → 0；**需拍板** `work:gateway`
+   通道是否随插件启停。
+3. **WP6-c**：基线写 0，门禁升硬 error。

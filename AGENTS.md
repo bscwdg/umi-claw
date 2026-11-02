@@ -41,7 +41,7 @@ npm run build          # 构建（含 plugin:gen）
 ```
 electron/main/
 ├── kernel/          # 插件内核：manifest / registry / lifecycle / plugin / services
-├── services/        # 宿主能力（pluginDb / knowledge / context / errors / pluginKv / pluginSecrets / characterKv / characterHost）
+├── services/        # 宿主能力（pluginDb / knowledge / context / gateway / errors / pluginKv / pluginSecrets / characterKv / characterHost）
 ├── database/        # 数据层：schema / migration / schemas（错误码唯一来源在 services/errors.ts）
 ├── ipc/             # IPC 注册，按域分文件
 ├── character/       # 大肥鱼宿主模块
@@ -168,7 +168,7 @@ export const WORK_TODOS_CHANNELS = {
 **允许 import**：`electron/main/kernel/**`、`electron/main/services/**`、本插件目录内文件。
 **禁止 import**：其余一切 `electron/main/*`（`runtime`、`ipc`、域实现、`pluginDataImport` 等）。
 
-**现状**：**11 条越界**（实测；9 条插件 `main.ts` 直引宿主 `ipc/*`，2 条 `marketing/domain` 直引 `gatewayClient` 值导出，见 `doc/PLAN-4.1-DEBT.md`）。门禁：`npm run check:boundary`（零依赖脚本，已接入 `npm run accept` 首套与 CI verify job）。
+**现状**：**9 条越界**（实测；全部是插件 `main.ts` 直引宿主 `ipc/*`（含 `ipc` 入口 barrel）；gateway 纯工具已于 4.1 WP6-a 下沉 `services/gateway/parts`，`marketing/domain` 不再直引 `gatewayClient` 值导出，见 `doc/PLAN-4.1-DEBT.md`）。门禁：`npm run check:boundary`（零依赖脚本，已接入 `npm run accept` 首套与 CI verify job）。
 
 **读这条规则时要知道**：现状是「新代码不得新增越界，旧越界按 WP6 逐步清零」，不是「现在已经合规」。`scripts/boundary-baseline.json` 的 ratchet 会锁死这个数（只准降不准升，`--update` 才写，上调必须 `--allow-raise --note "<原因>"`）。
 
@@ -336,7 +336,7 @@ npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）
 npm run check:boundary
-# 当前基线：pluginHostBoundary=11、managerElectron=0；输出里的扫描目录数必须 >0（否则是假绿）
+# 当前基线：pluginHostBoundary=9、managerElectron=0；输出里的扫描目录数必须 >0（否则是假绿）
 
 # ⑤ 渲染端错误分支按 code（应为 0）
 (Select-String -Path src\**\*.vue,src\**\*.ts,plugins\**\*.vue,plugins\**\*.ts `

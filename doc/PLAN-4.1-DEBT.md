@@ -27,9 +27,9 @@
 
 | 指标 | 实测 | 复核命令 | 目标 / 状态 |
 | --- | --- | --- | --- |
-| 宿主 `electron/main` 代码量 | 26,943 行 | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 943，WP5） |
+| 宿主 `electron/main` 代码量 | 26,960 行 | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 960，WP5） |
 | `electron/main/index.ts` | 2,551 行 | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800（差 751，WP5） |
-| 插件越界 import（非 type、非 kernel/services） | **11 条** | `npm run check:boundary` | 0（WP6） |
+| 插件越界 import（非 type、非 kernel/services） | **9 条**（全部是插件 `main.ts` 直引宿主 `ipc/*`；W6-a 已下沉 gateway 纯工具） | `npm run check:boundary` | 0（WP6-b） |
 | 门禁可绕过写法 | 已覆盖 static/export-from/dynamic/require + 路径穿越 + 注释掩码/正则字面量/字符串文案/模板字面量/非字面量/typeof | `node test/boundary.accept.mjs` | 8/8 保持 |
 | Manager 层 import electron | 0（扫描 `plugins/*/domain` 共 2 个目录） | `npm run check:boundary` | 0 |
 | 门禁是否自动执行 | `npm run accept` 首套 + CI verify job | `Select-String .github/workflows/release.yml -Pattern 'check:boundary'` | 必须有（已满足） |
@@ -544,7 +544,7 @@ Get-ChildItem *.md | ForEach-Object {
 | 阶段 A 收尾 | ✅ 完成（2026-11-02） | 2026-11-02 | 4.0.0 发布前 |
 | WP7（4.0.1） | 🟡 6/8 完成：P1/P4/P5/P7/P8 ✅；P6 部分（台账 ✅、3 处固定 sleep 清理顺延 4.0.2）；P2/P3 顺延 4.0.2 | 见 PROGRESS 4.0.1 段 | 4.0.1 |
 | WP5（index.ts ≤1800） | ⬜ 未开始 | — | 4.1 |
-| WP6（边界清零） | ⬜ 未开始 | — | 4.1 |
+| WP6（边界清零） | 🟡 W6-a 完成（11→9）；W6-b 域 ipc 搬插件 / W6-c 基线 0 待做 | 见 PROGRESS 4.1 段 | 4.1 |
 
 > 发布点已重排：原「WP1→4.0.1 / WP2→4.0.2 / WP3→4.0.3 / WP4→4.1」不再成立——四包全部合入同一棵未发布的 `release/4.0`，且 `v1.0.0` 之后没有 tag。现在按 **4.0.0（当前 HEAD + 阶段 A 收尾）/ 4.0.1（WP7）/ 4.1（WP5+WP6）** 发布。
 >
@@ -598,13 +598,13 @@ Get-ChildItem *.md | ForEach-Object {
 
 - **W5-a**：`registerIpcHandlers`（`index.ts:1304–1991`，688 行 / 61 个 `ipcMain.handle`）按前缀拆到 `electron/main/ipc/host/{window,claw,config,env,skills,obsidian,terminal}.ts`，`index.ts` 只留 `registerHostIpc(deps)`；`deps` 用 **getter** 形状（`getMainWindow()` 等）保住晚初始化语义。
 - **W5-b**：`initPlugins`（472–634，163 行）+ 三个服务工厂 → `electron/main/services/pluginRuntime.ts`，legacy 读库回调显式注入。
-- 推演：现状 2,551 → a+b 后约 **1,730 行**；宿主 26,943 → 约 26,130（顺带达成 V4 ≤26,000）；实际以拆完为准。
+- 推演：现状 2,551 → a+b 后约 **1,730 行**；宿主 26,960 → 约 26,147（顺带达成 V4 ≤26,000）；实际以拆完为准。
 - 出口判据：`(Get-Content electron\main\index.ts).Count -le 1800`；全量 32 套；61 个通道名逐条不变；双 typecheck 0。
 - **不要**引 DI 容器：要注入的只有 ~10 个模块级单例，getter 形状足够且不引入无类型注册表。
 
 ### WP6 · 边界清零（2.5–3.5 人天）
 
-- **W6-a**：`gatewayClient.ts`（1464 行、0 处 import electron）拆出纯工具到 `services/gateway/{parts,constants,normalize,stream}.ts`，类保留并 re-export → 11 → **9**。
+- **W6-a（parts）✅ 部分完成（2026-11-03）**：gateway 纯工具已下沉 `services/gateway/parts.ts`（`textPart`/`imageDataPart`/`imageUrlPart`/`GATEWAY_ABORT_REASON` + `GatewayContentPart`），`gatewayClient` 保留 re-export；marketing 两个域 Manager 改从 services 取 → **11 → 9**。原计划中的 `constants/normalize/stream` 三个拆分**未做**（不影响边界目标，可选）。
 - **W6-b**：域 ipc 文件搬进 `plugins/<id>/main/ipc/`（`ipc/*.ts` 现在反向 import 插件域类型，搬走同时消掉宿主→插件依赖）→ 9 → **0**。**需拍板**：`work:gateway` 两条通道随插件启停（与 marketing 对齐），按 G4 单独提交 + CHANGELOG 登记。清账时一并处理 `index.ts:701-983` 的 11 处 `import('plugins/work/domain/{wizardManager,reminderManager}')` 内联类型导入，以及 `electron/main/ipc/*` 的 `import type ... from plugins/<id>/domain/*`（均 type-only，运行时无耦合，但属反向依赖）。
 - **W6-c**：基线写 0，`check:boundary` 从 ratchet 升为硬 error。
 
