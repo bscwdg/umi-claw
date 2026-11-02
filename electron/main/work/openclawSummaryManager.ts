@@ -23,7 +23,7 @@
 // 本模块不 import electron；gateway / records / DB 全注入，纯 Node 可测。
 
 import { createHash } from 'crypto'
-import { AppError, ERROR_CODES } from '../database/errors'
+import { AppError, ERROR_CODES } from '../services/errors'
 import type { WorkDatabase } from './database'
 import type { GatewayClient } from '../gatewayClient'
 import type { RecordManager } from './recordManager'

@@ -704,7 +704,7 @@ try {
     assert(!/INSERT INTO|UPDATE\s+\w+\s+SET|prepare\(/.test(mgrSrc), 'manager 不直写 SQL（硬规则 8）')
     assert(mgrSrc.includes('HOT_SOURCE_ERROR'), 'manager 使用 HOT_SOURCE_ERROR')
 
-    const errSrc = read('electron/main/database/errors.ts')
+    const errSrc = read('electron/main/services/errors.ts')
     assert(errSrc.includes("HOT_SOURCE_ERROR: 'HOT_SOURCE_ERROR'"), '错误码表含 HOT_SOURCE_ERROR')
 
     const mainSrc =

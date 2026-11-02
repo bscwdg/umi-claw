@@ -18,7 +18,7 @@
 // electron 的取值由 main/index.ts 注入，因此纯 Node 可测（test/knowledge.accept.mjs）。
 
 import { join } from 'node:path'
-import { AppError, ERROR_CODES } from '../../../database/errors'
+import { AppError, ERROR_CODES } from '../../errors'
 
 /** `resources/` 下 pdfjs 资产的子目录名 */
 export const PDFJS_ASSETS_SUBDIR = 'pdfjs'

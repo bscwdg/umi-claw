@@ -19,7 +19,7 @@
 // 本模块不直接 import electron 的 Notification（保持可测）：notifier 注入；
 // 时间/开关读取通过注入函数。纯 Node 用假 notifier 断言。
 
-import { AppError, ERROR_CODES } from '../database/errors'
+import { AppError, ERROR_CODES } from '../services/errors'
 import type { WorkDatabase } from './database'
 
 /** 两个固定通知 id */

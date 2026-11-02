@@ -39,7 +39,7 @@ import { createRequire } from 'node:module'
 import mammoth from 'mammoth'
 import ExcelJS from 'exceljs'
 import { basename, extname, join } from 'node:path'
-import { AppError, ERROR_CODES } from '../../../database/errors'
+import { AppError, ERROR_CODES } from '../../errors'
 import { asPdfjsDirUrl, type PdfjsAssets } from './pdfjsAssets'
 
 /** pdfjs 模块形状（**类型**直接取官方 d.ts；运行时从资源里加载，不走打包器） */

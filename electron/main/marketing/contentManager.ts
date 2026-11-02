@@ -34,7 +34,7 @@
 // 原始流文本保留可复制。content_type 创建后不可改；businessLine（摄影/服饰）只进 prompt 快照。
 
 import { randomUUID } from 'node:crypto'
-import { AppError, ERROR_CODES } from '../database/errors'
+import { AppError, ERROR_CODES } from '../services/errors'
 import type { MarketingDatabase } from './database'
 import { PLATFORMS, renderContextPackText, type ContextEngine, type ContextPack, type Platform } from './contextEngine'
 import { renderPackRuleSection } from './platformRules'

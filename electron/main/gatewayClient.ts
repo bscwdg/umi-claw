@@ -23,7 +23,7 @@
 // 与 §14 的关系：本模块只提供 `work:gateway:{status,ensureReady}` 两条只读/幂等通道
 // （见 ipc/gateway.ts）；业务流通道（qa / tools / reports）归各自 Commit，本模块不预建。
 
-import { AppError, ERROR_CODES, errorCodeOf, type ErrorEnvelope } from './database/errors'
+import { AppError, ERROR_CODES, errorCodeOf, type ErrorEnvelope } from './services/errors'
 
 // ── 端点与事件名（§六 已实测事实） ────────────────────────────────────────────
 

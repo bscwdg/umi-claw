@@ -39,7 +39,7 @@
 import { randomUUID } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { basename, extname, join, resolve } from 'node:path'
-import { AppError, ERROR_CODES, errorCodeOf } from '../database/errors'
+import { AppError, ERROR_CODES, errorCodeOf } from '../services/errors'
 import type { MarketingDatabase } from './database'
 import { PROJECTS_SUBDIR } from './projectManager'
 import {

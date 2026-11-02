@@ -16,7 +16,7 @@
 import { randomUUID } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
-import { AppError, ERROR_CODES } from '../database/errors'
+import { AppError, ERROR_CODES } from '../services/errors'
 import type { WorkDatabase } from './database'
 import {
   FILE_TYPE_EXTENSIONS,

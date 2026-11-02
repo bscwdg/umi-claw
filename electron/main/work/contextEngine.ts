@@ -23,7 +23,7 @@
 // 本模块**不 import electron、不做 HTTP、不碰 GATEWAY_TOKEN**；只通过注入的 DatabaseClient 读库，
 // 因此纯 Node 可 bundle 测试。
 
-import { AppError, ERROR_CODES } from '../database/errors'
+import { AppError, ERROR_CODES } from '../services/errors'
 import type { WorkDatabase } from './database'
 import { dateOf, normalizeDate } from './todoManager'
 import { estimateTokens, sliceToTokenBudget } from '../services/context/tokens'

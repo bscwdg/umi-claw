@@ -26,7 +26,7 @@
 // current-project 切换，属 Commit 03）。Context Pack 是**主进程内部**的数据结构，消费方是
 // 07/08/09 的主进程代码，所以本提交**不新增 IPC 通道**，只把引擎接进主进程 wiring（见汇报「待拍板」）。
 
-import { AppError, ERROR_CODES } from '../database/errors'
+import { AppError, ERROR_CODES } from '../services/errors'
 import {
   BUSINESS_COMPLETENESS_FIELDS,
   WATCHLIST_MAX,

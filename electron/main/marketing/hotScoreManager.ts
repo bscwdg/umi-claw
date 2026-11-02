@@ -21,7 +21,7 @@
 //   - 与 11 的边界：hotManager 管采集/读榜（不碰 AI），本模块只评分/写缓存；listRadar
 //     的 LEFT 关联会自动读到这里写的分数，渲染端评分后 skipCollect 重读即可看到分组。
 
-import { AppError, ERROR_CODES } from '../database/errors'
+import { AppError, ERROR_CODES } from '../services/errors'
 import { extractJsonArray } from './jsonExtract'
 import { randomUUID } from 'node:crypto'
 import type { MarketingDatabase } from './database'

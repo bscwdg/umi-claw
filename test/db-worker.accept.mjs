@@ -407,7 +407,7 @@ try {
     // 错误码必须全部落在 §14.2 的 13 项内（4.0：HOT_SOURCE_ERROR 以 deprecated 身份回归，
     // 供 marketing 热点采集调用点继续编译，见 MERGE-INVENTORY R1）
     const envelopeMod = await import(
-      pathToFileURL(bundleEntry('electron/main/database/errors.ts', 'errors.mjs')).href
+      pathToFileURL(bundleEntry('electron/main/services/errors.ts', 'errors.mjs')).href
     )
     const allowedCodes = Object.keys(envelopeMod.ERROR_CODES)
     assertEq(allowedCodes.length, 13, `§14.2 应为 13 项，实际 ${allowedCodes.length}`)

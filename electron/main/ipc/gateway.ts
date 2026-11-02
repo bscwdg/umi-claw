@@ -11,7 +11,7 @@
 
 import { ipcMain } from 'electron'
 import { channelHandle } from './channelRegistrar'
-import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
+import { toErrorEnvelope, type ErrorEnvelope } from '../services/errors'
 import type { GatewayClient, GatewayStatusSnapshot } from '../gatewayClient'
 
 /** IPC 统一返回信封 */

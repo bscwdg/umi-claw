@@ -13,7 +13,7 @@
 //
 // 本模块不 import electron；依赖注入（DatabaseClient / ContextEngine），纯 Node 可测。
 
-import { AppError, ERROR_CODES } from '../database/errors'
+import { AppError, ERROR_CODES } from '../services/errors'
 import type { WorkDatabase } from './database'
 import {
   type ContextPack,

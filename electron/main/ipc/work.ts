@@ -15,7 +15,7 @@
 // 本模块只做参数透传与信封包装；业务规则全在 Manager 层（可纯 Node 测）。
 
 import { ipcMain, dialog, BrowserWindow } from 'electron'
-import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
+import { toErrorEnvelope, type ErrorEnvelope } from '../services/errors'
 import type { ProfileManager, UpdateProfileInput } from '../work/profileManager'
 import type { CreateMatterInput, MatterManager, UpdateMatterInput } from '../work/matterManager'
 import type { CreateTodoInput, ListTodosParams, TodoManager, UpdateTodoInput } from '../work/todoManager'

@@ -17,7 +17,7 @@
 
 import { dialog } from 'electron'
 import { channelHandle } from './channelRegistrar'
-import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
+import { toErrorEnvelope, type ErrorEnvelope } from '../services/errors'
 import type { BackupResult, DatabaseClient, DatabaseStatus } from '../database/database'
 import type {
   CreateProjectInput,

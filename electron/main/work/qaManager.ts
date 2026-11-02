@@ -8,7 +8,7 @@
 //
 // 本模块不 import electron；DB / ContextEngine / GatewayClient 注入，纯 Node 可测。
 
-import { AppError, ERROR_CODES } from '../database/errors'
+import { AppError, ERROR_CODES } from '../services/errors'
 import type { WorkDatabase } from './database'
 import { type ContextEngine, type ContextPack, type SnapshotScope, renderContextPackText } from './contextEngine'
 import { toView } from './contextManager'

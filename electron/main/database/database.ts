@@ -16,7 +16,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { AppError, ERROR_CODES, type ErrorCode } from './errors'
+import { AppError, ERROR_CODES, type ErrorCode } from '../services/errors'
 import { resolveDbSchema, type DbSchemaProfile, type SchemaId } from './schemas'
 
 /**

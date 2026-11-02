@@ -21,7 +21,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { AppError, ERROR_CODES } from '../database/errors'
+import { AppError, ERROR_CODES } from '../services/errors'
 import type { MarketingDatabase } from './database'
 import { listAllRows, compareHeatRank } from './hotShared'
 

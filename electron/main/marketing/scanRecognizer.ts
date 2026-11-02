@@ -44,7 +44,7 @@
 import { readFileSync, statSync } from 'node:fs'
 import { basename, extname } from 'node:path'
 import { deflateSync } from 'node:zlib'
-import { AppError, ERROR_CODES, errorCodeOf } from '../database/errors'
+import { AppError, ERROR_CODES, errorCodeOf } from '../services/errors'
 import {
   GATEWAY_ABORT_REASON,
   imageDataPart,

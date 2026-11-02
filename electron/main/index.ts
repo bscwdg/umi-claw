@@ -78,7 +78,7 @@ import { registerCharacter } from './character/wiring'
 import { filterCharacterHits } from './character/searchContext'
 import { scrubForLog } from './character/safety'
 import type { CharacterManager } from './character/manager'
-import { AppError, ERROR_CODES } from './database/errors'
+import { AppError, ERROR_CODES } from './services/errors'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
 

@@ -14,7 +14,7 @@
 
 import { type IpcMainInvokeEvent } from 'electron'
 import { channelHandleEvent } from './channelRegistrar'
-import { toErrorEnvelope, type ErrorEnvelope } from '../database/errors'
+import { toErrorEnvelope, type ErrorEnvelope } from '../services/errors'
 import { forwardGatewayStream, MARKETING_STREAM_EVENTS, type GatewayStreamSink } from '../gatewayClient'
 import type { AdvisorAskInput, AdvisorManager, WatchCandidate } from '../marketing/advisorManager'
 import type { ContextPack } from '../marketing/contextEngine'

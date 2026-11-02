@@ -15,7 +15,7 @@
 //   - 防护：shots 1-30、durationSec 1-300（坏条目丢弃/越界夹紧，防垃圾 JSON 撑爆渲染）。
 //   - 本期只做分镜脚本；AI 视频提示词（video_prompt）走枚举+模板扩展，下一轮。
 
-import { AppError, ERROR_CODES } from '../database/errors'
+import { AppError, ERROR_CODES } from '../services/errors'
 import { extractJsonObject } from './jsonExtract'
 
 // ── 产物类型 / 业务线常量 ──────────────────────────────────────────────────────

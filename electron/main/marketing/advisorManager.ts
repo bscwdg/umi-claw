@@ -18,7 +18,7 @@
 //   - 本提交**不注册 IPC**：渲染端面（`marketing:advisor:*`）与面板归本提交的 UI 半边，
 //     事件名沿用 07 的 `forwardGatewayStream` 约定（见 ipc/advisor.ts）。
 
-import { AppError, ERROR_CODES } from '../database/errors'
+import { AppError, ERROR_CODES } from '../services/errors'
 import { extractJsonArray } from './jsonExtract'
 import { WATCHLIST_MAX, WATCHLIST_KEYWORD_MAX_LENGTH, WATCHLIST_TYPES, type WatchlistManager } from './businessManager'
 import {
