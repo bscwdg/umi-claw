@@ -27,8 +27,8 @@
 
 | 指标 | 实测 | 复核命令 | 目标 / 状态 |
 | --- | --- | --- | --- |
-| 宿主 `electron/main` 代码量 | 26,253 行（WP6 搬家后） | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 253，V4 待 4.2 删减） |
-| `electron/main/index.ts` | 1,767 行 | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800（✅ 已达成，WP5） |
+| 宿主 `electron/main` 代码量 | 26,373 行（4.0.2 P2 后；WP6 搬家时 26,253） | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 373，V4 待 4.2 删减） |
+| `electron/main/index.ts` | 1,777 行（WP5 出口时 1,767） | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800（✅ 已达成，WP5；P2 后仍达标） |
 | 插件越界 import（非 type、非 kernel/services） | **0 条**（WP6-b/c 已把域 ipc 搬进 `plugins/<id>/main/ipc/`；仅存 14 处 type-only 宿主类型引用，按门禁口径放行，收敛登记 4.2） | `npm run check:boundary` | 0（已达成，基线 0 硬约束） |
 | 门禁可绕过写法 | 已覆盖 static/export-from/dynamic/require + 路径穿越 + 注释掩码/正则字面量/字符串文案/模板字面量/非字面量/typeof | `node test/boundary.accept.mjs` | 8/8 保持 |
 | Manager 层 import electron | 0（扫描 `plugins/*/domain` 共 2 个目录） | `npm run check:boundary` | 0 |
@@ -473,6 +473,12 @@ CI 加一步：`npm run lint`（= eslint + check-lint-budget）。
 Select-String -Path electron\**\*.ts,src\**\*.ts,src\**\*.vue `
   -Pattern "sk-[A-Za-z0-9]{16,}|Bearer [A-Za-z0-9\._-]{20,}" -ErrorAction SilentlyContinue
 
+# 口径注：
+# - V3 的 grep 会把多行 import type { ... } from 'electron/main/...' 误报为越界（实际 type-only 放行）；
+#   权威口径用 node scripts/check-boundaries.mjs（4.1 WP6 后为 0/0 硬约束）。
+# - V5「重复文件」按 parsers 口径（3→1）；test/hotscore.real-smoke.mjs 与 test/shooting.real-smoke.mjs
+#   是历史 0 字节文件，已登记 4.2 清理，不计重复实现。
+
 # V10（含根目录 *.md 与 doc/）
 Get-ChildItem electron,src,plugins,doc -Recurse -Include *.ts,*.vue,*.mjs,*.md | ForEach-Object {
   if ((Get-Content $_.FullName -Raw -Encoding UTF8) -match "[\u200b\u200e\u200f\ufeff]") { $_.FullName }
@@ -543,7 +549,7 @@ Get-ChildItem *.md | ForEach-Object {
 | WP4 | ✅ 完成（C4.3 判据未达，见下） | 2026-11-02 | 并入 4.0.0 |
 | 阶段 A 收尾 | ✅ 完成（2026-11-02） | 2026-11-02 | 4.0.0 发布前 |
 | WP7（4.0.1/4.0.2） | ✅ 8/8 完成：P1/P4/P5/P6/P7/P8（4.0.1；P5 核心=检测+日志告警）+ P3（4.0.2 knowledge 隔离）+ P2（4.0.2 旧库导入失败可见/重试入口）；P5 GUI 延伸并入 4.2 | 见 PROGRESS 4.0.1/4.0.2 段 | 4.0.1/4.0.2 |
-| WP5（index.ts ≤1800） | ✅ W5-b（pluginRuntime）+ W5-a（6 批、61 个 handle 全下沉 `ipc/host/*`）；**出口判据达成：index 1,767 ≤ 1,800**；两轮独立检查结论见 PROGRESS 4.1 段 | 见 PROGRESS 4.1 段 | 4.1 |
+| WP5（index.ts ≤1800） | ✅ W5-b（pluginRuntime）+ W5-a（6 批、61 个 handle 全下沉 `ipc/host/*`）；**出口判据达成：index 1,767 ≤ 1,800（4.0.2 P2 后 1,777 仍达标）**；两轮独立检查结论见 PROGRESS 4.1 段 | 见 PROGRESS 4.1 段 | 4.1 |
 | WP6（边界清零） | ✅ W6-a（11→9）+ W6-b/c（9→0，域 ipc 搬插件、gateway 拆 host/plugin、基线 0）；两轮独立检查已入档 PROGRESS（事实核对 + 对抗复核） | 见 PROGRESS 4.1 段 | 4.1 |
 
 > 发布点已重排：原「WP1→4.0.1 / WP2→4.0.2 / WP3→4.0.3 / WP4→4.1」不再成立——四包全部合入同一棵未发布的 `release/4.0`，且 `v1.0.0` 之后没有 tag。现在按 **4.0.0（当前 HEAD + 阶段 A 收尾）/ 4.0.1（WP7）/ 4.1（WP5+WP6）** 发布。
@@ -565,7 +571,7 @@ Get-ChildItem *.md | ForEach-Object {
 
 1. C0.3 NSIS 真机 7 步（RUNBOOK §6，需人工）；
 2. 重新产出 NSIS + 刷新 `release/win-unpacked`（现产物是 2026-11-01 的，smoke S6/S7 校验的是旧包）；
-3. 对 `7122a94..eed488c`（**44** 个提交，阶段 A 之前的未审查范围）补一次独立对抗复核（AGENTS §12.1 流程欠账）；
+3. ~~对 `7122a94..eed488c`（**44** 个提交）补一次独立对抗复核~~ **已完成（2026-11-03）**：task-9 事实核对 + task-10 对抗复核，C1 38/44、C2 4/44 如实记录并三态处置，见 PROGRESS 4.0.0 段；
 4. 四件套留档必须晚于最终 HEAD。
 
 **阶段 A 明确接受/未修的已知边界**（不阻塞 tag，登记备查）：

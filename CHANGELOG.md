@@ -13,10 +13,10 @@
 ### 重构
 - **插件边界清零**：域 IPC 全部搬进 `plugins/<id>/main/ipc/`（work 1 个文件 + marketing 8 个文件：6 个搬迁 + gateway 拆分 + ipcTypes，另 services 新增 hostUi），`check:boundary` 从 9 条越界收紧到 **0（硬约束）**；插件不再 import electron，
   宿主 electron 能力经 `services/hostUi`、流透传经 `services/gateway/stream` 注入。
-- **宿主装配瘦身**：`electron/main/index.ts` 2,551 → **1,767 行**（≤1,800 目标达成）；61 个 host IPC（4.0.2 P2 起 +2 条 import 通道 = 63）
+- **宿主装配瘦身**：`electron/main/index.ts` 2,551 → **1,777 行**（≤1,800 目标达成；4.0.2 P2 加 10 行）；61 个 host IPC（4.0.2 P2 起 +2 条 import 通道 = 63）
   拆到 `electron/main/ipc/host/*`，插件装配抽到 `services/pluginRuntime`，宿主服务适配器抽到
   `services/pluginServiceAdapters`。
-- 副作用：宿主 `electron/main` 27,463 → **26,253 行**（离 V4 ≤26,000 仅差 253，后续删减）。
+- 副作用：宿主 `electron/main` 27,463 → **26,373 行**（4.0.2 P2 后；离 V4 ≤26,000 差 373，后续删减）。
 
 ### 已知残差（登记 4.2）
 - `electron/main/ipc/index.ts` 仍 re-export 插件 registrar（host→plugin 兼容依赖，无环）；
