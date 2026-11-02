@@ -21,7 +21,7 @@ import {
 import { join } from 'node:path'
 import { resolvePdfjsAssets } from '../../electron/main/services/knowledge/parsers/pdfjsAssets'
 import { buildOpenClawGateway } from './gatewayAdapter'
-import { importTableData, MARKETING_TABLES, HOST_APP_META_PREFIXES } from '../../electron/main/pluginDataImport'
+import { importTableData, MARKETING_TABLES, HOST_APP_META_PREFIXES } from '../../electron/main/services/pluginDataImport'
 
 let runtime: MarketingRuntime | null = null
 

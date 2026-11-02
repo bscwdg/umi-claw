@@ -1,6 +1,6 @@
 // work/migrate.ts —— work.db → plugins/work/data.db 的一次性导入（Phase 2 / D2）
 //
-// 通用逻辑在 `electron/main/pluginDataImport.ts`；这里只固定 work 的表清单与排除项。
+// 通用逻辑在 `electron/main/services/pluginDataImport.ts`；这里只固定 work 的表清单与排除项。
 // 历史（对抗验收 A2/A3/A5）修掉的三处问题都在通用实现里：
 //   - 错误分类：只有明确的「没有这张表/方法」才跳过；
 //   - upsert：中断后重跑不会主键冲突；
@@ -13,7 +13,7 @@ import {
   type ImportResult,
   type ImportTarget,
   type LegacyReader
-} from '../pluginDataImport'
+} from '../services/pluginDataImport'
 
 export type { ImportResult, ImportTarget, LegacyReader }
 

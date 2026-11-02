@@ -693,7 +693,7 @@ const schemasMod = await import(
   pathToFileURL(bundleEntry('electron/main/database/schemas.ts', 'work-schemas.mjs')).href
 )
 const genericImportMod = await import(
-  pathToFileURL(bundleEntry('electron/main/pluginDataImport.ts', 'plugin-import.mjs')).href
+  pathToFileURL(bundleEntry('electron/main/services/pluginDataImport.ts', 'plugin-import.mjs')).href
 )
 
 const migrateMod = await import(
