@@ -326,7 +326,8 @@ try {
     return 'QA + 周报 ✓'
   })
 } catch (e) {
-  console.error('e2e 自身异常:', e)
+  // 统一短语：scripts/run-all-accept.mjs 靠它把「套件自身异常」判红（否则 catch 吞掉后 exit 0 假绿）
+  console.error('验收脚本自身异常（e2e）:', e)
 } finally {
   for (const g of gates) { try { await g.close() } catch {} }
   if (database) { try { await database.dispose() } catch {} }

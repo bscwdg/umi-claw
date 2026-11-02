@@ -53,13 +53,32 @@ const ACCEPT = [
 const E2E = ['one-day e2e', 'test/one-day.e2e.mjs']
 const SMOKE = ['packaged smoke', 'test/packaged.smoke.mjs']
 
+// 套件「自身异常」必须判失败：各套件主体包在 try/catch 里，异常只打一行
+// 「验收脚本自身异常」；若断言在异常前还没注册，checks 为空 → printResult 的
+// failed=0 会误判绿。这里同时解析子进程输出，出现该标记即失败（2026-11-02 实测
+// platform 在 setup 抛异常时曾输出 0/0 且 exit 0）。
+const SUITE_CRASH_MARK = '验收脚本自身异常'
+
 function runNode(script) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [join(repoRoot, script)], {
       cwd: repoRoot,
-      stdio: 'inherit'
+      stdio: ['inherit', 'pipe', 'pipe']
     })
-    child.on('close', (code) => resolve(code))
+    let crashed = false
+    const forward = (stream, target) => {
+      let tail = ''
+      stream.setEncoding('utf8')
+      stream.on('data', (chunk) => {
+        // 标记可能被切在两个 chunk 之间：带上上一段尾巴再判
+        if ((tail + chunk).includes(SUITE_CRASH_MARK)) crashed = true
+        tail = (tail + chunk).slice(-SUITE_CRASH_MARK.length)
+        target.write(chunk)
+      })
+    }
+    forward(child.stdout, process.stdout)
+    forward(child.stderr, process.stderr)
+    child.on('close', (code) => resolve({ code: code ?? 1, crashed }))
   })
 }
 
@@ -67,8 +86,12 @@ async function main() {
   const results = []
   for (const [name, script] of ACCEPT) {
     process.stdout.write(`\n── accept: ${name} ────────────────────────────\n`)
-    const code = await runNode(script)
-    results.push({ name, code })
+    const { code, crashed } = await runNode(script)
+    results.push({ name, code, crashed })
+    if (crashed) {
+      process.stdout.write(`\n❌ accept: ${name} 脚本自身异常（已判失败，防止 0/0 假绿），中止\n`)
+      process.exit(1)
+    }
     if (code !== 0) {
       process.stdout.write(`\n❌ accept: ${name} 失败（${code}），中止\n`)
       process.exit(1)
@@ -77,8 +100,12 @@ async function main() {
 
   for (const [name, script] of [E2E, SMOKE]) {
     process.stdout.write(`\n── ${name} ────────────────────────────\n`)
-    const code = await runNode(script)
-    results.push({ name, code })
+    const { code, crashed } = await runNode(script)
+    results.push({ name, code, crashed })
+    if (crashed) {
+      process.stdout.write(`\n❌ ${name} 脚本自身异常（已判失败，防止 0/0 假绿），中止\n`)
+      process.exit(1)
+    }
     if (code !== 0) {
       process.stdout.write(`\n❌ ${name} 失败（${code}），中止\n`)
       process.exit(1)

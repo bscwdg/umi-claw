@@ -164,7 +164,8 @@ try {
     return '角色资源/桌宠 preload/NOTICE ✓'
   })
 } catch (e) {
-  console.error('smoke 自身异常:', e)
+  // 统一短语：scripts/run-all-accept.mjs 靠它把「套件自身异常」判红（否则 catch 吞掉后 exit 0 假绿）
+  console.error('验收脚本自身异常（smoke）:', e)
 }
 
 const result = r.toJSON({})

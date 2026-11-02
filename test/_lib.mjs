@@ -271,7 +271,12 @@ export function printResult(result) {
   console.log(
     `----- ${result.suite}: ${result.passed}/${result.total} 通过，失败 ${result.failed}，用时 ${result.durationMs}ms -----`
   )
-  return result.failed === 0
+  // total=0 不是绿：套件在注册断言前就抛异常时 failed 也是 0，
+  // 只看 failed 会把「什么都没跑」判成通过（2026-11-02 实测 platform 假绿）。
+  if (result.total === 0) {
+    console.log('⚠️ 本套件没有任何断言（total=0）：判为失败，不允许「什么都没跑」算绿')
+  }
+  return result.failed === 0 && result.total > 0
 }
 
 export function writeJson(path, obj) {
