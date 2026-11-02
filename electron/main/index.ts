@@ -78,6 +78,7 @@ import {
 import { registerCharacter } from './character/wiring'
 import { buildCharacterDeps } from './services/characterHost'
 import { PluginSecretStore } from './services/pluginSecrets'
+import { CharacterKvStore } from './services/characterKv'
 import type { CharacterManager } from './character/manager'
 import { AppError, ERROR_CODES } from './services/errors'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
@@ -2287,14 +2288,17 @@ app.whenReady().then(async () => {
   // 知识库/世界书/日记走既有 Obsidian，不新增知识库服务。
   try {
     if (!workDatabase) throw new Error('workDatabase 尚未初始化')
-    const characterDb = workDatabase
     const characterDataDir = configManager.getDataDir()
+    // WP4 C4.2：角色数据搬到 <dataDir>/character/kv.json，不再借宿主 work.db 的 app_meta。
+    // 旧键 fish:v2:* 一次性幂等导入；旧键保留只读一个版本，出问题可回滚。
+    const characterKv = new CharacterKvStore({
+      dataDir: characterDataDir,
+      legacy: { get: (key) => workDatabase!.metaGet(key) },
+      logger: (message) => console.log(message)
+    })
       const characterPromise = registerCharacter(
         buildCharacterDeps({
-          kv: {
-            get: (key) => characterDb.metaGet(key),
-            set: (key, value) => characterDb.metaSet(key, value)
-          },
+          kv: characterKv,
           dataDir: characterDataDir,
           isPackaged: app.isPackaged,
           appPath: app.getAppPath(),
