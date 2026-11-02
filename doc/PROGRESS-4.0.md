@@ -847,3 +847,67 @@ work 的三个测量口径**在同一个域里就不同**，所以内核提供 `
   `error` / `killed` / `timeout` 结束，**均无可用结论**。W2-c 起的独立复审始终缺失，
   由「断言一条未改 + 自查等价」承担。
 - `test/packaged.smoke` 的 S6/S7 在 CI 用 `UMI_ALLOW_PACKAGE_SKIP=1` 跳过；真机仍待北执行。
+
+## 2026-11-02 · WP3 完成（边界门禁 + 两域搬迁）
+
+4.0 的核心目标达成：**work 与 marketing 两个域都不再住在宿主目录**。
+
+| 提交 | 内容 |
+| --- | --- |
+| `7de7965` | 零依赖边界门禁 `scripts/check-boundaries.mjs` + 基线 |
+| `a33e5e9` | `_lib.mjs` 新增 `workSrc`/`mkSrc`（仓库相对路径版，配合 G7） |
+| `8985001` | work 测试 44 处硬编码 → `workSrc()` |
+| `90d64e9` | marketing 测试 83 处硬编码 → `mkSrc()`（含 WP1 遗留双候选收成单候选） |
+| `19967de` | `database/errors` 下沉到 services（37 文件引用同步） |
+| `6b6c62a` | `pluginDataImport` 下沉到 services |
+| `5c47a35` | **work 域 19 文件 → `plugins/work/domain/`** |
+| `67f6b39` | 基线收紧到 10 |
+| `2adc781` | **marketing 域 15 文件 → `plugins/marketing/domain/`** |
+
+### 为什么先下沉 errors / pluginDataImport
+
+搬迁前实测：把 work 域直接搬进 `plugins/work/domain/` 会让边界门禁从 13 涨到 27
+（越界 +14：`database/errors`×13、`pluginDataImport`×1）。两者都是零 import 的叶模块，
+先下沉到 `services/`，越界归零后才动手搬。这是「先解阻、后搬迁」的典型顺序。
+
+### 搬迁等价性数据
+
+| 项 | work | marketing |
+| --- | --- | --- |
+| 文件数 | 19 | 15 |
+| 域内 import（路径不变） | 49 | 41 |
+| 跨出 import（改写为 `../../../electron/main/...`） | 25 | 24 |
+| 外部消费方同步 | 21 处（ipc/work 14、plugin main 2、ui pages 5、index.ts 10 处内联类型引用） | 11 处（ipc 5 文件 ×10、plugin main 1） |
+
+### 门禁的两次自我修正（都是实测发现的）
+
+1. **基线从 13 → 12 → 10**：两轮下沉把真实越界降下来，每次都 `--update` 收紧。
+2. **门禁脚本判定缺陷**：原实现只按「单行」判 import，多行 import 的收尾行
+   `} from '...'` 被误当值引用。改为解析完整 import 语句，并识别「所有成员都是 type」。
+   > 修正过程中我一度以为 marketing 的 2 条是误报；调试后发现 `textPart` /
+   > `imageDataPart` / `GATEWAY_ABORT_REASON` 都是**值导入**——门禁是对的，是我的假设错了。
+
+### 如实登记的新欠账（不是悄悄调高基线）
+
+marketing 搬迁后 `pluginHostBoundary` 从 10 → **11**。多出的 2 条：
+
+- `plugins/marketing/domain/contentManager.ts:58` → `gatewayClient`
+- `plugins/marketing/domain/scanRecognizer.ts:54` → `gatewayClient`
+
+搬迁前它们在宿主目录不受此规则约束，**属新暴露的真实耦合**，不是回归。
+基线设为 11，并在 `scripts/boundary-baseline.json` 的 `_note` 里写明：
+**WP4 把 gateway 纯工具下沉到 services 后清零，此前不得继续上调。**
+
+### 当前门禁状态
+
+```
+✓ pluginHostBoundary=11（基线 11）、managerElectron=0
+```
+
+剩余 11 条里 9 条是插件 `main.ts` 直接 import 宿主的 `ipc/*`（等 W2 之后迁 ipc），
+2 条是上面的 gatewayClient 值导入。
+
+### 验收
+
+双 typecheck 0 错；build 通过；全量 **31 套 / 585 断言 / 0 失败**；
+两域及其下游 23 套全部 exit 0。
