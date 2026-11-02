@@ -30,7 +30,6 @@ export interface CharacterHostSources {
   configManager: Pick<ConfigManager, 'getConfig' | 'getOpenClawChannels'>
   obsidianManager: ObsidianManager | null
   voiceManager: Pick<VoiceManager, 'speak' | 'readAudio'> | null
-  /** gateway 客户端（缺省则聊天/日记不可用） */
   /** 全应用唯一的网关客户端（缺省则聊天/日记不可用） */
   gateway: GatewayClient | null
   gatewayReady: () => boolean

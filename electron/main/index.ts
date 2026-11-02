@@ -2233,38 +2233,80 @@ app.whenReady().then(async () => {
     )
   }
   // ── 大肥鱼角色（宿主模块；默认关，失败只降级自身）──
-  // 数据只落宿主 work.db 的 app_meta（fish:v2:*），与 voice 同库同口径；
-  // 知识库/世界书/日记走既有 Obsidian，不新增知识库服务。
+  // 数据落 <dataDir>/character/kv.json（WP4 C4.2）；知识库/世界书/日记走既有 Obsidian，
+  // 不新增知识库服务。
   try {
     if (!workDatabase) throw new Error('workDatabase 尚未初始化')
     const characterDataDir = configManager.getDataDir()
     // WP4 C4.2：角色数据搬到 <dataDir>/character/kv.json，不再借宿主 work.db 的 app_meta。
-    // 旧键 fish:v2:* 一次性幂等导入；旧键保留只读一个版本，出问题可回滚。
+    // 升级用户的旧键 fish:v2:* 由 importAllFromLegacy() 一次性搬入（标记文件防重复）。
+    // 必须等导入（有上限）再 registerCharacter：否则角色初始化会先读到默认值、再把默认值写回
+    // kv.json，把旧数据挤掉（2026-11-02 实测踩过：work.db 8 个旧键 vs kv.json 3 个默认键）。
+    // 上限 2s：work.db 是惰性初始化，单请求默认 30s；旧库被锁/损坏时不能拖住开窗。
+    // 即使角色默认关闭也执行一次：旧数据里可能 enabled=true，跳过会把启停状态读错。
     const characterKv = new CharacterKvStore({
       dataDir: characterDataDir,
       legacy: { get: (key) => workDatabase!.metaGet(key) },
       logger: (message) => console.log(message)
     })
-      const characterPromise = registerCharacter(
-        buildCharacterDeps({
-          kv: characterKv,
-          dataDir: characterDataDir,
-          isPackaged: app.isPackaged,
-          appPath: app.getAppPath(),
-          resourcesPath: process.resourcesPath,
-          configManager,
-          obsidianManager,
-          voiceManager,
-          gateway: workGatewayClient,
-          gatewayReady: () => Boolean(clawManager?.getStatus().ready),
-          onEvent: (event) => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('character:event', event)
+    try {
+      const legacyImport = characterKv.importAllFromLegacy()
+      let importTimeoutId: NodeJS.Timeout | null = null
+      const importTimeout = new Promise<'timeout'>((resolve) => {
+        importTimeoutId = setTimeout(() => resolve('timeout'), 2000)
+      })
+      const importResult = await Promise.race([legacyImport, importTimeout])
+      if (importTimeoutId) clearTimeout(importTimeoutId)
+      if (importResult === 'timeout') {
+        console.log('[character] 旧数据导入超过 2s，先开窗口；导入在后台继续（失败下次启动重试）')
+        void legacyImport
+          .then((result) => {
+            if (result.imported.length) {
+              console.log(`[character] 后台旧数据导入完成 ${result.imported.length} 项`)
             }
-          },
-          logger: (message) => console.log(message)
-        })
+          })
+          .catch((error) => {
+            console.log(
+              `[character] 后台旧数据导入失败，下次启动重试: ${
+                (error as Error)?.message ?? String(error)
+              }`
+            )
+          })
+      } else if (importResult.imported.length) {
+        console.log(
+          `[character] 旧数据已导入 ${importResult.imported.length} 项（旧键保留只读，可回滚；` +
+            '被覆盖的 kv.json 已备份为 .pre-import.bak）'
+        )
+      } else if (importResult.alreadyDone) {
+        console.log('[character] 旧数据导入已完成（标记存在，跳过）')
+      }
+    } catch (error) {
+      console.log(
+        `[character] 旧数据导入失败，下次启动重试（角色先用默认值）: ${
+          (error as Error)?.message ?? String(error)
+        }`
       )
+    }
+    const characterPromise = registerCharacter(
+      buildCharacterDeps({
+        kv: characterKv,
+        dataDir: characterDataDir,
+        isPackaged: app.isPackaged,
+        appPath: app.getAppPath(),
+        resourcesPath: process.resourcesPath,
+        configManager,
+        obsidianManager,
+        voiceManager,
+        gateway: workGatewayClient,
+        gatewayReady: () => Boolean(clawManager?.getStatus().ready),
+        onEvent: (event) => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('character:event', event)
+          }
+        },
+        logger: (message) => console.log(message)
+      })
+    )
     // 启动体验：角色初始化最多等 3s；超时先开窗口，角色后台就绪后再接线
     let characterTimeoutId: NodeJS.Timeout | null = null
     const characterTimeout = new Promise<'timeout'>((resolve) => {

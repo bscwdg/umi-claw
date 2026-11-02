@@ -8,7 +8,7 @@
 // 用法：node test/character.core.accept.mjs（npm run accept:character）
 
 import { pathToFileURL } from 'node:url'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Recorder, assert, assertEq, bundleEntry, printResult, repoRoot, tmpDir } from './_lib.mjs'
 
@@ -29,6 +29,7 @@ const qqVoiceMod = await import(pathToFileURL(bundleEntry('electron/main/charact
 const sttMod = await import(pathToFileURL(bundleEntry('electron/main/character/stt.ts', 'character-stt.mjs')).href)
 const safetyMod = await import(pathToFileURL(bundleEntry('electron/main/character/safety.ts', 'character-safety.mjs')).href)
 const searchContextMod = await import(pathToFileURL(bundleEntry('electron/main/character/searchContext.ts', 'character-search-context.mjs')).href)
+const characterKvMod = await import(pathToFileURL(bundleEntry('electron/main/services/characterKv.ts', 'character-kv.mjs')).href)
 
 const {
   CHARACTER_ERROR_CODES,
@@ -85,6 +86,7 @@ const {
   scrubDeep,
   scrubForLog
 } = safetyMod
+const { CharacterKvStore } = characterKvMod
 
 function memoryKv(initial = new Map()) {
   return {
@@ -2107,6 +2109,149 @@ await recorder.check('C72', '删除失败要回传：agent/文件清理失败不
   assertEq(Array.isArray(result.warnings) && result.warnings.length === 1, true, '失败有 warnings')
   assertEq(/清理未完全成功/.test(result.warnings[0]), true, 'warnings 带可读原因')
   return '删除失败回传正确'
+})
+
+// ── C73~C76 角色旧数据一次性导入（WP4 C4.2 接线补完，2026-11-02）───────────────
+function characterKvDir(tag) {
+  return join(tmpDir, `character-kv-${tag}-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+}
+
+function legacyReader(map, throws = new Set(), reads = []) {
+  return {
+    async get(key) {
+      reads.push(key)
+      if (throws.has(key)) throw new Error('读取失败（模拟）')
+      return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null
+    }
+  }
+}
+
+await recorder.check('C73', '旧库一次性导入：meta 先读、day/life 展开、标记文件防重复', async () => {
+  const dir = characterKvDir('import')
+  const legacyMap = {
+    'fish:v2:meta': JSON.stringify({ schemaVersion: 1, days: ['2026-11-01'], lifeDays: ['2026-10-31'] }),
+    'fish:v2:state': JSON.stringify({ familiarity: 88, stage: 3 }),
+    'fish:v2:settings': JSON.stringify({ enabled: true }),
+    'fish:v2:day:2026-11-01': '{"day":1}',
+    'fish:v2:life:2026-10-31': '{"life":1}'
+  }
+  const reads = []
+  const store = new CharacterKvStore({
+    dataDir: dir,
+    legacy: legacyReader(legacyMap, new Set(), reads),
+    logger: () => {}
+  })
+  const first = await store.importAllFromLegacy()
+  assertEq(first.alreadyDone, false, '首次应执行导入')
+  assertEq(reads[0], 'fish:v2:meta', 'meta 必须最先读（day/life 的日期列表在它里面）')
+  assertEq(first.imported.length, 5, `应导入 5 个键，实际 ${first.imported.length}`)
+  assertEq(await store.get('fish:v2:state'), legacyMap['fish:v2:state'], 'state 值一致')
+  for (const key of ['fish:v2:day:2026-11-01', 'fish:v2:life:2026-10-31']) {
+    assertEq(await store.get(key), legacyMap[key], `${key} 应被展开导入`)
+  }
+  assertEq(existsSync(join(dir, 'character', 'legacy-import.json')), true, '应写导入标记')
+  const readsBefore = reads.length
+  const second = await store.importAllFromLegacy()
+  assertEq(second.alreadyDone, true, '第二次应直接跳过（标记存在）')
+  assertEq(reads.length, readsBefore, '第二次不应再读旧库')
+  const reloaded = new CharacterKvStore({ dataDir: dir, legacy: legacyReader({}), logger: () => {} })
+  assertEq(await reloaded.get('fish:v2:state'), legacyMap['fish:v2:state'], '落盘后新实例能读回')
+  rmSync(dir, { recursive: true, force: true })
+  return `导入 ${first.imported.length} 键；第二次读取旧库 0 次`
+})
+
+await recorder.check('C74', '目标已被默认值占住时，首次导入以旧库为准（旧值覆盖默认值）', async () => {
+  const dir = characterKvDir('polluted')
+  // 模拟 4.0 开发期 buggy 顺序留下的默认值：先写 kv.json 再（本该）导入
+  const polluted = new CharacterKvStore({ dataDir: dir, legacy: legacyReader({}), logger: () => {} })
+  await polluted.set('fish:v2:state', '{"familiarity":0,"stage":0}')
+  await polluted.set('fish:v2:meta', JSON.stringify({ days: [], lifeDays: [] }))
+  const legacyState = '{"familiarity":88,"stage":3}'
+  const fresh = new CharacterKvStore({
+    dataDir: dir,
+    legacy: legacyReader({
+      'fish:v2:state': legacyState,
+      'fish:v2:meta': JSON.stringify({ days: ['2026-11-01'], lifeDays: [] }),
+      'fish:v2:day:2026-11-01': '{"day":1}'
+    }),
+    logger: () => {}
+  })
+  const result = await fresh.importAllFromLegacy()
+  assertEq(result.imported.includes('fish:v2:state'), true, '默认值必须被旧值覆盖（不能跳过）')
+  assertEq(await fresh.get('fish:v2:state'), legacyState, '旧库 state 胜出')
+  assertEq(await fresh.get('fish:v2:day:2026-11-01'), '{"day":1}', '按旧 meta 的 days 展开')
+  // 覆盖是有意的，但被覆盖的内容必须留副本（开发期旧构建可能已写入新进度）
+  const backupPath = join(dir, 'character', 'kv.json.pre-import.bak')
+  assertEq(existsSync(backupPath), true, '导入前应备份被覆盖的 kv.json')
+  const backup = JSON.parse(readFileSync(backupPath, 'utf8'))
+  assertEq(backup['fish:v2:state'], '{"familiarity":0,"stage":0}', '备份里是覆盖前的默认值')
+  rmSync(dir, { recursive: true, force: true })
+  return `覆盖 ${result.imported.length} 个被默认值占住的键（原值已备份）`
+})
+
+await recorder.check('C75', '读旧库失败不写导入标记：下次启动重试而不是永久漏搬', async () => {
+  const dir = characterKvDir('retry')
+  const legacyMap = {
+    'fish:v2:meta': JSON.stringify({ days: [], lifeDays: [] }),
+    'fish:v2:state': '{"familiarity":88}',
+    'fish:v2:settings': '{"enabled":true}'
+  }
+  const failing = new CharacterKvStore({
+    dataDir: dir,
+    legacy: legacyReader(legacyMap, new Set(['fish:v2:state'])),
+    logger: () => {}
+  })
+  const first = await failing.importAllFromLegacy()
+  assertEq(failing.hasImportedLegacy(), false, '有读失败时不应写标记')
+  assertEq(first.imported.includes('fish:v2:settings'), true, '其余键照常导入')
+  const retry = new CharacterKvStore({ dataDir: dir, legacy: legacyReader(legacyMap), logger: () => {} })
+  const second = await retry.importAllFromLegacy()
+  assertEq(retry.hasImportedLegacy(), true, '重试成功后才写标记')
+  assertEq(second.imported.includes('fish:v2:state'), true, '失败键在重试里补上')
+  assertEq(await retry.get('fish:v2:state'), legacyMap['fish:v2:state'], '补上的值正确')
+  rmSync(dir, { recursive: true, force: true })
+  return '读失败 → 不写标记 → 下次启动补搬'
+})
+
+await recorder.check('C76', '宿主接线：registerCharacter 之前 await 旧数据导入（防先读默认值）', async () => {
+  const src = readFileSync(join(repoRoot, 'electron/main/index.ts'), 'utf8')
+  const importAt = src.indexOf('characterKv.importAllFromLegacy()')
+  assert(importAt >= 0, 'index.ts 必须调用 importAllFromLegacy（C4.2 曾漏接线）')
+  // 静态断言只能证明「写了调用」，不能证明运行时真的执行/等到；后者靠 C73–C75 与人工核查
+  const raceAt = src.indexOf('Promise.race([legacyImport, importTimeout])')
+  assert(raceAt > importAt, '导入必须被 2s 超时护栏包住（旧库被锁时不能拖住开窗）')
+  assert(/setTimeout\(\(\) => resolve\('timeout'\), 2000\)/.test(src), '超时护栏应为 2s')
+  const registerAt = src.indexOf('registerCharacter(', importAt)
+  assert(registerAt > raceAt, '导入/护栏必须发生在 registerCharacter 之前')
+  const kvSrc = readFileSync(join(repoRoot, 'electron/main/services/characterKv.ts'), 'utf8')
+  assert(kvSrc.includes('legacy-import.json'), '导入标记文件名要可查（排障用完即不再读旧库）')
+  assert(kvSrc.includes('.pre-import.bak'), '首导覆盖前必须留备份')
+  return 'index.ts 在 registerCharacter 前 await（含 2s 护栏）导入'
+})
+
+await recorder.check('C77', '导入标记存在但 kv.json 丢失时会重新导入（不再永久跳过）', async () => {
+  const dir = characterKvDir('marker-lost')
+  const legacyMap = {
+    'fish:v2:meta': JSON.stringify({ days: [], lifeDays: [] }),
+    'fish:v2:state': '{"familiarity":88,"stage":3}',
+    'fish:v2:settings': '{"enabled":true}'
+  }
+  const first = new CharacterKvStore({ dataDir: dir, legacy: legacyReader(legacyMap), logger: () => {} })
+  await first.importAllFromLegacy()
+  assertEq(first.hasImportedLegacy(), true, '首次导入后应有标记')
+  // 用户/磁盘/清理工具把新库弄丢：旧 work.db 还在，不能因为标记存在就永久跳过
+  rmSync(join(dir, 'character', 'kv.json'), { force: true })
+  const again = new CharacterKvStore({
+    dataDir: dir,
+    legacy: legacyReader(legacyMap),
+    logger: () => {}
+  })
+  const result = await again.importAllFromLegacy()
+  assertEq(result.alreadyDone, false, 'kv 丢失后不应直接跳过')
+  assertEq(result.imported.includes('fish:v2:state'), true, '应重新导入旧键')
+  assertEq(await again.get('fish:v2:state'), legacyMap['fish:v2:state'], '旧数据被重新导入')
+  rmSync(dir, { recursive: true, force: true })
+  return '标记在但 kv 丢失 → 重新导入'
 })
 
 const ok = printResult(recorder.toJSON())

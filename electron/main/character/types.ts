@@ -90,7 +90,7 @@ export const FISH_KEYS = {
 
 export const CHARACTER_SCHEMA_VERSION = 1
 
-/** 宿主 app_meta KV（work.db）；value=null 表示删除 */
+/** 角色数据 KV（4.0 起落 `<dataDir>/character/kv.json`）；value=null 表示删除 */
 export interface CharacterKv {
   get(key: string): Promise<string | null>
   set(key: string, value: string | null): Promise<unknown>
