@@ -1253,5 +1253,19 @@ content C6（activeGenerationCount===0）。report 14/14 ×2、content 12/12 ×2
 - **已知盲区**：这层装配没有行为级单测（packaged.smoke 是静态冒烟、e2e 不跑 Electron），
   目前靠 P44 静态断言 + dev 手动；行为级覆盖待后续 smoke 启动路径。
 
-剩余：**W5-a** —— `registerIpcHandlers`（`index.ts:1153–1838`，686 行 / 61 个 handle）拆到
-`ipc/host/*` 后预计 1,830–1,900 行，要 ≤1,800 还需再抽 ~100 行（角色/语音装配段）。
+### W5-a · registerIpcHandlers 分批拆分（进行中）
+
+**第一批 ✅（`2619acc`）**：`ipc/host/misc.ts` —— 窗口 5 / 版本 1 / 日志 2 / 外链 1 /
+对话框 1 / Obsidian 9 = **19 个通道**，`registerMiscIpc(deps)`（getMainWindow /
+setCloseConfirmPending / saveCloseAction(skipSync) / quitApp / getLogs / clearLogs /
+obsidian getter 注入）。
+- 等价性（task-24）：close-resolve 的 remember+skipSync、dialog 有无父窗口两分支、
+  rebuildIndex 吞错返 `{success:false}`、testEmbedding/testSearch 不吞异常、shell 仅 http(s)
+- handler 61 → 42（42+19 守恒）；index 2,394 → 2,330；宿主 27,138（只搬不删）
+- `plugin.accept` P44 增静态断言（19 通道都在 misc.ts / index 不再注册这 6 组前缀 /
+  index 调 registerMiscIpc）
+- 盲区：宿主通道无行为级单测（UI 套件用 fake window.api），靠 P44 静态 + dev 手动
+
+**剩余 42 个 handle**（`index.ts:1150–1774`，625 行）：config 8、claw 7、env 7、skills 11、
+term 5、channels 3、test-connection 1。env 批含 update 大段逻辑（局部 helper 需一并下沉或注入）。
+拆完预计约 1,800–1,900 行，以实测为准。
