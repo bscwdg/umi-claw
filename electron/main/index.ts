@@ -24,7 +24,7 @@ import { ObsidianManager } from './obsidian/obsidianManager'
 import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv, toPosix, GATEWAY_TOKEN } from './openClawPaths'
 import { shouldSpeakInApp } from './fish/voice/core/openclawTts'
-import { readFileSync, existsSync, readdirSync } from 'fs'
+import { readFileSync, existsSync, readdirSync, mkdirSync, appendFileSync } from 'fs'
 import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process'
 
 // ── 4.0 插件内核（Phase 0/1）──────────────────────────────────────────────────
@@ -78,6 +78,7 @@ import { registerCharacter } from './character/wiring'
 import { buildCharacterDeps } from './services/characterHost'
 import { PluginSecretStore } from './services/pluginSecrets'
 import { CharacterKvStore } from './services/characterKv'
+import { probeNodeWritable } from './services/runtimeProbe'
 import { createPluginKvService } from './services/pluginKv'
 import type { CharacterManager } from './character/manager'
 import { AppError, ERROR_CODES } from './services/errors'
@@ -2154,6 +2155,40 @@ app.whenReady().then(async () => {
   configManager = new ConfigManager()
   skillSyncService = new SkillSyncService(configManager)
   clawManager = new ClawManager(configManager, resourcesRoot())
+
+  // 便携 Node 写探针（4.0.1 P5）：运行时被标成低完整性/目录只读时，DB worker 会报
+  // readonly database / unable to open，用户只看到「数据存不上」。启动时主动探一次并落日志。
+  // 不 await：探针失败不能拖慢启动；console 在打包 GUI 里看不到，所以同时写 <dataDir>/logs/。
+  {
+    const runtimeNode = configManager.getNodePath()
+    if (existsSync(runtimeNode)) {
+      void probeNodeWritable({
+        nodePath: runtimeNode,
+        probeFile: join(configManager.getDataDir(), '.node-write-probe')
+      })
+        .then((probe) => {
+          if (probe.ok) return
+          const reason =
+            probe.reason === 'timeout'
+              ? '探针超时（8s 内便携 Node 未返回，可能是安全软件/慢盘）'
+              : '运行时可能被标成低完整性或目录只读，数据库将无法写入'
+          const message =
+            `[Main] 便携 Node 写入探针失败：${reason}；` +
+            '请重装运行环境/检查安全软件。' +
+            (probe.detail ? `（${probe.detail}）` : '')
+          console.warn(message)
+          // 打包 GUI 里 console 无人可见：追加到可以排障的日志文件（RUNBOOK 指向这里）
+          try {
+            const logDir = join(configManager.getDataDir(), 'logs')
+            mkdirSync(logDir, { recursive: true })
+            appendFileSync(join(logDir, 'runtime-probe.log'), `[${new Date().toISOString()}] ${message}\n`, 'utf8')
+          } catch {
+            /* 日志写不了也不能影响启动 */
+          }
+        })
+        .catch((e) => console.warn('[Main] 便携 Node 写入探针异常:', e))
+    }
+  }
 
   // ── work 域：Gateway 单例 + DB Worker + Manager（Commit 01/02）──
   // 合并约定：全应用只有 workGatewayClient 这一个 GatewayClient 实例，marketing 域复用它

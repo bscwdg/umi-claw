@@ -9,7 +9,8 @@
 //
 // 用法：node test/node-runtime.accept.mjs    （npm run accept:node-runtime）
 
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { join } from 'node:path'
 import {
@@ -110,6 +111,75 @@ try {
     )
     assert(updateBody.includes('_installOpenClawWithNodeRecovery('), '更新安装必须走引擎错误自愈包装')
     return '预检 → 快照 → 安装（带引擎自愈）的顺序固定在源码里'
+  })
+
+  await r.check('N8', '便携 Node 写入探针：真写文件判定/超时区分/失败可读告警（4.0.1 P5）', async () => {
+    const probePath = bundleEntry('electron/main/services/runtimeProbe.ts', 'node-probe.mjs')
+    const { probeNodeWritable } = await import(pathToFileURL(probePath).href)
+    const dir = mkdtempSync(join(tmpdir(), 'umi-probe-'))
+    const probeFile = join(dir, 'probe.txt')
+
+    let argvSeen = null
+    const okExec = (_bin, argv, _opts, cb) => {
+      argvSeen = argv
+      writeFileSync(argv[2] || probeFile, 'ok')
+      cb(null, '', '')
+    }
+    const okRes = await probeNodeWritable({
+      nodePath: 'node.exe',
+      probeFile,
+      execFileImpl: okExec
+    })
+    assertEq(okRes.ok, true, '成功 → ok（文件真写了才算）')
+    assertEq(okRes.reason, 'ok', 'reason=ok')
+    assert(!existsSync(probeFile), '探针文件用后即清（不留痕迹）')
+    assert(
+      argvSeen.includes("require('node:fs').writeFileSync(process.argv[1], 'ok')"),
+      '用便携 Node 自己写探针文件'
+    )
+
+    // exit 0 但没写文件（包装器/杀软拦截）→ 不能算成功
+    const noWriteExec = (_bin, _argv, _opts, cb) => cb(null, '', '')
+    const noWrite = await probeNodeWritable({
+      nodePath: 'node.exe',
+      probeFile,
+      execFileImpl: noWriteExec
+    })
+    assertEq(noWrite.ok, false, 'exit 0 但文件没生成 → 失败')
+    assertEq(noWrite.reason, 'probe-failed', 'reason=probe-failed')
+
+    const badExec = (_bin, _argv, _opts, cb) =>
+      cb(
+        Object.assign(new Error('EPERM'), { message: 'EPERM' }),
+        '',
+        'EPERM: operation not permitted'
+      )
+    const badRes = await probeNodeWritable({
+      nodePath: 'node.exe',
+      probeFile,
+      execFileImpl: badExec
+    })
+    assertEq(badRes.ok, false, '失败 → ok=false')
+    assertEq(badRes.reason, 'probe-failed', 'reason=probe-failed')
+    assert(String(badRes.detail).includes('EPERM'), 'detail 保留根因供排障')
+
+    // 超时与权限失败要区分（慢盘/安全软件不能误报成低完整性）
+    const timeoutExec = (_bin, _argv, _opts, cb) =>
+      cb(Object.assign(new Error('ETIMEDOUT'), { killed: true }), '', '')
+    const timeoutRes = await probeNodeWritable({
+      nodePath: 'node.exe',
+      probeFile,
+      execFileImpl: timeoutExec
+    })
+    assertEq(timeoutRes.reason, 'timeout', '超时单独报 reason=timeout')
+
+    const idx = readFileSync(join(__dirname, '..', 'electron', 'main', 'index.ts'), 'utf-8')
+    assert(idx.includes('probeNodeWritable('), 'index.ts 必须调用探针')
+    assert(idx.includes('.node-write-probe'), '探针写入 dataDir 下临时文件')
+    assert(/便携 Node 写入探针失败/.test(idx), '失败要有明确中文告警')
+    assert(idx.includes('runtime-probe.log'), '告警落 dataDir/logs（GUI 里 console 看不到）')
+    rmSync(dir, { recursive: true, force: true })
+    return '探针 + 告警接线 ✓'
   })
 } catch (e) {
   console.error('验收脚本自身异常:', e)
