@@ -281,6 +281,7 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 - **安全与隐私（C09）**：危机词命中 → 不进模型、直接回求助资源（12356/120）；输入先做 NFKC+去空白/标点/emoji+简繁归一，日常表达（想死你了/笑死/累死）走反向白名单不误伤；输出侧滑窗过滤「只有我懂你/别去找别人」类独占表达（跨 chunk 也生效）；日志/导出前深度脱敏（sk-\*/Bearer/手机号/身份证）；D10 —— `safety.ageConfirmed` 默认 false，**未确认年龄前主动消息与每日记忆都不执行**；删除分三层（values/memory/all），all 额外摘除 openclaw.json 的 feiyu agent 条目，日记归档到 `大肥鱼/归档/<时间戳>/` 而非硬删；voice 额度发送前原子预留、失败回滚。
 - **语音条（C08）**：TTS 走 `voiceManager.speak({options:{format:'pcm',sampleRate:16000}})` → WAV 去头 → SILK → QQ `file_type=3`/`msg_type=7`；`silk-wasm` 为**可选依赖**（缺失时抛 `SILK_ENCODER_UNAVAILABLE` 并降级文字）；QQ `openid` 需运行期从会话发现（缺省降级文字，不报错）；入站 STT 通过注入的 `transcribe` 提供，未配置时回「还没学会听语音」。
 - **实现期修正**：主动消息加最小间隔 60min（防 tick 连发）；`silentUntil` 上界 14 天；记忆窗口 23:00–24:00 且 00:00–06:00 补写前一天；日记落盘前统一 `normalizeDiary`（frontmatter 白名单 + 密钥脱敏），密钥不落盘；未配置 Obsidian 时降级 workspace-only 并标完成；每日记忆单飞 + day 记录统一 patch（防覆盖 activeSent）。
+- **预检索与 lean 配置（2026-11-02）**：角色 agent `skills: []`、`memory.search.enabled: false` 归宿主所有（每次 bootstrap 覆盖）；聊天预检索只查 vault 的 `大肥鱼/` 前缀（工作/隐私笔记不进角色上下文，§13.2-9），注入内容带 `<<UNTRUSTED_NOTE>>` 数据边界 + 指令性文本过滤 + 密钥脱敏，1200ms 超时降级；「外部渠道」自检只认真实凭据。
 - **默认值修正（D10 合规）**：`proactive.enabled` 默认 **false**（未确认年龄前不主动打扰）；用户在设置里手动开启。
 - **错误码**：`CHARACTER_NOT_READY` / `CHARACTER_DISABLED` / `CHARACTER_STORE_IO` / `CHARACTER_BAD_PAYLOAD` / `CHARACTER_RESET_FORBIDDEN`（保留未用）。
 - **聊天**：会话键 `conv:fish:<main|night>:<gen>`，`gen` 落 `fish:v2:chatgen`；`chat:clear` 轮换代际（旧 run 事件带 `gen`，渲染端丢弃）；请求显式带 `model: openclaw/feiyu`（否则人格不生效）。

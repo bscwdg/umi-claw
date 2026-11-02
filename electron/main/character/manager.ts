@@ -877,13 +877,14 @@ export class CharacterManager {
   }
 
   /** 分层删除：values 只清数值；memory 清日记/关系；all 连设置与人格文件（归档） */
-  async deleteData(scopeInput: unknown): Promise<{ scope: DeleteScope }> {
+  async deleteData(scopeInput: unknown): Promise<{ scope: DeleteScope; warnings?: string[] }> {
     this.assertInitialized()
     const scope = normalizeDeleteScope(scopeInput)
     // 先推进代际：在途的长任务写回前会校验，避免删除后数据复活
     this.dataEpoch += 1
     const previousGen = await this.store.readChatGeneration()
     return this.withMutation(async () => {
+      const warnings: string[] = []
       await this.store.reset(scope)
       // 代际单调递增（不能回到 1，否则可能复活最早一次 sticky 上下文）
       if (scope === 'memory' || scope === 'all') {
@@ -894,7 +895,10 @@ export class CharacterManager {
         try {
           await this.deleteWorkspaceFiles(scope)
         } catch (error) {
-          this.logger(`[character] 清理文件失败: ${(error as Error)?.message ?? String(error)}`)
+          const message = (error as Error)?.message ?? String(error)
+          this.logger(`[character] 清理文件失败: ${message}`)
+          // 不能静默：uninstall 后 feiyu agent/文件必须真的没了，失败要回传 UI
+          warnings.push(`清理未完全成功：${message}`)
         }
       }
       if (scope === 'all') this.settings = await this.store.readSettings()
@@ -904,7 +908,7 @@ export class CharacterManager {
       if (scope === 'all' && this.settings) {
         this.emit({ type: 'settings', payload: clone(this.settings), at: this.now() })
       }
-      return { scope }
+      return warnings.length ? { scope, warnings } : { scope }
     })
   }
 

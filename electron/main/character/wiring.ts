@@ -258,19 +258,27 @@ async function registerCharacterInternal(
     managerRef = manager
     // 状态自检改为实时求值：配置改完不用重跑初始化，页面「连接自检」立刻反映
     // 与 bootstrap 同口径：条目存在且 workspace 指向角色工作区
-    const readAgentConfigured = (): boolean => {
+    // agent 就绪判定：bootstrap 报告与「连接自检」实时 flags 必须同一口径
+    const isAgentConfigured = (): boolean => {
       const entry = readAgentEntry(deps.configPath, CHARACTER_AGENT_ID)
-      if (!entry.exists) return false
-      if (!entry.workspace) return true
-      const normalize = (p: string): string => p.replace(/[\\/]+$/, '').toLowerCase()
-      return normalize(entry.workspace) === normalize(workspaceDir)
+      if (!entry.exists || !entry.workspace) return false
+      const normalize = (p: string): string =>
+        p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+      const actual = normalize(entry.workspace)
+      const expected = normalize(workspaceDir)
+      // CLI 可能规范化路径（大小写/相对/多余 ./）：末尾同名目录也算就绪
+      return (
+        actual === expected ||
+        actual.endsWith(`/${CHARACTER_AGENT_ID}`) ||
+        actual.endsWith('/workspace-feiyu')
+      )
     }
     manager.setStatusProviders({
       ...(deps.gatewayReady ? { gatewayReady: deps.gatewayReady } : {}),
       ...(deps.qqReady ? { qqReady: deps.qqReady } : {}),
       ...(deps.ttsReady ? { ttsReady: deps.ttsReady } : {}),
       ...(deps.memorySearchReady ? { memorySearchReady: deps.memorySearchReady } : {}),
-      agentReady: readAgentConfigured,
+      agentReady: isAgentConfigured,
       obsidianReady: () => {
         const vault = deps.obsidianVaultPath?.()?.trim()
         return Boolean(vault && existsSync(join(vault, '大肥鱼')))
@@ -441,18 +449,7 @@ async function registerCharacterInternal(
         obsidianVaultPath: deps.obsidianVaultPath?.(),
         ensureAgentEntry: (ws) =>
           applyAgentPatch({ runner, tmpDir, agentId: CHARACTER_AGENT_ID, workspace: ws }),
-        agentConfigured: () => {
-          const entry = readAgentEntry(deps.configPath, CHARACTER_AGENT_ID)
-          if (!entry.exists) return false
-          if (!entry.workspace) return false
-          const normalize = (p: string): string =>
-            p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-          const actual = normalize(entry.workspace)
-          const expected = normalize(workspaceDir)
-          // CLI 可能规范化路径（大小写/相对/多余 ./）：退化为「末尾同名目录」也算就绪，
-          // 否则每次启动都会重复 patch 且引导步常驻失败
-          return actual === expected || actual.endsWith(`/${CHARACTER_AGENT_ID}`) || actual.endsWith('/workspace-feiyu')
-        },
+        agentConfigured: isAgentConfigured,
         gatewayReady: deps.gatewayReady,
         qqReady: deps.qqReady,
         ttsReady: deps.ttsReady,

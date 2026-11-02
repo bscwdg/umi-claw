@@ -75,6 +75,8 @@ import {
   registerVoiceIpc
 } from './fish/voice'
 import { registerCharacter } from './character/wiring'
+import { filterCharacterHits } from './character/searchContext'
+import { scrubForLog } from './character/safety'
 import type { CharacterManager } from './character/manager'
 import { AppError, ERROR_CODES } from './database/errors'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
@@ -104,6 +106,8 @@ let voiceManager: VoiceManager | null = null
 /** 大肥鱼角色（宿主模块；默认关，初始化失败只降级自身） */
 let characterManager: CharacterManager | null = null
 let characterDispose: (() => Promise<void>) | null = null
+/** 应用是否已进入退出流程：角色后台初始化迟到的完成必须 dispose 而不是回填 */
+let appShuttingDown = false
 
 /**
  * 取 Gateway Client 单例（Commit 07 → 合并后指向 work 域的唯一实例）。
@@ -2262,16 +2266,20 @@ app.whenReady().then(async () => {
         return result.text
       },
       // 预检索：直接复用「知识库」页同一条 search.mjs 链路（实测 200–500ms）
+      // 隔离红线（PLAN-FISH-CHARACTER §13.2-9）：角色只能看 vault 里的「大肥鱼/」，
+      // 工作/隐私笔记不得进入角色上下文；命中正文统一脱敏。
       searchKnowledge: async (query: string) => {
         try {
           const obs = configManager.getConfig().obsidian
           if (!obs?.enabled) return []
-          const result = await obsidianManager.testSearch({ query, limit: 5 })
-          return (result.hits ?? []).map((hit) => ({
-            path: hit.filePath,
-            content: hit.content,
-            score: hit.score
-          }))
+          const result = await obsidianManager.testSearch({ query, limit: 8 })
+          return filterCharacterHits(
+            (result.hits ?? []).map((hit) => ({
+              path: hit.filePath,
+              content: hit.content,
+              score: hit.score
+            }))
+          ).map((hit) => ({ ...hit, content: scrubForLog(hit.content) }))
         } catch {
           return []
         }
@@ -2384,6 +2392,11 @@ app.whenReady().then(async () => {
       console.log('[character] 初始化超过 3s，先开窗口；角色就绪后自动接线')
       void characterPromise
         .then((character) => {
+          // 退出竞态：窗口先开后应用可能已经退出，迟到的模块必须立即 dispose，不能回填
+          if (appShuttingDown) {
+            void character.dispose()
+            return
+          }
           characterManager = character.manager
           characterDispose = character.dispose
         })
@@ -2396,6 +2409,9 @@ app.whenReady().then(async () => {
             }`
           )
         })
+    } else if (appShuttingDown) {
+      // 边界：刚好在退出流程里完成，也不再接线
+      void characterResult.dispose()
     } else {
       characterManager = characterResult.manager
       characterDispose = characterResult.dispose
@@ -2453,6 +2469,7 @@ let quitCleanupRunning = false
  */
 app.on('before-quit', (event) => {
   if (quitCleanupDone) return
+  appShuttingDown = true
   event.preventDefault()
   if (quitCleanupRunning) return
   quitCleanupRunning = true

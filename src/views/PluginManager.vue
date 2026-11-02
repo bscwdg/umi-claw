@@ -181,6 +181,7 @@ async function loadCharacter(): Promise<void> {
 }
 
 async function toggleCharacter(): Promise<void> {
+  if (characterBusy.value) return
   const next = !characterEnabled.value
   if (
     !next &&
@@ -206,10 +207,18 @@ async function toggleCharacter(): Promise<void> {
   }
 }
 
+/** 打开角色页：懒加载失败要反馈，不能静默「启用成功但没页面」 */
+function openCharacterPage(): void {
+  void router.push('/character').catch((e: unknown) => {
+    characterError.value = `页面打开失败：${e instanceof Error ? e.message : String(e)}`
+  })
+}
+
 /** 停用状态下不做「静默打开」：先启用再进页面，语义与侧栏隐藏保持一致 */
 async function enableAndOpen(): Promise<void> {
+  if (characterBusy.value) return
   if (characterEnabled.value) {
-    void router.push('/character')
+    openCharacterPage()
     return
   }
   characterBusy.value = true
@@ -218,7 +227,7 @@ async function enableAndOpen(): Promise<void> {
     await window.api.character.settings.set({ enabled: true } as never)
     await loadCharacter()
     if (characterStatus.value?.enabled) {
-      void router.push('/character')
+      openCharacterPage()
     } else {
       characterNotice.value = '未能确认启用状态，请点「刷新」后再试'
     }
@@ -267,6 +276,8 @@ async function reload(): Promise<void> {
   } finally {
     loading.value = false
   }
+  // 「刷新」同时重载角色状态：初始化慢/刚失败时卡片不能变成永久「状态未知」死路
+  await loadCharacter()
 }
 
 async function applyToggle(status: PluginStatus, enabled: boolean): Promise<void> {
@@ -322,7 +333,6 @@ onMounted(async () => {
     return
   }
   await reload()
-  await loadCharacter()
 })
 
 onUnmounted(() => {

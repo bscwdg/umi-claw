@@ -733,7 +733,7 @@ const api = {
           unlocks: string[]
         }>('character:export'),
       deleteData: (scope: 'values' | 'memory' | 'all') =>
-        call<{ scope: string }>('character:delete', { scope })
+        call<{ scope: string; warnings?: string[] }>('character:delete', { scope })
     },
     pet: {
       show: () => call<{ visible: boolean; clickThrough: boolean }>('character:window:pet', { action: 'show' }),

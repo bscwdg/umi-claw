@@ -221,9 +221,27 @@ onMounted(async () => {
   })
   // 侧栏「🐟 大肥鱼」入口跟随启用状态：停用后自动隐藏（插件管理卡片仍可启用）
   void refreshCharacterNav()
-  characterNavCleanup = api.character.onEvent((event) => {
+  // 初始化慢/失败时 status 可能读不到：短轮询直到拿到结果，避免停用入口一直显示
+  const navRetryTimer = setInterval(() => {
+    if (characterNavKnown.value) {
+      clearInterval(navRetryTimer)
+      return
+    }
+    void refreshCharacterNav()
+  }, 2000)
+  const onFocusRefresh = (): void => {
+    void refreshCharacterNav()
+  }
+  window.addEventListener('focus', onFocusRefresh)
+  const offNavEvent = api.character.onEvent((event) => {
     if (event.type === 'settings' || event.type === 'reset') void refreshCharacterNav()
   })
+  characterNavCleanup = () => {
+    offNavEvent()
+    clearInterval(navRetryTimer)
+    window.removeEventListener('focus', onFocusRefresh)
+    characterNavCleanup = null
+  }
   // §八 Day1：首启先过用户协议（阻断式，只出现一次）。
   // 不 await：弹窗在状态回来后自己弹，绝不阻塞应用启动（硬规则 17）。
   void ensureFirstRunWizard()

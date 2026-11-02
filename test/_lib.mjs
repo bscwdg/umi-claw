@@ -4,13 +4,26 @@
 // esbuild bundle（把 TS 真源码打成临时 ESM 供纯 Node import）、结果落盘。
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const __dirname = dirname(fileURLToPath(import.meta.url))
 export const repoRoot = join(__dirname, '..')
 export const tmpDir = join(__dirname, '.tmp')
+
+// 插件 main 打包时 electron 会被 alias 到 .tmp/electron-stub.mjs；把它作为受版本管理的
+// 源文件（test/electron-stub.mjs）在每次加载时补到 .tmp，避免临时目录被清理后全量验收失败。
+try {
+  const electronStubSrc = join(__dirname, 'electron-stub.mjs')
+  const electronStubDest = join(tmpDir, 'electron-stub.mjs')
+  if (!existsSync(electronStubDest) && existsSync(electronStubSrc)) {
+    mkdirSync(tmpDir, { recursive: true })
+    writeFileSync(electronStubDest, readFileSync(electronStubSrc, 'utf8'))
+  }
+} catch {
+  /* 补桩失败就让具体套件报错，不吞掉真正的问题 */
+}
 
 /**
  * 域源码定位（D3）：Phase 2/3 装箱时域代码会从 `electron/main/**` 搬到

@@ -443,18 +443,20 @@ async function exportData(): Promise<void> {
 async function deleteMemory(): Promise<void> {
   if (!window.confirm('删除日记与关系记忆？日记会归档到 Obsidian「大肥鱼/归档」，可手动找回。')) return
   await run(async () => {
-    await window.api.character.safety.deleteData('memory')
+    const result = await window.api.character.safety.deleteData('memory')
     await refresh()
-    showToast('日记与关系记忆已删除（日记已归档）')
+    if (result.warnings?.length) error.value = result.warnings.join('；')
+    else showToast('日记与关系记忆已删除（日记已归档）')
   })
 }
 
 async function deleteAll(): Promise<void> {
   if (!window.confirm('删除全部角色数据（含设置与人格文件）？此操作不可撤销。')) return
   await run(async () => {
-    await window.api.character.safety.deleteData('all')
+    const result = await window.api.character.safety.deleteData('all')
     await refresh()
-    showToast('全部角色数据已删除')
+    if (result.warnings?.length) error.value = result.warnings.join('；')
+    else showToast('全部角色数据已删除')
   })
 }
 
