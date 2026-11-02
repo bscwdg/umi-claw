@@ -2,13 +2,54 @@ name: Release
 
 on:
   push:
+    branches:
+      - 'release/**'
     tags:
       - 'v*'
+  pull_request:
+    branches:
+      - master
+      - 'release/**'
 
 jobs:
+  verify:
+    # 源码级门禁：双 typecheck + 全量验收。与打包解耦，PR 上也要跑。
+    # 只在 windows 跑 accept：node:sqlite 需要 Node >= 22.5，且打包态冒烟依赖 Windows 产物路径。
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (node)
+        run: npm run typecheck:node
+
+      - name: Typecheck (web)
+        run: npm run typecheck:web
+
+      # accept 里的 packaged.smoke S1 要求 dist-electron 存在，干净 checkout 里没有。
+      # 所以必须先 build，再 accept。
+      - name: Build (unpackaged)
+        run: npm run build
+
+      - name: Accept
+        run: npm run accept
+        env:
+          # CI 不产出 NSIS；packaged.smoke 的 S6/S7 显式跳过（真机安装见 RUNBOOK §6）
+          UMI_ALLOW_PACKAGE_SKIP: '1'
+
   build:
+    needs: verify
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
