@@ -1,0 +1,446 @@
+# PLAN-4.1-DEBT —— 4.0 插件化减负执行计划（可执行版）
+
+> 状态：**执行中**（2026-11-02 立）｜分支：`release/4.0`
+> 定位：`PLAN-4.0.md` 的**施工分册**。4.0 是架构契约（宿主/插件边界、启停语义），本文件是**欠账清偿的执行顺序、每步命令与验收判据**。冲突时以 `PLAN-4.0.md` 为准，本文件不新增架构决定。
+> 依据：`PLAN-4.0.md §18.3`（承诺未落地清单）、`§18.4`（发布工程清单）、`§17`（硬规则）
+> 关联：`doc/PROGRESS-4.0.md`（施工日志，本文件每完成一包在其中追加一条）、`doc/RUNBOOK-4.0.md`（运维手册）
+
+---
+
+## 〇、为什么有这份文件
+
+4.0 的插件化**结构成立、边界未硬化**：启停语义、构建期装配、DB 隔离都是真的，但域代码仍住宿主目录、插件仍直接 import 宿主内部模块、同名能力有两份实现、仓库没有 lint 门禁。
+
+本计划只做一件事：**把"名义插件化"变成"实测插件化"**，且每一步都留一个可发布点。
+
+不做什么（防止扩散）：
+
+- 不迁 monorepo、不换包管理器（`PLAN-4.0 §10` 已定）
+- 不做第三方插件安装、不做运行时插件加载（`§17` 硬规则 3）
+- 不做类型化 IPC 生成（`§18.3` 已明确延后，不阻塞）
+- 不动启动链路（网关 325s 冷启动的根因在 OpenClaw 通道物化，不在本计划范围）
+- 不重写 UI、不改 CSP / contextIsolation / 插件生命周期语义
+
+---
+
+## 一、基线（2026-11-02 实测，HEAD `7122a94`）
+
+| 指标 | 实测 | 复核命令 | 目标 |
+| --- | --- | --- | --- |
+| 宿主 `electron/main` 代码量 | 39,412 行 | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000 |
+| `electron/main/index.ts` | 2,557 行 | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800 |
+| 插件越界 import（非 type、非 kernel/services） | **15 条** | 见 §二 WP3 的扫描脚本 | 0 |
+| 插件越界 import（含 type-only） | 27 条 | 同上 | ≤ 6（仅 type） |
+| 字节完全相同的重复文件 | 3 个（parsers） | `Get-FileHash` 比对 | 0 |
+| context/knowledge 双实现 | 2 对（各 761/776、490/807 行） | `(Get-FileHash).Hash` 不同即双实现 | 1 份内核 + 域侧 section |
+| lint 门禁 | **不存在**（无 `.eslintrc*` / `eslint.config.*` / `.editorconfig`） | `Test-Path` | ratchet 门禁 |
+| CI 门禁 | 仅 `npm ci` + `build` | `Get-Content .github/workflows/release.yml` | typecheck + accept |
+| accept 套件 | 28 + e2e + smoke = 30 套 | `npm run accept` | 不减少 |
+| `test/*.accept.mjs` 数量 | 30 个（`db-client` 由 `db-worker` 子进程串跑） | `Get-ChildItem test -Filter *.accept.mjs` | 不减少 |
+| 双 typecheck | 0 错（2026-11-02 实跑） | `npm run typecheck:node` / `:web` | 保持 0 |
+| 明文密钥字面量 | 0（仅 `Config.vue` 的 placeholder 示例） | 见 §三 校验清单 V9 | 0 |
+
+**已确认成立、不要在减负时破坏的东西**：
+
+1. `kernel/plugins.main.generated.ts` 是构建期静态 import，`resources/plugins/` 只有 manifest + migrations。
+2. `kernel/lifecycle.ts` 的 LIFO disposer / 激活超时 / 迟到注册拒绝 / 失败隔离。
+3. `services/pluginDb.ts` + `db-worker.mjs` 参数化为每插件独立库 + 独立 schema。
+4. 21 个 Manager 无一 import `electron`（0 命中），纯 Node 可测——这是验收网能跑的前提。
+5. 渲染端 0 处 `error.message.includes()`，错误分支全部走 `code`。
+
+---
+
+## 二、工作包
+
+顺序按**依赖**排，不按收益排：先上闸门（不然后面改动没有安全带），再去重（最便宜先拿收益），再下沉（最贵，必须活在闸门之下），最后搬目录（机械动作收口）。
+
+```
+WP0 止血闸门 ──> WP1 零风险去重 ──> WP2 context/knowledge 下沉 ──> WP3 边界硬化+搬迁 ──> WP4 契约补齐
+  0.5–1 人天        1–1.5 人天            4–6 人天                  4–5 人天            3–4 人天
+                  (可发 4.0.1)                                     (可发 4.0.3)          (4.1)
+```
+
+合计 **10.5–14.5 人天**。
+
+---
+
+### WP0 · 止血闸门（0.5–1 人天）
+
+**问题**：CI 只跑 `npm ci` + `build`，打 tag 就能发出一份没跑 typecheck、没跑 accept 的包；工作区还有未提交改动。
+
+#### C0.1 提交工作区改动
+
+```powershell
+# 前置：两套 typecheck 均为 0 错；ui.accept 23/23（2026-11-02 已实跑确认）
+npm run typecheck:node; npm run typecheck:web
+npm run accept:ui
+```
+
+| 内容 | 说明 |
+| --- | --- |
+| `src/views/Dashboard.vue` | `actionLoading` 布尔 → `pendingAction` 三态；按钮文案与真实动作一致（U23 锁住） |
+| `test/ui.accept.mjs` | 新增 U23，断言 `pendingAction` 结构与三处复位 |
+| `doc/video/umisi-brand-intro/` | 品牌介绍视频脚本/分镜/prompt（已扫描：无密钥、无凭据） |
+
+提交标题：`fix(ui): 控制台按钮文案按动作区分 + 品牌视频脚本入库`
+
+**注意**：`doc/video/` 属内容产物，不是构建输入，但 `resources/` **不能**放它（`§18.5` 已登记 `extraResources` 整目录带包风险）。放 `doc/` 是正确位置。
+
+#### C0.2 CI 补门禁（不引 lint，先补 typecheck + accept）
+
+`.github/workflows/release.yml` 现状：
+
+```yaml
+- run: npm ci
+- run: npm run build
+```
+
+改为（**只在 windows runner 跑 accept**，其他两个 OS 只跑 typecheck + build）：
+
+```yaml
+- name: Typecheck
+  run: npm run typecheck:node && npm run typecheck:web
+
+- name: Accept (Windows)
+  if: runner.os == 'Windows'
+  run: npm run accept
+  env:
+    UMI_ALLOW_PACKAGE_SKIP: '1'   # CI 不产出 NSIS，packaged.smoke 的 S6 显式跳过
+```
+
+`UMI_ALLOW_PACKAGE_SKIP=1` 的理由：`test/packaged.smoke.mjs:92` 在缺 `release/win-unpacked` 时允许显式跳过；CI 里先只保证「源码级 30 套绿」，真机安装留 WP0-C0.3 人工。
+
+另外新增 PR 触发（现在只有 tag 触发，日常提交无门禁）：
+
+```yaml
+on:
+  push:
+    branches: [release/**]
+    tags: ['v*']
+  pull_request:
+    branches: [master, 'release/**']
+```
+
+**出口判据**：
+
+1. 故意改坏一个类型（如给 `TodoManager.create` 传错参数），CI 必须红。
+2. 故意删掉一个断言，`accept` 必须红。
+3. 两条都验证过了才算 C0.2 完成——**没验证过等于没做**。
+
+#### C0.3 NSIS 真机 7 步（`§18.2` 登记的未执行项）
+
+按 `doc/RUNBOOK-4.0.md §6` 执行：干净目录安装 → 首启 → 启停插件 → 覆盖升级 → 卸载残留检查。
+
+**这一项不阻塞 WP1/WP2**（它们不改打包链路），但**阻塞打 tag**。执行后把结果追加到 `doc/PROGRESS-4.0.md`。
+
+---
+
+### WP1 · 零风险去重（1–1.5 人天）｜性价比最高
+
+**证据**（`Get-FileHash` 实测）：
+
+```
+4AC05BC6C6DCDD8E378402AF8F8A949607815C8061E69D7D3F6BF6A6E168503F
+  electron\main\work\parsers\documentParsers.ts          (22KB)
+  electron\main\marketing\parsers\documentParsers.ts     ← 字节完全相同
+
+68DE10520AA0...  work|marketing\parsers\pdfjsAssets.ts    ← 完全相同
+4CDBB3A1204B...  work|marketing\parsers\urlParser.ts      ← 完全相同
+```
+
+外加一处**错误引用**：`plugins/marketing/main.ts:22` 从 `electron/main/work/parsers/pdfjsAssets` 取 pdfjs 资产——marketing 引 work 的路径，纯属历史遗留。
+
+#### C1.1 下沉到 `electron/main/services/knowledge/`
+
+```powershell
+# 目标结构
+electron/main/services/knowledge/
+├── index.ts                    # 统一导出
+└── parsers/
+    ├── documentParsers.ts      # 唯一实现（Word/Excel/PDF/TXT）
+    ├── pdfjsAssets.ts          # 唯一实现
+    └── urlParser.ts            # 唯一实现
+```
+
+改动点（两类，各 3 处）：
+
+- `electron/main/work/runtime.ts`、`electron/main/marketing/runtime.ts` 的 import
+- `plugins/work/main.ts:12`、`plugins/marketing/main.ts:22` 的 import
+
+#### C1.2 删除冗余目录
+
+```powershell
+Remove-Item electron\main\work\parsers -Recurse
+Remove-Item electron\main\marketing\parsers -Recurse
+```
+
+**出口判据**（六套必须全绿）：
+
+```powershell
+npm run accept:knowledge:work; npm run accept:knowledge:marketing
+npm run accept:scan; npm run accept:content
+npm run accept:work; npm run accept:shooting
+npm run typecheck:node; npm run typecheck:web
+```
+
+**回滚**：单提交 revert，无数据影响（纯文件移动）。
+
+**注意**：`test/_lib.mjs:domainSrc()` 已经是「新路径存在就用新的、否则回落旧的」——所以**验收脚本一行都不用改**。这正是当初留这个 helper 的用途。
+
+---
+
+### WP2 · context / knowledge 真下沉（4–6 人天）｜唯一可能改坏的一包
+
+这是 `§18.3` 里最贵的一笔账，也是「第三个域进来就得写第三份」的根。
+
+**不要合并两个 800 行文件。** 实测两域的通用面几乎一致：
+
+| 项 | work | marketing | 结论 |
+| --- | --- | --- | --- |
+| `CONTEXT_BUDGET_RATIO` | 0.7 | 0.6 | **唯一实质差异** → 做成参数 |
+| `estimateTokens` | 有 | 有 | 同义 |
+| `sliceToTokenBudget` | 有 | 有 | 同义 |
+| `ITEM_TRUNCATE_MARKER` | 有 | 有 | 逐字相同 |
+| `DROPPED_TITLES_SHOWN` / `DROPPED_TITLE_MAX_CHARS` | 3 / 20 | 3 / 20 | 相同 |
+| `PACK_OVERHEAD_TOKENS` | 48 | 64 | 差异（口径不同，保留为参数） |
+| `PackMode` / `RetrievalMode` / `DroppedReason` | 有 | 有 | 同义 |
+| 喂什么料 | profile/matters/todos/records | business/watchlist/customer/platform | **差异化在这里** |
+
+#### 拆分方案：内核 + section provider
+
+```
+electron/main/services/context/
+├── budget.ts       预算分配 / 裁剪 / dropped 记账 / pack 文本渲染
+├── tokens.ts       estimateTokens / sliceToTokenBudget（两域逐字相同，直搬）
+└── engine.ts       ContextEngine 骨架：调 provider 收 section → 组装 → 预算内截断
+
+plugins/<id>/context/
+└── sections.ts     域侧只声明「我有哪几段料、优先级、单段上限」
+```
+
+knowledge 同理：解析入库 / 去重 / 检索 / 原件落盘 → 内核；域侧只给 schema + 字段投影。
+
+#### 提交与验收
+
+| 提交 | 内容 | 守它的测试（必须全绿且**断言不改**） |
+| --- | --- | --- |
+| C2.1 | context 内核（先以 marketing 776 行的通用面做基准） | `accept:context:marketing`（22 条） |
+| C2.2 | work 切内核，删旧实现 | `accept:context:work`（12 条）+ `accept:qatool` + `accept:report` |
+| C2.3 | knowledge 内核（以 marketing 807 行做基准） | `accept:knowledge:marketing`（23 条） |
+| C2.4 | work knowledge 切内核 | `accept:knowledge:work`（10 条）+ `accept:record` + `accept:today` |
+
+**出口判据**：67 条断言（12 + 22 + 10 + 23）一条不改、全绿；两域 `ContextPack` 的 JSON 结构逐字段相等。
+
+**加一条防回归**：新增 `test/context.parity.accept.mjs`，用同一组 fixture 同时喂两个域的 section provider，断言 `ContextPack` 的 key 集合、字段类型、`dropped[]` 结构一致。**这条测试的价值在于：将来加第三个域时，它会立刻告诉你哪一段没对齐。**
+
+**风险与对策**：
+
+- 单独分支 `debt/wp2`，每提交跑**全量** accept（context 是 today/report/qa 的上游，只跑相关套件会漏）。
+- 任何一条断言需要改 → 停下来确认是「行为变化」还是「实现偏差」。**要改断言必须单独一个提交，并在 PROGRESS 里写明为什么**。
+- `§17` 硬规则 4 的判据是「同名能力第二次出现即下沉」——这一包就是兑现，不是重构冲动。
+
+---
+
+### WP3 · 边界硬化 + 域代码搬迁（4–5 人天）
+
+分两阶段：**先上闸但不搬，再搬但不改逻辑**。
+
+#### 阶段 A：闸门（1–1.5 天）
+
+**现状**：15 条真越界 import。清单（实测）：
+
+```
+plugins/marketing/main.ts:8   ../../electron/main/marketing/runtime
+plugins/marketing/main.ts:9   ../../electron/main/ipc/channelRegistrar
+plugins/marketing/main.ts:10  ../../electron/main/ipc/marketing
+plugins/marketing/main.ts:11  ../../electron/main/ipc/advisor
+plugins/marketing/main.ts:12  ../../electron/main/ipc/scan
+plugins/marketing/main.ts:13  ../../electron/main/ipc/content
+plugins/marketing/main.ts:14  ../../electron/main/ipc/hot
+plugins/marketing/main.ts:15  ../../electron/main/ipc/gateway
+plugins/marketing/main.ts:20  ../../electron/main/ipc
+plugins/marketing/main.ts:22  ../../electron/main/work/parsers/pdfjsAssets
+plugins/marketing/main.ts:24  ../../electron/main/pluginDataImport
+plugins/work/main.ts:10       ../../electron/main/work/runtime
+plugins/work/main.ts:11       ../../electron/main/ipc/work
+plugins/work/main.ts:12       ../../electron/main/work/parsers/pdfjsAssets
+plugins/work/main.ts:13       ../../electron/main/work/migrate
+```
+
+> 注：这 15 条里有 2 条（两个 `pdfjsAssets`）会被 **WP1 自动消掉**（改指 `services/knowledge/parsers`）。WP3 开工时应为 **13 条**。
+
+**C3.1 装 lint**（只装两个包，不引 vue plugin）
+
+```powershell
+npm i -D eslint@8 @typescript-eslint/parser@7 @typescript-eslint/eslint-plugin@7
+```
+
+规则只守两条边界，不开格式化（避免一次性 2,597 处分号变更）：
+
+```js
+// eslint.config.mjs
+export default [
+  {
+    files: ['plugins/**/*.ts', 'plugins/**/*.vue'],
+    ignores: ['plugins/*/plugin.json'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: ['**/electron/main/*', '!**/electron/main/kernel', '!**/electron/main/kernel/*',
+                  '!**/electron/main/services', '!**/electron/main/services/*'],
+          message: '插件只能经 ctx 访问宿主：仅允许 electron/main/kernel 与 electron/main/services。见 AGENTS.md §5。'
+        }]
+      }]
+    }
+  },
+  {
+    files: ['electron/main/**/*.ts'],
+    rules: {
+      // Manager 层禁止 import electron（现状 0 命中，锁住它）
+      'no-restricted-imports': ['error', {
+        patterns: [{
+          group: ['electron'],
+          importNames: ['app', 'BrowserWindow', 'ipcMain', 'dialog', 'shell', 'session'],
+          message: 'Manager 层不得直接使用 Electron 副作用：由 runtime 注入 deps。见 AGENTS.md §5。'
+        }]
+      }]
+    }
+  }
+]
+```
+
+**C3.2 ratchet baseline**
+
+```json
+// scripts/lint-baseline.json
+{ "pluginHostBoundary": 13, "managerElectron": 0 }
+```
+
+`scripts/check-lint-budget.mjs` 统计当前违规数，**大于 baseline 即失败**；`--update` 才写入新值（只准手动下调）。
+
+CI 加一步：`npm run lint`（= eslint + check-lint-budget）。
+
+**为什么用 ratchet 而不是直接开 error**：直接开 error，现有代码全红，等于逼你一次性搬完 14,500 行——那就变成"大爆炸式重构"，和 WP2 撞车。ratchet 让闸门**今天就能上**，越界数只减不增。
+
+**阶段 A 出口判据**：新增一条越界 import 能立刻被 CI 拦住（拿上面清单里的任意一条复制到 `plugins/work/main.ts` 试一次）。
+
+#### 阶段 B：搬迁（2.5–3.5 天）
+
+| 提交 | 动作 | 守它的测试 |
+| --- | --- | --- |
+| C3.3 | `electron/main/work/**`（22 文件 7,028 行）→ `plugins/work/main/**`；`ipc/work.ts` 跟着走 | `accept:work` `accept:record` `accept:today` `accept:report` `accept:qatool` `accept:wizard` `accept:context:work` `accept:knowledge:work` |
+| C3.4 | `electron/main/marketing/**`（18 文件 7,430 行）→ `plugins/marketing/main/**`；5 个 ipc 文件跟着走 | `accept:project` `accept:business` `accept:advisor` `accept:scan` `accept:content` `accept:hot` `accept:hotscore` `accept:platform` `accept:shooting` |
+| C3.5 | baseline 归零，规则升 error；`index.ts` 删域装配段 | 全量 `npm run accept`；宿主 ≤ 26,000 行 |
+
+**关键约束**：C3.3 / C3.4 **只移动文件、改 import 路径，一行业务逻辑都不改**。逻辑改动已在 WP2 完成。这样出问题时能确定是"路径错了"而不是"逻辑坏了"。
+
+**搬迁的技术前提（已验证）**：
+
+1. `test/_lib.mjs:domainSrc()` 已支持双路径回落 → **验收脚本零改动**。
+2. `tsconfig.node.json` 的 `include` 是 `plugins/*/main.ts`，需扩为 `plugins/*/main.ts` + `plugins/*/main/**/*.ts`。
+3. `plugins/*/plugin.json` 的 `id` 必须与目录名一致（`gen-plugin-entries.mjs` 已强制校验）。
+4. `qatool` / `context` / `knowledge` 的 accept 脚本里若有硬编码 `electron/main/work/...` 的相对路径，需改走 `domainSrc()`。**开工前先 grep 一遍确认。**
+
+**顺手清掉的小债**（都在本包）：
+
+- `plugins/shared/hostBridge.ts`（1.4KB）实际没被两个插件用起来 → 搬完统一收敛或删除。
+- `electron/main/services/` 目前只有 `pluginDb.ts` 一个文件 → 搬完后它就是真正的服务层入口。
+
+---
+
+### WP4 · 契约补齐 + 角色归位（3–4 人天）
+
+**问题**：`kernel/services.ts` 的 `SERVICE_NAMES` = `config / db / openclaw / notifications / voice / hostOps / legacyDb`。**没有 secrets，没有 kv，没有 cli**。所以大肥鱼（21 文件、4,940 行）只能做"宿主模块"，靠 `index.ts:2235` 起 80 多行裸函数注入（chat / generateDiary / searchKnowledge / voice.speakPcm / kv）。每加一个角色能力就往入口塞一段。
+
+#### C4.1 补 services
+
+| 新增服务 | 内容 | 兑现的条款 |
+| --- | --- | --- |
+| `secrets` | safeStorage 按 `plugin:<id>:<key>` 命名空间，只给 get/set/clear | `§4.2` / `§8.2`（`§18.3` 登记为未实现） |
+| `kv` | 偏好类键值读写（替代裸 `metaGet`/`metaSet` 直传） | 让 `app_meta` 的宿主/插件边界显式化 |
+
+#### C4.2 角色数据独立
+
+现状：`fish:v2:*` 落在**宿主 `work.db` 的 `app_meta`**；而 work 域数据早已搬到 `plugins/work/data.db`。宿主保留 `work.db` 只为 voice + character + wizard 活着——"每插件独立库"在这里是半吊子。
+
+动作：迁到 `data/character/db`，一次幂等导入，旧键只读保留一个版本。
+
+#### C4.3 注入抽成 `services/characterHost.ts`
+
+`registerCharacter(deps)` 只收契约对象，`index.ts` 再减 ~200 行。
+
+**出口判据**：`accept:character` 全绿；停用角色后宿主 `work.db` 不再被打开；`index.ts` ≤ 1,800 行。
+
+---
+
+## 三、机械校验清单（每个 WP 结束都跑一遍）
+
+| # | 检查 | 命令 | 判据 |
+| --- | --- | --- | --- |
+| V1 | 双 typecheck | `npm run typecheck:node; npm run typecheck:web` | 0 错 |
+| V2 | 全量验收 | `npm run accept` | 30 套全绿 |
+| V3 | 插件越界 import | 见下 | ≤ baseline |
+| V4 | 宿主代码量 | 见 §一 | ≤ 目标 |
+| V5 | 重复文件 | `Get-FileHash` 比对 `work/marketing` 同名文件 | 0 |
+| V6 | Manager 不 import electron | 见下 | 0 |
+| V7 | 构建产物不含插件代码 | `npm run build` 后查 `resources/plugins/*/` | 只有 manifest + migrations |
+| V8 | 渲染端无 `message.includes()` | 见下 | 0 |
+| V9 | 无明文密钥 | 见下 | 0 |
+| V10 | 无不可见字符 | 见下 | 0 |
+
+```powershell
+# V3 插件越界 import（只数真违规：非 type-only，且不在 kernel/services 下）
+# V6 Manager 层
+(Get-ChildItem electron\main\work,electron\main\marketing -Filter *.ts -Recurse |
+  Select-String -Pattern "^import .*from 'electron'" | Measure-Object).Count
+# V8
+(Select-String -Path src\**\*.vue,src\**\*.ts,plugins\**\*.vue,plugins\**\*.ts `
+  -Pattern "message\.includes\(" -ErrorAction SilentlyContinue | Measure-Object).Count
+# V9（允许 Config.vue 的 placeholder 示例，其余一律 0）
+Select-String -Path electron\**\*.ts,src\**\*.ts,src\**\*.vue `
+  -Pattern "sk-[A-Za-z0-9]{16,}|Bearer [A-Za-z0-9\._-]{20,}" -ErrorAction SilentlyContinue
+# V10
+Get-ChildItem electron\main -Recurse -Filter *.ts | ForEach-Object {
+  $t = Get-Content $_.FullName -Raw -Encoding UTF8
+  if ($t -match "[\u200b\u200e\u200f\ufeff]") { $_.Name }
+}
+```
+
+---
+
+## 四、与 PLAN-4.0 §18.3 的映射
+
+| `§18.3` 登记项 | 本计划处置 |
+| --- | --- |
+| knowledge / context 下沉（两份独立实现） | **WP2**（C2.1–C2.4） |
+| 类型化 IPC 生成 | 明确不做（不阻塞） |
+| `ctx.secrets` 缺失 | **WP4**（C4.1） |
+| `contributes.settings` / `commands` 无消费方 | 随 `AGENTS.md` 明确为「已校验、无消费方」，要么补实现要么移除校验——**归入 WP4 的收尾判断，不在本计划主线** |
+| 插件只经 `ctx`（无 lint 兜底） | **WP3 阶段 A**（C3.1/C3.2） |
+| 停用即中止在途 SSE（work 未修） | 4.0.x 独立修复，不在本计划 |
+| 旧库导入失败可见 + 重试 | 4.0.x 独立修复，不在本计划 |
+| work 知识库原件写全局 `<dataDir>/knowledge` | 4.0.x 或 RUNBOOK 登记 |
+
+---
+
+## 五、决策记录
+
+| # | 决策 | 日期 | 理由 |
+| --- | --- | --- | --- |
+| D1 | 大肥鱼**不装箱**成 `plugins/character`，保留宿主模块 | 2026-11-02 | 它要 `petWindow` / `screen` / `globalShortcut`，而 `§4.2` 刻意不给插件窗口控制。硬装箱会破掉"官方插件不给窗口"这条边界。做法是依赖走 service 契约（C4.3） |
+| D2 | WP2 现在就做，不等第三个域 | 2026-11-02 | WP1 的三个 parsers 已证明重复实现真实存在；67 条断言是现成验收网。等第三个域才做，成本是三个域同时改 |
+| D3 | 引 eslint，只装 `eslint` + `@typescript-eslint` 两个包 | 2026-11-02 | 守 import 边界不需要 vue 支持；依赖越少越容易在 CI 上跑稳 |
+| D4 | 用 ratchet baseline，不直接开 error | 2026-11-02 | 直接开 error 会逼出"一次性搬 14,500 行"的大爆炸，与 WP2 撞车 |
+| D5 | CI 里 `UMI_ALLOW_PACKAGE_SKIP=1` | 2026-11-02 | CI 不产出 NSIS；真机安装是 WP0-C0.3 的人工项。先保证源码级 30 套绿 |
+
+---
+
+## 六、进度
+
+| WP | 状态 | 完成日期 | 发布点 |
+| --- | --- | --- | --- |
+| WP0 | 进行中 | — | 4.0.0 打 tag 前置 |
+| WP1 | 未开始 | — | 4.0.1 |
+| WP2 | 未开始 | — | 4.0.2 |
+| WP3 | 未开始 | — | 4.0.3 |
+| WP4 | 未开始 | — | 4.1 |

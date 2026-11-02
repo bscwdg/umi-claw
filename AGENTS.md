@@ -1,0 +1,362 @@
+# AGENTS.md —— Umi Claw 仓库统一 AI 规范
+
+> 版本：v1（2026-11-02）｜适用分支：`release/4.0` 及后续
+> 性质：**本仓库唯一的 AI/人类协作规范**。`PLAN-*.md` 是架构契约，本文件是**怎么写代码**的契约。
+> 冲突优先级：`PLAN-4.0.md`（架构边界） > 本文件（写法） > 各 `PLAN-*.md` 的历史细节。
+> 每一条都标注了「现状证据」与「校验方法」。**没有校验方法的条款不要写进来。**
+
+---
+
+## 0. 一分钟上手
+
+```powershell
+cd D:\work2026\umi-claw
+npm run dev            # 生成插件入口表 + 启动
+npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
+npm run accept         # 30 套验收（accept×28 + e2e + smoke）
+npm run build          # 构建（含 plugin:gen）
+```
+
+**开工前必读**：本文件 → `PLAN-4.0.md §〇`（已拍板结论）→ `doc/PLAN-4.1-DEBT.md`（当前欠账与顺序）。
+
+---
+
+## 1. 这是什么项目
+
+一个 Electron + Vue3 的**本地优先 AI 工作台**，底座是 OpenClaw 网关。四层能力叠在同一个壳上：
+
+| 层 | 内容 | 形态 |
+| --- | --- | --- |
+| 宿主 | 窗口 / 导航 / 设置 / OpenClaw 管理 / 渠道 / 终端 / Obsidian / 技能 / 更新 / 语音 | `electron/main/*`（kernel + services + 壳能力） |
+| `marketing` | 商家大脑 / 知识库 / AI 顾问 / 内容中心 / 热点雷达 | 官方内置插件 |
+| `work` | 新的一天 / 工作记录 / 日报周报 / 工作问答 / 工具箱 / 知识库 / 到点提醒 | 官方内置插件 |
+| `character` | 大肥鱼：桌宠 / 聊天 / 关系 / 生活 / 日记 / 语音 | **宿主模块**（不是插件，见 §5.3） |
+
+**只做官方内置插件**：插件代码随宿主构建进安装包，`resources/plugins/` 只放 `plugin.json` + `migrations/`。不提供第三方安装。
+
+---
+
+## 2. 目录与归属（写代码前先确认往哪放）
+
+```
+electron/main/
+├── kernel/          # 插件内核：manifest / registry / lifecycle / plugin / services
+├── services/        # 宿主能力（当前只有 pluginDb.ts；目标见 PLAN-4.1-DEBT WP1/WP2）
+├── database/        # 数据层：schema / migration / errors（错误码唯一来源）
+├── ipc/             # IPC 注册，按域分文件
+├── character/       # 大肥鱼宿主模块
+├── fish/voice/      # 语音服务
+├── work/            # 工作域实现（搬迁中 → plugins/work/main/）
+├── marketing/       # 营销域实现（搬迁中 → plugins/marketing/main/）
+├── clawManager.ts / configManager.ts / downloadManager.ts / channelManager.ts ...
+└── index.ts         # 只做组装；目标 ≤ 1,800 行（现状 2,557）
+
+plugins/             # 官方内置插件（同仓源码，参与宿主构建）
+├── work/  main.ts + renderer.ts + ui/
+├── marketing/
+├── hello/           # 内核演示插件
+└── shared/
+
+src/                 # 渲染端（Vue3 + Pinia + vue-router）
+├── views/           # 宿主页面
+├── character/       # 角色页面与桌宠窗口
+├── renderer/        # main.ts / pluginUi.ts / *.generated.ts
+├── stores/          # claw / config / envSetup
+└── composables/     # useToast
+
+resources/           # 打包为 extraResources（只放数据与脚本，不放业务源码）
+test/                # accept 验收脚本（零 npm 依赖）
+scripts/             # 构建/验收脚本
+doc/                 # 计划、施工日志、运维手册、调研
+```
+
+**放错位置的典型**：把业务逻辑塞进 `index.ts`；把域代码放进 `services/`；把脚本放进 `resources/`（会整目录带进安装包，见 `PLAN-4.0 §18.5`）。
+
+---
+
+## 3. 代码风格（以现状为准，不发明新风格）
+
+### 3.1 已统一的
+
+| 项 | 规则 | 现状证据 |
+| --- | --- | --- |
+| 主进程（`electron/**`、`plugins/*/main.ts`） | **不加行尾分号** | `todoManager.ts` 619 行 0 个行尾分号；`kernel/lifecycle.ts` 612 行 0 个 |
+| 主进程引号 | **单引号** | `electron/main` 506 处单引号 / 2 处双引号 |
+| 缩进 | **2 空格**；续行用 4 空格对齐 | 全仓无 tab |
+| 换行 | **LF**（`.gitattributes` 已强制 `text=auto eol=lf`，`*.bat`/`*.cmd` 除外） | 抽查 3 个文件 CRLF=0 |
+| 编码 | **UTF-8 无 BOM** | 抽查 3 个文件 BOM=False |
+| 文件头 | 首行 `// <相对路径> —— <一句话职责>`，随后用空注释行写**为什么** | `electron/main` 99/126 个 `.ts` 有头 |
+| 注释语言 | **中文**，写「为什么」和「踩过的坑」，不写「这行在赋值」 | 全仓一致 |
+| 类型 | `strict`（由 `@electron-toolkit/tsconfig` 提供）；公共导出显式类型 | 双 typecheck 0 错 |
+
+### 3.2 尚未统一的（**新代码按下面写，老代码不要顺手改**）
+
+| 项 | 现状 | 新代码怎么写 |
+| --- | --- | --- |
+| 渲染端分号 | `src/` 约 20% 行尾有分号（2,597/12,849），文件间 27%–43% 不等 | **跟随所在文件的既有风格**；同一文件内不得混用。禁止为「统一」而全仓格式化（会造成 2,600 行噪声 diff） |
+| 渲染端引号 | `src/` 48 单 / 26 双 | 单引号 |
+| 文件头 | 27 个 `.ts` 无头（`clawManager.ts`、`configManager.ts`、`fish/voice/**` 多数、`obsidianManager.ts`、`todayManager.ts` 等） | **新文件必须带头**；老文件改动时顺手补，不单独提交格式化 |
+| 提交 message | 类型/范围混用：`feat(4.0)` / `fix(3.0)` / `fix` / `feat(2.0-03)` | 见 §9 |
+
+**理由**：本仓库没有 `.editorconfig`、没有 lint，格式化靠习惯。这些差异是历史沉淀，不是错误。**一次性的全仓格式化会淹没真正的改动**（`§18.5` 已把「验收留档时效」列为风险）。
+
+---
+
+## 4. 分层约定（这是本仓库最硬的部分）
+
+### 4.1 Manager 层：纯逻辑，不碰 Electron
+
+**规则**：`electron/main/{work,marketing}/**/*Manager.ts` 与 `contextEngine.ts` **禁止** `import ... from 'electron'`。
+
+**现状证据**：0 / 39 个文件命中。这是 30 套验收能在纯 Node 里跑真源码的前提。
+
+**写法**：工厂函数 + 显式 options，不 `new`、不单例、不从全局推。
+
+```ts
+// 唯一允许的形状
+export interface TodoManagerOptions {
+  database: WorkDatabase          // 依赖显式传入
+  logger?: (message: string) => void
+}
+export function createTodoManager(options: TodoManagerOptions): TodoManager { ... }
+```
+
+**现状证据**：38 处 `export function create*`，21 个 Manager 文件全部如此。
+
+**禁止**：
+- 在 Manager 里 `import { app } from 'electron'` 取路径 → 由 `runtime.ts` 解析后注入
+- 在 Manager 里 `ipcMain.handle` → IPC 归 `electron/main/ipc/*`
+- 在 Manager 里读 `process.env` 判定行为 → 由调用方注入配置
+
+### 4.2 IPC 层：只做透传与信封
+
+**通道命名**：`<domain>:<entity>:<method>`，全部小写 domain、camelCase method。
+
+```ts
+export const WORK_TODOS_CHANNELS = {
+  list: 'work:todos:list',
+  create: 'work:todos:create',
+  confirm: 'work:todos:confirm'
+} as const
+```
+
+**现状证据**：26 个 `*_CHANNELS` 常量，全部 `as const`，全部符合上述形状。
+
+**返回**：统一信封，成功 `{ ok: true, data }`，失败 `{ ok: false, error: { code, message, details? } }`。
+
+**错误**：抛 `AppError(code, message, details?)`；`code` 必须来自 `electron/main/database/errors.ts` 的 `ERROR_CODES`（**唯一来源，当前 13 项**）。IPC 层用 `toErrorEnvelope(e)` 翻译，未知异常兜底 `DB_ERROR`。
+
+**渲染端**：**只按 `code` 分支，禁止 `message.includes()`**。
+
+**现状证据**：`src/` + `plugins/` 中 `message.includes(` 命中 **0**。
+
+### 4.3 渲染端
+
+- 页面放 `src/views/`（宿主）或 `plugins/<id>/ui/pages/`（插件）
+- 状态放 `src/stores/*`，`defineStore('<名字>', () => { ... })` setup 写法
+- 提示统一 `useToast()`（`showToast(msg, 'success'|'error'|'warning')`）
+- 二次确认统一 `ConfirmDialog` 组件，**禁止 `window.confirm` / `window.alert`**
+
+**现状证据**：全仓无一处真实调用（仅 3 处注释说明「不要用」）。由 `ui.accept` 的 U13/U14/U21 守住。
+
+---
+
+## 5. 插件边界（4.0 的核心，也是当前最大的欠账）
+
+### 5.1 插件只能经 `ctx` 访问宿主
+
+**允许 import**：`electron/main/kernel/**`、`electron/main/services/**`、本插件目录内文件。
+**禁止 import**：其余一切 `electron/main/*`（`runtime`、`ipc`、域实现、`pluginDataImport` 等）。
+
+**现状**：**13 条越界**（WP3 开工时的基数，见 `doc/PLAN-4.1-DEBT.md`）。当前**没有 lint 兜底**，靠自觉。
+
+**读这条规则时要知道**：现状是「新代码不得新增越界，旧越界按 WP3 逐步清零」，不是「现在已经合规」。`lint-baseline.json` 的 ratchet 会锁死这个数。
+
+### 5.2 插件形状
+
+```ts
+// plugins/<id>/plugin.json   —— 数据，不含代码
+{ "id": "<id>", "version": "1.0.0", "capabilities": ["host.db.v1", ...],
+  "inject": ["db", "openclaw", ...], "channels": ["work"], "defaultEnabled": true }
+
+// plugins/<id>/main.ts
+export default definePlugin({
+  activate(ctx: PluginContext) { ... ; return () => cleanup() },
+  deactivate?() { ... }
+})
+
+// plugins/<id>/renderer.ts
+export default { routes, nav, slot, setup } as PluginUiModule
+```
+
+**硬约束**：
+
+- `plugin.json` 的 `id` **必须等于目录名**（`scripts/gen-plugin-entries.mjs` 强制校验）
+- 入口表由脚本生成，**禁止手改** `kernel/plugins.main.generated.ts` 与 `src/renderer/plugins.renderer.generated.ts`
+- 禁止运行时从磁盘/网络加载可执行模块（`PLAN-4.0 §17.3`）
+- 注册物一律返回 disposer，停用由宿主 LIFO 清理；不要在 `deactivate` 里才擦屁股
+
+**现状证据**：`lifecycle.ts` 已实现 LIFO + 激活超时 + 迟到注册拒绝 + 失败隔离；`plugin.accept` **61 项**。
+
+### 5.3 大肥鱼为什么不是插件
+
+它需要 `petWindow`（透明置顶窗口）、`screen`（多屏定位）、`globalShortcut`（点击穿透逃生键）。而插件契约**刻意不给窗口控制**（`PLAN-4.0 §4.2` 只给 db/openclaw/notifications/voice/config）。
+
+**结论**：保留为宿主模块 `electron/main/character/`，但依赖仍走契约注入（`doc/PLAN-4.1-DEBT.md` C4.3），不得在 `index.ts` 里堆裸函数。**不要把它"顺手装箱"——那会破掉 §4.2 这条边界。**
+
+---
+
+## 6. 数据与配置
+
+| 对象 | 归属 | 规则 |
+| --- | --- | --- |
+| 插件数据 | `<dataDir>/plugins/<id>/data.db` | 每插件独立库 + 独立 schema + 独立 `plugin_migrations`；只能经 `ctx.db` 的参数化 CRUD，**禁止裸 SQL** |
+| 宿主数据 | `<dataDir>/work.db` | 只承载 voice / character / wizard 的 `app_meta`（目标：迁出 character，见 C4.2） |
+| 应用配置 | `<dataDir>/config/.openclaw/openclaw.json` | **单写入口**：`configManager` + `openClawConfigWriter.runSerializedOpenClawConfigWrite` |
+| 密钥 | `safeStorage` | 按 `plugin:<id>:<key>` 命名空间；永不写日志/配置/导出包 |
+| 迁移 | `migrations/*.sql` | 幂等、可重入、失败可回滚；迁移前必须 `backup()` |
+
+**现状证据**：`openclaw.json` 的写盘调用集中在 `configManager.ts`（2 处 writeFileSync）+ `openClawConfigWriter.ts`（串行队列），其余文件只读或经它们写。
+
+**禁止**：
+- 插件直接写 `openclaw.json`（`PLAN-4.0 §17.2`）
+- 在 Manager 里 `fs.writeFileSync` 到数据目录 — 走数据库或 `ctx`
+- 为「架构完整」新增状态表（`PLAN-3.0` 硬规则 24）
+
+---
+
+## 7. 验收：先写断言，再写实现
+
+### 7.1 硬性
+
+- 改 Manager / IPC / 数据层 → **必须**有对应 `test/*.accept.mjs` 断言
+- 新增 `test/*.accept.mjs` → **必须**在 `scripts/run-all-accept.mjs` 的 `ACCEPT` 数组注册（否则 `npm run accept` 不跑它）
+- 验收脚本**零 npm 依赖**，只用 `node:` 内置 + `test/_lib.mjs`
+- 断言打**真源码**：`bundleEntry('electron/main/work/todoManager.ts', 'todo-todo.mjs')` 后 `import()`，不 mock 被测逻辑
+
+**现状证据**：30 个 `.accept.mjs`；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。
+
+### 7.2 `_lib.mjs` 提供的工具
+
+| 工具 | 用途 |
+| --- | --- |
+| `Recorder(suite)` + `.check(id, name, fn)` | 单点失败不中断整轮 |
+| `assert` / `assertEq` / `assertDeepEq` | 断言 |
+| `bundleEntry(entry, outName, {externals, alias})` | esbuild 把 TS 打成临时 ESM |
+| `domainSrc(pluginId, rel)` / `domainUiSrc(pluginId, rel)` | **域代码搬家时的双路径回落**（WP3 靠它做到脚本零改动） |
+| `resolveNodePath()` | 便携 node 优先 |
+| `waitFor(fn, {timeout})` | 替代固定 `sleep`，避免并发下的假失败 |
+| `printResult` / `writeJson` | 结果输出与落盘 |
+
+### 7.3 搬家时不要改脚本
+
+`domainSrc()` 的语义是「新路径存在就用新的，否则回落旧的」。**域代码搬迁（WP3）时验收脚本应当一行不改**。如果发现某个脚本硬编码了 `electron/main/work/...`，先改成 `domainSrc()`，再搬。
+
+---
+
+## 8. 提交规范
+
+### 8.1 格式
+
+```
+<type>(<scope>): <中文描述，说清「改了什么 + 为什么」>
+```
+
+| type | 用途 |
+| --- | --- |
+| `feat` | 新能力 |
+| `fix` | 修缺陷 |
+| `perf` | 性能优化（说清量化收益） |
+| `refactor` | 不改行为的结构调整 |
+| `test` | 只改验收 |
+| `docs` | 只改文档 |
+| `chore` | 构建/依赖/杂务 |
+
+| scope | 用途 |
+| --- | --- |
+| `ui` `work` `marketing` `character` `voice` `plugin` `db` `gateway` `startup` | 按模块 |
+| `4.0` `4.1` | 按版本（跨模块批次） |
+
+**现状**：`feat(4.0)` 11 次、`docs(4.0)` 10 次、`fix(3.0)` 8 次…另有裸 `fix` / `feat` 12 次、`feat(2.0-03)` 这类工作包后缀。**新提交按上表；不再用工作包编号当 scope。**
+
+### 8.2 一次提交只做一件事
+
+特别地：**搬家（只改路径）与改逻辑绝不混在一个提交**。这是 `PLAN-4.1-DEBT` WP3 的核心纪律——出问题时才能判断是"路径错了"还是"逻辑坏了"。
+
+### 8.3 提交信息里写可验收的事实
+
+好的：`fix(ui): 控制台按钮文案按动作区分（pendingAction 三态，U23 锁住）`
+坏的：`fix: 修复一些问题`
+
+---
+
+## 9. 禁止清单（违反即回退）
+
+1. 手改 `*.generated.ts`（插件入口表由 `npm run plugin:gen` 生成）
+2. 插件 import `electron/main` 下除 `kernel` / `services` 以外的模块
+3. 插件直接写 `openclaw.json`，或在 Manager 里 spawn 网关
+4. 渲染端 `/plugins` 之外出现运行时动态加载插件代码
+5. `window.confirm` / `window.alert`（用 `ConfirmDialog`）
+6. `error.message.includes()` 判断错误（用 `code`）
+7. 为「架构完整」新增状态表 / 新增第三方插件安装入口
+8. 全仓格式化式提交（会淹没真实改动）
+9. 密钥写进配置、日志、导出包
+10. 改了 `test/*.accept.mjs` 的断言却不单独提交并说明理由
+
+---
+
+## 10. 自检（提 PR / 交付前跑一遍）
+
+```powershell
+# ① 双 typecheck 0 错
+npm run typecheck:node; npm run typecheck:web
+
+# ② 全量验收 30 套
+npm run accept
+
+# ③ 插件越界 import（只数真违规，目标是只降不升）
+#    基线见 doc/PLAN-4.1-DEBT.md §一
+(Get-ChildItem plugins -Recurse -Include *.ts,*.vue |
+  Select-String -Pattern "from '.*electron/main/").Count
+
+# ④ Manager 层不得 import electron（应为 0）
+(Get-ChildItem electron\main\work,electron\main\marketing -Filter *.ts -Recurse |
+  Select-String -Pattern "^import .*from 'electron'" | Measure-Object).Count
+
+# ⑤ 渲染端错误分支按 code（应为 0）
+(Select-String -Path src\**\*.vue,src\**\*.ts,plugins\**\*.vue,plugins\**\*.ts `
+  -Pattern "message\.includes\(" -ErrorAction SilentlyContinue | Measure-Object).Count
+
+# ⑥ 无明文密钥（0 命中）
+Select-String -Path electron\**\*.ts,src\**\*.ts,src\**\*.vue `
+  -Pattern "sk-[A-Za-z0-9]{16,}|Bearer [A-Za-z0-9\._-]{20,}" -ErrorAction SilentlyContinue
+
+# ⑦ 无不可见字符（0 命中）
+Get-ChildItem electron,src,plugins -Recurse -Include *.ts,*.vue,*.mjs | ForEach-Object {
+  if ((Get-Content $_.FullName -Raw -Encoding UTF8) -match "[\u200b\u200e\u200f\ufeff]") { $_.FullName }
+}
+```
+
+---
+
+## 11. 给 AI 的额外约束
+
+1. **先读再改**：改任一模块前，先读它的文件头注释与对应的 `test/*.accept.mjs`。断言就是你被允许改动的边界。
+2. **不动无关代码**：修 A 时不要顺手改 B 的格式、注释、命名。
+3. **改断言 = 改契约**：发现断言写错了，单独提交，并在 `doc/PROGRESS-4.0.md` 写明「原断言错在哪」。
+4. **别把"能跑"当"完成"**：`npm run build` 通过不等于通过；`npm run accept` 全绿才算。
+5. **别猜路径**：域代码正在从 `electron/main/{work,marketing}/` 搬向 `plugins/<id>/main/`，用 `_lib.mjs:domainSrc()` 而不是硬编码。
+6. **别新增文档**：新计划/新规范先问；`doc/PLAN-4.1-DEBT.md` 与 `doc/PROGRESS-4.0.md` 已覆盖施工与日志。
+7. **不确定就停**：涉及 `PLAN-4.0 §17` 硬规则的改动，先回报，不要自作主张。
+
+---
+
+## 12. 相关文档
+
+- 架构契约：[PLAN-4.0.md](PLAN-4.0.md)
+- 欠账执行：[doc/PLAN-4.1-DEBT.md](doc/PLAN-4.1-DEBT.md)
+- 施工日志：[doc/PROGRESS-4.0.md](doc/PROGRESS-4.0.md)
+- 运维手册：[doc/RUNBOOK-4.0.md](doc/RUNBOOK-4.0.md)
+- 合并仲裁：[doc/MERGE-INVENTORY.md](doc/MERGE-INVENTORY.md)
+- 3.0 硬规则：[PLAN-3.0.md](PLAN-3.0.md)（§十三，4.0 继续沿用）
+- 角色计划：[PLAN-FISH-CHARACTER.md](PLAN-FISH-CHARACTER.md)
