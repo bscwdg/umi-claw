@@ -113,21 +113,9 @@ let characterDispose: (() => Promise<void>) | null = null
 let appShuttingDown = false
 
 // ── 单实例（4.0.1 P4）─────────────────────────────────────────────────────────
-// 两个实例同指一个 dataDir 时：character/kv.json 的「写临时文件再改名」没有跨进程保护，
-// 插件 KV 的整文件 flush 也会互相覆盖（阶段 A 对抗复核明确接受、登记到 4.0.1）。
-// 拿不到锁的第二个实例直接退出；它的启动请求转给第一个实例（把窗口唤到前台）。
-const singleInstanceLock = app.requestSingleInstanceLock()
-if (!singleInstanceLock) {
-  app.quit()
-} else {
-  app.on('second-instance', () => {
-    const win = mainWindow
-    if (!win) return
-    if (win.isMinimized()) win.restore()
-    if (!win.isVisible()) win.show()
-    win.focus()
-  })
-}
+// 注意：锁**必须**在 `app.setPath('userData', …)` 之后请求——Electron 的单实例锁绑定
+// 默认 userData；不先切到本项目 userData 的话，「便携版 + 安装版」会被误判成同一实例。
+let singleInstanceLock = false
 
 /**
  * 取 Gateway Client 单例（Commit 07 → 合并后指向 work 域的唯一实例）。
@@ -2086,6 +2074,23 @@ if (app.isPackaged) {
 } else {
   // 开发环境下保持默认，或者指向项目内的临时夹
   app.setPath('userData', join(__dirname, '../../.dev-user-data'))
+}
+
+// 单实例（4.0.1 P4）：必须在 userData 定向之后请求（锁按 userData 生效）。
+// 两个实例同指一个 dataDir 时：character/kv.json 的「写临时文件再改名」没有跨进程保护，
+// 插件 KV 的整文件 flush 也会互相覆盖。拿不到锁的第二个实例直接退出；
+// 它的启动请求转给第一个实例（把窗口唤到前台）。
+singleInstanceLock = app.requestSingleInstanceLock()
+if (!singleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const win = mainWindow
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    if (!win.isVisible()) win.show()
+    win.focus()
+  })
 }
 
 // ─── App 生命周期 ──────────────────────────────────────────────────────────────
