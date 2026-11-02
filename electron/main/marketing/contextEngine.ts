@@ -44,6 +44,7 @@ import {
 import type { ProjectManager } from './projectManager'
 import { getPlatformRule } from './platformRules'
 import { estimateTokens, sliceToTokenBudget } from '../services/context/tokens'
+import { assembleLoop } from '../services/context/assemble'
 export { estimateTokens, sliceToTokenBudget }
 import { shortTitle } from '../services/context/pack'
 
@@ -463,63 +464,55 @@ export class ContextEngine {
       retrieval: { mode: 'full', query: null, hits: 0 },
       builtAt: 0
     })
-    const measure = (items: PackedKnowledge[], droppedItems: DroppedKnowledge[], probeMode: PackMode): number =>
-      estimateTokens(renderContextPackText(probePack(items, droppedItems, probeMode)))
 
-    const asDropped = (row: KnowledgeRow): DroppedKnowledge => ({
-      id: String(row.id),
-      title: String(row.title ?? ''),
-      reason: 'budget'
+    // ── 5. 预算与取舍（WP2-d：改走 services/context 的 assembleLoop） ──
+    //
+    // 与旧循环的等价点（切域前逐条核对）：
+    //   - mode：全量渲染 ≤ 预算且 business 未超 → full，否则 truncated
+    //   - 准入：未轮到的候选先按 budget 计入 dropped（未注入清单本身占预算）
+    //   - sliceBudget 依次减：已选渲染 + PACK_OVERHEAD + 标题 + 截断标记
+    //   - 落选：ranked 尾部切片，按 ranked 顺序（未排序）
+    //   - 最终 pack 的 dropped 再按标题排序（旧实现 561 行），渲染必须用排序后的顺序
+    const measureProbe = (
+      items: PackedKnowledge[],
+      droppedItems: DroppedKnowledge[],
+      probeMode: PackMode
+    ): number => estimateTokens(renderContextPackText(probePack(items, droppedItems, probeMode)))
+
+    const loop = await assembleLoop<KnowledgeRow, PackedKnowledge>({
+      budgetTokens,
+      markerTokens: estimateTokens(ITEM_TRUNCATE_MARKER),
+      overheadTokens: PACK_OVERHEAD_TOKENS,
+      minSliceTokens: KNOWLEDGE_ITEM_MIN_TOKENS,
+      allCandidates: candidates,
+      forceTruncated: businessOverBudget,
+      initialDropped: dropped,
+      ranked: async () => {
+        const ranked = await this.rankForTruncation(pid, candidates, query)
+        return {
+          entries: ranked.entries.map((e) => ({ item: e.row, matched: e.matched })),
+          info: ranked.info
+        }
+      },
+      measureSelection: (chosen, droppedList, probeMode) =>
+        measureProbe(chosen, droppedList as unknown as DroppedKnowledge[], probeMode),
+      renderFinal: (chosen, droppedList, finalMode) => {
+        const sorted = [...(droppedList as unknown as DroppedKnowledge[])].sort((a, b) =>
+          a.title < b.title ? -1 : a.title > b.title ? 1 : 0
+        )
+        const text = renderContextPackText(probePack(chosen, sorted, finalMode))
+        return { text, usedTokens: estimateTokens(text) }
+      },
+      include: (row, opts2) => packItem(row, opts2.truncate, Boolean(opts2.matched), opts2.sliceBudget),
+      toDropped: (row, reason) => ({ id: String(row.id), title: String(row.title ?? ''), reason }),
+      titleTokens: (row) => estimateTokens(String(row.title ?? ''))
     })
 
-    const allPacked = candidates.map((row) => packItem(row, false, false))
-    const mode: PackMode =
-      !businessOverBudget && measure(allPacked, dropped, 'full') <= budgetTokens ? 'full' : 'truncated'
-
-    let knowledge: PackedKnowledge[]
-    let retrieval: RetrievedInfo
-    let droppedList: DroppedKnowledge[] = dropped
-    if (mode === 'full') {
-      knowledge = allPacked
-      retrieval = { mode: 'full', query: null, hits: 0 }
-    } else {
-      const ranked = await this.rankForTruncation(pid, candidates, query)
-      retrieval = ranked.info
-      const chosen: PackedKnowledge[] = []
-      for (let i = 0; i < ranked.entries.length; i++) {
-        const entry = ranked.entries[i]
-        // 尚未轮到的一律先按「落选」计入探针——因为渲染出的未注入清单也占预算
-        const rest = ranked.entries.slice(i + 1).map((e) => asDropped(e.row))
-        const packed = packItem(entry.row, false, entry.matched)
-        if (measure([...chosen, packed], [...dropped, ...rest], 'truncated') <= budgetTokens) {
-          chosen.push(packed)
-          continue
-        }
-        // 放不下整条：剩余空间还够一段有意义的内容就截断收入，然后收手
-        const sliceBudget =
-          budgetTokens -
-          measure(chosen, [...dropped, ...rest], 'truncated') -
-          PACK_OVERHEAD_TOKENS -
-          estimateTokens(String(entry.row.title ?? '')) -
-          estimateTokens(ITEM_TRUNCATE_MARKER)
-        if (sliceBudget >= KNOWLEDGE_ITEM_MIN_TOKENS) {
-          chosen.push(packItem(entry.row, true, entry.matched, sliceBudget))
-        }
-        break
-      }
-      // 保险丝：估算与渲染之间的极小差值也不许越界——真超了就按同一顺序从尾部让位
-      let includedCount = chosen.length
-      const rebuildDropped = (): DroppedKnowledge[] => [
-        ...dropped,
-        ...ranked.entries.slice(includedCount).map((e) => asDropped(e.row))
-      ]
-      droppedList = rebuildDropped()
-      while (includedCount > 0 && measure(chosen.slice(0, includedCount), droppedList, 'truncated') > budgetTokens) {
-        includedCount -= 1
-        droppedList = rebuildDropped()
-      }
-      knowledge = chosen.slice(0, includedCount)
-    }
+    const mode = loop.mode
+    const knowledge = loop.chosen
+    const droppedList = loop.dropped as unknown as DroppedKnowledge[]
+    const retrieval: RetrievedInfo =
+      (loop.rankedInfo as RetrievedInfo | undefined) ?? { mode: 'full', query: null, hits: 0 }
 
     if (droppedList.length || knowledge.some((item) => item.truncated)) {
       this.log(
