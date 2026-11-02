@@ -3,7 +3,6 @@ import {
   BrowserWindow,
   ipcMain,
   shell,
-  dialog,
   Tray,
   Menu,
   nativeImage,
@@ -21,7 +20,7 @@ import { SkillSyncService } from './skillSyncService'
 import { DownloadManager, type DownloadProgress } from './downloadManager'
 import { ChannelManager } from './channelManager'
 import { ObsidianManager } from './obsidian/obsidianManager'
-import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
+import { OFFICIAL_MODEL_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv, toPosix, GATEWAY_TOKEN } from './openClawPaths'
 import { shouldSpeakInApp } from './fish/voice/core/openclawTts'
 import { readFileSync, existsSync, readdirSync, mkdirSync, appendFileSync } from 'fs'
@@ -56,6 +55,7 @@ import {
   type GatewayStarterResult
 } from './gatewayClient'
 import { registerWorkGatewayIpc } from './ipc'
+import { registerMiscIpc } from './ipc/host/misc'
 import {
   VoiceSecretStore,
   VoiceCloneManager,
@@ -396,7 +396,6 @@ function createWorkDatabase(): DatabaseClient {
 let pluginRuntime: PluginRuntime | null = null
 
 // ── 服务适配器（Phase 1 WP1）：窄接口，不把 manager 递给插件 ─────────────────
-
 
 /** 宿主副作用（过渡服务，Phase 4 拆细）：通知 / 渠道外发 / 旧库只读 */
 function createHostOpsService(): HostOpsApi {
@@ -852,7 +851,6 @@ async function listPushTargetOptions(
   })
 }
 
-
 /**
  * 安全地终止并清理指定的终端会话
  */
@@ -1149,35 +1147,20 @@ function createTray(): void {
 
 // ─── marketing DB Worker wiring（Electron 相关路径解析集中在这里） ───────────────
 
-
 function registerIpcHandlers(): void {
-  // 窗口控制
-  ipcMain.handle('window:minimize', () => mainWindow?.minimize())
-  ipcMain.handle('window:maximize', () => {
-    if (mainWindow?.isMaximized()) mainWindow.unmaximize()
-    else mainWindow?.maximize()
-  })
-  ipcMain.handle('window:close', () => mainWindow?.close())
-  // 关闭确认对话框的用户选择回传：tray=最小化到托盘，exit=退出并停止 OpenClaw
-  ipcMain.handle('window:close-resolve', (_e, payload: { action: 'tray' | 'exit'; remember?: boolean }) => {
-    closeConfirmPending = false
-    const action = payload?.action ?? 'tray'
-    const remember = payload?.remember === true
-    if (remember && (action === 'tray' || action === 'exit')) {
-      // closeAction 是纯 UI 偏好、不进 openclaw.json：skipSync 跳过 config patch，
-      // 避免退出时 fire-and-forget 一次冷启动 spawn（约 12s）而 quitApp 不等，
-      // 在应用退出后留个持有 state 库的孤儿进程靠 doctor 争用重试兜底。
+  // 窗口/版本/日志/外链/对话框/Obsidian（4.1 WP5-a 拆到 ipc/host/misc.ts）
+  registerMiscIpc({
+    getMainWindow: () => mainWindow,
+    setCloseConfirmPending: (pending) => {
+      closeConfirmPending = pending
+    },
+    saveCloseAction: (action) => {
       void configManager.saveConfig({ closeAction: action }, { skipSync: true })
-    }
-    if (action === 'exit') {
-      quitApp()
-    } else {
-      mainWindow?.hide()
-    }
-  })
-  // 用户取消关闭
-  ipcMain.handle('window:close-cancel', () => {
-    closeConfirmPending = false
+    },
+    quitApp,
+    getLogs: () => clawManager.getLogs(),
+    clearLogs: () => clawManager.clearLogs(),
+    obsidian: () => obsidianManager
   })
 
   // OpenClaw 进程管理
@@ -1236,9 +1219,6 @@ function registerIpcHandlers(): void {
     const port = configManager.getConfig().port || 3213
     shell.openExternal(`http://localhost:${port}`)
   })
-
-  // 应用版本：以 package.json 的 version 为唯一真相源（app.getVersion() 直接返回它）
-  ipcMain.handle('app:getVersion', () => app.getVersion())
 
   // 配置管理
   ipcMain.handle('config:get', () => configManager.getConfig())
@@ -1502,10 +1482,6 @@ function registerIpcHandlers(): void {
     })
   )
 
-  // 日志
-  ipcMain.handle('log:getLogs', () => clawManager.getLogs())
-  ipcMain.handle('log:clearLogs', () => clawManager.clearLogs())
-
   // 技能管理
   ipcMain.handle('skills:list', () => clawManager.listSkills())
   ipcMain.handle('skills:install', (_e, skillId) => clawManager.installSkill(skillId))
@@ -1550,24 +1526,6 @@ function registerIpcHandlers(): void {
   })
   // 渠道已接入状态（只读，依据 openclaw.json 与插件登录态）
   ipcMain.handle('channels:getStatuses', () => channelManager.getChannelStatuses())
-
-  ipcMain.handle('shell:openExternal', (_e, url: string) => {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      return shell.openExternal(url)
-    }
-    return Promise.reject(new Error('Invalid URL protocol'))
-  })
-
-  // 对话框 - 增加主窗口存在性检查
-  ipcMain.handle('dialog:showMessage', (_e, options) => {
-    const win = mainWindow || BrowserWindow.getFocusedWindow()
-    if (!win) {
-      // 如果没有窗口，使用 null 让 dialog 自动创建临时窗口或报错，视 Electron 版本而定
-      // 通常建议至少有一个父窗口
-      return dialog.showMessageBox(options as any)
-    }
-    return dialog.showMessageBox(win, options)
-  })
 
   // 一键获取token - 优化安全性与逻辑
   ipcMain.handle('claw:get-token', async () => {
@@ -1812,28 +1770,6 @@ function registerIpcHandlers(): void {
       }
     }
   })
-
-  // ── Obsidian 知识库 ──
-  ipcMain.handle('obsidian:getConfig', () => obsidianManager.getObsidianConfig())
-  ipcMain.handle('obsidian:saveConfig', (_e, cfg) => obsidianManager.saveObsidianConfig(cfg))
-  ipcMain.handle('obsidian:selectVault', async () => obsidianManager.selectVault())
-  ipcMain.handle('obsidian:getIndexStatus', () => obsidianManager.getIndexStatus())
-  ipcMain.handle('obsidian:rebuildIndex', async () => {
-    try {
-      return await obsidianManager.rebuildIndex()
-    } catch (e: any) {
-      return { success: false, error: e.message }
-    }
-  })
-  ipcMain.handle('obsidian:cancelIndex', async () => obsidianManager.cancelIndex())
-  ipcMain.handle('obsidian:testEmbedding', async (_e, arg) => {
-    // 不吞异常：失败时抛出，由渲染进程 try/catch 统一捕获。
-    // 否则返回 {success:false} 会被前端当作成功（r.dim 为 undefined 仍显示"连通"）。
-    return await obsidianManager.testEmbedding(arg)
-  })
-  ipcMain.handle('obsidian:getEmbeddingPresets', () => EMBEDDING_PRESETS)
-  // 检索测试：失败时抛出，由渲染进程统一捕获展示
-  ipcMain.handle('obsidian:testSearch', async (_e, arg) => obsidianManager.testSearch(arg))
 
 }
 

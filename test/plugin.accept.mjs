@@ -1917,7 +1917,41 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
   ]) {
     assert(runtimeSrc.includes(needle), 'pluginRuntime 应包含 ' + needle)
   }
-  return '宿主零注册 / 插件全注册 / 装配在 runtime'
+
+  // 4.1 WP5-a 第一批：窗口/app/log/shell/dialog/obsidian 共 19 个宿主通道拆到 ipc/host/misc.ts
+  const miscSrc = readFileSync(
+    join(repoRoot, 'electron', 'main', 'ipc', 'host', 'misc.ts'),
+    'utf-8'
+  )
+  const miscChannels = [
+    'window:minimize',
+    'window:maximize',
+    'window:close',
+    'window:close-resolve',
+    'window:close-cancel',
+    'app:getVersion',
+    'log:getLogs',
+    'log:clearLogs',
+    'shell:openExternal',
+    'dialog:showMessage',
+    'obsidian:getConfig',
+    'obsidian:saveConfig',
+    'obsidian:selectVault',
+    'obsidian:getIndexStatus',
+    'obsidian:rebuildIndex',
+    'obsidian:cancelIndex',
+    'obsidian:testEmbedding',
+    'obsidian:getEmbeddingPresets',
+    'obsidian:testSearch'
+  ]
+  for (const ch of miscChannels) {
+    assert(miscSrc.includes(`'${ch}'`), 'misc.ts 应注册 ' + ch)
+  }
+  for (const prefix of ['window:', 'app:', 'log:', 'shell:', 'dialog:', 'obsidian:']) {
+    assert(!hostSrc.includes(`ipcMain.handle('${prefix}`), 'index.ts 不应再直接注册 ' + prefix)
+  }
+  assert(/registerMiscIpc\(\{/.test(hostSrc), 'index.ts 应调用 registerMiscIpc')
+  return '宿主零注册 / 插件全注册 / 装配在 runtime / misc 已拆'
 })
 
 // ── P43 旧库导入走服务注入（防「清单忘了 inject」导致死代码）─────────────────
