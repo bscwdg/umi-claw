@@ -435,6 +435,43 @@ try {
     assert(a === b, '两次调用复用同一个结果对象')
     assertEq(calls, 1, '全程只调一次模型')
   })
+
+  await r.check('S16', 'abortAll：停用插件时中止在途总结（4.0.1 P1）', async () => {
+    let cancelled = 0
+    const gw = {
+      createChatStream() {
+        let settle
+        const result = new Promise((resolve) => {
+          settle = resolve
+        })
+        return {
+          result,
+          iterator: (async function* () {})(),
+          cancel() {
+            cancelled += 1
+            settle({ text: '', chunks: 0, usage: null, model: null, aborted: true, ms: 1 })
+          }
+        }
+      }
+    }
+    const m = makeManager(gw)
+    const before = await m.getStatus()
+    const pending = m.summarizeToday('manual')
+    await sleep(30)
+    assertEq(m.abortAll(), 1, '在途 1 条 → 返回 1')
+    assertEq(cancelled, 1, '流 cancel 被调用（真断上游）')
+    let error = null
+    try {
+      await pending
+    } catch (e) {
+      error = e
+    }
+    assertEq(error?.code, 'OPENCLAW_NOT_READY', '中止按未就绪错误收场（不透传为成功）')
+    const after = await m.getStatus()
+    assertEq(after.attempts, before.attempts, '停用中止不消耗自动尝试配额')
+    assertEq(after.lastStatus, before.lastStatus, '停用中止不写失败状态')
+    assertEq(m.abortAll(), 0, '收尾后没有在途')
+  })
 } catch (e) {
   console.error('验收脚本自身异常:', e)
 } finally {

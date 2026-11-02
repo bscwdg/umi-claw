@@ -25,7 +25,7 @@
 import { createHash } from 'crypto'
 import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
 import type { WorkDatabase } from './database'
-import type { GatewayClient } from '../../../electron/main/gatewayClient'
+import type { GatewayClient, GatewayStreamHandle } from '../../../electron/main/gatewayClient'
 import type { RecordManager } from './recordManager'
 import { dateOf } from './todoManager'
 
@@ -215,6 +215,10 @@ export class OpenClawSummaryManager {
   private readonly logger?: (message: string) => void
   /** 在途总结（手动点击撞上自动轮次时复用，不重复调模型） */
   private inflight: Promise<SummaryRunResult> | null = null
+  /** 当前在途的流（停用插件/退出时 abortAll 用；同一时刻最多一条） */
+  private activeStream: GatewayStreamHandle | null = null
+  /** 本次失败是否由「停用中止」造成：是则不计入自动尝试配额（不许停用顺手吃掉当天预算） */
+  private aborting = false
 
   constructor(options: OpenClawSummaryManagerOptions) {
     if (!options || typeof options !== 'object') {
@@ -400,6 +404,20 @@ export class OpenClawSummaryManager {
     return run
   }
 
+  /** 停用插件/退出时中止在途总结（真断上游；返回成功 cancel 数） */
+  abortAll(): number {
+    const h = this.activeStream
+    if (!h) return 0
+    this.aborting = true
+    try {
+      h.cancel()
+      return 1
+    } catch {
+      this.aborting = false
+      return 0
+    }
+  }
+
   private async doSummarize(trigger: SummaryTrigger): Promise<SummaryRunResult> {
     const now = this.now()
     const date = dateOf(now)
@@ -416,8 +434,10 @@ export class OpenClawSummaryManager {
       stream: true
     })
     let text = ''
+    this.activeStream = handle
     try {
       const result = await handle.result
+      this.activeStream = null
       if (result.aborted) {
         throw new AppError(ERROR_CODES.OPENCLAW_NOT_READY, 'OpenClaw 总结已中止', {
           reason: 'aborted'
@@ -425,6 +445,13 @@ export class OpenClawSummaryManager {
       }
       text = String(result.text ?? '')
     } catch (error) {
+      this.activeStream = null
+      if (this.aborting) {
+        // 停用中止不是「网关失败」：不写失败状态、不消耗自动尝试配额（否则退出几次就被当天拉黑）
+        this.aborting = false
+        this.log('[openclaw-summary] 停用中止，本轮不计失败尝试')
+        throw error
+      }
       await this.recordFailure(state, trigger, now, (error as Error)?.message ?? String(error))
       throw error
     }

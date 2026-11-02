@@ -305,6 +305,61 @@ try {
     assertEq(miss.aborted, false, '未知 runId 不报错返回 false')
     return 'abort ✓'
   })
+
+  await r.check('T7', 'abortAll：停用插件时中止全部在途（问答 / 工具；4.0.1 P1）', async () => {
+    let cancelled = 0
+    const stuck = () => {
+      let settle
+      const result = new Promise((resolve) => {
+        settle = resolve
+      })
+      return {
+        iterator: (async function* () {})(),
+        result,
+        cancel: () => {
+          cancelled += 1
+          settle({ text: '', chunks: 0, usage: null, model: null, aborted: true, ms: 0 })
+        }
+      }
+    }
+    const stub = {
+      getStatus: async () => ({ ready: true }),
+      ensureReady: async () => ({ ready: true }),
+      chat: async () => ({ text: '', chunks: 0, usage: null, model: null, aborted: false, ms: 0 }),
+      createChatStream: () => stuck()
+    }
+    const qa2 = createQaManager({ database, contextEngine: engine, gateway: stub, logger })
+    const tools2 = createToolManager({ records, todos, gateway: stub, logger })
+    await qa2.ask({ question: '在途问题：验证停用时能中止' })
+    tools2.run({ toolId: 'polish', text: '一段在途的原文，验证停用中止' })
+    assertEq(qa2.abortAll(), 1, '问答在途 1 个')
+    assertEq(tools2.abortAll(), 1, '工具在途 1 个')
+    assertEq(cancelled, 2, '两条流都被 cancel（真断上游）')
+    await sleep(80)
+    assertEq(qa2.abortAll(), 0, '问答收尾后无在途')
+    assertEq(tools2.abortAll(), 0, '工具收尾后无在途')
+
+    // cancel 抛错：不计入成功数，但不影响其它 run、也不把停用搞崩
+    let badCancelled = 0
+    const badGw = {
+      getStatus: async () => ({ ready: true }),
+      ensureReady: async () => ({ ready: true }),
+      chat: async () => ({ text: '', chunks: 0, usage: null, model: null, aborted: false, ms: 0 }),
+      createChatStream: () => ({
+        result: new Promise(() => {}),
+        iterator: (async function* () {})(),
+        cancel: () => {
+          badCancelled += 1
+          throw new Error('cancel boom')
+        }
+      })
+    }
+    const qa3 = createQaManager({ database, contextEngine: engine, gateway: badGw, logger })
+    await qa3.ask({ question: 'cancel 抛错场景：验证返回值不夸大' })
+    assertEq(qa3.abortAll(), 0, 'cancel 抛错不计成功数')
+    assertEq(badCancelled, 1, '仍然尝试了 cancel')
+    return 'abortAll ✓'
+  })
 } catch (e) {
   console.error('验收脚本自身异常:', e)
 } finally {

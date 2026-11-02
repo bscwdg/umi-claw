@@ -353,6 +353,37 @@ try {
     assertEq(nf.code, 'NOT_FOUND', 'get 不存在 → NOT_FOUND')
     return 'A5 + 校验 ✓'
   })
+
+  await r.check('P13', 'abortAll：停用插件时中止全部在途日报生成（4.0.1 P1）', async () => {
+    let cancelled = 0
+    const stuck = () => {
+      let settle
+      const result = new Promise((resolve) => {
+        settle = resolve
+      })
+      return {
+        iterator: (async function* () {})(),
+        result,
+        cancel: () => {
+          cancelled += 1
+          settle({ text: '', chunks: 0, usage: null, model: null, aborted: true, ms: 0 })
+        }
+      }
+    }
+    const stub = {
+      getStatus: async () => ({ ready: true }),
+      ensureReady: async () => ({ ready: true }),
+      chat: async () => ({ text: '', chunks: 0, usage: null, model: null, aborted: false, ms: 0 }),
+      createChatStream: () => stuck()
+    }
+    const reports2 = createReportManager({ database, contextEngine: engine, gateway: stub, logger })
+    await reports2.generate({ type: 'daily', period: '2026-09-29' })
+    assertEq(reports2.abortAll(), 1, '在途 1 个 → 返回 1')
+    assertEq(cancelled, 1, '流 cancel 被调用（真断上游）')
+    await sleep(80)
+    assertEq(reports2.abortAll(), 0, '收尾后没有在途')
+    return 'abortAll ✓'
+  })
 } catch (e) {
   console.error('验收脚本自身异常:', e)
 } finally {

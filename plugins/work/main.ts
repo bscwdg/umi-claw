@@ -62,6 +62,28 @@ function gatewayAdapter(openclaw: NonNullable<PluginContext['services']['opencla
   } as unknown as GatewayClient
 }
 
+/**
+ * 停用/退出时中止 work 域在途的模型调用。
+ *
+ * 为什么必须有：通道被摘掉后 SSE 流不会自己停，上游仍在产出 token（用户看不到，但仍在继续烧）。
+ * marketing 早就有同类 `stopBackgroundWork`；work 之前只 `reminder.stop()`（4.0.1 P1 修项）。
+ */
+function stopBackgroundWork(work: WorkRuntime): void {
+  const attempt = (label: string, fn: () => number): void => {
+    try {
+      const n = fn()
+      if (n > 0) console.log(`[work] 停用：已中止 ${n} 个${label}`)
+    } catch (e) {
+      console.warn(`[work] 停用中止${label}失败：`, (e as Error)?.message ?? e)
+    }
+  }
+  work.reminder.stop()
+  attempt('问答流', () => work.qa.abortAll())
+  attempt('工具调用', () => work.tools.abortAll())
+  attempt('日报生成', () => work.reports.abortAll())
+  attempt('OpenClaw 总结', () => work.openclawSummary.abortAll())
+}
+
 export default definePlugin({
   async activate(ctx) {
     const db = ctx.services.db
@@ -126,14 +148,16 @@ export default definePlugin({
     ctx.logger.info(`工作域就绪（库 ${db.path}）`)
 
     return () => {
-      work.reminder.stop()
+      stopBackgroundWork(work)
       runtime = null
       setWorkIpcRegistrar(null)
     }
   },
   deactivate() {
     try {
-      runtime?.reminder.stop()
+      // 正常启停路径由 activate 返回的 cleanup 覆盖（先 rollback 再 deactivate，cleanup 已置空）；
+      // 这里只兜「激活超时/异常后被停用」等 cleanup 未跑到的路径。
+      if (runtime) stopBackgroundWork(runtime)
     } catch {
       // 停用路径上不阻塞
     }

@@ -169,6 +169,20 @@ export class ToolManager {
     return { aborted: true }
   }
 
+  /** 停用插件/退出时中止全部在途工具调用（真断上游；返回成功 cancel 数） */
+  abortAll(): number {
+    let n = 0
+    for (const handle of this.runs.values()) {
+      try {
+        handle.stream.cancel()
+        n += 1
+      } catch {
+        // 停用路径上不阻塞；单个失败不影响其它 run
+      }
+    }
+    return n
+  }
+
   /** 流结束收尾：产出型 → 候选；minutes → 待办提取 */
   private async finishRun(handle: ToolRunHandle, tool: ToolInfo): Promise<void> {
     try {

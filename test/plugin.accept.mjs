@@ -8,7 +8,14 @@
 //
 // 用法：node test/plugin.accept.mjs（npm run accept:plugin）
 
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -1503,6 +1510,29 @@ await r.check('P38', 'work 插件启停循环：停用摘通道，重新启用�
     const list2 = await ipc.invoke('work:matters:list', {})
     assertEq(list2.data.length, 1, '重新启用后数据仍在（同一个插件库）')
     assertEq(list2.data[0].name, '合同', '内容一致')
+
+    // 4.0.1 P1：停用/退出时必须中止 work 域在途的模型调用（不看源码只看行为无法在纯 Node 里造在途流，
+    // 这里钉住接线：stopBackgroundWork 调 reminder.stop + 四个 manager 的 abortAll，且 cleanup/deactivate 都真实调用）。
+    const workMainSrc = readFileSync(join(repoRoot, 'plugins', 'work', 'main.ts'), 'utf-8')
+    const stopCalls = (workMainSrc.match(/stopBackgroundWork\(/g) || []).length
+    assert(stopCalls >= 3, '定义 + cleanup + deactivate 三处调用 stopBackgroundWork（实际 ' + stopCalls + '）')
+    for (const m of [
+      'qa.abortAll',
+      'tools.abortAll',
+      'reports.abortAll',
+      'openclawSummary.abortAll'
+    ]) {
+      assert(workMainSrc.includes(m), '停用中止在途：' + m)
+    }
+    // 只数函数体字符串挡不住「函数还在但调用点退回 reminder.stop()」——再钉住两处调用上下文
+    assert(
+      /return \(\) => \{\s*stopBackgroundWork\(work\)/.test(workMainSrc),
+      'cleanup 必须调 stopBackgroundWork'
+    )
+    assert(
+      /if \(runtime\) stopBackgroundWork\(runtime\)/.test(workMainSrc),
+      'deactivate 兜底路径必须调 stopBackgroundWork'
+    )
   } finally {
     await host.disposeAll()
     await pluginDb.disposeAll()
