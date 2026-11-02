@@ -24,7 +24,7 @@ import { ObsidianManager } from './obsidian/obsidianManager'
 import { EMBEDDING_PRESETS, OFFICIAL_MODEL_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv, toPosix, GATEWAY_TOKEN } from './openClawPaths'
 import { shouldSpeakInApp } from './fish/voice/core/openclawTts'
-import { readFileSync, existsSync, readdirSync, writeFileSync, renameSync } from 'fs'
+import { readFileSync, existsSync, readdirSync } from 'fs'
 import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process'
 
 // ── 4.0 插件内核（Phase 0/1）──────────────────────────────────────────────────
@@ -39,7 +39,6 @@ import {
   type LegacyDbApi,
   type NotificationsApi,
   type OpenClawApi,
-  type PluginKvApi,
   type PluginStatus,
   type ServiceFactories
 } from './kernel'
@@ -79,6 +78,7 @@ import { registerCharacter } from './character/wiring'
 import { buildCharacterDeps } from './services/characterHost'
 import { PluginSecretStore } from './services/pluginSecrets'
 import { CharacterKvStore } from './services/characterKv'
+import { createPluginKvService } from './services/pluginKv'
 import type { CharacterManager } from './character/manager'
 import { AppError, ERROR_CODES } from './services/errors'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
@@ -406,57 +406,6 @@ let pluginDbService: ReturnType<typeof createPluginDbService> | null = null
 
 // ── 服务适配器（Phase 1 WP1）：窄接口，不把 manager 递给插件 ─────────────────
 
-/**
- * 插件 KV：宿主持久化，按插件命名空间隔离（WP4 C4.1）。
- *
- * 与 plugin 的 db.metaGet/metaSet 的区别——那是插件自己库里的 app_meta；
- * 这里是宿主统一持久化的偏好（插件换库也不会丢），键前缀 plugin:<id>:。
- */
-function createPluginKvService(dataDir: string, pluginId: string): PluginKvApi {
-  const fileOf = () => join(dataDir, 'plugin-kv.json')
-  const prefix = `plugin:${pluginId}:`
-  let cache: Record<string, string> | null = null
-
-  const load = (): Record<string, string> => {
-    if (cache) return cache
-    try {
-      const raw = readFileSync(fileOf(), 'utf8')
-      const parsed = JSON.parse(raw) as unknown
-      cache = parsed && typeof parsed === 'object' ? (parsed as Record<string, string>) : {}
-    } catch {
-      cache = {}
-    }
-    return cache
-  }
-
-  const flush = (map: Record<string, string>): void => {
-    cache = map
-    const tmp = fileOf() + '.tmp'
-    writeFileSync(tmp, JSON.stringify(map, null, 2), 'utf8')
-    renameSync(tmp, fileOf())
-  }
-
-  return {
-    async get(key) {
-      const map = load()
-      const value = map[prefix + key]
-      return typeof value === 'string' ? value : null
-    },
-    async set(key, value) {
-      const map = { ...load() }
-      if (value === null) delete map[prefix + key]
-      else map[prefix + key] = value
-      flush(map)
-    },
-    async keys() {
-      const map = load()
-      return Object.keys(map)
-        .filter((k) => k.startsWith(prefix))
-        .map((k) => k.slice(prefix.length))
-        .sort()
-    }
-  }
-}
 
 /** 宿主副作用（过渡服务，Phase 4 拆细）：通知 / 渠道外发 / 旧库只读 */
 function createHostOpsService(): HostOpsApi {
