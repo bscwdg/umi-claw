@@ -261,7 +261,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 | --- | --- |
 | `join(..., 'electron','main', ...)` | 75 处 / 24 文件（域内 26 / 10，**全部是 marketing**，work 0） |
 | `bundleEntry('electron/main/...')` | 158 处 / 30 文件 |
-| 代码行含 `electron/main`（合计） | 177 处 / 31 文件 |
+| 代码行含 `electron/main`（合计） | 181 行 / 31 文件（去掉注释行后） |
 | 域内（`work`\|`marketing`）全写法 | 93 处 / 22 文件 |
 
 所以流程是：**搬前先 `Select-String -Path test\*.mjs -Pattern "<被搬目录>"` 清出清单 → 改成 `anySrc([...])`（返回仓库相对路径，按顺序取第一个存在的候选；独立提交、绿了再搬）**。

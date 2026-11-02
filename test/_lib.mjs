@@ -4,7 +4,7 @@
 // esbuild bundle（把 TS 真源码打成临时 ESM 供纯 Node import）、结果落盘。
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -26,10 +26,8 @@ try {
 }
 
 /**
- * 域源码定位（D3）：Phase 2/3 装箱时域代码会从 `electron/main/**` 搬到
- * `plugins/<id>/main/**`。所有断言源码的验收脚本都走这里，搬家时**不用改脚本**。
- *
- * 规则：装箱后路径存在就用新路径，否则回落到旧路径。
+ * 页面源码定位：`src/views/<rel>` ↔ `plugins/<id>/ui/<rel>`。
+ * 返回**仓库相对路径**（与 `bundleEntry()` 的入参约定一致）。
  */
 export function domainUiSrc(pluginId, relPath) {
   const migrated = join('plugins', pluginId, 'ui', relPath)
@@ -37,10 +35,46 @@ export function domainUiSrc(pluginId, relPath) {
   return join('src', 'views', relPath)
 }
 
+/**
+ * 域源码（main 侧）定位（D3）：`electron/main/<rel>` ↔ `plugins/<id>/main/<rel>`。
+ *
+ * 两个硬限制：
+ *   1. 表达不了「新位置在一棵树、旧位置在另一棵树」（那两个候选里只有第二个是自由的）；
+ *   2. 返回**绝对路径**，而 `bundleEntry()` 要仓库相对路径——直接传会拼成 `D:\repo\D:\repo\...`。
+ *
+ * 需要多候选回落，或需要仓库相对路径时，用 `anySrc()`。
+ */
 export function domainSrc(pluginId, relPath) {
   const migrated = join(repoRoot, 'plugins', pluginId, 'main', relPath)
   if (existsSync(migrated)) return migrated
   return join(repoRoot, 'electron', 'main', relPath)
+}
+
+/**
+ * 多候选源码定位（PLAN-4.1-DEBT G7）：按顺序返回**第一个存在的仓库相对路径**。
+ *
+ * 为什么要有它：
+ *   - `domainSrc()` 只能表达 `plugins/<id>/main/<rel>` ↔ `electron/main/<rel>` 这一对，
+ *     表达不了「新位置在 services/、旧位置在某域」这种一对多回落；
+ *   - `bundleEntry()` / `join(repoRoot, ...)` 收的是**仓库相对路径**，而 `domainSrc()` 返回绝对路径。
+ *
+ * 一个候选都不存在时返回第一个（让 esbuild/readFileSync 报出真实缺失路径，而不是静默取错）。
+ */
+export function anySrc(candidates) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    throw new Error('anySrc 需要非空候选数组')
+  }
+  for (const rel of candidates) {
+    const abs = join(repoRoot, rel)
+    // 只认文件：目录同名时 existsSync 也会为 true，会把「候选其实不存在」掩盖成
+    // esbuild 的 "is a directory"，而不是回落到下一个候选。
+    try {
+      if (statSync(abs).isFile()) return rel
+    } catch {
+      /* 不存在就试下一个 */
+    }
+  }
+  return candidates[0]
 }
 
 /** 便携 Node（data/runtime/node-<platform>-<arch>）优先，缺失时回退当前 node */

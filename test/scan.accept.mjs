@@ -39,6 +39,7 @@ import {
   assert,
   assertDeepEq,
   assertEq,
+  anySrc,
   bundleEntry,
   printResult,
   resolveNodePath,
@@ -70,7 +71,7 @@ const knowledgePath = bundleEntry('electron/main/marketing/knowledgeManager.ts',
 })
 const projectPath = bundleEntry('electron/main/marketing/projectManager.ts', 'scan-project-manager.mjs')
 const databasePath = bundleEntry('electron/main/database/database.ts', 'scan-database.mjs')
-const assetsPath = bundleEntry('electron/main/marketing/parsers/pdfjsAssets.ts', 'scan-pdfjs-assets.mjs')
+const assetsPath = bundleEntry(anySrc(['electron/main/services/knowledge/parsers/pdfjsAssets.ts', 'electron/main/marketing/parsers/pdfjsAssets.ts']), 'scan-pdfjs-assets.mjs')
 
 const scanMod = await import(pathToFileURL(scanPath).href)
 const gwMod = await import(pathToFileURL(gatewayPath).href)
@@ -706,7 +707,7 @@ const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 
     }
     assert(/资料图/.test(marketIpcSrc), 'picker 应把资料图单列并提示需 AI 识别')
     // 05a 联动：scanned-pdf 不落行现状不变
-    assert(/reason:\s*'scanned-pdf'/.test(readFileSync(join(repoRoot, 'electron', 'main', 'marketing', 'parsers', 'documentParsers.ts'), 'utf-8')), '05a 扫描件检测保持')
+    assert(/reason:\s*'scanned-pdf'/.test(readFileSync(join(repoRoot, anySrc(['electron/main/services/knowledge/parsers/documentParsers.ts', 'electron/main/marketing/parsers/documentParsers.ts'])), 'utf-8')), '05a 扫描件检测保持')
     assert(!/commitRecognized/.test(knowledgeSrc.match(/async importKnowledge[\s\S]*?\n  \}/)?.[0] ?? ''), 'importKnowledge 未被 05b 改动（不落行现状不变）')
 
     // store 契约
