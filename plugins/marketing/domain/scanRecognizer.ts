@@ -48,9 +48,11 @@ import { AppError, ERROR_CODES, errorCodeOf } from '../../../electron/main/servi
 import {
   GATEWAY_ABORT_REASON,
   imageDataPart,
-  textPart,
-  type GatewayChatMessage,
-  type GatewayStreamHandle
+  textPart
+} from '../../../electron/main/services/gateway/parts'
+import type {
+  GatewayChatMessage,
+  GatewayStreamHandle
 } from '../../../electron/main/gatewayClient'
 import { loadPdfjsModule, asPdfjsDirUrl, type PdfjsAssets } from '../../../electron/main/services/knowledge'
 

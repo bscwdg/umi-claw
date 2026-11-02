@@ -49,12 +49,12 @@ import {
   type ContentType,
   type BusinessLine
 } from './shootingScript'
-import {
-  textPart,
-  type GatewayClient,
-  type GatewayChatMessage,
-  type GatewayStreamHandle,
-  type GatewayStreamResult
+import { textPart } from '../../../electron/main/services/gateway/parts'
+import type {
+  GatewayClient,
+  GatewayChatMessage,
+  GatewayStreamHandle,
+  GatewayStreamResult
 } from '../../../electron/main/gatewayClient'
 
 // ── 常量（§四 列值与产品口径） ───────────────────────────────────────────────

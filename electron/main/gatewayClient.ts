@@ -24,6 +24,17 @@
 // （见 ipc/gateway.ts）；业务流通道（qa / tools / reports）归各自 Commit，本模块不预建。
 
 import { AppError, ERROR_CODES, errorCodeOf, type ErrorEnvelope } from './services/errors'
+import {
+  GATEWAY_ABORT_REASON,
+  imageDataPart,
+  imageUrlPart,
+  textPart,
+  type GatewayContentPart
+} from './services/gateway/parts'
+
+// 兼容旧引用面：既有调用方仍从 gatewayClient 取这些纯工具（4.1 WP6-a 起实体在 services/gateway/parts）
+export { GATEWAY_ABORT_REASON, imageDataPart, imageUrlPart, textPart }
+export type { GatewayContentPart }
 
 // ── 端点与事件名（§六 已实测事实） ────────────────────────────────────────────
 
@@ -82,7 +93,6 @@ export const CONVERSATION_USER_PREFIX = 'conv:'
 export const CONVERSATION_KEY_PATTERN = /^conv:[a-z0-9][a-z0-9:_-]*$/
 
 /** abort（用户点「停止生成」）在 `details.reason` 上的判别值 —— §五 无专用码，见汇报「待拍板」 */
-export const GATEWAY_ABORT_REASON = 'aborted'
 
 /** 超时/连接失败的 `details.reason` 判别值（前端按 code + reason 分支，不解析 message） */
 export const GATEWAY_TIMEOUT_REASONS = {
@@ -118,10 +128,6 @@ export const GATEWAY_DEFAULT_TIMEOUTS = {
 } as const
 
 // ── 类型：请求体 ──────────────────────────────────────────────────────────────
-
-export type GatewayContentPart =
-  | { type: 'text'; text: string }
-  | { type: 'image_url'; image_url: { url: string } }
 
 export interface GatewayChatMessage {
   role: 'system' | 'user' | 'assistant'
@@ -366,41 +372,7 @@ export function selectGatewayModel(
   return normalizeGatewayModel(models.multimodal, 'models.multimodal')
 }
 
-// ── 纯函数：消息部件 ──────────────────────────────────────────────────────────
-
-export function textPart(text: string): GatewayContentPart {
-  return { type: 'text', text: String(text ?? '') }
-}
-
-/**
- * 图片部件（data URI）。
- *
- * 为什么默认走 data URI：OpenClaw 的 `gateway.http.endpoints.chatCompletions.images.allowUrl`
- * **默认 false**（「data URIs remain supported」），传 http(s) 链接会被网关拒绝；
- * 05b 的扫描件识别必须用 base64 内联。
- */
-export function imageDataPart(dataUri: string): GatewayContentPart {
-  const url = typeof dataUri === 'string' ? dataUri.trim() : ''
-  if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(url)) {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, '图片必须是 data:image/*;base64,... 形式的 data URI', {
-      field: 'image_url.url',
-      reason: 'invalid-image-data-uri'
-    })
-  }
-  return { type: 'image_url', image_url: { url } }
-}
-
-/** 图片部件（外链）。默认网关 **不允许** 服务端拉取 URL，故这里只做形态校验 + 由调用方自担风险 */
-export function imageUrlPart(url: string): GatewayContentPart {
-  const value = typeof url === 'string' ? url.trim() : ''
-  if (!/^https?:\/\//i.test(value)) {
-    throw new AppError(ERROR_CODES.VALIDATION_ERROR, '图片 URL 必须是 http(s) 地址', {
-      field: 'image_url.url',
-      reason: 'invalid-image-url'
-    })
-  }
-  return { type: 'image_url', image_url: { url: value } }
-}
+// ── 纯函数：消息部件已下沉到 services/gateway/parts（4.1 WP6-a） ─────────────
 
 /** 该消息是否含图片部件（模型选择规则的输入） */
 export function messageHasImages(message: GatewayChatMessage): boolean {
