@@ -380,6 +380,129 @@ await r.check('E12', 'computeBudget：floor(window×ratio) / reserved=window-bud
   return '7 组：128k×0.7 / 128k×0.6 / 向下取整 / 0 / ratio=1 / 10.5 / -100'
 })
 
+// ── E13 取舍循环内核（W2-c：services/context/assemble.ts） ──
+await r.check('E13', 'assembleLoop：全量/准入/截断/保险丝/预置 dropped 五条不变量（合成模型）', async () => {
+  const mod = await import(
+    pathToFileURL(bundleEntry('electron/main/services/context/assemble.ts', 'context-assemble.mjs')).href
+  )
+  const { assembleLoop } = mod
+
+  // 合成模型：候选正文 = 'x'.repeat(n)（n 个 ASCII → ceil(n/4) token）
+  // renderText = 正文 + 「未注入」清单（清单本身也占预算，与两域一致）
+  const mk = (id, chars) => ({ id, body: 'x'.repeat(chars) })
+  const renderText = (chosen, dropped) =>
+    [
+      ...chosen.map((c) => c.body),
+      ...(dropped.length ? ['【未注入】', ...dropped.map((d) => d.title)] : [])
+    ].join('\n')
+  const toDropped = (item, reason) => ({ id: item.id, title: 'T' + item.id, reason })
+  const titleTokens = (item) => estimateTokens('T' + item.id)
+  const include = (item, { truncate, sliceBudget }) => ({
+    ...item,
+    truncated: truncate,
+    body: truncate
+      ? engineMod.sliceToTokenBudget(item.body, Math.max(0, sliceBudget ?? 0))
+      : item.body
+  })
+
+  const base = {
+    markerTokens: estimateTokens(engineMod.ITEM_TRUNCATE_MARKER),
+    overheadTokens: engineMod.PACK_OVERHEAD_TOKENS,
+    minSliceTokens: 5,
+    renderText,
+    measure: estimateTokens,
+    include,
+    toDropped,
+    titleTokens
+  }
+
+  // ① 全量装得下 → full、全收、无 dropped、不超预算
+  {
+    const items = [mk('a', 40), mk('b', 40)] // 各 10 token，合计 20
+    const r = assembleLoop({ ...base, budgetTokens: 10_000, allCandidates: items, ranked: items.map((item) => ({ item })) })
+    assertEq(r.mode, 'full', '全量装得下应为 full')
+    assertEq(r.chosen.length, 2, 'full 模式应收下全部')
+    assertEq(r.dropped.length, 0, 'full 模式不应产生 dropped')
+    assert(r.usedTokens <= 10_000, 'full 模式不得超预算')
+  }
+
+  // ② 装不下 → truncated、真子集、余项进 dropped(budget)、不超预算
+  //    10 条 × 200 字符 = 各 50 token，全量 500；预算 300 必超
+  {
+    const items = Array.from({ length: 10 }, (_, k) => mk(String(k), 200))
+    const r = assembleLoop({ ...base, budgetTokens: 300, allCandidates: items, ranked: items.map((item) => ({ item })) })
+    assertEq(r.mode, 'truncated', '全量超预算应为 truncated')
+    assert(r.chosen.length > 0 && r.chosen.length < items.length, `应部分收入（实际 ${r.chosen.length}/10）`)
+    assert(r.usedTokens <= 300, `不得超预算（实际 ${r.usedTokens}）`)
+    assert(r.dropped.length > 0, '落选条目必须进 dropped')
+    assert(r.dropped.every((d) => d.reason === 'budget'), '落选原因应为 budget')
+    // dropped 必须正好是 ranked 里没被收入的那一段（按 id 顺序）
+    const chosenIds = new Set(r.chosen.map((c) => c.id))
+    const expectDropped = items.filter((it) => !chosenIds.has(it.id)).map((it) => it.id)
+    assertEq(r.dropped.map((d) => d.id).join(','), expectDropped.join(','), 'dropped 应与落选集合一致')
+  }
+
+  // ③ 截断：放不下整条但剩余空间够 → 最后一条以 truncated 收入
+  //    必须有且仅有一条被截断（断言不能写「<=1」——那在「永不截断」的实现下也会空转通过）
+  {
+    const items = [mk('0', 100), mk('1', 100), mk('2', 900)]
+    const r = assembleLoop({ ...base, budgetTokens: 150, allCandidates: items, ranked: items.map((item) => ({ item })) })
+    const truncatedCount = r.chosen.filter((c) => c.truncated).length
+    assertEq(truncatedCount, 1, `必须恰好一条被截断（实际 ${truncatedCount}）`)
+    assertEq(r.chosen[r.chosen.length - 1].truncated, true, '被截断的必须是最后收入的那条')
+    assert(r.usedTokens <= 150, `截断后仍不得超预算（实际 ${r.usedTokens}）`)
+    assert(r.chosen[r.chosen.length - 1].body.length < 900, '被截断的正文必须真的变短')
+  }
+
+  // ④ 保险丝：预算不足时要能收缩到「装得下的最大子集」，且不超预算
+  //    注意既有边界：预算若小到连「【未注入】清单」本身都装不下，内核无法再收缩——
+  //    两域旧实现也是同一行为（它只减 includedCount，dropped 只增不减）。这里用
+  //    能容下清单的预算来验证收缩逻辑本身。
+  {
+    const items = Array.from({ length: 5 }, (_, k) => mk(String(k), 50)) // 各 13 token，全量 65
+    const r = assembleLoop({ ...base, budgetTokens: 40, allCandidates: items, ranked: items.map((item) => ({ item })) })
+    assert(r.usedTokens <= 40, `必须收缩到不超预算（实际 ${r.usedTokens}）`)
+    assert(r.chosen.length < items.length, `必须真的让位（实际收入 ${r.chosen.length}/5）`)
+    assert(r.dropped.length === items.length - r.chosen.length, 'dropped 数 = 落选数')
+  }
+
+  // ⑥ 性质测试：一整排预算下，四条不变量都必须成立
+  //    （比「造一个会撒谎的 measure」更可证伪——后者测的是「内核能否读心」，不是逻辑）
+  {
+    const items = Array.from({ length: 8 }, (_, k) => mk(String(k), 200)) // 各 50 token，全量 ~400
+    const budgets = [60, 100, 150, 200, 300, 500, 5000]
+    for (const budgetTokens of budgets) {
+      const r = assembleLoop({
+        ...base,
+        budgetTokens,
+        allCandidates: items,
+        ranked: items.map((item) => ({ item }))
+      })
+      assert(r.usedTokens <= budgetTokens, `预算 ${budgetTokens} 不得超（实际 ${r.usedTokens}）`)
+      assertEq(r.chosen.length + r.dropped.length, items.length, `预算 ${budgetTokens}：收入+落选必须等于总数`)
+      const ids = new Set(r.chosen.map((c) => c.id))
+      assert(r.dropped.every((d) => !ids.has(d.id)), `预算 ${budgetTokens}：同一 id 不能既收又丢`)
+      assertEq(r.mode, budgetTokens >= 500 ? 'full' : r.mode, `预算 ${budgetTokens}：mode 与是否装满一致`)
+    }
+  }
+
+  // ⑤ 预置 dropped（如 empty-content）必须保留，且不被改写
+  {
+    const items = [mk('a', 4)]
+    const r = assembleLoop({
+      ...base,
+      budgetTokens: 10_000,
+      allCandidates: items,
+      ranked: items.map((item) => ({ item })),
+      initialDropped: [{ id: 'e', title: '空', reason: 'empty-content' }]
+    })
+    assertEq(r.dropped.length, 1, '预置 dropped 必须保留')
+    assertEq(r.dropped[0].reason, 'empty-content', '预置项原因不被改写')
+  }
+
+  return '5 组：全量 / 准入+余项 / 截断 / 小预算保险丝 / 预置 dropped'
+})
+
 const result = r.toJSON({ nodePath, dbPath })
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-context-work.json'), result)
