@@ -215,55 +215,111 @@ npm run typecheck:node; npm run typecheck:web
 
 这是 `§18.3` 里最贵的一笔账，也是「第三个域进来就得写第三份」的根。
 
-**不要合并两个 800 行文件。** 实测两域的通用面几乎一致：
+**不要合并两个 700 行文件。** 实测两域的通用面高度重合，但**骨架不同**：
 
-| 项 | work | marketing | 结论 |
-| --- | --- | --- | --- |
-| `CONTEXT_BUDGET_RATIO` | 0.7 | 0.6 | **唯一实质差异** → 做成参数 |
-| `estimateTokens` | 有 | 有 | 同义 |
-| `sliceToTokenBudget` | 有 | 有 | 同义 |
-| `ITEM_TRUNCATE_MARKER` | 有 | 有 | 逐字相同 |
-| `DROPPED_TITLES_SHOWN` / `DROPPED_TITLE_MAX_CHARS` | 3 / 20 | 3 / 20 | 相同 |
-| `PACK_OVERHEAD_TOKENS` | 48 | 64 | 差异（口径不同，保留为参数） |
-| `PackMode` / `RetrievalMode` / `DroppedReason` | 有 | 有 | 同义 |
-| 喂什么料 | profile/matters/todos/records | business/watchlist/customer/platform | **差异化在这里** |
-
-#### 拆分方案：内核 + section provider
-
-```
-electron/main/services/context/
-├── budget.ts       预算分配 / 裁剪 / dropped 记账 / pack 文本渲染
-├── tokens.ts       estimateTokens / sliceToTokenBudget（两域逐字相同，直搬）
-├── limits.ts       共享常量（窗口上下界 / 单条最小占用 / 截断标记 / 标题长度）
-├── pack.ts         共享小工具（shortTitle：dropped 标题截断；不含预算逻辑）
-└── engine.ts       ContextEngine 骨架：调 provider 收 section → 组装 → 预算内截断
-
-plugins/<id>/context/
-└── sections.ts     域侧只声明「我有哪几段料、优先级、单段上限」
-```
-
-knowledge 同理：解析入库 / 去重 / 检索 / 原件落盘 → 内核；域侧只给 schema + 字段投影。
-
-#### 提交与验收
-
-| 提交 | 内容 | 守它的测试（必须全绿且**断言不改**） |
+| 项 | work | marketing |
 | --- | --- | --- |
-| C2.1 | context 内核（先以 marketing 776 行的通用面做基准） | `accept:context:marketing`（22 条） |
-| C2.2 | work 切内核，删旧实现 | `accept:context:work`（12 条）+ `accept:qatool` + `accept:report` |
-| C2.3 | knowledge 内核（以 marketing 807 行做基准） | `accept:knowledge:marketing`（23 条） |
-| C2.4 | work knowledge 切内核 | `accept:knowledge:work`（10 条）+ `accept:record` + `accept:today` |
+| 包结构 | 7 段：①任务指令（永不裁）②画像 ③事项 ④待办 ⑤confirmed 记录 ⑥知识 ⑦对话历史（独立预算，进文本） | 16 个顶层字段，核心键 business / knowledge / watchlist / customer / platform / task |
+| 预算测算 | `measureWith()` **只拼知识条目正文 + dropped 标题**再加 `PACK_OVERHEAD_TOKENS`；第 2–5 段不算进账 | `measure()` 渲染**整个 probe pack**（含 `probeMode`） |
+| dropped 原因 | 类型里有 `budget`/`empty-content`/`cut-order`，但 **`cut-order` 从未被 push**（死代码） | `budget`/`empty-content` |
 
-**出口判据**：67 条断言（12 + 22 + 10 + 23）一条不改、全绿；两域 `ContextPack` 的 JSON 结构逐字段相等。
+**两个必须知道的事实**（本轮审查实测，写进来免得下一个人重踩）：
 
-**加一条防回归**：新增 `test/context.parity.accept.mjs`，用同一组 fixture 同时喂两个域的 section provider，断言 `ContextPack` 的 key 集合、字段类型、`dropped[]` 结构一致。**这条测试的价值在于：将来加第三个域时，它会立刻告诉你哪一段没对齐。**
+1. work 的 `measureWith` 是「代餐测量」：知识块当全包计费，固定五段的占用不在账上；实跑 E4 是 `used=1481 / budget=1540`（余量 59 token），站住是数字凑巧。若无超长条目、循环走完不 break，`usedTokens` 可以真的超预算。
+2. `cut-order` 只有类型定义、没有实现；§6.2 写的「6→5→4→3→2 裁剪」也不存在（2–5 段从不裁）。
 
-**风险与对策**：
+#### 拆分方案：结构化 section + 内核驱动循环
 
-- 单独分支 `debt/wp2`，每提交跑**全量** accept（context 是 today/report/qa 的上游，只跑相关套件会漏）。
-- 任何一条断言需要改 → 停下来确认是「行为变化」还是「实现偏差」。**要改断言必须单独一个提交，并在 PROGRESS 里写明为什么**。
-- `§17` 硬规则 4 的判据是「同名能力第二次出现即下沉」——这一包就是兑现，不是重构冲动。
+**关键修正（v2）**：内核不能只产出 `text`。域的 `ContextPack` 需要**逐条**结果（`content` 是否被切、`truncated`、`estimatedTokens`、`matchedQuery`、`knowledgeIncluded`、`truncatedItems`、`businessOverBudget`）。所以 section 必须返回结构，不是字符串。
 
----
+```ts
+// services/context/types.ts
+export interface SectionContext {
+  /** 当前预算（渲染后可被内核重测；不要假设它单调） */
+  budgetTokens: number
+  mode: PackMode
+  /** 当前已产生的 dropped（供「未注入清单」段渲染；这是循环依赖的唯一解法） */
+  dropped: DroppedEntry[]
+}
+
+export interface SectionResult {
+  /** 本段渲染文本（可为空串） */
+  text: string
+  /** 逐条结果：域侧组装 ContextPack 用 */
+  items?: Array<{ id: string; text: string; tokens: number; truncated?: boolean; matched?: boolean }>
+  /** 本段产生的 dropped（含 empty-content） */
+  drops?: DroppedEntry[]
+  /** 本段的固定开销（标题/分隔符），内核计费用 */
+  fixedTokens?: number
+}
+
+export interface Section {
+  key: string
+  /** 渲染顺序（文本拼接顺序） */
+  order: number
+  /** 截断优先级：数字小的先保；与 order 分离 */
+  priority: number
+  /** 永不裁（任务指令 / 画像 / business）；超预算时让位给低优先级段 */
+  fixed?: boolean
+  /** 单段上限（防一段吃光预算）；缺省不限 */
+  maxTokens?: number
+  render(ctx: SectionContext): SectionResult
+}
+```
+
+```ts
+// services/context/budget.ts —— 只有公式，不做分配
+export function computeBudget(windowTokens: number, ratio: number): { budgetTokens: number; reservedTokens: number }
+// budgetTokens = Math.floor(window * ratio)；reserved = window - budgetTokens
+```
+
+```ts
+// services/context/assemble.ts —— 纯函数，驱动循环 + 记账
+export interface AssembleResult {
+  text: string
+  usedTokens: number
+  budgetTokens: number
+  fixedTokens: number
+  fixedOverBudget: boolean
+  mode: PackMode
+  sections: Array<{ key: string; text: string; items?: unknown[]; dropped: DroppedEntry[] }>
+  dropped: DroppedEntry[]   // 已按「标题升序 + 同标题按插入序」去重排序
+}
+export function assemble(opts: { windowTokens; ratio; overheadTokens; sections; measure: (text: string) => number }): AssembleResult
+```
+
+**不变量**（写死，验收断言）：
+- `usedTokens ≤ budgetTokens` **只对「进预算的段」成立**；work 的对话历史段是内核外独立预算，不计入这条（域侧另记）。
+- `dropped` 不静默丢；顺序 = 标题升序，同标题按插入序（tie-break 写进契约）。
+- `mode` 由「全量渲染是否超预算」决定，不由逐段累加决定。
+
+#### 分步执行（每步单独提交、每步可回滚）
+
+> 编号与旧表冲突已重编：本节用 **W2-a … W2-f**，不再复用 C2.x。
+
+| 步 | 内容 | 出口判据（可机械验证） |
+| --- | --- | --- |
+| W2-a | 修测试产物重名：`context.work` / `context.marketing` 写同一个 `accept-result-context.json`，knowledge 两份同样重名 → 改成按套件名落盘 | 四个文件名互不相同；跑四套后四份 json 同时存在 |
+| W2-b | `types.ts` + `budget.ts`（纯函数、无调用方） | 新增断言进现有 `context.work.accept.mjs`（不新建文件，避免 accept 清单变动）：公式、边界（0 / 负数 / 非整数窗口） |
+| W2-c | `assemble.ts`（纯函数、无调用方） | 在同一次测试进程里同时加载旧引擎与新 assemble：用 marketing 真 DB 行构建两遍，**归一化 uuid/时间后**比对 `text`/`usedTokens`/`dropped` 逐字节相等 |
+| W2-d | marketing 切 `assemble`（旧实现**先保留**，只切调用点） | `accept:context:marketing` **23 条**断言不改全绿；`ContextPack` 16 个顶层字段与 `budget` 子字段逐字段相等（归一化后快照断言） |
+| W2-e | work 切 `assemble`；先补 work 侧等价闸（条目级 `knowledgeIncluded` 快照） | `accept:context:work` 12 条 + `qatool`/`report`/`today` 全绿；**条目级等价断言先红后绿**（证明它抓得住） |
+| W2-f | 两域旧 `buildPack` 删除 | 全量 31 套；`git diff --stat` 留数（不写「行数下降」这种不可判定的话） |
+
+#### 需要拍板的 3 个行为变化（不能藏在「重构」里）
+
+| # | 问题 | 选项 |
+| --- | --- | --- |
+| P1 | work 的 `measureWith` 只测知识块；统一成整包测量后，同一窗口会**少收几条知识** | (a) 接受变化，单独提交并在 CHANGELOG 说明；(b) 给内核加「测量范围」策略，但那会引入域分支，违反参数化约束 |
+| P2 | 如果内核按优先级真正截断 2–5 段（现在从不裁），work 第一次会**真的删记录/待办** | (a) 本包只做「不裁固定段」的等价重构，裁剪另立工作包；(b) 一并做，按 G5 单独提交 |
+| P3 | work 第 7 段对话历史「独立预算但进文本」 | 内核只负责进预算的段；历史由域侧拼接并另行记 `usedTokens`（保持现状） |
+
+**默认建议**：P1 选 (a)，P2 选 (a)，P3 保持现状——这样 WP2 仍是纯重构，行为变化留到 WP5。
+
+#### 出口判据（整包）
+
+`accept:context:work` 12 条 + `accept:context:marketing` 23 条 + `accept:knowledge:*` 33 条，**断言一条不改**全绿（合计 68 条）；
+两域 `ContextPack` 归一化后逐字段相等；全量 31 套 / 582 断言。
 
 ### WP3 · 边界硬化 + 域代码搬迁（4–5 人天）
 
