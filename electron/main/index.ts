@@ -29,21 +29,11 @@ import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process'
 
 // ── 4.0 插件内核（Phase 0/1）──────────────────────────────────────────────────
 import {
-  availableServices,
-  createJsonStateStore,
-  createPluginConfigStore,
-  discoverPlugins,
-  PluginHost,
-  PluginRegistry,
   type HostOpsApi,
-  type LegacyDbApi,
   type NotificationsApi,
-  type OpenClawApi,
-  type PluginStatus,
-  type ServiceFactories
+  type OpenClawApi
 } from './kernel'
-import { PLUGIN_MAIN_ENTRIES } from './kernel/plugins.main.generated'
-import { createPluginDbService } from './services/pluginDb'
+import { createPluginRuntime, type PluginRuntime } from './services/pluginRuntime'
 
 // ── 2.0 营销域 imports（合并自 release/2.0）────────────────────────────────────
 // 与 work 域同名的模块内标识符加 `Marketing*` / `*Lib` 别名区分：
@@ -76,10 +66,8 @@ import {
 } from './fish/voice'
 import { registerCharacter } from './character/wiring'
 import { buildCharacterDeps } from './services/characterHost'
-import { PluginSecretStore } from './services/pluginSecrets'
 import { CharacterKvStore } from './services/characterKv'
 import { probeNodeWritable } from './services/runtimeProbe'
-import { createPluginKvService } from './services/pluginKv'
 import type { CharacterManager } from './character/manager'
 import { AppError, ERROR_CODES } from './services/errors'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
@@ -302,13 +290,13 @@ function createWorkGatewayClient(): GatewayClient {
         })
       }
       // 营销域未启用时不该悄悄建库：resolver 只在插件启用时工作（对抗 C2）
-      if (!pluginRegistry?.isEnabled('marketing')) {
+      if (!pluginRuntime?.isEnabled('marketing')) {
         throw new AppError(ERROR_CODES.OPENCLAW_NOT_READY, '营销域插件未启用：无法派生 Project 会话键')
       }
-      if (!pluginDbService) {
+      const db = pluginRuntime.pluginDbFor('marketing')
+      if (!db) {
         throw new AppError(ERROR_CODES.OPENCLAW_NOT_READY, '插件库服务尚未初始化（应在 app.whenReady 之后取用）')
       }
-      const db = pluginDbService.forPlugin({ id: 'marketing', dir: join(resourcesRoot(), 'plugins', 'marketing') })
       const project = await db.request<{ conversation_key?: string } | null>('projects.get', { pk: projectId })
       const conversationKey = project?.conversation_key
       if (!conversationKey) {
@@ -405,10 +393,7 @@ function createWorkDatabase(): DatabaseClient {
 // 只加载构建期登记过的插件（plugins.main.generated.ts），清单从 resources/plugins/<id>/plugin.json
 // 读；启停状态存 <dataDir>/plugins-state.json。插件失败只禁用它自己，宿主继续跑。
 
-let pluginHost: PluginHost | null = null
-let pluginRegistry: PluginRegistry | null = null
-let pluginConfigStore: ReturnType<typeof createPluginConfigStore> | null = null
-let pluginDbService: ReturnType<typeof createPluginDbService> | null = null
+let pluginRuntime: PluginRuntime | null = null
 
 // ── 服务适配器（Phase 1 WP1）：窄接口，不把 manager 递给插件 ─────────────────
 
@@ -464,195 +449,53 @@ function createOpenClawService(): OpenClawApi {
   }
 }
 
-function pluginStatuses(): PluginStatus[] {
-  return pluginHost?.statuses() ?? []
-}
-
-function broadcastPluginStatus(): void {
-  const statuses = pluginStatuses()
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) win.webContents.send('plugin:changed', statuses)
-  }
-}
-
 async function initPlugins(): Promise<void> {
-  try {
-    const dataDir = configManager.getDataDir()
-    const stateStore = createJsonStateStore(join(dataDir, 'plugins-state.json'))
-
-    // ── 服务层（Phase 1 WP1）：插件只能经 ctx.services 拿到这些窄接口 ──────────
-    pluginConfigStore = createPluginConfigStore(join(dataDir, 'plugin-config.json'))
-    pluginDbService = createPluginDbService({
-      dataDir,
-      nodePath: configManager.getNodePath(),
-      workerScriptPath: join(resourcesRoot(), 'database', 'db-worker.mjs'),
-      logger: (line) => console.log(line)
-    })
-
-    const serviceFactories: ServiceFactories = {
-      config: (info) => pluginConfigStore!.serviceFor(info.id),
-      // 每个插件一个库：work 的数据落 plugins/work/data.db；
-      // 宿主 work.db 只剩 voice 的 app_meta（见 whenReady 的语音段）。
-      db: (info) => pluginDbService!.forPlugin(info),
-      hostOps: () => createHostOpsService(),
-      // 插件密钥（PLAN-4.0 §8.2）：safeStorage 按 plugin:<id>:<key> 隔离
-      secrets: (info) =>
-        new PluginSecretStore(join(dataDir, 'plugins', info.id, 'secrets.bin'), safeStorage),
-      // 插件偏好：宿主持久化，按插件命名空间隔离
-      kv: (info) => createPluginKvService(dataDir, info.id),
-      // 旧库只读：work → work.db，marketing → umi-claw.db（都是宿主老库，插件自己决定怎么搬）
-      legacyDb: (info) => {
-        const client =
-          info.id === 'marketing'
-            ? openLegacyDatabase('umi-claw.db', 'marketing')
-            : info.id === 'work'
-              ? workDatabase
-              : null
-        // 旧库不存在（全新安装 / 没装过 2.0）不是错误：返回空 reader，
-        // 插件照常激活、导入逻辑自然跳过（审查 P1#3：否则营销域在新装用户上永久激活失败）
-        if (!client) return { list: (async () => []) as unknown as LegacyDbApi['list'] }
-        return {
-          list: (table, params) =>
-            client.request(`${table}.list`, (params ?? {}) as Record<string, unknown>)
-        }
-      },
-      notifications: () => createNotificationsService(),
-      openclaw: () => createOpenClawService()
-    }
-
-    const registry = new PluginRegistry({
-      persistedEnabled: await stateStore.load(),
-      hostServices: availableServices(serviceFactories)
-    })
-
-    const discovered = discoverPlugins({
-      root: join(resourcesRoot(), 'plugins'),
-      entries: PLUGIN_MAIN_ENTRIES,
-      logger: (line) => console.log(line)
-    })
-
-    let registered = 0
-    for (const item of discovered) {
-      if (!item.manifest) {
-        // 清单缺失/坏 JSON 也要在 plugin:list 里可见，否则用户看到的是「装了但什么也没发生」
-        registry.addFailed(
-          item.id,
-          {
-            code: item.loadError === 'MANIFEST_MISSING' ? 'PLUGIN_MANIFEST_MISSING' : 'PLUGIN_MANIFEST_INVALID',
-            stage: 'manifest',
-            message: item.loadError === 'MANIFEST_MISSING' ? '缺少 plugin.json' : `plugin.json 解析失败：${item.loadError}`
-          },
-          { dir: item.dir, source: item.source }
-        )
-        continue
+  pluginRuntime = createPluginRuntime({
+    dataDir: () => configManager.getDataDir(),
+    nodePath: () => configManager.getNodePath(),
+    resourcesRoot,
+    workDatabase: () => workDatabase,
+    openLegacyDatabase: (fileName, domain) =>
+      openLegacyDatabase(fileName, domain as 'marketing'),
+    hostOps: createHostOpsService,
+    notifications: createNotificationsService,
+    openclaw: createOpenClawService,
+    encryption: safeStorage,
+    ipc: ipcMain,
+    appInfo: () => ({
+      version: app.getVersion(),
+      appPath: app.getAppPath(),
+      resourcesPath: process.resourcesPath,
+      isPackaged: app.isPackaged
+    }),
+    subscribeResume: (callback) => {
+      powerMonitor.on('resume', callback)
+      return () => powerMonitor.removeListener('resume', callback)
+    },
+    broadcast: (channel, payload) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send(channel, payload)
       }
-      try {
-        registry.register({
-          dir: item.dir,
-          entryId: item.id,
-          source: item.source,
-          manifest: item.manifest,
-          loadMain: item.loadMain
-        })
-        registered += 1
-      } catch (e) {
-        const err = e as { code?: string; field?: string; message?: string }
-        registry.addFailed(
-          item.id,
-          {
-            code: typeof err.code === 'string' ? err.code : 'PLUGIN_REGISTER_FAILED',
-            stage: 'manifest',
-            field: err.field,
-            message: err.message ?? String(e)
-          },
-          { dir: item.dir, source: item.source }
-        )
-        console.error(`[plugin:${item.id}] 注册失败：${err.message ?? String(e)}`)
-      }
-    }
-
-    const host = new PluginHost({
-      registry,
-      ipc: ipcMain,
-      hostVersion: app.getVersion(),
-      dataDir,
-      // 宿主路径必须显式传：插件据此解析 collector / pdfjs / 便携 node（缺省回落只适合测试）
-      paths: {
-        appPath: app.getAppPath(),
-        resourcesPath: process.resourcesPath,
-        isPackaged: app.isPackaged,
-        nodePath: configManager.getNodePath()
-      },
-      // 系统从睡眠恢复：广播给插件（热点采集立即补一轮等）
-      hostEvents: {
-        onResume: (callback) => {
-          powerMonitor.on('resume', callback)
-          return () => powerMonitor.removeListener('resume', callback)
-        }
-      },
-      services: serviceFactories,
-      // work 激活要 spawn 便携 node + 建库/迁移，5s 在慢机上会误判超时（审查 P1-4）
-      activationTimeoutMs: 20000,
-      logger: (line) => console.log(line),
-      onStatusChange: () => broadcastPluginStatus()
-    })
-
-    pluginRegistry = registry
-    pluginHost = host
-
-    // 宿主级插件管理通道（不是插件自己的能力通道）
-    ipcMain.removeHandler('plugin:list')
-    ipcMain.handle('plugin:list', () => ({ ok: true, data: pluginStatuses() }))
-
-    ipcMain.removeHandler('plugin:setEnabled')
-    ipcMain.handle('plugin:setEnabled', async (_e, payload: { id?: string; enabled?: boolean }) => {
-      const id = String(payload?.id ?? '')
-      const enabled = Boolean(payload?.enabled)
-      try {
-        if (!pluginHost || !pluginRegistry) throw new Error('插件宿主未初始化')
-        await pluginHost.setEnabled(id, enabled)
-        await stateStore.save(pluginRegistry.enabledSnapshot())
-        broadcastPluginStatus()
-        return { ok: true, data: pluginStatuses() }
-      } catch (e) {
-        return {
-          ok: false,
-          error: {
-            code: 'PLUGIN_OPERATION_FAILED',
-            message: e instanceof Error ? e.message : String(e)
-          }
-        }
-      }
-    })
-
-
-    await host.activateAll()
-    broadcastPluginStatus()
-
-    const activated = pluginStatuses().filter((s) => s.state === 'activated').length
-    console.log(
-      `[plugin] 就绪：登记 ${registered}/${Object.keys(PLUGIN_MAIN_ENTRIES).length}，激活 ${activated}`
-    )
-  } catch (e) {
-    // 插件子系统整体失败 → 宿主以「零插件模式」继续运行（PLAN-4.0 验收标准 1）
-    console.error('[plugin] 初始化失败（宿主继续运行，零插件模式）：', e)
-  }
+    },
+    logger: (line) => console.log(line)
+  })
+  await pluginRuntime.init()
 }
 
 /**
  * 用户协议闸门（宿主自持，Phase 2 审查 P1-3）。
  *
  * 以前依赖 work 插件的 wizardManager：插件停用或激活失败时 `?.` 会静默放行，
- * 未同意协议也能拉起 OpenClaw。现在直接读**插件库的 app_meta**——库由宿主持有
- * （pluginDbService），不依赖插件是否激活；读不到时回落宿主 work.db。
+ * 未同意协议也能拉起 OpenClaw。现在直接读**插件库的 app_meta**——库由宿主 runtime 持有
+ * （pluginRuntime），不依赖插件是否激活；读不到时回落宿主 work.db。
  */
 async function assertConsent(): Promise<void> {
   const granted = (value: string | null): boolean => value === 'granted'
 
   try {
     // 只有 work 插件启用时才读插件库：否则会为了读一个开关把库建出来（审查 #4）
-    if (pluginDbService && pluginRegistry?.isEnabled('work')) {
-      const db = pluginDbService.forPlugin({ id: 'work', dir: join(resourcesRoot(), 'plugins', 'work') })
+    const db = pluginRuntime?.isEnabled('work') ? pluginRuntime.pluginDbFor('work') : null
+    if (db) {
       if (granted(await db.metaGet('wizard_consent'))) return
     }
   } catch (e) {
@@ -2489,10 +2332,10 @@ async function runQuitCleanup(): Promise<void> {
     characterManager = null
   }
   // 插件先优雅停用：移除 IPC / 清定时器，避免退出过程中还有插件回调在跑
-  await step('停用插件', () => pluginHost?.disposeAll(), 3000)
+  await step('停用插件', () => pluginRuntime?.disposeHost(), 3000)
   // 配置的合并写可能还在 300ms 防抖里，退出前强制落盘
-  await step('插件配置落盘', () => pluginConfigStore?.flush(), 2000)
-  await step('关闭插件库', () => pluginDbService?.disposeAll(), 3000)
+  await step('插件配置落盘', () => pluginRuntime?.flushConfig(), 2000)
+  await step('关闭插件库', () => pluginRuntime?.disposeDb(), 3000)
   // 确保在退出前杀死所有子进程，防止孤儿进程
   killAllTerminalSessions()
   // 在途的 Advisor 流先中止：否则应用退出时上游可能还在生成（白烧 token）

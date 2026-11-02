@@ -1895,7 +1895,29 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
     assert(!re.test(hostSrc), `electron/main/index.ts 不应再调用 ${fn}`)
     assert(re.test(pluginSrc), `plugins/marketing/main.ts 应调用 ${fn}`)
   }
-  return '宿主零注册 / 插件全注册'
+
+  // 4.1 WP5-b：插件装配已抽到 services/pluginRuntime，index 只经它初始化（装配层无直接单测，
+  // 这里用静态断言钉住关键接线，避免「抽走后 index 又自己拼一套」）
+  assert(hostSrc.includes('createPluginRuntime'), 'index.ts 应使用 createPluginRuntime')
+  assert(/pluginRuntime = createPluginRuntime\(/.test(hostSrc), 'index.ts 应创建 runtime')
+  assert(hostSrc.includes('await pluginRuntime.init()'), 'index.ts 应调用 runtime.init()')
+  assert(
+    !/from '\.\/services\/(pluginDb|pluginSecrets|pluginKv)'/.test(hostSrc),
+    'index.ts 不应直接 import 插件服务实现（只允许 runtime 持有）'
+  )
+  const runtimeSrc = readFileSync(
+    join(repoRoot, 'electron', 'main', 'services', 'pluginRuntime.ts'),
+    'utf-8'
+  )
+  for (const needle of [
+    'plugin:list',
+    'plugin:setEnabled',
+    'registry.enabledSnapshot()',
+    "broadcast('plugin:changed'"
+  ]) {
+    assert(runtimeSrc.includes(needle), 'pluginRuntime 应包含 ' + needle)
+  }
+  return '宿主零注册 / 插件全注册 / 装配在 runtime'
 })
 
 // ── P43 旧库导入走服务注入（防「清单忘了 inject」导致死代码）─────────────────
