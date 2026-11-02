@@ -46,14 +46,22 @@ export interface AssembleLoopOptions<T, R> {
    * （含固定段与「未注入清单」），否则预算账与实际渲染不同源。
    */
   /**
-   * 渲染完整文本。**必须传入当前 mode**：两域的渲染都依赖它
-   * （marketing 用它决定「全部注入」还是「已按相关度裁剪 N/M 条」）。
-   * 判定 mode 时内核传 'full'（与两域旧实现的 probeMode 一致），
-   * 取舍循环中传 'truncated'，收尾用最终 mode。
+   * 用量测量：给定当前选择与 dropped，返回**真实渲染后的** token 数。
+   *
+   * 为什么不是「渲染成字符串再 measure」：marketing 的测量是「渲染整个 ContextPack
+   * 再估算」（estimateTokens(renderContextPackText(pack))），拿不到可比的字符串；
+   * 强行让它拼一个假串会给账本引入偏差。所以内核只问「现在占多少」，不问怎么算的。
+   *
+   * 契约：本函数必须与 renderFinal 同源（同一渲染函数），否则账不对。
+   * mode 必须被使用：两域渲染都依赖它（marketing 用它决定「全部注入」还是
+   * 「已按相关度裁剪 N/M 条」）。
    */
-  renderText(chosen: R[], dropped: DroppedEntry[], mode: PackMode): string
-  /** 测量文本的 token 数（通常就是 estimateTokens） */
-  measure(text: string): number
+  measureSelection(chosen: R[], dropped: DroppedEntry[], mode: PackMode): number
+  /**
+   * 收尾渲染：返回最终文本与实际用量。
+   * usedTokens 必须等于 measureSelection(chosen, dropped, mode) 的结果（同源）。
+   */
+  renderFinal(chosen: R[], dropped: DroppedEntry[], mode: PackMode): { text: string; usedTokens: number }
   /** 打包一条：truncate=true 时按 sliceBudget 截断正文 */
   /**
    * 打包一条：候选 T → 结果 R（可以是不同类型，如 KnowledgeRow → PackedKnowledge）。
@@ -87,16 +95,17 @@ export function assembleLoop<T, R>(opts: AssembleLoopOptions<T, R>): AssembleLoo
 
   // ── 1. 全量能否装下 ──
   const allPacked = opts.allCandidates.map((item) => opts.include(item, { truncate: false }))
-  const fullText = opts.renderText(allPacked, initial, 'full')
-  const mode: PackMode = opts.measure(fullText) <= opts.budgetTokens ? 'full' : 'truncated'
+  const fullTokens = opts.measureSelection(allPacked, initial, 'full')
+  const mode: PackMode = fullTokens <= opts.budgetTokens ? 'full' : 'truncated'
 
   if (mode === 'full') {
+    const final = opts.renderFinal(allPacked, initial, 'full')
     return {
       mode,
       chosen: allPacked,
       dropped: [...initial],
-      usedTokens: opts.measure(fullText),
-      text: fullText
+      usedTokens: final.usedTokens,
+      text: final.text
     }
   }
 
@@ -109,7 +118,7 @@ export function assembleLoop<T, R>(opts: AssembleLoopOptions<T, R>): AssembleLoo
     const probeDropped = [...initial, ...rest]
 
     const packed = opts.include(entry.item, { truncate: false })
-    if (opts.measure(opts.renderText([...chosen, packed], probeDropped, 'truncated')) <= opts.budgetTokens) {
+    if (opts.measureSelection([...chosen, packed], probeDropped, 'truncated') <= opts.budgetTokens) {
       chosen.push(packed)
       continue
     }
@@ -117,7 +126,7 @@ export function assembleLoop<T, R>(opts: AssembleLoopOptions<T, R>): AssembleLoo
     // 放不下整条：剩余空间够一段有意义的内容就截断收入，否则收手
     const sliceBudget =
       opts.budgetTokens -
-      opts.measure(opts.renderText(chosen, probeDropped, 'truncated')) -
+      opts.measureSelection(chosen, probeDropped, 'truncated') -
       opts.overheadTokens -
       opts.markerTokens -
       opts.titleTokens(entry.item)
@@ -134,12 +143,12 @@ export function assembleLoop<T, R>(opts: AssembleLoopOptions<T, R>): AssembleLoo
     ...opts.ranked.slice(count).map((e) => opts.toDropped(e.item, 'budget'))
   ]
   let dropped = rebuildDropped()
-  while (count > 0 && opts.measure(opts.renderText(chosen.slice(0, count), dropped, 'truncated')) > opts.budgetTokens) {
+  while (count > 0 && opts.measureSelection(chosen.slice(0, count), dropped, 'truncated') > opts.budgetTokens) {
     count -= 1
     dropped = rebuildDropped()
   }
 
   const finalChosen = chosen.slice(0, count)
-  const text = opts.renderText(finalChosen, dropped, mode)
-  return { mode, chosen: finalChosen, dropped, usedTokens: opts.measure(text), text }
+  const final = opts.renderFinal(finalChosen, dropped, mode)
+  return { mode, chosen: finalChosen, dropped, usedTokens: final.usedTokens, text: final.text }
 }

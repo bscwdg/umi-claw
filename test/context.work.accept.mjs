@@ -390,11 +390,17 @@ await r.check('E13', 'assembleLoop：全量/准入/截断/保险丝/预置 dropp
   // 合成模型：候选正文 = 'x'.repeat(n)（n 个 ASCII → ceil(n/4) token）
   // renderText = 正文 + 「未注入」清单（清单本身也占预算，与两域一致）
   const mk = (id, chars) => ({ id, body: 'x'.repeat(chars) })
-  const renderText = (chosen, dropped, mode) =>
+  // 与内核契约一致：measureSelection 只报用量，renderFinal 返回文本+用量，两者同源
+  const buildText = (chosen, dropped) =>
     [
       ...chosen.map((c) => c.body),
       ...(dropped.length ? ['【未注入】', ...dropped.map((d) => d.title)] : [])
     ].join('\n')
+  const measureSelection = (chosen, dropped, mode) => estimateTokens(buildText(chosen, dropped))
+  const renderFinal = (chosen, dropped, mode) => {
+    const text = buildText(chosen, dropped)
+    return { text, usedTokens: estimateTokens(text) }
+  }
   const toDropped = (item, reason) => ({ id: item.id, title: 'T' + item.id, reason })
   const titleTokens = (item) => estimateTokens('T' + item.id)
   const include = (item, { truncate, sliceBudget }) => ({
@@ -409,8 +415,8 @@ await r.check('E13', 'assembleLoop：全量/准入/截断/保险丝/预置 dropp
     markerTokens: estimateTokens(engineMod.ITEM_TRUNCATE_MARKER),
     overheadTokens: engineMod.PACK_OVERHEAD_TOKENS,
     minSliceTokens: 5,
-    renderText,
-    measure: estimateTokens,
+    measureSelection,
+    renderFinal,
     include,
     toDropped,
     titleTokens
