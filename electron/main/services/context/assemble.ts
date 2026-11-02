@@ -39,8 +39,22 @@ export interface AssembleLoopOptions<T, R> {
   minSliceTokens: number
   /** 全量候选（用于判断 mode） */
   allCandidates: T[]
-  /** 裁剪模式下的候选顺序（已按域侧规则排好：LIKE 命中优先 / 时间） */
-  ranked: LoopCandidate<T>[]
+  /**
+   * 裁剪模式下的候选顺序（已按域侧规则排好：LIKE 命中优先 / 时间）。
+   *
+   * **惰性**：只有真的进入裁剪分支才会调用。旧实现同理——mode=full 时不查
+   * `searchKnowledge`，传数组会让满量场景白跑一次 DB 查询。
+   *
+   * `info` 由内核原样带回（营销用它填 `pack.retrieval`），内核不解读。
+   */
+  ranked: () => { entries: LoopCandidate<T>[]; info?: unknown }
+  /**
+   * 强制走 truncated（不看全量是否装得下）。
+   *
+   * 用途：marketing 的 `businessOverBudget`（固定开销已超预算）会让 mode 直接落到
+   * truncated。内核不判断「谁超了」，只接受调用方的结论——避免内核里出现域分支。
+   */
+  forceTruncated?: boolean
   /**
    * 渲染完整文本。**必须包含调用方认为要计入预算的全部内容**
    * （含固定段与「未注入清单」），否则预算账与实际渲染不同源。
@@ -81,8 +95,10 @@ export interface AssembleLoopResult<R> {
   chosen: R[]
   dropped: DroppedEntry[]
   usedTokens: number
-  /** 最终渲染文本（= renderText(chosen, dropped) 的结果，与 usedTokens 同源） */
+  /** 最终渲染文本 */
   text: string
+  /** 裁剪时用到的候选项信息（`ranked().info` 原样带回；full 模式为 undefined） */
+  rankedInfo?: unknown
 }
 
 /**
@@ -105,16 +121,19 @@ export function assembleLoop<T, R>(opts: AssembleLoopOptions<T, R>): AssembleLoo
       chosen: allPacked,
       dropped: [...initial],
       usedTokens: final.usedTokens,
-      text: final.text
+      text: final.text,
+      rankedInfo: undefined
     }
   }
 
   // ── 2. 逐条准入 + 截断 ──
+  const ranked = opts.ranked()
+  const rankedEntries = ranked.entries
   const chosen: R[] = []
-  for (let i = 0; i < opts.ranked.length; i++) {
-    const entry = opts.ranked[i]
+  for (let i = 0; i < rankedEntries.length; i++) {
+    const entry = rankedEntries[i]
     // 尚未轮到的一律先按「落选」计入探针——渲染出的未注入清单也占预算
-    const rest = opts.ranked.slice(i + 1).map((e) => opts.toDropped(e.item, 'budget'))
+    const rest = rankedEntries.slice(i + 1).map((e) => opts.toDropped(e.item, 'budget'))
     const probeDropped = [...initial, ...rest]
 
     const packed = opts.include(entry.item, { truncate: false })
@@ -140,7 +159,7 @@ export function assembleLoop<T, R>(opts: AssembleLoopOptions<T, R>): AssembleLoo
   let count = chosen.length
   const rebuildDropped = (): DroppedEntry[] => [
     ...initial,
-    ...opts.ranked.slice(count).map((e) => opts.toDropped(e.item, 'budget'))
+    ...rankedEntries.slice(count).map((e) => opts.toDropped(e.item, 'budget'))
   ]
   let dropped = rebuildDropped()
   while (count > 0 && opts.measureSelection(chosen.slice(0, count), dropped, 'truncated') > opts.budgetTokens) {
@@ -150,5 +169,12 @@ export function assembleLoop<T, R>(opts: AssembleLoopOptions<T, R>): AssembleLoo
 
   const finalChosen = chosen.slice(0, count)
   const final = opts.renderFinal(finalChosen, dropped, mode)
-  return { mode, chosen: finalChosen, dropped, usedTokens: final.usedTokens, text: final.text }
+  return {
+    mode,
+    chosen: finalChosen,
+    dropped,
+    usedTokens: final.usedTokens,
+    text: final.text,
+    rankedInfo: ranked.info
+  }
 }

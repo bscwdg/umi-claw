@@ -425,7 +425,7 @@ await r.check('E13', 'assembleLoop：全量/准入/截断/保险丝/预置 dropp
   // ① 全量装得下 → full、全收、无 dropped、不超预算
   {
     const items = [mk('a', 40), mk('b', 40)] // 各 10 token，合计 20
-    const r = assembleLoop({ ...base, budgetTokens: 10_000, allCandidates: items, ranked: items.map((item) => ({ item })) })
+    const r = assembleLoop({ ...base, budgetTokens: 10_000, allCandidates: items, ranked: () => ({ entries: items.map((item) => ({ item })) }) })
     assertEq(r.mode, 'full', '全量装得下应为 full')
     assertEq(r.chosen.length, 2, 'full 模式应收下全部')
     assertEq(r.dropped.length, 0, 'full 模式不应产生 dropped')
@@ -436,7 +436,7 @@ await r.check('E13', 'assembleLoop：全量/准入/截断/保险丝/预置 dropp
   //    10 条 × 200 字符 = 各 50 token，全量 500；预算 300 必超
   {
     const items = Array.from({ length: 10 }, (_, k) => mk(String(k), 200))
-    const r = assembleLoop({ ...base, budgetTokens: 300, allCandidates: items, ranked: items.map((item) => ({ item })) })
+    const r = assembleLoop({ ...base, budgetTokens: 300, allCandidates: items, ranked: () => ({ entries: items.map((item) => ({ item })) }) })
     assertEq(r.mode, 'truncated', '全量超预算应为 truncated')
     assert(r.chosen.length > 0 && r.chosen.length < items.length, `应部分收入（实际 ${r.chosen.length}/10）`)
     assert(r.usedTokens <= 300, `不得超预算（实际 ${r.usedTokens}）`)
@@ -452,7 +452,7 @@ await r.check('E13', 'assembleLoop：全量/准入/截断/保险丝/预置 dropp
   //    必须有且仅有一条被截断（断言不能写「<=1」——那在「永不截断」的实现下也会空转通过）
   {
     const items = [mk('0', 100), mk('1', 100), mk('2', 900)]
-    const r = assembleLoop({ ...base, budgetTokens: 150, allCandidates: items, ranked: items.map((item) => ({ item })) })
+    const r = assembleLoop({ ...base, budgetTokens: 150, allCandidates: items, ranked: () => ({ entries: items.map((item) => ({ item })) }) })
     const truncatedCount = r.chosen.filter((c) => c.truncated).length
     assertEq(truncatedCount, 1, `必须恰好一条被截断（实际 ${truncatedCount}）`)
     assertEq(r.chosen[r.chosen.length - 1].truncated, true, '被截断的必须是最后收入的那条')
@@ -466,7 +466,7 @@ await r.check('E13', 'assembleLoop：全量/准入/截断/保险丝/预置 dropp
   //    能容下清单的预算来验证收缩逻辑本身。
   {
     const items = Array.from({ length: 5 }, (_, k) => mk(String(k), 50)) // 各 13 token，全量 65
-    const r = assembleLoop({ ...base, budgetTokens: 40, allCandidates: items, ranked: items.map((item) => ({ item })) })
+    const r = assembleLoop({ ...base, budgetTokens: 40, allCandidates: items, ranked: () => ({ entries: items.map((item) => ({ item })) }) })
     assert(r.usedTokens <= 40, `必须收缩到不超预算（实际 ${r.usedTokens}）`)
     assert(r.chosen.length < items.length, `必须真的让位（实际收入 ${r.chosen.length}/5）`)
     assert(r.dropped.length === items.length - r.chosen.length, 'dropped 数 = 落选数')
@@ -482,7 +482,7 @@ await r.check('E13', 'assembleLoop：全量/准入/截断/保险丝/预置 dropp
         ...base,
         budgetTokens,
         allCandidates: items,
-        ranked: items.map((item) => ({ item }))
+        ranked: () => ({ entries: items.map((item) => ({ item })) })
       })
       assert(r.usedTokens <= budgetTokens, `预算 ${budgetTokens} 不得超（实际 ${r.usedTokens}）`)
       assertEq(r.chosen.length + r.dropped.length, items.length, `预算 ${budgetTokens}：收入+落选必须等于总数`)
@@ -499,7 +499,7 @@ await r.check('E13', 'assembleLoop：全量/准入/截断/保险丝/预置 dropp
       ...base,
       budgetTokens: 10_000,
       allCandidates: items,
-      ranked: items.map((item) => ({ item })),
+      ranked: () => ({ entries: items.map((item) => ({ item })) }),
       initialDropped: [{ id: 'e', title: '空', reason: 'empty-content' }]
     })
     assertEq(r.dropped.length, 1, '预置 dropped 必须保留')
