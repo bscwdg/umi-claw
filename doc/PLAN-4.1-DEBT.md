@@ -494,8 +494,8 @@ Get-ChildItem *.md | ForEach-Object {
 | `contributes.settings` / `commands` 无消费方 | 随 `AGENTS.md` 明确为「已校验、无消费方」，要么补实现要么移除校验——**归入 WP4 的收尾判断，不在本计划主线** |
 | 插件只经 `ctx`（无 lint 兜底） | **WP3 阶段 A**（C3.1/C3.2） |
 | 停用即中止在途 SSE（work 未修） | 4.0.x 独立修复，不在本计划 |
-| 旧库导入失败可见 + 重试 | 4.0.x 独立修复，不在本计划 |
-| work 知识库原件写全局 `<dataDir>/knowledge` | 4.0.x 或 RUNBOOK 登记 |
+| 旧库导入失败可见 + 重试 | **4.0.2 待做**（P2；仍需渲染端/IPC 入口） |
+| work 知识库原件写全局 `<dataDir>/knowledge` | **4.0.2 已修**（P3，`6a4096b`）：新导入写 `<dataDir>/plugins/work/knowledge/`；旧文件不迁移、旧条目仍可读，旧全局目录可手工清理 |
 
 ---
 
@@ -542,7 +542,7 @@ Get-ChildItem *.md | ForEach-Object {
 | WP3 | ✅ 完成 | 2026-11-02 | 并入 4.0.0 |
 | WP4 | ✅ 完成（C4.3 判据未达，见下） | 2026-11-02 | 并入 4.0.0 |
 | 阶段 A 收尾 | ✅ 完成（2026-11-02） | 2026-11-02 | 4.0.0 发布前 |
-| WP7（4.0.1/4.0.2） | 🟡 7/8 完成：P1/P4/P5/P6/P7/P8 ✅（P6 于 4.0.2 补完 5 处 waitFor）；P2/P3 顺延 4.0.2 | 见 PROGRESS 4.0.1 段 | 4.0.1/4.0.2 |
+| WP7（4.0.1/4.0.2） | 🟡 7/8 完成：P1/P4/P5/P6/P7/P8 ✅（P6 于 4.0.2 补完 5 处 waitFor）；P3 ✅（4.0.2 knowledge 原件隔离）；**P2 导入失败可见/重试仍顺延** | 见 PROGRESS 4.0.1/4.0.2 段 | 4.0.1/4.0.2 |
 | WP5（index.ts ≤1800） | ⬜ 未开始 | — | 4.1 |
 | WP6（边界清零） | 🟡 W6-a 完成（11→9）；W6-b 域 ipc 搬插件 / W6-c 基线 0 待做 | 见 PROGRESS 4.1 段 | 4.1 |
 
@@ -587,7 +587,7 @@ Get-ChildItem *.md | ForEach-Object {
 | --- | --- | --- |
 | P1 | work 停用中止在途 SSE/提醒 | marketing 有 `stopBackgroundWork()` + `abortAll*`；work 只有 `reminder.stop()`，通道摘了但流还在烧 token |
 | P2 | 旧库导入失败可见 + 重试入口 | work/marketing `main.ts` 现在只 `ctx.logger.warn('下次启动重试')`，插件管理页无入口 |
-| P3 | knowledge 原件路径隔离 | work 写全局 `<dataDir>/knowledge`；marketing 写 `<dataDir>/projects/<id>`；卸载/迁移会漏 |
+| P3 | knowledge 原件路径隔离 | ✅ 4.0.2（`6a4096b`）：work 新导入写 `<dataDir>/plugins/work/knowledge/`，`originalsSubdir` 默认仍 `knowledge`（旧文件不迁移、旧条目仍可读） |
 | P4 | 单实例锁（入口 `requestSingleInstanceLock`） | 两个实例同指 dataDir 时 `character/kv.json` 的 tmp+rename 无跨进程保护（阶段 A 明确接受，4.0.1） |
 | P5 | 便携 Node 低完整性自检 | 本机 `data/runtime/node.exe` 被标 Low IL，写不了 Medium 目录；打包/真机同类问题会表现为「数据存不上」。（4.0.1 只做**检测 + 日志级告警**（`dataDir/logs/runtime-probe.log`）；GUI 横幅/引导重装顺延 4.0.2。） |
 | P6 | 测试 flake 台账 + 固定 sleep 清理 | e2e D3 已修（`d2f5ef9`）；`report.accept:281/305`、`content.accept:380` 等「固定 sleep + 读库断言」登记待改 |

@@ -216,6 +216,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 | --- | --- | --- |
 | 插件数据 | `<dataDir>/plugins/<id>/data.db` | 每插件独立库 + 独立 schema + 独立 `plugin_migrations`；只能经 `ctx.db` 的参数化 CRUD，**禁止裸 SQL** |
 | 宿主数据 | `<dataDir>/work.db` | 只承载 voice / wizard 的 `app_meta`（character 已迁 `<dataDir>/character/kv.json`，见 C4.2） |
+| 知识库原件 | work：`<dataDir>/plugins/work/knowledge/<id>/`；marketing：`<dataDir>/projects/<id>/` | `source_path` 存相对 dataDir 的路径（可随 data 目录搬移）；work 旧全局 `<dataDir>/knowledge` 仅历史数据（4.0.2 起新导入不再写） |
 | 应用配置 | `<dataDir>/config/.openclaw/openclaw.json` | **单写入口**：`configManager` + `openClawConfigWriter.runSerializedOpenClawConfigWrite` |
 | 密钥 | `safeStorage` | 按 `plugin:<id>:<key>` 命名空间；永不写日志/配置/导出包 |
 | 迁移 | `migrations/*.sql` | 幂等、可重入、失败可回滚；迁移前必须 `backup()` |

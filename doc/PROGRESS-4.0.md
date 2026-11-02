@@ -1209,3 +1209,27 @@ W6-a（parts）部分完成：`textPart` / `imageDataPart` / `imageUrlPart` / `G
 2. **WP6-b**：9 条插件 `main.ts` 直引宿主 ipc/* 搬进 `plugins/<id>/main/ipc/` → 0；**需拍板** `work:gateway`
    通道是否随插件启停。
 3. **WP6-c**：基线写 0，门禁升硬 error。
+
+## 2026-11-03 · 4.0.2（进行中）
+
+承接 4.0.1 顺延项，已完成：
+
+### P6 · 测试 flake 收尾（`f8eb7bb`）
+
+report/content 的 5 处「异步收尾后读状态」固定 sleep 全部改 `waitFor` + 精确断言：
+report P7/P9（versions≥1/2）、report P13（abortAll===0）、content C4（versions+2 / closeEarly≥1）、
+content C6（activeGenerationCount===0）。report 14/14 ×2、content 12/12 ×2。
+
+### P3 · knowledge 原件路径隔离（`6a4096b`）
+
+- work 新导入原件写 `<dataDir>/plugins/work/knowledge/<id>/`（`originalsSubdir`，默认仍 `knowledge` 保持等价）；
+  `source_path` 仍存相对 dataDir；`originalsSubdir` 拒绝绝对路径/`..`（VALIDATION_ERROR）
+- **旧文件不迁移**：旧行 `knowledge/<id>/...` 仍可 list/get/search/update/delete（manager 不把 source_path
+  还原成绝对路径）；旧 `<dataDir>/knowledge` 仅历史数据，可手工清理；只有新导入进插件目录
+- 验证：typecheck 0；knowledge.work 10/10（K2 断言新路径 + 旧全局目录未被写入 + `..` 拒）；
+  knowledge.marketing 23/23（独立 manager 未动）
+
+### 仍未做（4.0.2 剩余）
+
+1. **P2 旧库导入失败可见 + 重试入口**：需渲染端/IPC 入口（工作量大，单独提交）。
+2. **P5 GUI 诊断/引导重装**：目前只有 `<dataDir>/logs/runtime-probe.log` 日志级告警。
