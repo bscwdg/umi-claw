@@ -296,7 +296,7 @@ export function assembleLoop<T>(opts: AssembleLoopOptions<T>): AssembleLoopResul
 | P3 | work 第 7 段对话历史「独立预算但进文本」 | 内核只负责进预算的段；历史由域侧拼接并另行记 `usedTokens`（保持现状） |
 
 **默认建议**：P1 选 (a)，P2 选 (a)，P3 保持现状——这样 WP2 仍是纯重构，行为变化留到 WP5。
-**已拍板（2026-11-03 事实核对回写）**：P1 (a) / P2 (a) / P3 保持——实际实现是「域侧保留预算占比与 pack 开销，内核提供 `assembleLoop` + 测量回调」，见 `services/context/limits.ts` 注释与 PROGRESS 的 WP2 等价性表；`computeBudget` 已于 2026-11-03 接入两域（`window×ratio` 的地板除收敛到内核），ratio/overhead 仍留域侧。
+**已拍板（2026-11-03 事实核对回写）**：P1 / P2 保持行为不变（等价重构，选择「域侧保留预算占比与 pack 开销、内核提供 `assembleLoop` + 测量回调」，不引入域分支）；P3 保持——实现见 `services/context/limits.ts` 注释与 PROGRESS 的 WP2 等价性表；`computeBudget` 已于 2026-11-03 接入两域（`window×ratio` 的地板除收敛到内核），ratio/overhead 仍留域侧。
 
 #### 出口判据（整包）
 
@@ -542,7 +542,7 @@ Get-ChildItem *.md | ForEach-Object {
 | WP3 | ✅ 完成 | 2026-11-02 | 并入 4.0.0 |
 | WP4 | ✅ 完成（C4.3 判据未达，见下） | 2026-11-02 | 并入 4.0.0 |
 | 阶段 A 收尾 | ✅ 完成（2026-11-02） | 2026-11-02 | 4.0.0 发布前 |
-| WP7（4.0.1 三修） | ⬜ 未开始 | — | 4.0.1 |
+| WP7（4.0.1 八项修复） | ⬜ 未开始 | — | 4.0.1 |
 | WP5（index.ts ≤1800） | ⬜ 未开始 | — | 4.1 |
 | WP6（边界清零） | ⬜ 未开始 | — | 4.1 |
 
@@ -581,7 +581,7 @@ Get-ChildItem *.md | ForEach-Object {
 
 ## 八、后续工作包（4.0.1 / 4.1）
 
-### WP7 · 4.0.1 修复（用户可感知 ×3 + 契约/稳定性 ×3，2–3.5 人天）
+### WP7 · 4.0.1 修复（用户可感知 ×3 + 契约/稳定性 ×5，2–3.5 人天）
 
 | # | 修复 | 证据 |
 | --- | --- | --- |
