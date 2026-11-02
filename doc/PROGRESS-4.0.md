@@ -1319,3 +1319,20 @@ getModelPresetsInfo/openDataDir；save/reset 共用 `toSaveResult`（剥 4 个�
 - 盲区：两文件都是纯模块（claw 仅依赖 node:path、modelConnection 零依赖），可 fake
   registrar + fake deps/fetch 做行为断言（P45 待补）
 - 行数：index 2,162（差 362）；剩余 12 个 handle（env 7 / term 5）
+
+### W5-a · 第五批（terminal 5）
+
+`ipc/host/terminal.ts`：term:run / term:pty-start / term:pty-input / term:pty-stop / term:pty-resize，
+spawn / getRuntimeConfig / resolveRuntime / sessions（对宿主 Map 的实时适配）/ killSession / killAll /
+send / log 全部注入。
+
+- 行为等价：term:run 的 args 上限/stdio/错误文案、pty-start 的单例先杀与 error 分支（不走 pty-chunk 的理由）、
+  pty-input 无 id 兼容、pty-stop 单个 vs 全杀、pty-resize no-op 均逐条核对
+- send 仍走 `mainWindow?.webContents.send` 的运行时守卫（窗口未初始化/销毁时不发）
+- handler 12 → 7（19+11+3+8+7+1+5+7=61 守恒）；index 2,162 → 2,031；宿主 27,358
+- **已知细节差异（非回退）**：① pty-start 活跃会话提示 console.warn→log；② term:run catch 对非 Error 文案更完整
+- 测试：P44 加 terminal 5 通道 + 不再注册 term: + registrar + 守恒断言（61）
+- 提交卫生：修复工作区误删的 19 个 `test/e2e-screenshots/*.jpg`（`git restore`；单跑 phase1-e2e 会重建该目录，
+  其低完整性 SQLITE 14 失败属环境已知问题，不进 accept 链路）
+- 盲区：终端行为零 accept 覆盖（纯模块可 fake spawn/registrar），并入 P45
+- 行数：index 2,031（差 231）；剩余 7 个 env handle
