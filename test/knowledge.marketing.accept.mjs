@@ -819,7 +819,7 @@ try {
 
   // ── K19 通道 / preload / wiring / store 契约 ──
   await r.check('K19', 'IPC 通道 / preload / main wiring / store 契约一致（静态核对，避免漂移）', async () => {
-    const ipcSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'marketing.ts'), 'utf-8')
+    const ipcSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main', 'ipc', 'marketing.ts'), 'utf-8')
     const ipcIndexSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'index.ts'), 'utf-8')
     const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
     const mainSrc =
@@ -868,9 +868,9 @@ const runtimeSrc = readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
       'preload 应暴露 knowledge.pickFile'
     )
 
-    // 本地文件选择器：dialog 只能在主进程用 → 写在 ipc 层（manager 保持纯 Node 可测，不上 electron）
-    assert(/import\s*\{[^}]*\bdialog\b[^}]*\}\s*from\s*'electron'/.test(ipcSrc), 'ipc/marketing.ts 应 import dialog（主进程）')
-    assert(/dialog\.showOpenDialog\(/.test(ipcSrc), 'pickFile 应使用 dialog.showOpenDialog')
+    // 本地文件选择器：dialog 只能在主进程用 → 走宿主 services/hostUi 适配（manager 保持纯 Node 可测）
+    assert(/import\s*\{[^}]*\bshowOpenDialog\b[^}]*\}\s*from\s*'[^']*services\/hostUi'/.test(ipcSrc), 'ipc/marketing.ts 应走宿主 dialog 适配（services/hostUi）')
+    assert(/showOpenDialog\(null,/.test(ipcSrc), 'pickFile 应使用宿主 showOpenDialog（已适配）')
     assert(/properties:\s*\[\s*'openFile'\s*\]/.test(ipcSrc), 'picker 应限定 properties: ["openFile"]')
     assert(/title:\s*'选择要导入的资料'/.test(ipcSrc), 'picker 标题应为「选择要导入的资料」')
     for (const ext of ['docx', 'xlsx', 'pdf', 'txt', 'md']) {

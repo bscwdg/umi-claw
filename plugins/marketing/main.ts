@@ -6,18 +6,16 @@
 import type { PluginContext } from '../../electron/main/kernel'
 import { definePlugin } from '../../electron/main/kernel'
 import { createMarketingRuntime, type MarketingRuntime } from './domain/runtime'
-import { setChannelRegistrar } from '../../electron/main/ipc/channelRegistrar'
-import { registerMarketingIpc } from '../../electron/main/ipc/marketing'
-import { registerAdvisorIpc } from '../../electron/main/ipc/advisor'
-import { registerScanIpc } from '../../electron/main/ipc/scan'
-import { registerContentIpc } from '../../electron/main/ipc/content'
-import { registerHotIpc } from '../../electron/main/ipc/hot'
-import { registerMarketingGatewayIpc } from '../../electron/main/ipc/gateway'
-import {
-  abortAllAdvisorStreams,
-  abortAllContentGenerations,
-  abortAllScanStreams
-} from '../../electron/main/ipc'
+import { setChannelRegistrar } from './main/ipc/channelRegistrar'
+import { registerMarketingIpc } from './main/ipc/marketing'
+import { registerAdvisorIpc } from './main/ipc/advisor'
+import { registerScanIpc } from './main/ipc/scan'
+import { registerContentIpc } from './main/ipc/content'
+import { registerHotIpc } from './main/ipc/hot'
+import { registerMarketingGatewayIpc } from './main/ipc/gateway'
+import { abortAllAdvisorStreams } from './main/ipc/advisor'
+import { abortAllContentGenerations } from './main/ipc/content'
+import { abortAllScanStreams } from './main/ipc/scan'
 import { join } from 'node:path'
 import { resolvePdfjsAssets } from '../../electron/main/services/knowledge/parsers/pdfjsAssets'
 import { buildOpenClawGateway } from './gatewayAdapter'

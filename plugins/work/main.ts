@@ -8,7 +8,7 @@
 
 import { definePlugin, type PluginContext } from '../../electron/main/kernel'
 import { createWorkRuntime, type WorkRuntime } from './domain/runtime'
-import { registerWorkIpc, setWorkIpcRegistrar, type WorkIpcDeps } from '../../electron/main/ipc/work'
+import { registerWorkIpc, setWorkIpcRegistrar, type WorkIpcDeps } from './main/ipc/work'
 import { resolvePdfjsAssets } from '../../electron/main/services/knowledge/parsers/pdfjsAssets'
 import { importWorkDataIfNeeded } from './domain/migrate'
 import type { GatewayClient } from '../../electron/main/gatewayClient'

@@ -1,4 +1,4 @@
-// electron/main/ipc/advisor.ts —— AI Advisor 面 IPC（PLAN-2.0.md Commit 08）
+// plugins/marketing/main/ipc/advisor.ts —— AI Advisor 面 IPC（PLAN-2.0.md Commit 08）
 //
 // 三条通道（08 自己的业务通道；流式事件名沿用 07 的约定）：
 //   - `marketing:advisor:ask`            → 发起一轮问答：组装 Context Pack（06）→ 调 Gateway（07）
@@ -12,12 +12,12 @@
 //
 // 失败统一信封：`{ ok: false, error: { code, message, details? } }`（与 ipc/marketing.ts 同构）
 
-import { type IpcMainInvokeEvent } from 'electron'
+import type { IpcMainInvokeEventLike as IpcMainInvokeEvent } from './ipcTypes'
 import { channelHandleEvent } from './channelRegistrar'
-import { toErrorEnvelope, type ErrorEnvelope } from '../services/errors'
-import { forwardGatewayStream, MARKETING_STREAM_EVENTS, type GatewayStreamSink } from '../services/gateway/stream'
-import type { AdvisorAskInput, AdvisorManager, WatchCandidate } from '../../../plugins/marketing/domain/advisorManager'
-import type { ContextPack } from '../../../plugins/marketing/domain/contextEngine'
+import { toErrorEnvelope, type ErrorEnvelope } from '../../../../electron/main/services/errors'
+import { forwardGatewayStream, MARKETING_STREAM_EVENTS, type GatewayStreamSink } from '../../../../electron/main/services/gateway/stream'
+import type { AdvisorAskInput, AdvisorManager, WatchCandidate } from '../../domain/advisorManager'
+import type { ContextPack } from '../../domain/contextEngine'
 
 export type AdvisorIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
 

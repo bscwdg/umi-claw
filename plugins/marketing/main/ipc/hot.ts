@@ -1,4 +1,4 @@
-// electron/main/ipc/hot.ts —— 热点雷达面 IPC（PLAN-2.0.md Commit 11）
+// plugins/marketing/main/ipc/hot.ts —— 热点雷达面 IPC（PLAN-2.0.md Commit 11）
 //
 // §五 hot 面：list(projectId,{platform,force?,skipCollect?,windowHours?}) / get(topicId) /
 // refresh() / score(projectId, platform, {force?})（Commit 12：AI 懒评分，按批续评）。
@@ -9,11 +9,11 @@
 // listRadar 内部已按 §六「整体失败降级裸榜」处理：采集全败也返回库内热点 + lastError，
 // 只有参数错误才回失败信封。
 
-import { type IpcMainInvokeEvent } from 'electron'
+import type { IpcMainInvokeEventLike as IpcMainInvokeEvent } from './ipcTypes'
 import { channelHandleEvent } from './channelRegistrar'
-import { toErrorEnvelope, type ErrorEnvelope } from '../services/errors'
-import type { HotManager, RadarView, HotTopicRow, HotCollectStatus } from '../../../plugins/marketing/domain/hotManager'
-import type { HotScoreManager, HotScoreBatchResult } from '../../../plugins/marketing/domain/hotScoreManager'
+import { toErrorEnvelope, type ErrorEnvelope } from '../../../../electron/main/services/errors'
+import type { HotManager, RadarView, HotTopicRow, HotCollectStatus } from '../../domain/hotManager'
+import type { HotScoreManager, HotScoreBatchResult } from '../../domain/hotScoreManager'
 
 export type HotIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
 

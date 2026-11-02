@@ -475,7 +475,7 @@ try {
       'marketing:context:getCurrentProject',
       'marketing:context:setCurrentProject'
     ]
-    const ipcSrc = readFileSync(join(__dirname, '..', 'electron', 'main', 'ipc', 'marketing.ts'), 'utf-8')
+    const ipcSrc = readFileSync(join(__dirname, '..', 'plugins', 'marketing', 'main', 'ipc', 'marketing.ts'), 'utf-8')
     const preloadSrc = readFileSync(join(__dirname, '..', 'electron', 'preload', 'index.ts'), 'utf-8')
     for (const c of channels) {
       assert(ipcSrc.includes(`'${c}'`), `ipc/marketing.ts 应声明通道 ${c}`)

@@ -330,7 +330,7 @@ try {
   })
 
   await r.check('E11', 'IPC 静态核对：snapshot 只读通道注册（§14）', async () => {
-    const src = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'work.ts'), 'utf-8')
+    const src = readFileSync(join(repoRoot, 'plugins', 'work', 'main', 'ipc', 'work.ts'), 'utf-8')
     assert(src.includes("'work:context:snapshot'"), '注册 snapshot 通道')
     // 无写入口：不应出现 context:* 的非 snapshot handle
     const writeChannels = (src.match(/work:context:[a-z]+/g) || []).filter((c) => c !== 'work:context:snapshot')

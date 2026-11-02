@@ -1,4 +1,4 @@
-// electron/main/ipc/work.ts —— work 域 IPC（PLAN-3.0.md §14 契约）
+// plugins/work/main/ipc/work.ts —— work 域 IPC（PLAN-3.0.md §14 契约；4.1 WP6-b 搬入插件）
 //
 // Commit 02 面：work.profile / work.matters / work.todos
 //
@@ -14,29 +14,29 @@
 //
 // 本模块只做参数透传与信封包装；业务规则全在 Manager 层（可纯 Node 测）。
 
-import { ipcMain, dialog, BrowserWindow } from 'electron'
-import { toErrorEnvelope, type ErrorEnvelope } from '../services/errors'
-import type { ProfileManager, UpdateProfileInput } from '../../../plugins/work/domain/profileManager'
-import type { CreateMatterInput, MatterManager, UpdateMatterInput } from '../../../plugins/work/domain/matterManager'
-import type { CreateTodoInput, ListTodosParams, TodoManager, UpdateTodoInput } from '../../../plugins/work/domain/todoManager'
+import { hostIpcMain, getFocusedWindow, showOpenDialog } from '../../../../electron/main/services/hostUi'
+import { toErrorEnvelope, type ErrorEnvelope } from '../../../../electron/main/services/errors'
+import type { ProfileManager, UpdateProfileInput } from '../../domain/profileManager'
+import type { CreateMatterInput, MatterManager, UpdateMatterInput } from '../../domain/matterManager'
+import type { CreateTodoInput, ListTodosParams, TodoManager, UpdateTodoInput } from '../../domain/todoManager'
 import type {
   CreateRecordInput,
   ListRecordsParams,
   ProposeCandidateInput,
   RecordManager,
   UpdateRecordInput
-} from '../../../plugins/work/domain/recordManager'
-import type { ContextManager, SnapshotRequest } from '../../../plugins/work/domain/contextManager'
-import type { RouterManager } from '../../../plugins/work/domain/routerManager'
-import type { TodayManager } from '../../../plugins/work/domain/todayManager'
-import type { ReportManager } from '../../../plugins/work/domain/reportManager'
-import type { QaManager } from '../../../plugins/work/domain/qaManager'
-import type { ToolManager } from '../../../plugins/work/domain/toolManager'
-import type { KnowledgeManager } from '../../../plugins/work/domain/knowledgeManager'
-import type { WizardManager } from '../../../plugins/work/domain/wizardManager'
-import type { ReminderManager, ReminderId, PushChannel } from '../../../plugins/work/domain/reminderManager'
-import type { OpenClawSummaryManager } from '../../../plugins/work/domain/openclawSummaryManager'
-import { forwardGatewayStream } from '../services/gateway/stream'
+} from '../../domain/recordManager'
+import type { ContextManager, SnapshotRequest } from '../../domain/contextManager'
+import type { RouterManager } from '../../domain/routerManager'
+import type { TodayManager } from '../../domain/todayManager'
+import type { ReportManager } from '../../domain/reportManager'
+import type { QaManager } from '../../domain/qaManager'
+import type { ToolManager } from '../../domain/toolManager'
+import type { KnowledgeManager } from '../../domain/knowledgeManager'
+import type { WizardManager } from '../../domain/wizardManager'
+import type { ReminderManager, ReminderId, PushChannel } from '../../domain/reminderManager'
+import type { OpenClawSummaryManager } from '../../domain/openclawSummaryManager'
+import { forwardGatewayStream } from '../../../../electron/main/services/gateway/stream'
 
 /** IPC 统一返回信封（§14.2） */
 export type WorkIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
@@ -192,12 +192,12 @@ export interface WorkIpcRegistrar {
 
 const defaultRegistrar: WorkIpcRegistrar = {
   handle(channel, fn) {
-    ipcMain.removeHandler(channel)
-    ipcMain.handle(channel, (_e, ...args) => fn(...args))
+    hostIpcMain.removeHandler(channel)
+    hostIpcMain.handle(channel, (_e, ...args) => fn(...args))
   },
   handleEvent(channel, fn) {
-    ipcMain.removeHandler(channel)
-    ipcMain.handle(channel, (event, ...args) => fn(event, ...args))
+    hostIpcMain.removeHandler(channel)
+    hostIpcMain.handle(channel, (event, ...args) => fn(event, ...args))
   }
 }
 
@@ -389,7 +389,7 @@ export function registerWorkIpc(deps: WorkIpcDeps): void {
   )
   // pickFile：主进程原生文件选择（硬规则 23：渲染端只能拿这里的返回路径）
   handle(WORK_KNOWLEDGE_CHANNELS.pickFile, async (expectedType?: string) => {
-    const win = BrowserWindow.getFocusedWindow() ?? undefined
+    const win = getFocusedWindow() ?? undefined
     const filters =
       expectedType === 'docx'
         ? [{ name: 'Word', extensions: ['docx'] }]
@@ -401,12 +401,12 @@ export function registerWorkIpc(deps: WorkIpcDeps): void {
                 { name: '可导入文件', extensions: ['docx', 'xlsx', 'pdf', 'txt', 'md'] }
               ]
     const result = await (win
-      ? dialog.showOpenDialog(win, {
+      ? showOpenDialog(win, {
           title: '选择要导入的文件',
           properties: ['openFile'],
           filters
         })
-      : dialog.showOpenDialog({
+      : showOpenDialog(null, {
           title: '选择要导入的文件',
           properties: ['openFile'],
           filters

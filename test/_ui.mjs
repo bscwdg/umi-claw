@@ -354,7 +354,7 @@ export async function collectRendererChannels(api) {
 }
 
 /**
- * 打包真实 work 域 IPC 注册器（ipc/work.ts + ipc/gateway.ts），
+ * 打包真实 work 域 IPC 注册器（plugins/work/main/ipc/work.ts + ipc/gateway.ts），
  * 调用后返回**主进程真实注册的通道集合**。
  *
  * 这是「通道对齐」验收的基础：mock IPC 能测「页面调了 A」，但测不出
@@ -367,13 +367,13 @@ export async function loadWorkIpcChannels({ electronStub }) {
   const stub = {}
   // work.ts：业务通道（只包闭包、不立即调 Manager，空对象即可）
   const workBundle = esbuildBundle(
-    join(repoRoot, 'electron', 'main', 'ipc', 'work.ts'),
+    join(repoRoot, 'plugins', 'work', 'main', 'ipc', 'work.ts'),
     'ui-work-ipc.bundle.mjs',
     { externals: ['vue'], alias: [`electron=${posix(electronStub)}`] }
   )
   const workMod = await import(pathToFileURL(workBundle).href)
   if (typeof workMod.registerWorkIpc !== 'function') {
-    throw new Error('ipc/work.ts 未导出 registerWorkIpc')
+    throw new Error('plugins/work/main/ipc/work.ts 未导出 registerWorkIpc')
   }
   workMod.registerWorkIpc({
     profile: stub, matters: stub, todos: stub, records: stub, context: stub,

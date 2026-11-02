@@ -399,7 +399,7 @@ try {
   // ── S10 静态契约：通道 / 模块边界 / 表不加列 / 双端阈值 / 护栏 ─────────────
   await r.check('S10', 'score 通道两处一致；hotManager 不碰 AI；表不加列；UI 四档+建议+窗口', () => {
     const read = (rel) => readFileSync(join(repoRoot, rel), 'utf8')
-    const ipcSrc = read('electron/main/ipc/hot.ts')
+    const ipcSrc = read('plugins/marketing/main/ipc/hot.ts')
     const preloadSrc = read('electron/preload/index.ts')
     for (const src of [ipcSrc, preloadSrc]) {
       assert(src.includes('marketing:hot:score'), '通道 marketing:hot:score：' + (src === ipcSrc ? 'ipc' : 'preload'))

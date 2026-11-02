@@ -475,7 +475,7 @@ try {
   })
 
   await r.check('C13', 'IPC 契约静态核对：12 条 records 通道（§14）', async () => {
-    const src = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'work.ts'), 'utf-8')
+    const src = readFileSync(join(repoRoot, 'plugins', 'work', 'main', 'ipc', 'work.ts'), 'utf-8')
     const channels = [
       'work:records:list',
       'work:records:get',

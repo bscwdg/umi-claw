@@ -487,7 +487,7 @@ try {
 
   // ── B16 IPC / preload / main wiring / store 契约静态核对 ──
   await r.check('B16', 'IPC 通道 / preload / wiring / store 契约一致（静态核对，避免漂移）', async () => {
-    const ipcSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'marketing.ts'), 'utf-8')
+    const ipcSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main', 'ipc', 'marketing.ts'), 'utf-8')
     const ipcIndexSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'index.ts'), 'utf-8')
     const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
     const mainSrc =

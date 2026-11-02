@@ -560,7 +560,7 @@ try {
 
   // ── S9 静态契约 ──
   await r.check('S9', '静态：IPC/preload 透链 contentType/businessLine；通道不新增', () => {
-    const ipcSrc = stripComments(readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'content.ts'), 'utf8'))
+    const ipcSrc = stripComments(readFileSync(join(repoRoot, 'plugins', 'marketing', 'main', 'ipc', 'content.ts'), 'utf8'))
     assert(ipcSrc.includes('contentType: run.contentType'), 'IPC 回传 contentType')
     // 回传侧也要断：只断请求侧会让 store 的 `res.data?.businessLine` 静默恒为 null（死链路）
     assert(ipcSrc.includes('businessLine: run.businessLine'), 'IPC 回传 businessLine')

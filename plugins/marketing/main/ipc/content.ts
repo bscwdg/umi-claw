@@ -1,4 +1,4 @@
-// electron/main/ipc/content.ts —— Content Center 面 IPC（PLAN-2.0.md Commit 09）
+// plugins/marketing/main/ipc/content.ts —— Content Center 面 IPC（PLAN-2.0.md Commit 09）
 //
 // 九条通道（§五 content 面枚举 6 条：list/get/create/update/generate/saveVersion；
 // 本提交扩面 3 条并在汇报注明，先例：05a import/pickFile、05b recognize/abort）：
@@ -18,10 +18,10 @@
 //
 // 失败统一信封：`{ ok: false, error: { code, message, details? } }`（与 advisor/scan 同构）。
 
-import { type IpcMainInvokeEvent } from 'electron'
+import type { IpcMainInvokeEventLike as IpcMainInvokeEvent } from './ipcTypes'
 import { channelHandleEvent } from './channelRegistrar'
-import { toErrorEnvelope, type ErrorEnvelope } from '../services/errors'
-import { forwardGatewayStream, MARKETING_STREAM_EVENTS, type GatewayStreamSink } from '../services/gateway/stream'
+import { toErrorEnvelope, type ErrorEnvelope } from '../../../../electron/main/services/errors'
+import { forwardGatewayStream, MARKETING_STREAM_EVENTS, type GatewayStreamSink } from '../../../../electron/main/services/gateway/stream'
 import type { AdvisorPackSummary } from './advisor'
 import { summarizePack } from './advisor'
 import type {
@@ -33,7 +33,7 @@ import type {
   GenerateContentSpec,
   SaveVersionInput,
   UpdateContentInput
-} from '../../../plugins/marketing/domain/contentManager'
+} from '../../domain/contentManager'
 
 export type ContentIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
 

@@ -671,8 +671,8 @@ try {
 
   // ── S14 静态契约 ──
   await r.check('S14', '三条新通道三处一致 + picker 含资料图 + abort 两路 + 预检 wiring + UI 确认弹窗/四路中止/干净文本', async () => {
-    const scanIpcSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'scan.ts'), 'utf-8')
-    const marketIpcSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'marketing.ts'), 'utf-8')
+    const scanIpcSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main', 'ipc', 'scan.ts'), 'utf-8')
+    const marketIpcSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main', 'ipc', 'marketing.ts'), 'utf-8')
     const ipcIndexSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'index.ts'), 'utf-8')
     const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
     const mainSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')

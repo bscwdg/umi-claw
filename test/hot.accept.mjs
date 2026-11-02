@@ -666,7 +666,7 @@ try {
   // ── H12 静态契约 ─────────────────────────────────────────────────────────
   await r.check('H12', '通道/worker/打包/依赖边界/store/UI 静态契约', () => {
     const read = (rel) => readFileSync(join(repoRoot, rel), 'utf8')
-    const ipcSrc = read('electron/main/ipc/hot.ts')
+    const ipcSrc = read('plugins/marketing/main/ipc/hot.ts')
     const preloadSrc = read('electron/preload/index.ts')
     for (const ch of ['marketing:hot:list', 'marketing:hot:get', 'marketing:hot:refresh']) {
       assert(ipcSrc.includes(ch), 'IPC 注册通道 ' + ch)

@@ -570,7 +570,7 @@ try {
 
   // ── C10 静态契约 ──
   await r.check('C10', '9 通道三处一致 + 两路 abort + before-quit + store/UI/路由契约 + db-worker 白名单零改动', async () => {
-    const ipcSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'content.ts'), 'utf-8')
+    const ipcSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main', 'ipc', 'content.ts'), 'utf-8')
     const indexSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'index.ts'), 'utf-8')
     const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
     const mainSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8') +

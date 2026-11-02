@@ -368,7 +368,7 @@ try {
     const read = (rel) => readFileSync(join(repoRoot, rel), 'utf-8')
     const preload = read('electron/preload/index.ts') + read('electron/preload/index.d.ts')
     assert(!preload.includes('platformRule') && !preload.includes('PlatformRule'), 'preload 不暴露规则（无渲染端通道）')
-    assert(!read('electron/main/ipc/content.ts').includes('platformRule'), 'content IPC 不新增规则面')
+    assert(!read('plugins/marketing/main/ipc/content.ts').includes('platformRule'), 'content IPC 不新增规则面')
     assert(!read('resources/database/db-worker.mjs').includes('platform_rule'), 'worker 白名单零扩展（无 platform_rule 方法）')
     const srcRenderer = []
     for (const f of ['plugins/marketing/ui/pages/ContentCenter.vue', 'plugins/marketing/ui/pages/AdvisorPanel.vue']) {

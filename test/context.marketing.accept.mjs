@@ -553,7 +553,7 @@ try {
       '应写明「Context Pack 不新增 IPC 通道」的理由（runtime 或宿主）'
     )
     // §五 没有 context pack 通道 → 不应偷偷加
-    const ipcSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'marketing.ts'), 'utf-8')
+    const ipcSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main', 'ipc', 'marketing.ts'), 'utf-8')
     assert(
       !/marketing:context:(buildPack|previewPack|pack)/.test(ipcSrc),
       '§五 没有 context pack 通道，不应新增（如要加需先改基线）'

@@ -1,6 +1,6 @@
-// ipc/channelRegistrar.ts —— 通道注册器的统一注入点（Phase 3 装箱）
+// plugins/marketing/main/ipc/channelRegistrar.ts —— 通道注册器的统一注入点（Phase 3 装箱）
 //
-// work 用的是 ipc/work.ts 自带的 setWorkIpcRegistrar；marketing 这边有 5 个 ipc 文件
+// work 用的是 plugins/work/main/ipc/work.ts 自带的 setWorkIpcRegistrar；marketing 这边有 5 个 ipc 文件
 // （marketing / advisor / scan / content / hot），各自复制一份注入点太脏，
 // 所以抽出这个共享模块：插件激活时接上 ctx.registerChannelIpc，停用即摘除。
 
@@ -11,27 +11,19 @@ export interface ChannelRegistrar {
   handleEvent(channel: string, fn: (event: any, ...args: any[]) => Promise<unknown>): void
 }
 
-const ipcMainRef: {
-  removeHandler?: (channel: string) => void
-  handle?: (channel: string, listener: (event: any, ...args: any[]) => unknown) => void
-} = (() => {
-  try {
-    // 延迟 require：本模块也会被纯 Node 测试 import，测试里没有 electron
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    return require('electron').ipcMain ?? {}
-  } catch {
-    return {}
-  }
-})()
-
+// 4.1 WP6-b：本文件已搬进插件目录，不能再 require('electron')（边界门禁连非 type 引用也计）。
+// 生产路径在插件 activate 里必然先 setChannelRegistrar(ctx.registerChannelIpc) 再注册；
+// 未注入就注册属于接线错误，直接抛错比静默落到宿主 ipcMain 更安全。
 const defaultRegistrar: ChannelRegistrar = {
-  handle(channel, fn) {
-    ipcMainRef.removeHandler?.(channel)
-    ipcMainRef.handle?.(channel, (_e, ...args) => fn(...args))
+  handle() {
+    throw new Error(
+      '通道注册器未注入：插件必须在注册 IPC 前 setChannelRegistrar(ctx.registerChannelIpc)'
+    )
   },
-  handleEvent(channel, fn) {
-    ipcMainRef.removeHandler?.(channel)
-    ipcMainRef.handle?.(channel, (event, ...args) => fn(event, ...args))
+  handleEvent() {
+    throw new Error(
+      '通道注册器未注入：插件必须在注册 IPC 前 setChannelRegistrar(ctx.registerChannelIpc)'
+    )
   }
 }
 

@@ -767,7 +767,7 @@ try {
     await db3.dispose()
 
     // IPC 静态核对
-    const src = readFileSync(join(__dirname, '..', 'electron', 'main', 'ipc', 'work.ts'), 'utf-8')
+    const src = readFileSync(join(__dirname, '..', 'plugins', 'work', 'main', 'ipc', 'work.ts'), 'utf-8')
     const channels = [
       'work:wizard:status', 'work:wizard:grantConsent', 'work:wizard:ensureConsent',
       'work:wizard:revokeConsent',

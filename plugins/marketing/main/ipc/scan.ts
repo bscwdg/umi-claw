@@ -1,4 +1,4 @@
-// electron/main/ipc/scan.ts —— 扫描件/图片 AI 识别面 IPC（PLAN-2.0.md Commit 05b）
+// plugins/marketing/main/ipc/scan.ts —— 扫描件/图片 AI 识别面 IPC（PLAN-2.0.md Commit 05b）
 //
 // 三条通道（05b 的业务通道；流式增量沿用 07 定死的事件名 + forwardGatewayStream）：
 //   - `marketing:knowledge:recognize`          → 显式触发一次识别：取图（扫描 PDF 逐页 / 资料图）→
@@ -19,12 +19,12 @@
 // 预检在栅格化前由 recognizer 抛（stage='precheck'），最终防线在 07（按次解析）——两处同 payload，
 // 这里**原样透传**（不包装、不降级）；渲染端翻成人话引导去配置。
 
-import { type IpcMainInvokeEvent } from 'electron'
+import type { IpcMainInvokeEventLike as IpcMainInvokeEvent } from './ipcTypes'
 import { channelHandleEvent } from './channelRegistrar'
-import { toErrorEnvelope, type ErrorEnvelope } from '../services/errors'
-import { forwardGatewayStream, MARKETING_STREAM_EVENTS, type GatewayStreamSink } from '../services/gateway/stream'
-import type { ScanRecognizer, RecognitionRun } from '../../../plugins/marketing/domain/scanRecognizer'
-import type { CommitRecognizedInput, KnowledgeManager, KnowledgeRow } from '../../../plugins/marketing/domain/knowledgeManager'
+import { toErrorEnvelope, type ErrorEnvelope } from '../../../../electron/main/services/errors'
+import { forwardGatewayStream, MARKETING_STREAM_EVENTS, type GatewayStreamSink } from '../../../../electron/main/services/gateway/stream'
+import type { ScanRecognizer, RecognitionRun } from '../../domain/scanRecognizer'
+import type { CommitRecognizedInput, KnowledgeManager, KnowledgeRow } from '../../domain/knowledgeManager'
 
 export type ScanIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
 

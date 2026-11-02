@@ -279,7 +279,7 @@ try {
   await r.check('K9', '类型枚举契约 + IPC 静态核对', async () => {
     assertEq([...KNOWLEDGE_TYPES].join(','), 'text,markdown,url,faq,docx,xlsx,pdf', '7 类型')
     assertEq([...KNOWLEDGE_MANUAL_TYPES].join(','), 'text,markdown,faq', '手工类型')
-    const src = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'work.ts'), 'utf-8')
+    const src = readFileSync(join(repoRoot, 'plugins', 'work', 'main', 'ipc', 'work.ts'), 'utf-8')
     foreach_assert(src)
     return '枚举/IPC ✓'
   })

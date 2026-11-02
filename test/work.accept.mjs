@@ -458,7 +458,7 @@ try {
   })
 
   await r.check('T9', 'IPC 契约静态核对：通道名与参数形状（§14）', async () => {
-    const src = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'work.ts'), 'utf-8')
+    const src = readFileSync(join(repoRoot, 'plugins', 'work', 'main', 'ipc', 'work.ts'), 'utf-8')
     const channels = [
       'work:profile:get',
       'work:profile:update',

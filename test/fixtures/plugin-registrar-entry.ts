@@ -5,9 +5,6 @@
 // 这个单入口把三样东西打进一个产物里，才能真观测到「激活结束是否复位注册器」。
 
 export { default as marketing } from '../../plugins/marketing/main'
-export { setChannelRegistrar, hasChannelRegistrar } from '../../electron/main/ipc/channelRegistrar'
-export {
-  registerWorkGatewayIpc,
-  registerMarketingGatewayIpc,
-  WORK_GATEWAY_CHANNELS
-} from '../../electron/main/ipc/gateway'
+export { setChannelRegistrar, hasChannelRegistrar } from '../../plugins/marketing/main/ipc/channelRegistrar'
+export { registerWorkGatewayIpc, WORK_GATEWAY_CHANNELS } from '../../electron/main/ipc/gateway'
+export { registerMarketingGatewayIpc } from '../../plugins/marketing/main/ipc/gateway'

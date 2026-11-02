@@ -1,4 +1,4 @@
-// electron/main/ipc/marketing.ts —— marketing IPC 面（PLAN-2.0.md §五）
+// plugins/marketing/main/ipc/marketing.ts —— marketing IPC 面（PLAN-2.0.md §五）
 //
 // Commit 02：marketing.system = { dbStatus, ping, metaGet, metaSet }（最小面，保留不动）。
 // Commit 03：追加 marketing.project = { list, get, create, update, delete } 与
@@ -15,24 +15,24 @@
 //   - code 取自 §五 错误码表（errors.ts 的 ERROR_CODES）
 //   - 渲染端**禁止**用 error.message.includes() 判断，一律按 code 分支
 
-import { dialog } from 'electron'
+import { showOpenDialog } from '../../../../electron/main/services/hostUi'
 import { channelHandle } from './channelRegistrar'
-import { toErrorEnvelope, type ErrorEnvelope } from '../services/errors'
-import type { BackupResult, DatabaseClient, DatabaseStatus } from '../database/database'
+import { toErrorEnvelope, type ErrorEnvelope } from '../../../../electron/main/services/errors'
+import type { BackupResult, DatabaseClient, DatabaseStatus } from '../../../../electron/main/database/database'
 import type {
   CreateProjectInput,
   DeleteProjectResult,
   ProjectManager,
   ProjectRow,
   UpdateProjectInput
-} from '../../../plugins/marketing/domain/projectManager'
+} from '../../domain/projectManager'
 import type {
   BusinessInput,
   BusinessManager,
   BusinessRow,
   WatchRow,
   WatchlistManager
-} from '../../../plugins/marketing/domain/businessManager'
+} from '../../domain/businessManager'
 import type {
   CreateKnowledgeInput,
   ImportKnowledgeInput,
@@ -40,7 +40,7 @@ import type {
   KnowledgeRow,
   KnowledgeSearchHit,
   UpdateKnowledgeInput
-} from '../../../plugins/marketing/domain/knowledgeManager'
+} from '../../domain/knowledgeManager'
 
 /** IPC 统一返回信封 */
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
@@ -213,7 +213,7 @@ export function registerMarketingIpc(
 
 /** 知识库「选一个本地文件导入」的文件选择器（docx/xlsx/pdf/txt/md + 05b 资料图 png/jpg/webp） */
 export async function pickKnowledgeFile(): Promise<{ filePath: string | null }> {
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialog(null, {
     title: '选择要导入的资料',
     properties: ['openFile'],
     filters: [

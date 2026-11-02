@@ -1,5 +1,5 @@
 {
-  "pluginHostBoundary": 9,
+  "pluginHostBoundary": 0,
   "managerElectron": 0,
-  "_note": "2026-11-03 4.1 WP6-a：gateway 纯工具（textPart/imageDataPart/imageUrlPart/GATEWAY_ABORT_REASON）下沉 services/gateway/parts，marketing/domain 不再直引 gatewayClient 值导出 → 11→9；剩余 9 条全是插件 main.ts 直引宿主 ipc/*（含 ipc 入口 barrel）（WP6-b 清零）。门禁已接入 npm run accept 首套与 CI verify job；managerElectron 扫 plugins/<id>/domain。只准降不准升，上调必须 --allow-raise --note。"
+  "_note": "2026-11-03 4.1 WP6-b/c：域 ipc 全部搬进 plugins/{work,marketing}/main/ipc（work 1 个文件 + marketing 6 个文件 + gateway 拆分），gateway 流助手下沉 services/gateway/stream、宿主 electron 能力适配下沉 services/hostUi、插件 IPC 用最小结构类型 ipcTypes；pluginHostBoundary 9 → 0。门禁此后是硬约束：任何新增插件越界直接红（上调必须 --allow-raise --note）。managerElectron 扫 plugins/<id>/domain。"
 }
