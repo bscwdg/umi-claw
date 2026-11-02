@@ -13,7 +13,7 @@
 cd D:\work2026\files\claw-desktop
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 32 套验收（accept×30 + e2e + smoke，598 条断言）
+npm run accept         # 32 套验收（accept×30 + e2e + smoke，600 条断言；hot 见 §10 注）
 npm run build          # 构建（含 plugin:gen）
 ```
 
@@ -49,7 +49,7 @@ electron/main/
 ├── work/            # 已删除：work 域代码在 plugins/work/domain/
 ├── marketing/       # 已删除：marketing 域代码在 plugins/marketing/domain/
 ├── clawManager.ts / configManager.ts / downloadManager.ts / channelManager.ts ...
-└── index.ts         # 只做组装；目标 ≤ 1,800 行（现状 2,483）
+└── index.ts         # 只做组装；目标 ≤ 1,800 行（现状 2,491）
 
 plugins/             # 官方内置插件（同仓源码，参与宿主构建）
 ├── work/  main.ts + renderer.ts + ui/
@@ -170,7 +170,11 @@ export const WORK_TODOS_CHANNELS = {
 
 **现状**：**11 条越界**（实测；9 条插件 `main.ts` 直引宿主 `ipc/*`，2 条 `marketing/domain` 直引 `gatewayClient` 值导出，见 `doc/PLAN-4.1-DEBT.md`）。门禁：`npm run check:boundary`（零依赖脚本，已接入 `npm run accept` 首套与 CI verify job）。
 
-**读这条规则时要知道**：现状是「新代码不得新增越界，旧越界按 WP6 逐步清零」，不是「现在已经合规」。`scripts/boundary-baseline.json` 的 ratchet 会锁死这个数（只准降不准升，`--update` 才写）。
+**读这条规则时要知道**：现状是「新代码不得新增越界，旧越界按 WP6 逐步清零」，不是「现在已经合规」。`scripts/boundary-baseline.json` 的 ratchet 会锁死这个数（只准降不准升，`--update` 才写，上调必须 `--allow-raise --note "<原因>"`）。
+
+**非字面量引用**：`import(someVar)` / `require(someVar)` 无法静态判定目标，记成 `<non-literal>` **按违规处理**（宁可多报）；`typeof import(...)` 是类型查询，放行。注释与字符串/模板文案里的示例 `import(...)` 不算引用（门禁先做词法掩码）。
+
+**已登记的门禁边界**（2026-11-02 G10 复核接受，B8 有断言锁住）：① 模板字符串 `${}` 内的动态 `import`/`require` 暂被视为模板内容、检不出；② `if (cond) /re/` 这种 `)` 后的正则字面量不识别（补 `)` 会带来除法误判，权衡后保留）。修这两条时同步改 `test/boundary.accept.mjs` 的 B8 断言。
 
 ### 5.2 插件形状
 
@@ -327,7 +331,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 32 套（accept×30 + e2e + smoke，598 条断言）
+# ② 全量验收 32 套（accept×30 + e2e + smoke，600 条断言；hot 依赖本机便携 Node，CI 无 data/runtime 时退化为系统 Node，待首跑确认）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）

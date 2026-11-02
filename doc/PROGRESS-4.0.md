@@ -956,9 +956,9 @@ marketing 搬迁后 `pluginHostBoundary` 从 10 → **11**。多出的 2 条：
 
 **2026-11-02 阶段 A 复查更正（原登记的两个数字不成立）**：
 
-- 「`4.0 插件宿主` 节 954 行」不可复现：该 section 注释到下一注释的 span 是 904 行，其中真正的插件宿主代码只有 **231 行**（服务工厂 402–470 = 69 + `initPlugins` 472–633 = 162）；其余是 legacy DB / 推送通知 / 终端 / 窗口 / 托盘等宿主壳能力。
+- 「`4.0 插件宿主` 节 954 行」不可复现：该 section 注释到下一注释的 span 是 904 行，其中真正的插件宿主代码只有 **232 行**（服务工厂 402–470 = 69 + `initPlugins` 472–634 = 163）；其余是 legacy DB / 推送通知 / 终端 / 窗口 / 托盘等宿主壳能力。
 - 「`marketing DB Worker wiring` 节 476 行」是 **WP3 删掉宿主 marketing 装配后残留的死注释**（`index.ts:1301`，紧邻的 1304 行就是 `registerIpcHandlers`），实际是 `registerIpcHandlers` 的前 477 行。
-- 真正的大块（按顶层声明实测）：`registerIpcHandlers` 1304–1991 = **688 行 / 61 个 `ipcMain.handle`**；`app.whenReady` 回调 2078–2356 = **279 行**；`initPlugins` 472–633 = **162 行**。WP5 拆法应以这三块为准（见 `PLAN-4.1-DEBT §八`）。
+- 真正的大块（按顶层声明实测）：`registerIpcHandlers` 1304–1991 = **688 行 / 61 个 `ipcMain.handle`**；`app.whenReady` 回调 2078–2388 = **311 行**（阶段 A 修复后行号后移；fact-check 时测到 2380=303）；`initPlugins` 472–634 = **163 行**。WP5 拆法应以这三块为准（见 `PLAN-4.1-DEBT §八`）。
 
 ### 门禁与验收
 
@@ -983,52 +983,103 @@ marketing 搬迁后 `pluginHostBoundary` 从 10 → **11**。多出的 2 条：
 ② 边界门禁**没有自动链路**（不在 accept/CI）、`managerElectron` 扫的是已搬空的目录、且可被 4 类写法绕过；
 ③ 测试假绿：套件在注册断言前抛异常时输出 `0/0` 且 exit 0（实测 platform）。
 
-### A1 · 角色旧数据导入接线（C4.2 补完）
+### A1 · 角色旧数据导入接线（C4.2 补完 + G10 两轮复核后加固）
 
-- `CharacterKvStore`：新增一次性标记 `character/legacy-import.json`；首次导入**以旧库为权威**（覆盖目标里已被默认值占住的键——旧实现「目标已有就跳过」会让 2026-11-02 之前写下的默认值永久挤掉旧记忆）；读旧库失败时不写标记，下次启动重试；覆盖前把现有 kv.json 备份成 `kv.json.pre-import.bak`；标记存在但 kv.json 被删/清空时重新导入（不永久跳过）。
-- `index.ts`：在 `registerCharacter` **之前 await** 导入（旧提交信息写「导入不 await」，但 diff 里根本没有调用——本次补上），且用 **2s 超时护栏**包住（work.db 惰性初始化、单请求默认 30s，旧库被锁时不能拖住开窗；超时后导入后台继续）；顺带修 2236–2237 的自相矛盾注释与 2248 的缩进。即使角色默认关闭也导入一次（旧数据可能 `enabled=true`），代价被 2s 上限兜住。
+- `CharacterKvStore`：一次性标记 `character/legacy-import.json`；首次导入**以旧库为权威**（覆盖目标里已被默认值占住的键——旧实现「目标已有就跳过」会让 2026-11-02 之前写下的默认值永久挤掉旧记忆）；读旧库失败不写标记、下次重试；覆盖前备份 `kv.json.pre-import.bak`（**已有备份不覆盖**，避免二次重导冲掉可回滚副本）。
+- **重置不复活**：标记存在时只有 `kv.json` **缺失/损坏**（`loadState=missing/corrupt`）才重导；用户「删除全部角色数据」走 `set(null)` 后文件仍合法 → 不重导（G10 对抗复核 P1 的可复现缺陷）。
+- `index.ts`：在 `registerCharacter` **之前 await** 导入（旧提交信息写「导入不 await」，但 diff 里根本没有调用——本次补上）；2s 超时护栏；超时**取消本轮**（`isCancelled`，不写 kv/不写标记，下次启动重试），不再后台并行写（G10 对抗复核 P2 竞态）。
+- 修 2236–2237 的自相矛盾注释与 2248 的缩进；即使角色默认关闭也导入一次（旧数据可能 `enabled=true`），代价被 2s 上限兜住。
 - `character/types.ts` / `characterHost.ts`：同步过时注释。
-- 验收：character 71 → **76/76**（新增 C73 导入+标记幂等、C74 默认值被旧值覆盖+备份、C75 读失败重试、C76 接线与 2s 护栏静态断言、C77 标记在但 kv 丢失时重导）。
+- 验收：character 71 → **78/78**（C73 导入+标记幂等、C74 覆盖+备份、C75 读失败重试、C76 接线+护栏+取消、C77 kv 缺失重导、C78 重置不复活、C79 取消不落盘）。
 
-### A2 · 边界门禁补强并接入自动链路
+### A2 · 边界门禁补强并接入自动链路（G10 两轮复核后加固）
 
-- `scripts/check-boundaries.mjs` 重写：静态 import/export-from（含跨行、类型判定、注释掩码、行首分号）、副作用 import、动态 `import()`（含模板字面量）、`require()` 全覆盖；非字面量 `import(x)` / `require(x)` 记成 `<non-literal>` 按违规处理；相对路径先归一化再判定（堵 `services/../ipc` 穿越）；`managerElectron` 扫描目录改为 `plugins/<id>/domain/`，**扫描目录为空直接失败**（防「什么都没扫」的假绿）；`--update` 保留 `_note`、拒绝空目录、拒绝未经 `--allow-raise` 的上调。
-- 新增 `test/boundary.accept.mjs`（B1–B8）钉住 4 类绕过、注释/模板字面量/非字面量/typeof 判定与扫描目录非空；注册进 `run-all-accept.mjs` **首套**；CI verify job 加 `Boundary gate` 一步。
+- `scripts/check-boundaries.mjs`：词法掩码 `lexMask`（注释 / 正则字面量 / 字符串文案 / 模板内容；防「正则里的 `/*` 把后续整段掩掉」与「文案里的 import 误报」）；静态 import/export-from（跨行、类型判定、行首分号）、副作用 import、动态 `import()`（含模板字面量）、`require()` 全覆盖；非字面量 `import(x)`/`require(x)` 记成 `<non-literal>` 按违规处理，`typeof import(...)` 放行；相对路径先归一化再判定（堵 `services/../ipc` 穿越）；`managerElectron` 扫描目录改为 `plugins/<id>/domain/`，**扫描目录为空直接失败**；`--update` 保留 `_note`、拒绝空目录、上调必须 `--allow-raise --note "<原因>"`（原因追加进 `_note`）。
+- 新增 `test/boundary.accept.mjs`（B1–B8，覆盖正则字面量/字符串文案/URL 字符串/typeof(变量) 等反例）；注册进 `run-all-accept.mjs` **首套**；CI verify job 加 `Boundary gate` 一步。
 - 变异测试实测：插入 `await import('../../electron/main/ipc/work')` → `pluginHostBoundary 12 > 11` 红；插入 `import { app } from 'electron'` 到 `plugins/work/domain/todoManager.ts` → `managerElectron 1 > 0` 红；还原后 11/0 绿。
 
 ### A3 · 修测试假绿
 
 - `_lib.mjs:printResult`：`total === 0` 判失败（不再只看 `failed === 0`）。
 - `run-all-accept.mjs`：子进程输出出现「验收脚本自身异常」即判失败；并把 e2e / smoke 的 catch 文案统一成同一短语（原为「e2e 自身异常」「smoke 自身异常」，不在检测范围内——审查发现的最外层假绿缺口）。实测三个方向都红：注入 `throw`、注入标记行、e2e/smoke 短语命中，均使 `npm run accept` 立即退出 1。
+- character / voice 补 `accept-result-*.json` 落盘（此前 97 条断言无第三方可核物证，G10 事实核对提出）。
 
 ### A4 · 文档校准
 
-AGENTS（32 套/598 断言、index.ts 2483、边界 11、门禁命令、目录树、domainSrc 现状）、
+AGENTS（32 套/600 断言、index.ts 2491、边界 11、门禁命令、目录树、domainSrc 现状）、
 PLAN-4.1-DEBT（§一基线表、C3.1 eslint 校正、V2/V3、D6/D7、§六进度表与发布点重排、新增 §七/§八）、
-CHANGELOG（4.0.0 条目、验收口径）、本文件（更正 WP4 的 954/476 两个不可复现数字）。
+CHANGELOG（4.0.0 条目、验收口径）、本文件（更正 WP4 的 954/476 两个不可复现数字，以及 G10 发现的三处二次错误）。
 
 ### 验证（2026-11-02 实跑）
 
 - 双 typecheck：0 错 / 0 错；`npm run build` 通过。
 - 边界门禁：`pluginHostBoundary=11（基线 11）、managerElectron=0（扫描 2 个域目录）`，exit 0；boundary 套件 8/8。
-- 全量验收：**除 hot 外的 31 套（accept 29 + e2e + smoke）全绿**；`hot` 未能在本会话复现（本会话沙箱里便携 Node 被限制写 `test/.tmp`，改系统 Node 24 跑 collector 会撞 libuv 断言；hot 相关代码本次未改，待 CI/真机首跑确认）。断言累计 **598**（accept×30 + e2e + smoke 完整口径，含 hot 的 16；config-writer 的 node:test 断言不计入，与此前 585 同口径）。**不写成「全量全绿」——hot 未跑。**
-- 与基线对比：boundary 8/8；character 76/76；db-worker 38/38；gateway 29/29；plugin 61/61；ui 23/23；wizard 17/17；hotscore 14/14；platform 7/7；voice 21/21；e2e 11/11；smoke 7/7。
+- character 78/78；voice 21/21（含新增落盘）；与基线对比：db-worker 38/38、gateway 29/29、plugin 61/61、ui 23/23、wizard 17/17、hotscore 14/14、platform 7/7、e2e 11/11、smoke 7/7。
+- 全量验收：**除 hot 外的 31 套（accept 29 + e2e + smoke）全绿**；`hot` 未能在本会话复现（本会话沙箱里便携 Node 被限制写 `test/.tmp`，改系统 Node 24 跑 collector 会撞 libuv 断言；hot 相关代码本次未改，待 CI/真机首跑确认）。断言累计 **600**（accept×30 + e2e + smoke 完整口径，含 hot 的 16；config-writer 的 node:test 断言不计入，与此前 585 同口径）。**不写成「全量全绿」——hot 未跑。**
 
-### 对抗审查（独立子代理，2026-11-02）
+### 提交前对抗审查（独立子代理 task-3）
 
 审查范围：本阶段未提交 diff（14 个已跟踪改动 + 1 个新文件）。结论「可以提交，但先做 3 件低成本事」，逐条处置：
 
 | # | 意见 | 处置 |
 | --- | --- | --- |
-| 1 | e2e / smoke 的 catch 文案不在 run-all 检测短语内，最外层仍可假绿（P1） | **属实→已修**：两处统一为「验收脚本自身异常（e2e/smoke）」；PROGRESS/断言同步 |
-| 2 | 角色首导 await 无上限（单键 30s），旧库被锁会拖住开窗；默认关用户也被拉 work.db（P2） | **属实→已修**：加 2s `Promise.race` 护栏（超时后台继续、不写标记），注释写明默认关也导的原因；C76 钉住护栏 |
-| 3 | 门禁解析仍可漏报/误报：注释前缀、行首分号、模板字面量、非字面量、`typeof import`、注释里的 require（P2） | **属实→已修**：`maskComments` + 扩展正则 + `typeof import` 标记 typeOnly + 非字面量按违规记；新增 B8 |
-| 4 | 首导旧值覆盖用户新进度且无 kv 备份（P2） | **属实→已修**：flush 前备份 `kv.json.pre-import.bak`，C74 断言备份内容；文档写明覆盖语义 |
-| 5 | 文档 6 处数字与实测不符（279/231/688/44/34/39）与 596 口径（P2） | **属实→已修**：全部按实测改；596→598（新增 C77/B8）；「31/32 套」改为「除 hot 外 31 套全绿」 |
-| 6 | `--update` 在空目录时照写基线；`--json` 失败不显示原因（P3） | **属实→已修**：空目录/未经 `--allow-raise` 的上调拒绝写基线；`--json` 带 `failures` |
+| 1 | e2e / smoke 的 catch 文案不在 run-all 检测短语内，最外层仍可假绿（P1） | **属实→已修**：两处统一为「验收脚本自身异常（e2e/smoke）」 |
+| 2 | 角色首导 await 无上限（单键 30s），旧库被锁会拖住开窗；默认关用户也被拉 work.db（P2） | **属实→已修**：加 2s `Promise.race` 护栏；后再按 G10 复核改为「超时取消本轮」 |
+| 3 | 门禁解析仍可漏报/误报：注释前缀、行首分号、模板字面量、非字面量、`typeof import`、注释里的 require（P2） | **属实→已修**：词法掩码 + 扩展解析 + B8；后再按 G10 复核修掉正则/字符串/模板误报 |
+| 4 | 首导旧值覆盖用户新进度且无 kv 备份（P2） | **属实→已修**：flush 前备份 `.pre-import.bak`（G10 复核后改为「已有备份不覆盖」） |
+| 5 | 文档 6 处数字与实测不符（279/231/688/44/34/39）与 596 口径（P2） | **属实→已修**：按实测改；后按 G10 再修 48/163/232/303，口径 600 |
+| 6 | `--update` 在空目录时照写基线；`--json` 失败不显示原因（P3） | **属实→已修**：空目录/上调拒绝写基线；`--json` 带 `failures`；上调需 `--allow-raise --note` |
 | 7 | `importFromLegacy` 死代码且可绕过 marker 覆盖（P3） | **属实→已删**（0 调用方），`FISH_PREFIX` 一并删 |
-| 8 | marker 在但 kv.json 丢失/损坏时不重导（P3） | **属实→已修**：标记记 `imported` 键，全缺时重新导入；C77 锁定 |
-| 9 | C76 是源码文本断言、覆盖缺口（P3） | **属实→接受并写明局限**（注释）；新增 C77 补 marker 丢失路径；并发/磁盘满路径记为未覆盖 |
+| 8 | marker 在但 kv.json 丢失/损坏时不重导（P3） | **属实→已修**：改由 `loadState` 判定；C77/C78 锁定 |
+| 9 | C76 是源码文本断言、覆盖缺口（P3） | **属实→接受并写明局限**（注释）；C78/C79 补行为覆盖；并发/磁盘满路径明确未覆盖 |
 | — | hot 失败原因「无法复现」 | **前提不成立（部分）**：本机确有 `data/runtime` 便携 Node；失败发生在 DSH 会话里便携 Node 被限制写 `test/.tmp`，属会话环境差异，非代码；文档改为「本机未复现，待 CI/真机首跑」 |
 | — | `AGENTS.md:13` 路径不存在 / 「已搬空」措辞 | **属实→已修**：改为实际仓库路径与「已删除」 |
+
+### 第一次 · 事实核对（G10，独立子代理）
+
+结论：A1/A2/A3、主要数字、提交纪律（C1/C2）基本达成；**C3 未达成**（阶段 A 缺两节）；另发现：`7122a94..HEAD` 实为 48 个提交（44 是到 `eed488c`）、`initPlugins` 实为 472–634=163 行 / 插件宿主 232 行、`whenReady` 回调当时实测 2078–2380=303 行（本轮修复后最终为 2078–2388=311）、hot 口径未带例外、`_note` 写「搬空」而目录已删除、test/ 有 3 份旧命名 json 干扰断言计数、character/voice 无落盘物证。
+
+处置：**属实→已修**——范围改 `7122a94..eed488c`（44）、163/232/311、hot 例外写入 AGENTS/CHANGELOG、`_note` 改「已删除」、删除 3 份旧 json、character/voice 补 `writeJson`；C3 由本节与下一节补齐。
+
+### 第二次 · 对抗复核（G10，独立子代理）
+
+结论：**不可放行**。阻断项：P1「删除全部角色数据后重启复活」（可复现）；P2 2s 竞态、正则字面量假阴性、字符串文案误报、bak 覆盖、lost 三态；P2 C3 第二次检查未入档。
+
+处置：
+
+| 意见 | 处置 |
+| --- | --- |
+| P1 `reset('all')` 后重启复活旧数据 | **属实→已修**：lost 判据改为 `loadState`（missing/corrupt）；用户重置（文件合法）不重导；C78 锁定 |
+| P2 2s 超时后台写与角色初始化竞态 | **属实→已修**：超时取消本轮（`isCancelled`，不写 kv/标记），不再后台并行；C79 锁定 |
+| P2 `maskComments` 无正则状态 → `[/*]` 后整段漏检 | **属实→已修**：`lexMask` 增加正则状态；B8 加反例 |
+| P2 字符串/模板文案里的 `import(x)`/`require('electron')` 误报 | **属实→已修**：动态 import/require 在「字符串掩码」文本定位、参数回原文读；B8 加反例 |
+| P2 `.pre-import.bak` 被二次重导覆盖 | **属实→已修**：已有备份不覆盖；C77 覆盖重导路径 |
+| P2 lost 只覆盖全缺 / marker 损坏静默跳过 | **属实→部分接受**：改由文件状态判据（缺失/损坏重导）；「部分丢失不重导」「marker 损坏 warn+跳过」明确接受并写入 `PLAN §七` 已知边界（无法与用户主动重置区分，保守优先） |
+| P2 C3 第二次检查未入档 | **属实→已修**：本节即第二次检查结论 |
+| P3 `--allow-raise` 无法写 note | **属实→已修**：强制 `--note`，追加写入基线 `_note` |
+| P3 双实例无单实例锁 | **属实→接受，登记 4.0.1**（PLAN §七已知边界）：跨进程锁属启动链路改动，不在阶段 A 夹带 |
+| P3 测试缺口（正则/字符串/reset/bak/marker） | **属实→已补** C78/C79/B8 反例；部分丢失/坏 marker 见上条接受项 |
+| P3 文档范围/悬空引用/42-44-48 并存 | **属实→已修**：`7122a94..eed488c`（44）、D7 改 44、hot 说明改为显式（不再「见 §七」） |
+
+### 修复后的快速复核（G10 第二轮）
+
+结论：**可放行**。P1（重置复活）与 5 个 P2（2s 竞态、正则假阴性、字符串误报、bak 覆盖、C3 入档）均经真实模块/产物验证堵住；character 78/78、boundary 8/8、gate 11/0、600 断言口径一致。
+
+复核新提 5 条 P3，处置如下（均不阻断 tag）：
+
+| 复核意见 | 处置 |
+| --- | --- |
+| 模板 `${}` 内动态 import/require 检不出（新假阴性） | **接受并登记**：`lexMask` 注释 + AGENTS §5.1「已登记的门禁边界」+ B8 断言锁住；修复时同步改 B8 |
+| `if (cond) /re/` 的 `)` 后正则不识别 | **接受并登记**：同上（补 `)` 会带来除法误判，权衡后保留） |
+| 取消是协作式、adopt 循环内不早停 | **属实→已修**：每轮 adopt 后检查 `cancelled()` 并早停（不再做完剩余 DB 读取） |
+| `whenReady` 数字未回填（303→实际 306+） | **属实→已修**：按最终 HEAD 回填为 2078–2388=311（含本轮 +5 行）；index 2491 / host 26802 同步 |
+| 导入抛错路径 2s timer 未 clear | **属实→已修**：`Promise.race` 包 `try/finally` 清定时器 |
+
+### 已知欠账（阶段 A）
+
+1. `hot` 套件本机未复现（环境限制），待 CI/真机首跑；CI 无 `data/runtime` 时 collector 用系统 Node 22，结果未验证。
+2. 单实例锁缺失（两个实例同指 dataDir 时 kv 无跨进程保护）→ 4.0.1。
+3. 部分丢失不重导、marker 损坏跳过（保守策略，已写入 PLAN §七）。
+4. 四件套留档需在最终 HEAD 之后重跑（见 PLAN §七 第 4 条）。
+
 

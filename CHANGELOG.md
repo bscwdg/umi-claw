@@ -42,7 +42,7 @@
 - 渲染端 `AppConfig` 补 `keepGatewayOnQuit` 字段
 
 ### 验收
-- 32 套（accept×30 + e2e + smoke）/ 598 条断言；双 typecheck 0 错、build 通过
+- 32 套（accept×30 + e2e + smoke）/ 600 条断言；双 typecheck 0 错、build 通过
 - `hot` 套件依赖本机便携 Node 跑 collector；本机验证时 hot 未复现（沙箱限制），其余 31 套全绿，待 CI/真机首跑确认
 
 ---
