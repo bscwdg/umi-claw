@@ -659,3 +659,54 @@ offline maintenance → `openclaw.json` 读取失败 → 网关启动失败。
 - `configManager` 注入 `channels.qqbot` 并启用 `plugins.entries.openclaw-qqbot`；表单为空时**不删除**扫码写入的绑定
 - `downloadManager` 在环境初始化/更新时受管安装 `@tencent-connect/openclaw-qqbot@latest`（失败不阻断，保存/扫码时会补装）
 - 测试：maintenance 新增 `qqbot-channel`（状态识别 + 安装/扫码/配置接线），ui 新增 U20（QQ 卡片渲染 / 扫码跳终端 / 保存 channels.qqbot）
+
+## 2026-11-02 · WP0 止血闸门 + 统一 AI 规范
+
+背景：4.0 插件化「结构成立、边界未硬化」——启停语义/构建期装配/DB 隔离是真的，但域代码仍住宿主目录、
+插件仍直接 import 宿主内部模块、同名能力有两份实现、仓库既无 lint 也无 CI 门禁。
+本日立 `doc/PLAN-4.1-DEBT.md`（欠账执行顺序）并完成 WP0。
+
+### 落点（4 个提交）
+
+| 提交 | 内容 |
+| --- | --- |
+| `8e7e2fa` fix(ui) | 控制台按钮文案按动作区分：`actionLoading` 布尔 → `pendingAction` 三态（start/stop/restart），每按钮只反映自己的动作；`actionLoading` 降为派生值仅用于禁用。ui.accept 新增 U23 锁住结构与三处复位 |
+| `1032d47` docs(video) | 品牌视频脚本/分镜/prompt 入库到 `doc/`（**不放 resources/**：extraResources 整目录带包，§18.5 已登记该风险）。已扫描无密钥 |
+| `354106d` docs(4.0) | 新增 `AGENTS.md`（统一 AI 规范）+ `doc/PLAN-4.1-DEBT.md`（WP0–WP4 执行计划） |
+| `70216b4` ci | `release.yml` 新增 `verify` job（双 typecheck + build + 全量 accept），`build` 用 `needs` 依赖；补 PR 触发 |
+
+### CI 顺序踩到的坑（已修）
+
+`npm run accept` 里的 `packaged.smoke` S1 断言 `dist-electron/` 存在——干净 checkout 里没有产物，
+会直接失败。故 verify job 的顺序必须是 **typecheck → build → accept**，不能省 build。
+CI 不产出 NSIS，`UMI_ALLOW_PACKAGE_SKIP=1` 跳过 S6/S7（真机安装仍是 RUNBOOK §6 的人工项）。
+
+### 闸门有效性（变异测试实测，不是「配好了就算」）
+
+1. **类型闸门**：往 `todayManager.ts` 尾部注入 `export const __gateProbe: number = 'not-a-number'`
+   → `typecheck:node` 报 `error TS2322`、退出码 2。已还原。
+2. **验收闸门**：把 `platformRules.ts` 的抖音规则从「不做视频」改成「可以生成视频」→
+   `accept:platform` P1–P5 五条报红、退出码 1。已还原并复验 7/7。
+
+### 全量验收（2026-11-02 实跑）
+
+`npm run accept` = **31 套（accept×29 + e2e + smoke）、582 条断言、0 失败**。
+口径勘误：`PLAN-4.0 §18.1` 记的是 28 + e2e + smoke = 30 套，实测为 29 + e2e + smoke。
+双 typecheck 0 错；`npm run build` 通过（11.67s）。
+
+### 统一 AI 规范（`AGENTS.md`）的做法
+
+不是写「理想规范」，是**从当前代码里提取真实成立的写法**，每条都带现状证据与校验方法：
+
+- 已统一且可固化的：主进程无行尾分号（`todoManager` 619 行 0 个）、单引号（506 : 2）、2 空格缩进、
+  LF + UTF-8 无 BOM、文件头「路径 —— 职责」+ 为什么（99/126）、中文注释讲因由。
+- 尚未统一的按「**新代码按规范、老代码不顺手改**」处理：渲染端分号 20%（2,597/12,849，文件间 27–43%）、
+  渲染端引号 48:26、27 个 `.ts` 无文件头、提交 scope 混用（`feat(4.0)` / `fix(3.0)` / `feat(2.0-03)`）。
+  理由：一次全仓格式化会产生 2,600 行噪声 diff，淹没真实改动（§18.5「验收留档时效」风险）。
+- 硬条款只写有据可查的：Manager 层禁止 import electron（实测 0/40）、IPC 统一信封 + `AppError`、
+  渲染端只按 `code` 分支（`message.includes` 实测 0）、插件只能 import `kernel`/`services`。
+
+### 状态
+
+- WP0 C0.1 / C0.2 完成；**C0.3（NSIS 真机 7 步）未执行**，阻塞打 tag，不阻塞 WP1/WP2。
+- WP1（parsers 下沉，3 个文件字节完全相同）为下一步。
