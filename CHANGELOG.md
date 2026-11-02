@@ -6,7 +6,7 @@
 
 ---
 
-## [4.0.0]（release/4.0，开发中）— 2026-10-31
+## [4.0.0]（release/4.0，开发中：阶段 A 已收尾，待 C0.3 真机安装后打 tag）— 2026-11-02
 
 > 主题：**插件化宿主** + 启动可靠性/性能优化。一套代码通过官方内置插件组合出营销（2.0）/ 工作（3.0）能力。
 
@@ -14,6 +14,12 @@
 - 控制台（`/dashboard`）与能力中心（`/skills`）导航；插件运行期启停、懒加载、独立路由/IPC/数据迁移
 - 2.0 营销域、3.0 工作域装箱为官方内置插件；宿主保留 OpenClaw 管理/渠道/终端/Obsidian/技能/更新等壳能力
 - 宿主服务下沉（db / gateway / knowledge / context / voice），插件通过 `ctx` 使用，配置与密钥归宿主
+- work / marketing 域代码搬到 `plugins/<id>/domain/`；重复的文档解析器合并为 `services/knowledge`，
+  上下文取舍循环收敛为 `services/context` 内核（两域共用，域侧只提供回调）
+- 插件契约补 `secrets` / `kv`；角色数据迁到 `<dataDir>/character/kv.json`
+  （旧 `fish:v2:*` 一次性导入，标记文件防重复；首次导入以旧库为准，可覆盖早期版本的默认值）
+- 边界门禁 `scripts/check-boundaries.mjs`（零依赖 ratchet：pluginHostBoundary=11 / managerElectron=0），
+  已接入全量验收首套与 CI，覆盖静态 import / export-from / 动态 import / require / 路径穿越
 
 ### 启动可靠性与性能
 - **就绪态与阶段可视化**：`running`（进程）与 `ready`（/health 200）分离；点击启动即「启动中」；
@@ -36,7 +42,8 @@
 - 渲染端 `AppConfig` 补 `keepGatewayOnQuit` 字段
 
 ### 验收
-- 30 套（accept×28 + e2e + smoke）；双 typecheck 0 错、build 通过
+- 32 套（accept×30 + e2e + smoke）/ 598 条断言；双 typecheck 0 错、build 通过
+- `hot` 套件依赖本机便携 Node 跑 collector；本机验证时 hot 未复现（沙箱限制），其余 31 套全绿，待 CI/真机首跑确认
 
 ---
 ## [2.0.0]（release/2.0 分支，待发布）

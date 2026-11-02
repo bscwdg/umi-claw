@@ -10,10 +10,10 @@
 ## 0. 一分钟上手
 
 ```powershell
-cd D:\work2026\umi-claw
+cd D:\work2026\files\claw-desktop
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 31 套验收（accept×29 + e2e + smoke，582 条断言）
+npm run accept         # 32 套验收（accept×30 + e2e + smoke，598 条断言）
 npm run build          # 构建（含 plugin:gen）
 ```
 
@@ -41,15 +41,15 @@ npm run build          # 构建（含 plugin:gen）
 ```
 electron/main/
 ├── kernel/          # 插件内核：manifest / registry / lifecycle / plugin / services
-├── services/        # 宿主能力（当前只有 pluginDb.ts；目标见 PLAN-4.1-DEBT WP1/WP2）
-├── database/        # 数据层：schema / migration / errors（错误码唯一来源）
+├── services/        # 宿主能力（pluginDb / knowledge / context / errors / pluginKv / pluginSecrets / characterKv / characterHost）
+├── database/        # 数据层：schema / migration / schemas（错误码唯一来源在 services/errors.ts）
 ├── ipc/             # IPC 注册，按域分文件
 ├── character/       # 大肥鱼宿主模块
 ├── fish/voice/      # 语音服务
-├── work/            # 工作域实现（搬迁中 → plugins/work/main/）
-├── marketing/       # 营销域实现（搬迁中 → plugins/marketing/main/）
+├── work/            # 已删除：work 域代码在 plugins/work/domain/
+├── marketing/       # 已删除：marketing 域代码在 plugins/marketing/domain/
 ├── clawManager.ts / configManager.ts / downloadManager.ts / channelManager.ts ...
-└── index.ts         # 只做组装；目标 ≤ 1,800 行（现状 2,557）
+└── index.ts         # 只做组装；目标 ≤ 1,800 行（现状 2,483）
 
 plugins/             # 官方内置插件（同仓源码，参与宿主构建）
 ├── work/  main.ts + renderer.ts + ui/
@@ -106,9 +106,9 @@ doc/                 # 计划、施工日志、运维手册、调研
 
 ### 4.1 Manager 层：纯逻辑，不碰 Electron
 
-**规则**：`electron/main/{work,marketing}/**/*Manager.ts` 与 `contextEngine.ts` **禁止** `import ... from 'electron'`。
+**规则**：`plugins/<id>/domain/**/*Manager.ts` 与 `contextEngine.ts` **禁止** `import ... from 'electron'`（WP3 起域代码住在 `plugins/<id>/domain/`；宿主 `electron/main/{work,marketing}` 已删除）。
 
-**现状证据**：0 / 40 个文件命中。这是 31 套验收能在纯 Node 里跑真源码的前提。
+**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 32 套验收能在纯 Node 里跑真源码的前提。
 
 **写法**：工厂函数 + 显式 options，不 `new`、不单例、不从全局推。
 
@@ -121,7 +121,7 @@ export interface TodoManagerOptions {
 export function createTodoManager(options: TodoManagerOptions): TodoManager { ... }
 ```
 
-**现状证据**：38 处 `export function create*`，21 个 Manager 文件全部如此。
+**现状证据**：39 处 `export function create*`，21 个 Manager 文件全部如此。
 
 **禁止**：
 - 在 Manager 里 `import { app } from 'electron'` 取路径 → 由 `runtime.ts` 解析后注入
@@ -144,7 +144,7 @@ export const WORK_TODOS_CHANNELS = {
 
 **返回**：统一信封，成功 `{ ok: true, data }`，失败 `{ ok: false, error: { code, message, details? } }`。
 
-**错误**：抛 `AppError(code, message, details?)`；`code` 必须来自 `electron/main/database/errors.ts` 的 `ERROR_CODES`（**唯一来源，当前 13 项**）。IPC 层用 `toErrorEnvelope(e)` 翻译，未知异常兜底 `DB_ERROR`。
+**错误**：抛 `AppError(code, message, details?)`；`code` 必须来自 `electron/main/services/errors.ts` 的 `ERROR_CODES`（**唯一来源，当前 13 项**）。IPC 层用 `toErrorEnvelope(e)` 翻译，未知异常兜底 `DB_ERROR`。
 
 **渲染端**：**只按 `code` 分支，禁止 `message.includes()`**。
 
@@ -168,9 +168,9 @@ export const WORK_TODOS_CHANNELS = {
 **允许 import**：`electron/main/kernel/**`、`electron/main/services/**`、本插件目录内文件。
 **禁止 import**：其余一切 `electron/main/*`（`runtime`、`ipc`、域实现、`pluginDataImport` 等）。
 
-**现状**：**13 条越界**（WP3 开工时的基数，见 `doc/PLAN-4.1-DEBT.md`）。当前**没有 lint 兜底**，靠自觉。
+**现状**：**11 条越界**（实测；9 条插件 `main.ts` 直引宿主 `ipc/*`，2 条 `marketing/domain` 直引 `gatewayClient` 值导出，见 `doc/PLAN-4.1-DEBT.md`）。门禁：`npm run check:boundary`（零依赖脚本，已接入 `npm run accept` 首套与 CI verify job）。
 
-**读这条规则时要知道**：现状是「新代码不得新增越界，旧越界按 WP3 逐步清零」，不是「现在已经合规」。`lint-baseline.json` 的 ratchet 会锁死这个数。
+**读这条规则时要知道**：现状是「新代码不得新增越界，旧越界按 WP6 逐步清零」，不是「现在已经合规」。`scripts/boundary-baseline.json` 的 ratchet 会锁死这个数（只准降不准升，`--update` 才写）。
 
 ### 5.2 插件形状
 
@@ -211,7 +211,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 | 对象 | 归属 | 规则 |
 | --- | --- | --- |
 | 插件数据 | `<dataDir>/plugins/<id>/data.db` | 每插件独立库 + 独立 schema + 独立 `plugin_migrations`；只能经 `ctx.db` 的参数化 CRUD，**禁止裸 SQL** |
-| 宿主数据 | `<dataDir>/work.db` | 只承载 voice / character / wizard 的 `app_meta`（目标：迁出 character，见 C4.2） |
+| 宿主数据 | `<dataDir>/work.db` | 只承载 voice / wizard 的 `app_meta`（character 已迁 `<dataDir>/character/kv.json`，见 C4.2） |
 | 应用配置 | `<dataDir>/config/.openclaw/openclaw.json` | **单写入口**：`configManager` + `openClawConfigWriter.runSerializedOpenClawConfigWrite` |
 | 密钥 | `safeStorage` | 按 `plugin:<id>:<key>` 命名空间；永不写日志/配置/导出包 |
 | 迁移 | `migrations/*.sql` | 幂等、可重入、失败可回滚；迁移前必须 `backup()` |
@@ -234,7 +234,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 - 验收脚本**零 npm 依赖**，只用 `node:` 内置 + `test/_lib.mjs`
 - 断言打**真源码**：`bundleEntry('electron/main/work/todoManager.ts', 'todo-todo.mjs')` 后 `import()`，不 mock 被测逻辑
 
-**现状证据**：30 个 `.accept.mjs`；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。
+**现状证据**：31 个 `.accept.mjs`；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。
 
 ### 7.2 `_lib.mjs` 提供的工具
 
@@ -243,19 +243,21 @@ export default { routes, nav, slot, setup } as PluginUiModule
 | `Recorder(suite)` + `.check(id, name, fn)` | 单点失败不中断整轮 |
 | `assert` / `assertEq` / `assertDeepEq` | 断言 |
 | `bundleEntry(entry, outName, {externals, alias})` | esbuild 把 TS 打成临时 ESM |
-| `domainSrc(pluginId, rel)` / `domainUiSrc(pluginId, rel)` | **域代码搬家的双路径回落**：`plugins/<id>/main/<rel>` 存在就用它，否则回落 `electron/main/<rel>`。返回**绝对路径**，不能直接传给 `bundleEntry`（它要仓库相对路径）。需要多候选回落时用 `anySrc([...])` |
+| `domainSrc(pluginId, rel)` / `domainUiSrc(pluginId, rel)` | **旧路径兼容回落**：`plugins/<id>/main/<rel>` 存在就用它，否则回落 `electron/main/<rel>`。返回**绝对路径**，不能直接传给 `bundleEntry`（它要仓库相对路径）。**WP3 起域代码在 `plugins/<id>/domain/`，`domainSrc` 的第一候选恒不存在，实际总回落旧路径——新脚本用 `workSrc()` / `mkSrc()` / `anySrc([...])`（仓库相对路径）** |
+| `workSrc(rel)` / `mkSrc(rel)` | 域源码定位（WP3 后）：`plugins/work/domain/<rel>` → `electron/main/work/<rel>`；返回**仓库相对路径**，可直接给 `bundleEntry` |
+| `anySrc(candidates)` | 多候选定位：返回第一个存在的仓库相对路径（用于 `services/X` ↔ 旧域路径这类一对多回落） |
 | `resolveNodePath()` | 便携 node 优先 |
 | `waitFor(fn, {timeout})` | 替代固定 `sleep`，避免并发下的假失败 |
 | `printResult` / `writeJson` | 结果输出与落盘 |
 
 ### 7.3 搬家前先改硬编码，不是「不用改脚本」
 
-`domainSrc()` 的语义是「`plugins/<id>/main/<rel>` 存在就用它，否则回落 `electron/main/<rel>`」，但它有两个硬限制：
+`domainSrc()` 的语义是「`plugins/<id>/main/<rel>` 存在就用它，否则回落 `electron/main/<rel>`」——**WP3 搬迁完成后这条候选恒为旧路径**（域代码在 `plugins/<id>/domain/`），只作历史兼容保留。它有两个硬限制：
 
 1. 表达不了「新位置在一棵树、旧位置在另一棵树」（如 `services/knowledge/parsers/X` ↔ `marketing/parsers/X`）：两个候选里只有第二个是自由的。
 2. 返回绝对路径，而 `bundleEntry()` 要仓库相对路径。
 
-而且它**只对调用它的脚本生效**。实测 `test/*.mjs` 里的硬编码（G7 口径）：
+新脚本一律用 `workSrc()` / `mkSrc()` / `anySrc()`（返回仓库相对路径）。下面是 WP3 开工前的实测口径（G7 证据，供下一次搬家参考）：
 
 | 写法 | 命中 |
 | --- | --- |
@@ -325,15 +327,12 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 31 套（accept×29 + e2e + smoke，582 条断言）
+# ② 全量验收 32 套（accept×30 + e2e + smoke，598 条断言）
 npm run accept
 
-# ③ 插件越界 import（只数真违规：非 type-only、且不在 kernel/services 下；应为 15 或更少）
-#    权威定义与基线见 doc/PLAN-4.1-DEBT.md §三 V3 与 §一
-(Get-ChildItem plugins -Recurse -Include *.ts,*.vue |
-  Select-String -Pattern "from '.*electron/main/" |
-  Where-Object { $_.Line -notmatch 'electron/main/(kernel|services)' -and $_.Line -notmatch 'import type' } |
-  Measure-Object).Count
+# ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）
+npm run check:boundary
+# 当前基线：pluginHostBoundary=11、managerElectron=0；输出里的扫描目录数必须 >0（否则是假绿）
 
 # ⑤ 渲染端错误分支按 code（应为 0）
 (Select-String -Path src\**\*.vue,src\**\*.ts,plugins\**\*.vue,plugins\**\*.ts `
@@ -361,7 +360,7 @@ Get-ChildItem *.md | ForEach-Object {
 2. **不动无关代码**：修 A 时不要顺手改 B 的格式、注释、命名。
 3. **改断言 = 改契约**：发现断言写错了，单独提交，并在 `doc/PROGRESS-4.0.md` 写明「原断言错在哪」。
 4. **别把"能跑"当"完成"**：`npm run build` 通过不等于通过；`npm run accept` 全绿才算。
-5. **别猜路径**：域代码正在从 `electron/main/{work,marketing}/` 搬向 `plugins/<id>/main/`，用 `_lib.mjs:domainSrc()` 而不是硬编码。
+5. **别猜路径**：域代码已搬到 `plugins/<id>/domain/`（旧 `electron/main/{work,marketing}/` 已删除），用 `_lib.mjs:workSrc()/mkSrc()/anySrc()` 而不是硬编码；`domainSrc()` 只剩历史兼容。
 6. **别新增文档**：新计划/新规范先问；`doc/PLAN-4.1-DEBT.md` 与 `doc/PROGRESS-4.0.md` 已覆盖施工与日志。
 7. **不确定就停**：涉及 `PLAN-4.0 §17` 硬规则的改动，先回报，不要自作主张。
 

@@ -952,12 +952,13 @@ marketing 搬迁后 `pluginHostBoundary` 从 10 → **11**。多出的 2 条：
 ### ⚠️ 未达标的判据（如实登记，不算过关）
 
 `PLAN-4.1-DEBT` 的 C4.3 判据写的是 **`index.ts ≤ 1800 行`**，实测 **2441 行**，差 641 行。
-把它写成「完成」是自欺，所以单列在此：
+把它写成「完成」是自欺，所以单列在此。
 
-- 剩余最大两块：`4.0 插件宿主` 节 954 行、`marketing DB Worker wiring` 节 476 行
-- 这两块都在 `whenReady` 的闭包作用域里，抽走需要先引入显式依赖注入（与 C4.3 同性质，
-  但范围更大），不是机械搬运
-- **建议**：作为 WP5 单独立项，不混进 WP4 的完成定义
+**2026-11-02 阶段 A 复查更正（原登记的两个数字不成立）**：
+
+- 「`4.0 插件宿主` 节 954 行」不可复现：该 section 注释到下一注释的 span 是 904 行，其中真正的插件宿主代码只有 **231 行**（服务工厂 402–470 = 69 + `initPlugins` 472–633 = 162）；其余是 legacy DB / 推送通知 / 终端 / 窗口 / 托盘等宿主壳能力。
+- 「`marketing DB Worker wiring` 节 476 行」是 **WP3 删掉宿主 marketing 装配后残留的死注释**（`index.ts:1301`，紧邻的 1304 行就是 `registerIpcHandlers`），实际是 `registerIpcHandlers` 的前 477 行。
+- 真正的大块（按顶层声明实测）：`registerIpcHandlers` 1304–1991 = **688 行 / 61 个 `ipcMain.handle`**；`app.whenReady` 回调 2078–2356 = **279 行**；`initPlugins` 472–633 = **162 行**。WP5 拆法应以这三块为准（见 `PLAN-4.1-DEBT §八`）。
 
 ### 门禁与验收
 
@@ -975,4 +976,59 @@ marketing 搬迁后 `pluginHostBoundary` 从 10 → **11**。多出的 2 条：
 2. `index.ts ≤ 1800` 未达成（见上）。
 3. `pluginHostBoundary` 11 条：9 条是插件 `main.ts` 直接 import 宿主 `ipc/*`，
    2 条是 marketing domain 的 `gatewayClient` 值导入。计划在 WP6 下沉 gateway 纯工具后清零。
-4. C0.3 NSIS 真机 7 步仍待北执行（阻塞打 tag）。
+## 2026-11-02 · 4.0.0 发布前阶段 A 收尾（P0 修复 + 门禁补强 + 修假绿 + 文档校准）
+
+背景：当日 WP0–WP4 完成后做了独立审查，发现三个必须先堵的洞：
+① C4.2 角色数据迁移**没有接线**（`importAllFromLegacy` 0 调用方，本机 `work.db` 8 个旧键 vs `character/kv.json` 3 个默认键）；
+② 边界门禁**没有自动链路**（不在 accept/CI）、`managerElectron` 扫的是已搬空的目录、且可被 4 类写法绕过；
+③ 测试假绿：套件在注册断言前抛异常时输出 `0/0` 且 exit 0（实测 platform）。
+
+### A1 · 角色旧数据导入接线（C4.2 补完）
+
+- `CharacterKvStore`：新增一次性标记 `character/legacy-import.json`；首次导入**以旧库为权威**（覆盖目标里已被默认值占住的键——旧实现「目标已有就跳过」会让 2026-11-02 之前写下的默认值永久挤掉旧记忆）；读旧库失败时不写标记，下次启动重试；覆盖前把现有 kv.json 备份成 `kv.json.pre-import.bak`；标记存在但 kv.json 被删/清空时重新导入（不永久跳过）。
+- `index.ts`：在 `registerCharacter` **之前 await** 导入（旧提交信息写「导入不 await」，但 diff 里根本没有调用——本次补上），且用 **2s 超时护栏**包住（work.db 惰性初始化、单请求默认 30s，旧库被锁时不能拖住开窗；超时后导入后台继续）；顺带修 2236–2237 的自相矛盾注释与 2248 的缩进。即使角色默认关闭也导入一次（旧数据可能 `enabled=true`），代价被 2s 上限兜住。
+- `character/types.ts` / `characterHost.ts`：同步过时注释。
+- 验收：character 71 → **76/76**（新增 C73 导入+标记幂等、C74 默认值被旧值覆盖+备份、C75 读失败重试、C76 接线与 2s 护栏静态断言、C77 标记在但 kv 丢失时重导）。
+
+### A2 · 边界门禁补强并接入自动链路
+
+- `scripts/check-boundaries.mjs` 重写：静态 import/export-from（含跨行、类型判定、注释掩码、行首分号）、副作用 import、动态 `import()`（含模板字面量）、`require()` 全覆盖；非字面量 `import(x)` / `require(x)` 记成 `<non-literal>` 按违规处理；相对路径先归一化再判定（堵 `services/../ipc` 穿越）；`managerElectron` 扫描目录改为 `plugins/<id>/domain/`，**扫描目录为空直接失败**（防「什么都没扫」的假绿）；`--update` 保留 `_note`、拒绝空目录、拒绝未经 `--allow-raise` 的上调。
+- 新增 `test/boundary.accept.mjs`（B1–B8）钉住 4 类绕过、注释/模板字面量/非字面量/typeof 判定与扫描目录非空；注册进 `run-all-accept.mjs` **首套**；CI verify job 加 `Boundary gate` 一步。
+- 变异测试实测：插入 `await import('../../electron/main/ipc/work')` → `pluginHostBoundary 12 > 11` 红；插入 `import { app } from 'electron'` 到 `plugins/work/domain/todoManager.ts` → `managerElectron 1 > 0` 红；还原后 11/0 绿。
+
+### A3 · 修测试假绿
+
+- `_lib.mjs:printResult`：`total === 0` 判失败（不再只看 `failed === 0`）。
+- `run-all-accept.mjs`：子进程输出出现「验收脚本自身异常」即判失败；并把 e2e / smoke 的 catch 文案统一成同一短语（原为「e2e 自身异常」「smoke 自身异常」，不在检测范围内——审查发现的最外层假绿缺口）。实测三个方向都红：注入 `throw`、注入标记行、e2e/smoke 短语命中，均使 `npm run accept` 立即退出 1。
+
+### A4 · 文档校准
+
+AGENTS（32 套/598 断言、index.ts 2483、边界 11、门禁命令、目录树、domainSrc 现状）、
+PLAN-4.1-DEBT（§一基线表、C3.1 eslint 校正、V2/V3、D6/D7、§六进度表与发布点重排、新增 §七/§八）、
+CHANGELOG（4.0.0 条目、验收口径）、本文件（更正 WP4 的 954/476 两个不可复现数字）。
+
+### 验证（2026-11-02 实跑）
+
+- 双 typecheck：0 错 / 0 错；`npm run build` 通过。
+- 边界门禁：`pluginHostBoundary=11（基线 11）、managerElectron=0（扫描 2 个域目录）`，exit 0；boundary 套件 8/8。
+- 全量验收：**除 hot 外的 31 套（accept 29 + e2e + smoke）全绿**；`hot` 未能在本会话复现（本会话沙箱里便携 Node 被限制写 `test/.tmp`，改系统 Node 24 跑 collector 会撞 libuv 断言；hot 相关代码本次未改，待 CI/真机首跑确认）。断言累计 **598**（accept×30 + e2e + smoke 完整口径，含 hot 的 16；config-writer 的 node:test 断言不计入，与此前 585 同口径）。**不写成「全量全绿」——hot 未跑。**
+- 与基线对比：boundary 8/8；character 76/76；db-worker 38/38；gateway 29/29；plugin 61/61；ui 23/23；wizard 17/17；hotscore 14/14；platform 7/7；voice 21/21；e2e 11/11；smoke 7/7。
+
+### 对抗审查（独立子代理，2026-11-02）
+
+审查范围：本阶段未提交 diff（14 个已跟踪改动 + 1 个新文件）。结论「可以提交，但先做 3 件低成本事」，逐条处置：
+
+| # | 意见 | 处置 |
+| --- | --- | --- |
+| 1 | e2e / smoke 的 catch 文案不在 run-all 检测短语内，最外层仍可假绿（P1） | **属实→已修**：两处统一为「验收脚本自身异常（e2e/smoke）」；PROGRESS/断言同步 |
+| 2 | 角色首导 await 无上限（单键 30s），旧库被锁会拖住开窗；默认关用户也被拉 work.db（P2） | **属实→已修**：加 2s `Promise.race` 护栏（超时后台继续、不写标记），注释写明默认关也导的原因；C76 钉住护栏 |
+| 3 | 门禁解析仍可漏报/误报：注释前缀、行首分号、模板字面量、非字面量、`typeof import`、注释里的 require（P2） | **属实→已修**：`maskComments` + 扩展正则 + `typeof import` 标记 typeOnly + 非字面量按违规记；新增 B8 |
+| 4 | 首导旧值覆盖用户新进度且无 kv 备份（P2） | **属实→已修**：flush 前备份 `kv.json.pre-import.bak`，C74 断言备份内容；文档写明覆盖语义 |
+| 5 | 文档 6 处数字与实测不符（279/231/688/44/34/39）与 596 口径（P2） | **属实→已修**：全部按实测改；596→598（新增 C77/B8）；「31/32 套」改为「除 hot 外 31 套全绿」 |
+| 6 | `--update` 在空目录时照写基线；`--json` 失败不显示原因（P3） | **属实→已修**：空目录/未经 `--allow-raise` 的上调拒绝写基线；`--json` 带 `failures` |
+| 7 | `importFromLegacy` 死代码且可绕过 marker 覆盖（P3） | **属实→已删**（0 调用方），`FISH_PREFIX` 一并删 |
+| 8 | marker 在但 kv.json 丢失/损坏时不重导（P3） | **属实→已修**：标记记 `imported` 键，全缺时重新导入；C77 锁定 |
+| 9 | C76 是源码文本断言、覆盖缺口（P3） | **属实→接受并写明局限**（注释）；新增 C77 补 marker 丢失路径；并发/磁盘满路径记为未覆盖 |
+| — | hot 失败原因「无法复现」 | **前提不成立（部分）**：本机确有 `data/runtime` 便携 Node；失败发生在 DSH 会话里便携 Node 被限制写 `test/.tmp`，属会话环境差异，非代码；文档改为「本机未复现，待 CI/真机首跑」 |
+| — | `AGENTS.md:13` 路径不存在 / 「已搬空」措辞 | **属实→已修**：改为实际仓库路径与「已删除」 |
+

@@ -23,22 +23,19 @@
 
 ---
 
-## 一、基线（2026-11-02 实测，HEAD `7122a94`）
+## 一、基线（2026-11-02 阶段 A 收尾实测）
 
-| 指标 | 实测 | 复核命令 | 目标 |
+| 指标 | 实测 | 复核命令 | 目标 / 状态 |
 | --- | --- | --- | --- |
-| 宿主 `electron/main` 代码量 | 39,412 行 | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000 |
-| `electron/main/index.ts` | 2,557 行 | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800 |
-| 插件越界 import（非 type、非 kernel/services） | **15 条** | 见 §二 WP3 的扫描脚本 | 0 |
-| 插件越界 import（含 type-only） | 27 条 | 同上 | ≤ 6（仅 type） |
-| 字节完全相同的重复文件 | 3 个（parsers） | `Get-FileHash` 比对 | 0 |
-| context/knowledge 双实现 | 2 对（各 761/776、490/807 行） | `(Get-FileHash).Hash` 不同即双实现 | 1 份内核 + 域侧 section |
-| lint 门禁 | **不存在**（无 `.eslintrc*` / `eslint.config.*` / `.editorconfig`） | `Test-Path` | ratchet 门禁 |
-| CI 门禁 | 仅 `npm ci` + `build` | `Get-Content .github/workflows/release.yml` | typecheck + accept |
-| accept 套件 | 29 + e2e + smoke = **31 套 / 582 条断言**（2026-11-02 实跑全绿） | `npm run accept` | 不减少 |
-| `test/*.accept.mjs` 数量 | 30 个（`db-client` 由 `db-worker` 子进程串跑） | `Get-ChildItem test -Filter *.accept.mjs` | 不减少 |
-| 双 typecheck | 0 错（2026-11-02 实跑） | `npm run typecheck:node` / `:web` | 保持 0 |
-| 全量验收 | **31 套 / 582 断言全绿**（2026-11-02 实跑） | `npm run accept` | 保持全绿 |
+| 宿主 `electron/main` 代码量 | 26,745 行 | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 745，WP5） |
+| `electron/main/index.ts` | 2,483 行 | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800（差 683，WP5） |
+| 插件越界 import（非 type、非 kernel/services） | **11 条** | `npm run check:boundary` | 0（WP6） |
+| 门禁可绕过写法 | 已覆盖 static/export-from/dynamic/require + 路径穿越 + 注释掩码/模板字面量/非字面量/typeof | `node test/boundary.accept.mjs` | 8/8 保持 |
+| Manager 层 import electron | 0（扫描 `plugins/*/domain` 共 2 个目录） | `npm run check:boundary` | 0 |
+| 门禁是否自动执行 | `npm run accept` 首套 + CI verify job | `Select-String .github/workflows/release.yml -Pattern 'check:boundary'` | 必须有（已满足） |
+| CI 门禁 | typecheck×2 + boundary + build + accept（Windows），push release/** / tags v* / PR 触发 | `.github/workflows/release.yml` | 保持 |
+| accept 套件 | accept×30 + e2e + smoke = **32 套 / 598 条断言** | `npm run accept`（hot 依赖本机便携 Node，见 §七） | 不减少 |
+| 唯一实现 | parsers 3 份合并为 1；context 双实现收敛为 `services/context` 内核 | `Get-FileHash` / 目录结构 | 保持 |
 | 明文密钥字面量 | 0（仅 `Config.vue` 的 placeholder 示例） | 见 §三 校验清单 V9 | 0 |
 
 **已确认成立、不要在减负时破坏的东西**：
@@ -335,6 +332,8 @@ plugins/work/main.ts:13       ../../electron/main/work/migrate
 
 **C3.1 装 lint**（只装两个包，不引 vue plugin）
 
+> **v4 校正（2026-11-02 阶段 A）**：本段**未按原文执行**。`NODE_ENV=production` 下 `npm i -D` 会删掉 devDependencies（实测 449 packages removed、双 typecheck 变红）。实际落地是零依赖脚本 [check-boundaries.mjs](../../scripts/check-boundaries.mjs) + `scripts/boundary-baseline.json`（ratchet 11/0），覆盖范围比下面的 eslint 配置更严（4 类写法 + 路径归一 + 扫描目录非空校验），并已接入 `npm run accept` 首套与 CI。下面的 eslint 方案仅作历史存档。
+
 ```powershell
 npm i -D eslint@8 @typescript-eslint/parser@7 @typescript-eslint/eslint-plugin@7
 ```
@@ -442,8 +441,8 @@ CI 加一步：`npm run lint`（= eslint + check-lint-budget）。
 | # | 检查 | 判据 |
 | --- | --- | --- |
 | V1 | 双 typecheck | 0 错 |
-| V2 | 全量验收 | 31 套全绿（582 断言） |
-| V3 | 插件越界 import | ≤ `scripts/lint-baseline.json` 的 `pluginHostBoundary`（WP3 建；当前人工基线 15） |
+| V2 | 全量验收 | 32 套全绿（598 断言；hot 依赖本机便携 Node，见 §七） |
+| V3 | 插件越界 import | ≤ `scripts/boundary-baseline.json` 的 `pluginHostBoundary`（当前 11；跑 `npm run check:boundary`，已接入 accept/CI） |
 | V4 | 宿主代码量 | ≤ 目标（见 §一） |
 | V5 | 重复文件 | 0 |
 | V6 | Manager 不 import electron | 0 |
@@ -526,7 +525,9 @@ Get-ChildItem *.md | ForEach-Object {
 | D2 | WP2 现在就做，不等第三个域 | 2026-11-02 | WP1 的三个 parsers 已证明重复实现真实存在；67 条断言是现成验收网。等第三个域才做，成本是三个域同时改 |
 | D3 | 引 eslint，只装 `eslint` + `@typescript-eslint` 两个包 | 2026-11-02 | 守 import 边界不需要 vue 支持；依赖越少越容易在 CI 上跑稳 |
 | D4 | 用 ratchet baseline，不直接开 error | 2026-11-02 | 直接开 error 会逼出"一次性搬 14,500 行"的大爆炸，与 WP2 撞车 |
-| D5 | CI 里 `UMI_ALLOW_PACKAGE_SKIP=1` + accept 前先 build | 2026-11-02 | CI 不产出 NSIS；真机安装是 WP0-C0.3 的人工项。先保证源码级 31 套绿。accept 前必须 build，否则 packaged.smoke S1 在干净 checkout 失败 |
+| D5 | CI 里 `UMI_ALLOW_PACKAGE_SKIP=1` + accept 前先 build | 2026-11-02 | CI 不产出 NSIS；真机安装是 WP0-C0.3 的人工项。先保证源码级 32 套绿。accept 前必须 build，否则 packaged.smoke S1 在干净 checkout 失败 |
+| D6 | 门禁用**零依赖脚本**而不是 eslint | 2026-11-02 | `NODE_ENV=production` 下 `npm i -D` 会删 devDependencies（实测 449 packages removed、双 typecheck 变红）。脚本还必须覆盖 dynamic import / export-from / require / 路径穿越（原 import 正则漏这四类） |
+| D7 | 阶段 A 收尾**不夹带** WP5/WP6，先发 4.0.0 | 2026-11-02 | WP5/WP6 动启动链与 IPC 注册，是全仓最高回归风险区；先发布可把「从未被独立审查的 diff」冻结在 42 个提交的可审规模 |
 
 ---
 
@@ -534,8 +535,61 @@ Get-ChildItem *.md | ForEach-Object {
 
 | WP | 状态 | 完成日期 | 发布点 |
 | --- | --- | --- | --- |
-| WP0 | 进行中 | — | 4.0.0 打 tag 前置 |
-| WP1 | 未开始 | — | 4.0.1 |
-| WP2 | 未开始 | — | 4.0.2 |
-| WP3 | 未开始 | — | 4.0.3 |
-| WP4 | 未开始 | — | 4.1 |
+| WP0 | ✅ 完成（C0.3 待人工） | 2026-11-02 | 4.0.0 打 tag 前置 |
+| WP1 | ✅ 完成 | 2026-11-02 | 并入 4.0.0 |
+| WP2 | ✅ 完成 | 2026-11-02 | 并入 4.0.0 |
+| WP3 | ✅ 完成 | 2026-11-02 | 并入 4.0.0 |
+| WP4 | ✅ 完成（C4.3 判据未达，见下） | 2026-11-02 | 并入 4.0.0 |
+| 阶段 A 收尾 | ✅ 完成（2026-11-02） | 2026-11-02 | 4.0.0 发布前 |
+| WP7（4.0.1 三修） | ⬜ 未开始 | — | 4.0.1 |
+| WP5（index.ts ≤1800） | ⬜ 未开始 | — | 4.1 |
+| WP6（边界清零） | ⬜ 未开始 | — | 4.1 |
+
+> 发布点已重排：原「WP1→4.0.1 / WP2→4.0.2 / WP3→4.0.3 / WP4→4.1」不再成立——四包全部合入同一棵未发布的 `release/4.0`，且 `v1.0.0` 之后没有 tag。现在按 **4.0.0（当前 HEAD + 阶段 A 收尾）/ 4.0.1（WP7）/ 4.1（WP5+WP6）** 发布。
+>
+> WP4 的判据 `index.ts ≤ 1,800` 仍未达成（2,483），已如实登记，归 WP5，不算 WP4 过关。
+
+---
+
+## 七、4.0.0 发布前收尾（阶段 A，2026-11-02）
+
+| # | 内容 | 证据 |
+| --- | --- | --- |
+| A1 | 角色旧数据一次性导入接线（C4.2 补完） | `characterKv.ts` 标记文件 + 首次以旧库为准（覆盖被默认值占住的键，覆盖前备份 `.pre-import.bak`，标记在但 kv 丢失时重导）；`index.ts` 在 `registerCharacter` 前 **await** 导入并加 2s 超时护栏；character 套件 76/76（新增 C73–C77） |
+| A2 | 边界门禁补强 + 接入自动链路 | 修 4 类绕过（dynamic/export-from/require/路径穿越）+ 注释掩码/模板字面量/非字面量/typeof；`managerElectron` 改扫 `plugins/<id>/domain`、扫描目录为空即失败；新增 `test/boundary.accept.mjs` 8/8；`npm run accept` 首套 + CI `Boundary gate` |
+| A3 | 修测试假绿 | `printResult` 在 `total=0` 时判失败；`run-all-accept` 解析子进程输出里的「验收脚本自身异常」判失败（e2e/smoke 文案已统一；2026-11-02 实测 platform 曾 0/0 假绿） |
+| A4 | 文档校准 | AGENTS/PLAN/PROGRESS/CHANGELOG 的数字与进度表；`boundary-baseline.json` 说明 |
+
+**尚未完成（阻塞 v4.0.0 tag）**：
+
+1. C0.3 NSIS 真机 7 步（RUNBOOK §6，需人工）；
+2. 重新产出 NSIS + 刷新 `release/win-unpacked`（现产物是 2026-11-01 的，smoke S6/S7 校验的是旧包）；
+3. 对 `7122a94..HEAD`（**44** 个提交）补一次独立对抗复核（AGENTS §12.1 流程欠账）；
+4. 四件套留档必须晚于最终 HEAD。
+
+---
+
+## 八、后续工作包（4.0.1 / 4.1）
+
+### WP7 · 4.0.1 三个用户可感知修复（2–3.5 人天）
+
+| # | 修复 | 证据 |
+| --- | --- | --- |
+| P1 | work 停用中止在途 SSE/提醒 | marketing 有 `stopBackgroundWork()` + `abortAll*`；work 只有 `reminder.stop()`，通道摘了但流还在烧 token |
+| P2 | 旧库导入失败可见 + 重试入口 | work/marketing `main.ts` 现在只 `ctx.logger.warn('下次启动重试')`，插件管理页无入口 |
+| P3 | knowledge 原件路径隔离 | work 写全局 `<dataDir>/knowledge`；marketing 写 `<dataDir>/projects/<id>`；卸载/迁移会漏 |
+
+### WP5 · index.ts ≤ 1800（3–4 人天）
+
+- **W5-a**：`registerIpcHandlers`（`index.ts:1304–1991`，688 行 / 61 个 `ipcMain.handle`）按前缀拆到 `electron/main/ipc/host/{window,claw,config,env,skills,obsidian,terminal}.ts`，`index.ts` 只留 `registerHostIpc(deps)`；`deps` 用 **getter** 形状（`getMainWindow()` 等）保住晚初始化语义。
+- **W5-b**：`initPlugins`（472–633，约 162 行）+ 三个服务工厂 → `electron/main/services/pluginRuntime.ts`，legacy 读库回调显式注入。
+- 推演：现状 2,483 → a+b 后约 **1,660 行**；宿主 26,745 → 约 25,930（顺带达成 V4 ≤26,000）。
+- 出口判据：`(Get-Content electron\main\index.ts).Count -le 1800`；全量 32 套；61 个通道名逐条不变；双 typecheck 0。
+- **不要**引 DI 容器：要注入的只有 ~10 个模块级单例，getter 形状足够且不引入无类型注册表。
+
+### WP6 · 边界清零（2.5–3.5 人天）
+
+- **W6-a**：`gatewayClient.ts`（1464 行、0 处 import electron）拆出纯工具到 `services/gateway/{parts,constants,normalize,stream}.ts`，类保留并 re-export → 11 → **9**。
+- **W6-b**：域 ipc 文件搬进 `plugins/<id>/main/ipc/`（`ipc/*.ts` 现在反向 import 插件域类型，搬走同时消掉宿主→插件依赖）→ 9 → **0**。**需拍板**：`work:gateway` 两条通道随插件启停（与 marketing 对齐），按 G4 单独提交 + CHANGELOG 登记。
+- **W6-c**：基线写 0，`check:boundary` 从 ratchet 升为硬 error。
+
