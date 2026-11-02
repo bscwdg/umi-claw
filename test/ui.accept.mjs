@@ -21,7 +21,7 @@
 //
 // 用法：node test/ui.accept.mjs（npm run accept:ui）
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Recorder, assert, assertEq, printResult, writeJson, __dirname, repoRoot, domainUiSrc } from './_lib.mjs'
@@ -1085,6 +1085,75 @@ await r.check('U19', '就绪态接线：Dashboard 用 ready 门禁、语音页�
   assert(/phaseLabel/.test(dashSrc), 'Dashboard 展示当前启动阶段')
   assert(/物化\/加载渠道插件/.test(dashSrc), '加载阶段的提示文案')
   return '就绪态接线完整（含门禁/代际/快捷入口）'
+})
+
+await r.check('U21', '二次确认弹窗统一：插件管理/角色页不再用原生 window.confirm（全仓扫描兜底）', async () => {
+  const pluginMgrPath = join(repoRoot, 'src', 'views', 'PluginManager.vue')
+  const pluginMgrSrc = readFileSync(pluginMgrPath, 'utf-8')
+  assert(
+    /<ConfirmDialog[\s\S]{0,400}characterConfirmVisible/.test(pluginMgrSrc),
+    '大肥鱼停用确认必须和插件卡片用同一套 ConfirmDialog（不能再用原生弹窗）'
+  )
+  assert(/confirmDisableCharacter/.test(pluginMgrSrc), '确认回调要走 confirmDisableCharacter')
+  assert(!/window\.confirm\(/.test(pluginMgrSrc), '插件管理页不得出现原生 window.confirm 调用')
+
+  const characterPath = join(repoRoot, 'src', 'character', 'CharacterPage.vue')
+  const characterSrc = readFileSync(characterPath, 'utf-8')
+  assert(
+    /from '@\/views\/components\/ConfirmDialog\.vue'/.test(characterSrc),
+    '角色页必须复用宿主 ConfirmDialog'
+  )
+  assert(/askConfirm\(/.test(characterSrc), '角色页停用/删除等二次确认统一走 askConfirm')
+  assert(!/window\.confirm\(/.test(characterSrc), '角色页不得出现原生 window.confirm 调用')
+
+  // 全仓渲染端扫描：原生 window.confirm 与自定义弹窗样式/层级/键盘行为不一致，产品口径是统一弹窗
+  const offenders = []
+  const scan = (dir) => {
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name)
+      const stat = statSync(full)
+      if (stat.isDirectory()) {
+        scan(full)
+        continue
+      }
+      if (!/\.(vue|ts)$/.test(name)) continue
+      if (/window\.confirm\(/.test(readFileSync(full, 'utf-8'))) offenders.push(full)
+    }
+  }
+  for (const root of ['src', 'plugins']) scan(join(repoRoot, root))
+  assert(offenders.length === 0, `仍有原生 window.confirm：${offenders.join(', ')}`)
+  return '插件管理/角色页确认弹窗已统一（全仓无 window.confirm）'
+})
+
+await r.check('U22', '环境初始化/更新完成后顶部版本状态会刷新：绿色「已更新至最新版本」', async () => {
+  const setupSrc = readFileSync(join(repoRoot, 'src', 'views', 'Setup.vue'), 'utf-8')
+
+  // 顶部「已更新至最新版本」必须是绿色（黄色只留给「有新版本」）
+  assert(
+    /color: updateInfo\.hasUpdate \? 'var\(--yellow\)' : 'var\(--green\)'/.test(setupSrc),
+    '已最新状态必须用绿色，有新版本才用黄色'
+  )
+  assert(/已更新至最新版本/.test(setupSrc), '已最新文案要是「已更新至最新版本」')
+
+  // 初始化成功也要同步更新状态（旧实现只有 startUpdate 同步 → 一键初始化后仍显示旧版本 + 有新版本）
+  assert(
+    /if \(res\?\.success && envRefreshed\) syncUpdateInfoAfterSuccess\("init"\)/.test(setupSrc),
+    '初始化成功后要用磁盘实际版本刷新更新状态'
+  )
+  assert(/syncUpdateInfoAfterSuccess\("update"\)/.test(setupSrc), '显式更新成功后同样同步')
+
+  // 任务可能在页面卸载期间完成：in-flight 下降沿要兜底刷新，而不是只依赖发起时的回执
+  assert(/watch\(taskRunning/.test(setupSrc), '要监听 taskRunning 下降沿兜底刷新顶部状态')
+  assert(/onMounted\(async/.test(setupSrc), 'onMounted 要重新检测环境')
+  assert(
+    /progress\.value\?\.done && !progress\.value\?\.error/.test(setupSrc),
+    '挂载时若任务已完成，也要收敛一次状态'
+  )
+
+  // 版本比较不能误报：本地仍落后于已知最新时保留黄色提示
+  assert(/isVersionAtLeast\(/.test(setupSrc), '需要版本比较守卫（落后不谎报已最新）')
+
+  return '初始化/更新完成后顶部状态会刷新为绿色已最新，且任务跨页面完成也能兜底'
 })
 
 const result = r.toJSON({})

@@ -181,12 +181,27 @@
       </div>
       <p class="hint">只清角色数值；记忆与日记在 C07/C09 提供更细的删除与导出。</p>
     </section>
+
+    <!-- 统一二次确认：宿主其它页面用的都是自定义 ConfirmDialog，这里不再用原生 window.confirm -->
+    <ConfirmDialog
+      v-model:visible="confirmVisible"
+      :icon="confirmDanger ? '⚠️' : '❓'"
+      :title="confirmTitle"
+      :confirm-text="confirmText"
+      cancel-text="取消"
+      :danger="confirmDanger"
+      @confirm="runConfirmedAction"
+      @cancel="cancelConfirmedAction"
+    >
+      <p class="modal-message">{{ confirmMessage }}</p>
+    </ConfirmDialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 import type { BootstrapReport } from '../../electron/main/character/bootstrap'
 import type { CharacterChatStreamEvent } from '../../electron/main/character/chat'
 
@@ -284,6 +299,41 @@ function showToast(message: string): void {
   }, 3000)
 }
 
+/**
+ * 统一二次确认：宿主其它页面（插件管理 / 模型配置等）都用自定义 ConfirmDialog，
+ * 这里不再用原生 window.confirm，避免样式、层级与交互不一致。
+ */
+const confirmVisible = ref(false)
+const confirmTitle = ref('')
+const confirmMessage = ref('')
+const confirmText = ref('确定')
+const confirmDanger = ref(true)
+let confirmAction: (() => void | Promise<void>) | null = null
+
+function askConfirm(
+  options: { title: string; message: string; confirmText?: string; danger?: boolean },
+  action: () => void | Promise<void>
+): void {
+  confirmTitle.value = options.title
+  confirmMessage.value = options.message
+  confirmText.value = options.confirmText ?? '确定'
+  confirmDanger.value = options.danger ?? true
+  confirmAction = action
+  confirmVisible.value = true
+}
+
+function runConfirmedAction(): void {
+  const action = confirmAction
+  confirmVisible.value = false
+  confirmAction = null
+  if (action) void action()
+}
+
+function cancelConfirmedAction(): void {
+  confirmVisible.value = false
+  confirmAction = null
+}
+
 /** 自检失败项 → 对应配置页（QQ/飞书/微信都在渠道接入里） */
 const FLAG_FIX: Record<string, { label: string; to: string }> = {
   agentReady: { label: '模型', to: '/config' },
@@ -354,10 +404,21 @@ async function refresh(): Promise<void> {
 }
 
 async function toggleEnabled(): Promise<void> {
-  const next = !status.value.enabled
-  if (!next && !window.confirm('停用后主动消息、日记都会停止，关系与日记数据会保留。确定停用？')) {
+  if (!status.value.enabled) {
+    await applyEnabled(true)
     return
   }
+  askConfirm(
+    {
+      title: '停用大肥鱼',
+      message: '停用后主动消息、日记都会停止，关系与日记数据会保留。确定停用？',
+      confirmText: '停用'
+    },
+    () => applyEnabled(false)
+  )
+}
+
+async function applyEnabled(next: boolean): Promise<void> {
   await run(async () => {
     await window.api.character.settings.set({ enabled: next } as never)
     await refresh()
@@ -441,22 +502,33 @@ async function exportData(): Promise<void> {
 }
 
 async function deleteMemory(): Promise<void> {
-  if (!window.confirm('删除日记与关系记忆？日记会归档到 Obsidian「大肥鱼/归档」，可手动找回。')) return
-  await run(async () => {
-    const result = await window.api.character.safety.deleteData('memory')
-    await refresh()
-    if (result.warnings?.length) error.value = result.warnings.join('；')
-    else showToast('日记与关系记忆已删除（日记已归档）')
-  })
+  askConfirm(
+    {
+      title: '删除日记与关系记忆',
+      message: '删除日记与关系记忆？日记会归档到 Obsidian「大肥鱼/归档」，可手动找回。',
+      confirmText: '删除'
+    },
+    () => deleteCharacterData('memory')
+  )
 }
 
 async function deleteAll(): Promise<void> {
-  if (!window.confirm('删除全部角色数据（含设置与人格文件）？此操作不可撤销。')) return
+  askConfirm(
+    {
+      title: '删除全部角色数据',
+      message: '删除全部角色数据（含设置与人格文件）？此操作不可撤销。',
+      confirmText: '删除'
+    },
+    () => deleteCharacterData('all')
+  )
+}
+
+async function deleteCharacterData(scope: 'memory' | 'all'): Promise<void> {
   await run(async () => {
-    const result = await window.api.character.safety.deleteData('all')
+    const result = await window.api.character.safety.deleteData(scope)
     await refresh()
     if (result.warnings?.length) error.value = result.warnings.join('；')
-    else showToast('全部角色数据已删除')
+    else showToast(scope === 'memory' ? '日记与关系记忆已删除（日记已归档）' : '全部角色数据已删除')
   })
 }
 

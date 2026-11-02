@@ -115,6 +115,21 @@
     >
       <p class="modal-message">{{ confirmMessage }}</p>
     </ConfirmDialog>
+
+    <!-- 大肥鱼是宿主模块而不是插件，但它和插件卡片共用同一套宿主交互：
+         停用确认也必须走 ConfirmDialog，不能再用原生 window.confirm（样式/层级不一致）。 -->
+    <ConfirmDialog
+      v-model:visible="characterConfirmVisible"
+      icon="⚠️"
+      title="停用大肥鱼"
+      confirm-text="停用"
+      cancel-text="取消"
+      danger
+      @confirm="confirmDisableCharacter"
+      @cancel="cancelDisableCharacter"
+    >
+      <p class="modal-message">停用后主动消息、日记会自动停止；关系与日记数据保留。确定停用大肥鱼？</p>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -159,6 +174,7 @@ const characterStatus = ref<CharacterStatus | null>(null)
 const characterBusy = ref(false)
 const characterError = ref('')
 const characterNotice = ref('')
+const characterConfirmVisible = ref(false)
 const router = useRouter()
 const characterEnabled = computed(() => Boolean(characterStatus.value?.enabled))
 const characterStateLabel = computed(() => {
@@ -182,13 +198,25 @@ async function loadCharacter(): Promise<void> {
 
 async function toggleCharacter(): Promise<void> {
   if (characterBusy.value) return
-  const next = !characterEnabled.value
-  if (
-    !next &&
-    !window.confirm('停用后主动消息、日记会自动停止；关系与日记数据保留。确定停用大肥鱼？')
-  ) {
+  if (!characterEnabled.value) {
+    await applyCharacterToggle(true)
     return
   }
+  // 停用会停掉她的后台主动消息 / 日记任务：破坏性操作走宿主统一的 ConfirmDialog
+  characterConfirmVisible.value = true
+}
+
+function cancelDisableCharacter(): void {
+  characterConfirmVisible.value = false
+}
+
+async function confirmDisableCharacter(): Promise<void> {
+  characterConfirmVisible.value = false
+  await applyCharacterToggle(false)
+}
+
+async function applyCharacterToggle(next: boolean): Promise<void> {
+  if (characterBusy.value) return
   characterBusy.value = true
   characterError.value = ''
   characterNotice.value = ''

@@ -561,11 +561,26 @@
         </div>
       </div>
     </Teleport>
+
+    <!-- 二次确认统一走宿主 ConfirmDialog（与插件管理/角色页一致，不用原生 window.confirm） -->
+    <ConfirmDialog
+      v-model:visible="confirmVisible"
+      :icon="confirmDanger ? '⚠️' : '❓'"
+      :title="confirmTitle"
+      :confirm-text="confirmText"
+      cancel-text="取消"
+      :danger="confirmDanger"
+      @confirm="runConfirmedAction"
+      @cancel="cancelConfirmedAction"
+    >
+      <p class="modal-message" style="white-space: pre-line">{{ confirmMessage }}</p>
+    </ConfirmDialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 import type {
   VoiceCatalogFile,
   VoiceCatalogVoice,
@@ -747,6 +762,41 @@ function dismissNotice(): void {
   notice.value = ''
 }
 
+/**
+ * 统一二次确认：宿主其它页面（插件管理 / 角色页等）都用 ConfirmDialog，
+ * 这里不再用原生 window.confirm，避免样式、层级与键盘行为不一致。
+ */
+const confirmVisible = ref(false)
+const confirmTitle = ref('')
+const confirmMessage = ref('')
+const confirmText = ref('确定')
+const confirmDanger = ref(true)
+let confirmAction: (() => void | Promise<void>) | null = null
+
+function askConfirm(
+  options: { title: string; message: string; confirmText?: string; danger?: boolean },
+  action: () => void | Promise<void>
+): void {
+  confirmTitle.value = options.title
+  confirmMessage.value = options.message
+  confirmText.value = options.confirmText ?? '确定'
+  confirmDanger.value = options.danger ?? true
+  confirmAction = action
+  confirmVisible.value = true
+}
+
+function runConfirmedAction(): void {
+  const action = confirmAction
+  confirmVisible.value = false
+  confirmAction = null
+  if (action) void action()
+}
+
+function cancelConfirmedAction(): void {
+  confirmVisible.value = false
+  confirmAction = null
+}
+
 async function refreshSettings(): Promise<void> {
   const next = await api.settings.get()
   settings.value = next
@@ -790,7 +840,13 @@ async function testOpenClaw(): Promise<void> {
 }
 
 async function restartOpenClaw(): Promise<void> {
-  if (!window.confirm('重启 OpenClaw 网关？当前对话会短暂中断。')) return
+  askConfirm(
+    { title: '重启网关', message: '重启 OpenClaw 网关？当前对话会短暂中断。', confirmText: '重启' },
+    () => doRestartOpenClaw()
+  )
+}
+
+async function doRestartOpenClaw(): Promise<void> {
   busy.value = true
   try {
     const restarted = await window.api.claw.restart()
@@ -1235,14 +1291,18 @@ async function cancelSpeak(): Promise<void> {
   }
 }
 
-async function activateClone(record: VoiceCloneRecord): Promise<void> {
-  if (
-    !window.confirm(
-      `确认使用「${record.displayName}」进行首次正式合成？\n\n这一步会让供应商将音色转正并收取音色槽位费，之后该 ID 不能再次复刻。`
-    )
-  ) {
-    return
-  }
+function activateClone(record: VoiceCloneRecord): void {
+  askConfirm(
+    {
+      title: '首次正式合成（转正）',
+      message: `确认使用「${record.displayName}」进行首次正式合成？\n\n这一步会让供应商将音色转正并收取音色槽位费，之后该 ID 不能再次复刻。`,
+      confirmText: '转正并启用'
+    },
+    () => doActivateClone(record)
+  )
+}
+
+async function doActivateClone(record: VoiceCloneRecord): Promise<void> {
   busy.value = true
   try {
     const result = await api.clone.activate({
@@ -1274,14 +1334,18 @@ async function refreshClone(record: VoiceCloneRecord): Promise<void> {
   }
 }
 
-async function deleteClone(record: VoiceCloneRecord): Promise<void> {
-  if (
-    !window.confirm(
-      `删除本地克隆记录「${record.displayName}」？\n\n只会清理本地样本、试听和启用状态，供应商侧音色可能仍保留。`
-    )
-  ) {
-    return
-  }
+function deleteClone(record: VoiceCloneRecord): void {
+  askConfirm(
+    {
+      title: '删除克隆记录',
+      message: `删除本地克隆记录「${record.displayName}」？\n\n只会清理本地样本、试听和启用状态，供应商侧音色可能仍保留。`,
+      confirmText: '删除'
+    },
+    () => doDeleteClone(record)
+  )
+}
+
+async function doDeleteClone(record: VoiceCloneRecord): Promise<void> {
   busy.value = true
   try {
     await api.clone.remove(record.speakerId)

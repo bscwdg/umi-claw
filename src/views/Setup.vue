@@ -71,7 +71,7 @@
               {{
                 updateInfo.hasUpdate
                   ? `🆙 有新版本 v${updateInfo.latestVersion} 可用`
-                  : `✓ 已是最新版本 v${updateInfo.latestVersion}`
+                  : `✓ 已更新至最新版本 v${updateInfo.latestVersion}`
               }}
             </div>
             <div
@@ -340,12 +340,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import ConfirmDialog from "@/views/components/ConfirmDialog.vue";
 import { openWizard } from "@/composables/useWizardGate";
-import { useEnvSetupStore } from "@/stores/envSetup";
+import { useEnvSetupStore, type EnvTaskKind } from "@/stores/envSetup";
 
 const router = useRouter();
 const envSetup = useEnvSetupStore();
@@ -374,6 +374,43 @@ async function checkEnv() {
   }
 }
 
+/** 版本比较：installed ≥ target（只比较前三段数字，忽略 v 前缀/预发布后缀） */
+function isVersionAtLeast(installed: string, target: string): boolean {
+  const parse = (v: string) =>
+    v
+      .replace(/^v/i, "")
+      .split(/[.\-+]/)
+      .slice(0, 3)
+      .map((n) => Number(n) || 0);
+  const a = parse(installed);
+  const b = parse(target);
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] > b[i];
+  }
+  return true;
+}
+
+/**
+ * 初始化/更新成功后，把顶部「OpenClaw 核心服务」的更新提示收敛成绿色「已更新至最新版本」。
+ *
+ * 版本一律以磁盘实际安装为准（checkEnv 刚读过 package.json）：
+ * 任务回执/进度广播都不可靠（可能在页面卸载期间完成），旧实现只在 startUpdate 里同步，
+ * 走「一键初始化」更新完仍会显示旧版本 + 「有新版本可用」。
+ */
+function syncUpdateInfoAfterSuccess(kind: EnvTaskKind | null): void {
+  if (kind !== "init" && kind !== "update") return;
+  const installed = envInfo.value?.openClawVersion as string | undefined;
+  if (!installed) return;
+  const latest = updateInfo.value?.latestVersion;
+  // 已知最新版本且本地仍落后（例如镜像还没同步到最新）→ 保留黄色提醒，不谎报「已最新」
+  if (latest && !isVersionAtLeast(installed, latest)) return;
+  updateInfo.value = {
+    currentVersion: installed,
+    latestVersion: latest ?? installed,
+    hasUpdate: false,
+  };
+}
+
 async function startInit() {
   // 任务状态/进度订阅都在 store 单例里：切走页面时 Setup.vue 卸载不影响任务，
   // 切回来进度卡片与步骤日志仍在，也无法重复触发第二次初始化（store + 主进程双保险）
@@ -391,11 +428,16 @@ async function startInit() {
   } else if (res?.error) {
     envSetup.markError(res.error);
   }
+  let envRefreshed = false;
   try {
     await checkEnv();
+    envRefreshed = true;
   } catch (e) {
     console.error("刷新环境状态失败：", e);
   }
+  // 初始化内部会顺带把核心更新到最新：以磁盘实际版本为准刷新顶部状态
+  // （checkEnv 没成功就不能拿旧版本号去报「已最新」）
+  if (res?.success && envRefreshed) syncUpdateInfoAfterSuccess("init");
 }
 
 async function startUpdate() {
@@ -423,7 +465,8 @@ async function startUpdate() {
     console.error("刷新环境状态失败：", e);
   }
   if (res?.success) {
-    // 以更新回执为准即时同步版本与更新状态，避免界面仍提示“有可用更新”、显示旧版本
+    // 以磁盘实际安装版本为准同步（界面「版本号」的唯一来源是 checkEnv 的结果，
+    // 回执里的 currentVersion 只用来即时兜底，避免两者出现偏差）
     if (envInfo.value && res.currentVersion) {
       envInfo.value = {
         ...envInfo.value,
@@ -431,11 +474,7 @@ async function startUpdate() {
         openClawVersion: res.currentVersion,
       };
     }
-    updateInfo.value = {
-      currentVersion: res.currentVersion,
-      latestVersion: updateInfo.value?.latestVersion ?? res.currentVersion,
-      hasUpdate: false,
-    };
+    syncUpdateInfoAfterSuccess("update");
   }
   // 更新失败时保留原有 updateInfo（“有新版本”提示不消失），便于用户重新触发更新
 }
@@ -585,7 +624,32 @@ async function startNodeUpdate() {
   }
 }
 
-onMounted(checkEnv);
+// 任务可能在页面卸载期间完成（进度状态在 store 里，切走再切回不会重新拿到任务回执）：
+// 监听 in-flight 下降沿兜底刷新顶部状态，避免「一键初始化已更新完，但顶部仍显示旧版本 + 有新版本可用」。
+watch(taskRunning, async (running, wasRunning) => {
+  if (!wasRunning || running) return;
+  const kind = envSetup.currentKind;
+  const finishedOk = Boolean(progress.value?.done && !progress.value?.error);
+  try {
+    await checkEnv();
+  } catch (e) {
+    console.error("刷新环境状态失败：", e);
+    return;
+  }
+  if (finishedOk) syncUpdateInfoAfterSuccess(kind);
+});
+
+onMounted(async () => {
+  try {
+    await checkEnv();
+  } catch (e) {
+    console.error("刷新环境状态失败：", e);
+    return;
+  }
+  // 任务已经在别处完成（页面卸载期间跑完再挂载回来）：挂载时也把顶部状态收敛一次
+  const p = progress.value;
+  if (p?.done && !p?.error) syncUpdateInfoAfterSuccess(envSetup.currentKind);
+});
 </script>
 
 <style scoped>
