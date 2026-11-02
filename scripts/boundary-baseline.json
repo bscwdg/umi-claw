@@ -1,5 +1,5 @@
 {
   "pluginHostBoundary": 11,
   "managerElectron": 0,
-  "_note": "2026-11-02 阶段 A 补强后：门禁已接入 npm run accept 首套与 CI verify job；managerElectron 扫描目录改为 plugins/*/domain（旧 electron/main/{work,marketing} 已搬空，扫旧路径是假绿）。11 条构成：9 条插件 main.ts 直引宿主 ipc/*，2 条 marketing/domain 直引 gatewayClient 值导出（textPart / imageDataPart / GATEWAY_ABORT_REASON）。计划在 WP6 把 gateway 纯工具下沉 services、域 ipc 搬进插件后清零；此前只准下调，--update 保留本说明。"
+  "_note": "2026-11-02 阶段 A 补强后：门禁已接入 npm run accept 首套与 CI verify job；managerElectron 扫描目录改为 plugins/<id>/domain（旧 electron/main/{work,marketing} 已删除，扫旧路径是假绿）。11 条构成：9 条插件 main.ts 直引宿主 ipc/*，2 条 marketing/domain 直引 gatewayClient 值导出（textPart / imageDataPart / GATEWAY_ABORT_REASON）。计划在 WP6 把 gateway 纯工具下沉 services、域 ipc 搬进插件后清零；此前只准下调，--update 保留本说明，上调必须 --allow-raise --note。"
 }

@@ -50,16 +50,48 @@ export function lineAt(src, index) {
 export const NONLITERAL_SPEC = '<non-literal>'
 
 /**
- * 把注释替换成等长空白（保留换行），避免两类错误：
- *   - 块注释里的「行首 import」被当成真引用（误报：实测会被计成越界）；
- *   - 注释前缀打断行首锚点导致真 import 漏报（`/* x *\/ import ...` 曾整条漏掉）。
- * 字符串内容保留（specifier 本身在引号里）；模板字符串里的 import 仍可能误报，
- * 仓库现有代码没有这种写法，验收 B8 覆盖已知形态。
+ * 词法掩码：把注释（可选：字符串/模板内容）替换成等长空白，保留换行与偏移。
+ *
+ * 为什么需要它（2026-11-02 对抗复核实测的三类反例）：
+ *   - 注释里的示例 import 被当成真引用（误报）；
+ *   - 注释前缀打断行首锚点导致真 import 漏报；
+ *   - 正则字面量里出现 `/*` 会把其后整段代码掩掉（假阴性）——所以必须识别正则状态；
+ *   - 字符串文案里的 `import(x)` / `require('electron')` 被当成真引用（误报）。
+ *
+ * 用法：
+ *   - `lexMask(src)`：只掩注释，保留字符串（用于静态 import 的 specifier 提取）；
+ *   - `lexMask(src, { maskStrings: true })`：连字符串内容一起掩掉（用于动态 import/require 定位，
+ *     字面量参数再回原文按位置读取）。
+ * 已知边界：模板字符串的 `${}` 表达式会被当成字符串内容掩掉（仓库当前无此写法）。
  */
-export function maskComments(src) {
+export function lexMask(src, { maskStrings = false } = {}) {
   let out = ''
   let i = 0
-  let state = 'code' // code | line | block | single | double | template
+  let state = 'code' // code | line | block | single | double | template | regex
+  let regexClass = false
+
+  const lastCodeChar = () => {
+    for (let k = out.length - 1; k >= 0; k--) {
+      const c = out[k]
+      if (c === ' ' || c === '\t' || c === '\n' || c === '\r') continue
+      return c
+    }
+    return ''
+  }
+
+  // 粗粒度判断 `/` 是否在「表达式位置」（可能是正则字面量开始），避免把 `[/*]` 当块注释
+  // 已知限制（G10 复核登记）：`if (cond) /re/.test()` 这类「`)` 后」的表达式位置不识别，
+  // 会把后续代码误当正则；补 `)` 会带来除法（`(a)/b`）误判，权衡后保留现状（仓库无此写法）。
+  const regexAllowed = () => {
+    const prev = lastCodeChar()
+    if (!prev) return true
+    if ('([{=,:;!&|?+-*%^~<>'.includes(prev)) return true
+    const tail = out.slice(-16)
+    return /(?:^|[^\w$])(?:return|case|typeof|new|delete|void|in|of|yield|await|do|else)\s*$/.test(
+      tail
+    )
+  }
+
   while (i < src.length) {
     const ch = src[i]
     const next = src[i + 1]
@@ -74,6 +106,13 @@ export function maskComments(src) {
         state = 'block'
         out += '  '
         i += 2
+        continue
+      }
+      if (ch === '/' && regexAllowed()) {
+        state = 'regex'
+        regexClass = false
+        out += '/'
+        i++
         continue
       }
       if (ch === "'") state = 'single'
@@ -104,10 +143,24 @@ export function maskComments(src) {
       i++
       continue
     }
-    // 字符串/模板字符串：原样保留，但跳过转义字符
-    out += ch
+    if (state === 'regex') {
+      if (ch === '\\') {
+        out += ch + (src[i + 1] ?? '')
+        i += 2
+        continue
+      }
+      if (ch === '[' && !regexClass) regexClass = true
+      else if (ch === ']' && regexClass) regexClass = false
+      else if (ch === '/' && !regexClass) state = 'code'
+      out += ch
+      i++
+      continue
+    }
+    // 字符串 / 模板字符串：按 maskStrings 决定保留原样还是掩成空白
+    out += maskStrings ? (ch === '\n' ? '\n' : ' ') : ch
     if (ch === '\\') {
-      out += src[i + 1] ?? ''
+      const esc = src[i + 1] ?? ''
+      out += maskStrings ? (esc === '\n' ? '\n' : ' ') : esc
       i += 2
       continue
     }
@@ -131,20 +184,40 @@ export function maskComments(src) {
  * 这里按语句形态抓：静态 from、副作用 import、动态 import()、require()；
  * 非字面量参数（`import(someVar)`）静态无法判定，记成 NONLITERAL_SPEC 按违规处理。
  * 只判断「引用了哪个模块」，不做语义分析——宁可多报，不可漏报。
- * 注释先被 maskComments 抹掉，避免注释里的示例 import 误报/漏报。
+ *
+ * 两类掩码分别用：
+ *   - 静态 import 用 `lexMask(src)`（正则感知的注释掩码、保留字符串）提取 specifier；
+ *   - 动态 import / require 用 `lexMask(src, {maskStrings:true})` 定位 `import(` / `require(`，
+ *     参数是字面量时回**原文**按位置读取（这样字符串文案里的 import(x) 不会被误报）。
  */
 export function moduleReferences(src) {
-  const code = maskComments(src)
+  const commentsMasked = lexMask(src)
+  const codeMasked = lexMask(src, { maskStrings: true })
   const refs = []
 
   const push = (spec, kind, typeOnly, index) => {
-    refs.push({ spec, kind, typeOnly, line: lineAt(code, index) })
+    refs.push({ spec, kind, typeOnly, line: lineAt(src, index) })
+  }
+  // 在原文里从 pos 处读一个字符串/模板字面量（参数位置）
+  const literalAt = (pos) => {
+    const quote = src[pos]
+    if (quote !== "'" && quote !== '"' && quote !== '`') return null
+    let j = pos + 1
+    while (j < src.length) {
+      if (src[j] === '\\') {
+        j += 2
+        continue
+      }
+      if (src[j] === quote) return src.slice(pos + 1, j)
+      j++
+    }
+    return null
   }
 
   // 静态 import / export ... from '...'（允许跨多行、行首分号；花括号成员全 type 也算类型导入）
   const staticFrom = /^[ \t;]*(import|export)\s+(?:type\s+)?([\s\S]*?)\s+from\s+['"]([^'"]+)['"]/gm
   let m
-  while ((m = staticFrom.exec(code))) {
+  while ((m = staticFrom.exec(commentsMasked))) {
     const keyword = m[1]
     const head = m[0].slice(0, m[0].indexOf('from'))
     const brace = head.match(/\{([\s\S]*?)\}/)
@@ -162,29 +235,25 @@ export function moduleReferences(src) {
 
   // 副作用 import '...'（不 from）
   const sideEffect = /^[ \t;]*import\s+['"]([^'"]+)['"]/gm
-  while ((m = sideEffect.exec(code))) push(m[1], 'side-effect', false, m.index)
+  while ((m = sideEffect.exec(commentsMasked))) push(m[1], 'side-effect', false, m.index)
 
-  // 动态 import（字面量，支持 ' " `；避开 obj.import(...) 这类 API 调用）
-  const dynamicImport = /(?<![.\w$])import\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g
-  while ((m = dynamicImport.exec(code))) {
-    const prefix = code.slice(Math.max(0, m.index - 8), m.index)
-    push(m[1], 'dynamic', /typeof\s*$/.test(prefix), m.index)
+  // 动态 import：在「注释+字符串都掩掉」的文本上定位，参数回原文读（支持 ' " `）
+  const dynamicImport = /(?<![.\w$])import\s*\(\s*/g
+  while ((m = dynamicImport.exec(codeMasked))) {
+    const argPos = m.index + m[0].length
+    const spec = literalAt(argPos)
+    const prefix = codeMasked.slice(Math.max(0, m.index - 8), m.index)
+    const typeOnly = /typeof\s*$/.test(prefix)
+    push(spec ?? NONLITERAL_SPEC, spec ? 'dynamic' : 'dynamic-nonliteral', typeOnly, m.index)
   }
 
-  // 动态 import（非字面量）：无法静态判定，按违规处理
-  const dynamicNonLiteral = /(?<![.\w$])import\s*\(\s*(?!['"`])/g
-  while ((m = dynamicNonLiteral.exec(code))) {
-    const prefix = code.slice(Math.max(0, m.index - 8), m.index)
-    push(NONLITERAL_SPEC, 'dynamic-nonliteral', /typeof\s*$/.test(prefix), m.index)
+  // require：同上（CommonJS 写法同样能拿到真模块 → 一律按值引用）
+  const requireCall = /(?<![.\w$])require\s*\(\s*/g
+  while ((m = requireCall.exec(codeMasked))) {
+    const argPos = m.index + m[0].length
+    const spec = literalAt(argPos)
+    push(spec ?? NONLITERAL_SPEC, spec ? 'require' : 'require-nonliteral', false, m.index)
   }
-
-  // require（字面量）：CommonJS 写法同样能拿到真模块 → 一律按值引用
-  const requireCall = /(?<![.\w$])require\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g
-  while ((m = requireCall.exec(code))) push(m[1], 'require', false, m.index)
-
-  // require（非字面量）
-  const requireNonLiteral = /(?<![.\w$])require\s*\(\s*(?!['"`])/g
-  while ((m = requireNonLiteral.exec(code))) push(NONLITERAL_SPEC, 'require-nonliteral', false, m.index)
 
   return refs.sort((a, b) => a.line - b.line || a.kind.localeCompare(b.kind))
 }
@@ -259,7 +328,12 @@ export function listManagerDirs(root = repoRoot) {
     .filter((dir) => existsSync(dir) && statSync(dir).isDirectory())
 }
 
-/** 从一份源码里找 'electron' 包引用（Manager 层规则；纯函数，便于回归） */
+/**
+ * 从一份源码里找 'electron' 包引用（Manager 层规则；纯函数，便于回归）。
+ *
+ * 非字面量 `import(x)`（记成 NONLITERAL_SPEC）不计入本指标：它已被 pluginHostBoundary
+ * 统一按违规处理（domain 文件也在 plugins/** 扫描范围内），这里再算会重复计数。
+ */
 export function managerElectronRefs(src) {
   return moduleReferences(src).filter(
     (ref) => !ref.typeOnly && (ref.spec === 'electron' || ref.spec.startsWith('electron/'))
@@ -308,16 +382,30 @@ if (isMain) {
       for (const f of failures) console.error('  ' + f)
       process.exit(1)
     }
-    // ratchet 只准降：上调必须显式 --allow-raise，并在提交信息 / _note 写明原因
+    // ratchet 只准降：上调必须显式 --allow-raise + --note 说明原因（否则 _note 会与新基线矛盾）
     const raised = Object.keys(current).filter((k) => current[k] > (baseline[k] ?? 0))
-    if (raised.length && !process.argv.includes('--allow-raise')) {
+    let raiseNote = ''
+    if (raised.length) {
       const detail = raised.map((k) => `${k} ${baseline[k] ?? 0}→${current[k]}`).join(', ')
-      console.error(`\n✗ 拒绝上调基线（ratchet 只准降）：${detail}`)
-      console.error('  若确属新暴露的真实耦合，用 --allow-raise 并在基线 _note 写明原因')
-      process.exit(1)
+      const noteIdx = process.argv.indexOf('--note')
+      raiseNote = noteIdx >= 0 ? (process.argv[noteIdx + 1] ?? '') : ''
+      if (!process.argv.includes('--allow-raise')) {
+        console.error(`\n✗ 拒绝上调基线（ratchet 只准降）：${detail}`)
+        console.error('  若确属新暴露的真实耦合，用 --allow-raise --note "<原因>" 并在提交信息写明')
+        process.exit(1)
+      }
+      if (!raiseNote.trim()) {
+        console.error(`\n✗ --allow-raise 必须同时给 --note "<原因>"：${detail}`)
+        process.exit(1)
+      }
     }
-    // 保留既有 _note：--update 只该改数字，不该把「为什么是 11」的说明擦掉
-    const next = baseline._note ? { ...current, _note: baseline._note } : current
+    // 保留既有 _note：--update 只该改数字；上调时把原因追加进去
+    let nextNote = baseline._note
+    if (raiseNote.trim()) {
+      const stamp = new Date().toISOString().slice(0, 10)
+      nextNote = `${nextNote ? nextNote + ' | ' : ''}${stamp} raised by --note: ${raiseNote.trim()}`
+    }
+    const next = nextNote ? { ...current, _note: nextNote } : current
     writeFileSync(baselinePath, JSON.stringify(next, null, 2) + '\n', 'utf8')
     console.log('基线已更新：', JSON.stringify(current))
     process.exit(0)

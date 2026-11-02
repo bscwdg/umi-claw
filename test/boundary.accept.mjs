@@ -199,7 +199,65 @@ await r.check('B8', '注释 / 模板字面量 / 非字面量 / typeof / API 调�
     0,
     '.import() API 调用不应计入'
   )
-  return '注释掩码 / 分号 / 模板字面量 / 非字面量 / typeof / API 调用 六类形态判定正确'
+
+  // 正则字面量里的 `/*` 不能把其后代码整段掩掉（旧实现假阴性）
+  const regexLiteral = [
+    'const re = /[/*]/g',
+    "import { d } from '../../electron/main/ipc/work'",
+    'export const ok = re.test("/")'
+  ].join('\n')
+  const refs6 = moduleReferences(regexLiteral)
+  assertEq(refs6.length, 1, `正则字面量后的 import 应被识别，实际 ${refs6.length}`)
+  assertEq(
+    classifyPluginSpecifier(PLUGIN_FILE, refs6[0].spec, refs6[0].typeOnly),
+    'electron/main/ipc/work',
+    '正则字面量后的越界应命中'
+  )
+
+  // 字符串 / 模板「内容」里的 import(x) / require('electron') 是文案，不应误报
+  assertEq(
+    moduleReferences("throw new Error('unsupported: import(specifier)')").length,
+    0,
+    '字符串文案里的 import(x) 不应计为动态导入'
+  )
+  assertEq(
+    moduleReferences("throw new Error('unsupported: require(specifier)')").length,
+    0,
+    '字符串文案里的 require(x) 不应计为 require'
+  )
+  assertEq(
+    managerElectronRefs("const msg = 'do not require(\"electron\") here'").length,
+    0,
+    '字符串文案里的 require(electron) 不应误报'
+  )
+  assertEq(
+    moduleReferences('const s = `call import(path)`').length,
+    0,
+    '模板内容里的 import(x) 不应误报'
+  )
+
+  // typeof import(变量) 是类型查询：即使非字面量也不应按值违规
+  const typeQueryVar = 'type T = typeof import(modulePath)'
+  const refs7 = moduleReferences(typeQueryVar)
+  assertEq(refs7.length, 1, 'typeof import(变量) 应被识别为一条引用')
+  assertEq(refs7[0].typeOnly, true, 'typeof import(变量) 应标记 typeOnly')
+  assertEq(classifyPluginSpecifier(PLUGIN_FILE, refs7[0].spec, refs7[0].typeOnly), null, '类型查询放行')
+
+  // 字符串里的 `//` 不能进入注释状态（否则后面真 import 漏掉）
+  const urlString = ["const url = 'https://example.com/a'", "import { e } from '../../electron/main/ipc/hot'"].join('\n')
+  const refs8 = moduleReferences(urlString)
+  assertEq(refs8.length, 1, `字符串里的 // 不应吞掉后续 import，实际 ${refs8.length}`)
+  assertEq(classifyPluginSpecifier(PLUGIN_FILE, refs8[0].spec, refs8[0].typeOnly), 'electron/main/ipc/hot', 'URL 字符串后的越界应命中')
+
+  // ── 已登记的两条已知边界（G10 复核接受；修复时同步改这里的断言与 AGENTS §5.1）──
+  // 1) 模板字符串 `${}` 里的表达式暂被当作模板内容掩掉 → 其中的动态 import 检不出
+  const templateExpr = 'const s = `${await import("../../electron/main/ipc/work")}`'
+  assertEq(moduleReferences(templateExpr).length, 0, '已知边界：模板 ${} 内动态 import 暂不识别')
+  // 2) `)` 后的正则字面量启发式不识别 → 该行之后可能被误当正则而漏检
+  const regexAfterParen = ["if (ok) /[/*]/.test(s)", "import { f } from '../../electron/main/ipc/scan'"].join('\n')
+  assertEq(moduleReferences(regexAfterParen).length, 0, '已知边界：`)` 后正则字面量暂不识别')
+
+  return '注释/正则字面量/字符串文案/模板内容/typeof/URL字符串/非字面量/API调用 判定正确（2 条已知边界已登记）'
 })
 
 const result = r.toJSON()
