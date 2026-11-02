@@ -40,6 +40,7 @@ import {
   resolveNodePath,
   sleep,
   tmpDir,
+  waitFor,
   workerScriptPath,
   writeJson
 } from './_lib.mjs'
@@ -377,7 +378,12 @@ try {
       assertEq(results[1].aborted, true, '第 1 路 aborted')
       assertEq(results[0].aborted, false, '第 0 路不受影响')
       assertEq(results[2].aborted, false, '第 2 路不受影响')
-      await sleep(150)
+      // 异步收尾落库 + 服务端断连观测：用轮询代替固定 sleep（重负载下 150ms 会读早）
+      await waitFor(
+        async () => (await countRows(database, 'content_versions', {})) >= versionsBefore + 2,
+        { timeout: 5000, label: 'C4 两路版本落库' }
+      )
+      await waitFor(() => fake.state.closeEarly >= 1, { timeout: 5000, label: 'C4 服务端断连' })
       assert(fake.state.closeEarly >= 1, `服务端应观测到断连，实际 ${fake.state.closeEarly}`)
       assert(fake.state.framesByAngle[1] < 40, '断连发生在流中途（非超时跑完）')
       assertEq(await countRows(database, 'content_versions', {}), versionsBefore + 2, '只落 2 版（中止路不落）')
@@ -688,7 +694,11 @@ const runtimeSrc = readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
       assertEq(manager.cancelAllGenerations(), 0, '都已终结 → cancelAll 数 0（不双计）')
     } finally {
       fake.state.mode = 'ok'
-      await sleep(80)
+      // 注册表清空发生在异步收尾里；轮询代替固定 sleep
+      await waitFor(() => manager.activeGenerationCount() === 0, {
+        timeout: 3000,
+        label: 'C6 收尾后注册表空'
+      })
       assertEq(manager.activeGenerationCount(), 0, '收尾后注册表空')
     }
     return '整体中止 + 两路定位 + 幂等不双计 ✓'

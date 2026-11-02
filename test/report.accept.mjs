@@ -29,6 +29,7 @@ import {
   resolveNodePath,
   sleep,
   tmpDir,
+  waitFor,
   workerScriptPath,
   writeJson
 } from './_lib.mjs'
@@ -277,8 +278,11 @@ try {
     const res = await handle.stream.result
     assertEq(res.aborted, false, '正常完成')
     assertEq(res.text, '片1片2片3片4片5片6', '拼接产出')
-    // 等异步 finishRun 落库
-    await sleep(200)
+    // 等异步 finishRun 落库（轮询而不是固定 sleep：重负载下 200ms 会读早）
+    await waitFor(
+      async () => (await reports.get(reportId)).versions.length >= 1,
+      { timeout: 5000, label: 'P7 generation 落库' }
+    )
     const detail = await reports.get(reportId)
     assertEq(detail.versions.length, 1, '落了 1 个 generation')
     assertEq(detail.versions[0].content, '片1片2片3片4片5片6', 'generation content 是 AI 原文')
@@ -302,7 +306,10 @@ try {
   await r.check('P9', 'regenerate：追加新 generation（不覆盖；current 推进；旧版本可回看）', async () => {
     const handle = await reports.regenerate(reportId)
     await handle.stream.result
-    await sleep(200)
+    await waitFor(
+      async () => (await reports.get(reportId)).versions.length >= 2,
+      { timeout: 5000, label: 'P9 第二版落库' }
+    )
     const detail = await reports.get(reportId)
     assertEq(detail.versions.length, 2, '追加为 2 个 generation')
     assertEq(detail.versions[0].version, 1, 'v1 仍在（不覆盖）')
@@ -380,7 +387,8 @@ try {
     await reports2.generate({ type: 'daily', period: '2026-09-29' })
     assertEq(reports2.abortAll(), 1, '在途 1 个 → 返回 1')
     assertEq(cancelled, 1, '流 cancel 被调用（真断上游）')
-    await sleep(80)
+    // finishRun 的 finally 删 Map 是异步的；轮询代替固定 sleep
+    await waitFor(() => reports2.abortAll() === 0, { timeout: 3000, label: 'P13 收尾后无在途' })
     assertEq(reports2.abortAll(), 0, '收尾后没有在途')
     return 'abortAll ✓'
   })
