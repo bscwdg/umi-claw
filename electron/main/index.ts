@@ -2243,6 +2243,8 @@ app.whenReady().then(async () => {
     // 必须等导入（有上限）再 registerCharacter：否则角色初始化会先读到默认值、再把默认值写回
     // kv.json，把旧数据挤掉（2026-11-02 实测踩过：work.db 8 个旧键 vs kv.json 3 个默认键）。
     // 上限 2s：work.db 是惰性初始化，单请求默认 30s；旧库被锁/损坏时不能拖住开窗。
+    // 超时**放弃本轮**（不写 kv、不写标记）：不能在后台继续写——角色初始化会同时整份覆盖
+    // 同一份 kv，两边并行会互相丢写；放弃后下次启动重试即可。
     // 即使角色默认关闭也执行一次：旧数据里可能 enabled=true，跳过会把启停状态读错。
     const characterKv = new CharacterKvStore({
       dataDir: characterDataDir,
@@ -2250,35 +2252,41 @@ app.whenReady().then(async () => {
       logger: (message) => console.log(message)
     })
     try {
-      const legacyImport = characterKv.importAllFromLegacy()
+      let importCancelled = false
+      const legacyImport = characterKv.importAllFromLegacy({
+        isCancelled: () => importCancelled
+      })
       let importTimeoutId: NodeJS.Timeout | null = null
       const importTimeout = new Promise<'timeout'>((resolve) => {
         importTimeoutId = setTimeout(() => resolve('timeout'), 2000)
       })
-      const importResult = await Promise.race([legacyImport, importTimeout])
-      if (importTimeoutId) clearTimeout(importTimeoutId)
+      let importResult: Awaited<typeof legacyImport> | 'timeout'
+      try {
+        importResult = await Promise.race([legacyImport, importTimeout])
+      } finally {
+        // 异常路径也要清定时器，避免无意义地拖住事件循环 2s
+        if (importTimeoutId) clearTimeout(importTimeoutId)
+      }
       if (importResult === 'timeout') {
-        console.log('[character] 旧数据导入超过 2s，先开窗口；导入在后台继续（失败下次启动重试）')
-        void legacyImport
-          .then((result) => {
-            if (result.imported.length) {
-              console.log(`[character] 后台旧数据导入完成 ${result.imported.length} 项`)
-            }
-          })
-          .catch((error) => {
-            console.log(
-              `[character] 后台旧数据导入失败，下次启动重试: ${
-                (error as Error)?.message ?? String(error)
-              }`
-            )
-          })
+        importCancelled = true
+        console.log(
+          '[character] 旧数据导入超过 2s，本轮放弃（不写 kv、不写标记；下次启动重试），先开窗口'
+        )
+        // 超时后不再等待；仍需接住后面的 rejection（本轮已取消，产物不会写入）
+        void legacyImport.catch((error) => {
+          console.log(
+            `[character] 超时后旧数据导入结束（本轮已放弃）: ${
+              (error as Error)?.message ?? String(error)
+            }`
+          )
+        })
       } else if (importResult.imported.length) {
         console.log(
           `[character] 旧数据已导入 ${importResult.imported.length} 项（旧键保留只读，可回滚；` +
             '被覆盖的 kv.json 已备份为 .pre-import.bak）'
         )
       } else if (importResult.alreadyDone) {
-        console.log('[character] 旧数据导入已完成（标记存在，跳过）')
+        console.log('[character] 旧数据导入已完成（标记存在且 kv.json 完好，跳过）')
       }
     } catch (error) {
       console.log(

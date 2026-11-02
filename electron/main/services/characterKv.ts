@@ -14,9 +14,11 @@
 //   首次导入以旧库为权威：目标里已有的同名键会被旧值覆盖——因为 4.0 开发期曾有一版
 //   先写默认值再（本该）导入的顺序，目标可能已被默认值污染；只跳过会让旧记忆永远搬不过来。
 //   读旧库失败时不写标记，下次启动重试（宁可重读，不可漏搬）。
-//   首次导入前会把现有 kv.json 备份为 `kv.json.pre-import.bak`（覆盖是有意的：旧库是权威，
-//   但开发期旧构建可能已写入新进度，留一份可人工找回）。
+//   首次导入前会把现有 kv.json 备份为 `kv.json.pre-import.bak`（已有备份不覆盖）。
+//   标记存在时只有 kv.json **缺失/损坏**才重导；用户主动「删除全部角色数据」不会重导。
 //   旧键保留只读一个版本（不删），出问题时可回滚。
+//
+// 已知边界：不做跨进程锁（两个应用实例同指一个 dataDir 时无保护，见 PROGRESS 阶段 A 已知欠账）。
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -45,14 +47,26 @@ export interface LegacyImportResult {
   imported: string[]
   /** 旧库没有值 / 与目标已一致的键 */
   skipped: string[]
-  /** 标记文件已存在，本次完全跳过 */
+  /** 标记文件已存在（或 kv.json 完好），本次完全跳过 */
   alreadyDone: boolean
+}
+
+export interface LegacyImportOptions {
+  /**
+   * 返回 true 表示调用方已放弃本轮（如启动超时）：不写 kv、不写标记，下次启动重试。
+   *
+   * 为什么需要它：调用方有 2s 开窗护栏，超时后不能继续在后台写 kv——角色初始化会同时
+   * 读写同一份 kv（整份 map 覆盖），两边并行会互相覆盖；放弃本轮最安全。
+   */
+  isCancelled?: () => boolean
 }
 
 export class CharacterKvStore implements CharacterKv {
   private readonly filePath: string
   private readonly markerPath: string
   private cache: KvMap | null = null
+  /** kv.json 的加载状态：用于区分「用户主动清空（文件正常）」与「文件丢失/损坏」 */
+  private loadState: 'ok' | 'missing' | 'corrupt' = 'ok'
   private readonly legacy?: LegacyCharacterKv
   private readonly logger: (message: string) => void
 
@@ -80,6 +94,12 @@ export class CharacterKvStore implements CharacterKv {
     renameSync(tmp, this.markerPath)
   }
 
+  /** 取消本轮导入的统一返回（不写盘、不写标记） */
+  private cancelledResult(skipped: string[]): LegacyImportResult {
+    this.logger('[character] 旧数据导入已被调用方取消（启动超时），本轮不写入 kv、不写标记')
+    return { imported: [], skipped, alreadyDone: false }
+  }
+
   /** 读取导入标记（排障：标记里记着导入过哪些键，用来判断 kv.json 是否被弄丢） */
   private readMarker(): { imported: string[] } | null {
     try {
@@ -94,11 +114,16 @@ export class CharacterKvStore implements CharacterKv {
     }
   }
 
-  /** 首导会覆盖目标键，先留一份被覆盖前的 kv.json（备份失败不阻断导入） */
+  /**
+   * 首导会覆盖目标键，先留一份被覆盖前的 kv.json（备份失败不阻断导入）。
+   * 已存在备份时不覆盖：lost 重导可能发生多次，不能让第二次的空文件冲掉第一次的可回滚副本。
+   */
   private backupBeforeImport(): void {
     if (!existsSync(this.filePath)) return
+    const backupPath = this.filePath + '.pre-import.bak'
+    if (existsSync(backupPath)) return
     try {
-      copyFileSync(this.filePath, this.filePath + '.pre-import.bak')
+      copyFileSync(this.filePath, backupPath)
     } catch (e) {
       this.logger(
         `[character] 导入前备份 kv.json 失败（继续导入）: ${(e as Error)?.message ?? String(e)}`
@@ -118,7 +143,9 @@ export class CharacterKvStore implements CharacterKv {
         }
       }
       this.cache = out
-    } catch {
+      this.loadState = 'ok'
+    } catch (e) {
+      this.loadState = (e as NodeJS.ErrnoException)?.code === 'ENOENT' ? 'missing' : 'corrupt'
       this.cache = {}
     }
     return this.cache
@@ -131,6 +158,8 @@ export class CharacterKvStore implements CharacterKv {
     const tmp = this.filePath + '.tmp'
     writeFileSync(tmp, JSON.stringify(map, null, 2), 'utf8')
     renameSync(tmp, this.filePath)
+    // 刚写成合法文件：后续「标记在但 kv 丢失」的判定必须以 ok 为准
+    this.loadState = 'ok'
   }
 
   async get(key: string): Promise<string | null> {
@@ -165,20 +194,33 @@ export class CharacterKvStore implements CharacterKv {
    * kv.json 只有 3 个默认键）。首次导入以旧库为权威，之后靠标记文件不再覆盖。
    *
    * 读旧库失败时不写标记：宁可下次重读，不可把「临时故障」变成「永久漏搬」。
+   *
+   * 标记存在时只有「kv.json 缺失/损坏」才重导；**用户主动删除全部角色数据不会重导**——
+   * 重置走 `set(key, null)` 会把 kv.json 写成合法的空/剩余对象，文件状态是 ok，
+   * 若用「键都空了就重导」判据，用户点过「删除全部（不可撤销）」后重启就会复活旧数据。
    */
-  async importAllFromLegacy(): Promise<LegacyImportResult> {
+  async importAllFromLegacy(options: LegacyImportOptions = {}): Promise<LegacyImportResult> {
     const legacy = this.legacy
     if (!legacy) return { imported: [], skipped: [], alreadyDone: false }
+    const cancelled = (): boolean => options.isCancelled?.() === true
     if (existsSync(this.markerPath)) {
-      // 标记存在但 kv.json 被删/清空：不能永久跳过，否则旧数据永远回不来
       const marker = this.readMarker()
-      const current = this.load()
-      const lost =
-        marker !== null &&
-        marker.imported.length > 0 &&
-        marker.imported.every((key) => !(key in current))
-      if (!lost) return { imported: [], skipped: [], alreadyDone: true }
-      this.logger('[character] 导入标记存在但 kv.json 已丢失/清空，重新执行一次导入')
+      // 触发一次加载，得到 kv.json 的真实状态（missing/corrupt/ok）
+      this.load()
+      if (marker === null) {
+        this.logger(
+          '[character] 导入标记损坏，跳过导入（如需重导：删除 character/legacy-import.json 与 character/kv.json 后重启）'
+        )
+        return { imported: [], skipped: [], alreadyDone: true }
+      }
+      if (this.loadState === 'ok') return { imported: [], skipped: [], alreadyDone: true }
+      this.logger(
+        `[character] kv.json 状态为 ${this.loadState}（缺失/损坏），重新执行一次旧数据导入`
+      )
+    }
+    if (cancelled()) {
+      this.logger('[character] 旧数据导入开始前已被调用方取消（启动超时），本轮不写入')
+      return { imported: [], skipped: [], alreadyDone: false }
     }
 
     const map = { ...this.load() }
@@ -213,6 +255,7 @@ export class CharacterKvStore implements CharacterKv {
 
     // meta 优先：日期列表在它里面
     await adopt('fish:v2:meta')
+    if (cancelled()) return this.cancelledResult(skipped)
     const source = map['fish:v2:meta']
     let days: string[] = []
     let lifeDays: string[] = []
@@ -230,9 +273,18 @@ export class CharacterKvStore implements CharacterKv {
 
     for (const k of ['state', 'settings', 'unlocks', 'dedup', 'pet', 'chatgen']) {
       await adopt('fish:v2:' + k)
+      if (cancelled()) return this.cancelledResult(skipped)
     }
-    for (const d of days) await adopt('fish:v2:day:' + d)
-    for (const d of lifeDays) await adopt('fish:v2:life:' + d)
+    for (const d of days) {
+      await adopt('fish:v2:day:' + d)
+      if (cancelled()) return this.cancelledResult(skipped)
+    }
+    for (const d of lifeDays) {
+      await adopt('fish:v2:life:' + d)
+      if (cancelled()) return this.cancelledResult(skipped)
+    }
+
+    if (cancelled()) return this.cancelledResult(skipped)
 
     if (imported.length) {
       this.backupBeforeImport()

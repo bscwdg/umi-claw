@@ -10,7 +10,7 @@
 import { pathToFileURL } from 'node:url'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Recorder, assert, assertEq, bundleEntry, printResult, repoRoot, tmpDir } from './_lib.mjs'
+import { Recorder, __dirname, assert, assertEq, bundleEntry, printResult, repoRoot, tmpDir, writeJson } from './_lib.mjs'
 
 const typesMod = await import(pathToFileURL(bundleEntry('electron/main/character/types.ts', 'character-types.mjs')).href)
 const storeMod = await import(pathToFileURL(bundleEntry('electron/main/character/store.ts', 'character-store.mjs')).href)
@@ -2215,18 +2215,20 @@ await recorder.check('C75', '读旧库失败不写导入标记：下次启动重
 
 await recorder.check('C76', '宿主接线：registerCharacter 之前 await 旧数据导入（防先读默认值）', async () => {
   const src = readFileSync(join(repoRoot, 'electron/main/index.ts'), 'utf8')
-  const importAt = src.indexOf('characterKv.importAllFromLegacy()')
+  const importAt = src.indexOf('characterKv.importAllFromLegacy({')
   assert(importAt >= 0, 'index.ts 必须调用 importAllFromLegacy（C4.2 曾漏接线）')
   // 静态断言只能证明「写了调用」，不能证明运行时真的执行/等到；后者靠 C73–C75 与人工核查
   const raceAt = src.indexOf('Promise.race([legacyImport, importTimeout])')
   assert(raceAt > importAt, '导入必须被 2s 超时护栏包住（旧库被锁时不能拖住开窗）')
   assert(/setTimeout\(\(\) => resolve\('timeout'\), 2000\)/.test(src), '超时护栏应为 2s')
+  assert(/isCancelled: \(\) => importCancelled/.test(src), '超时必须取消本轮导入（不能后台并行写 kv）')
   const registerAt = src.indexOf('registerCharacter(', importAt)
   assert(registerAt > raceAt, '导入/护栏必须发生在 registerCharacter 之前')
   const kvSrc = readFileSync(join(repoRoot, 'electron/main/services/characterKv.ts'), 'utf8')
   assert(kvSrc.includes('legacy-import.json'), '导入标记文件名要可查（排障用完即不再读旧库）')
   assert(kvSrc.includes('.pre-import.bak'), '首导覆盖前必须留备份')
-  return 'index.ts 在 registerCharacter 前 await（含 2s 护栏）导入'
+  assert(/loadState === 'ok'/.test(kvSrc), 'lost 判据必须基于文件状态（不是键是否全空）')
+  return 'index.ts 在 registerCharacter 前 await（含 2s 护栏 + 取消）导入'
 })
 
 await recorder.check('C77', '导入标记存在但 kv.json 丢失时会重新导入（不再永久跳过）', async () => {
@@ -2254,5 +2256,64 @@ await recorder.check('C77', '导入标记存在但 kv.json 丢失时会重新导
   return '标记在但 kv 丢失 → 重新导入'
 })
 
-const ok = printResult(recorder.toJSON())
+await recorder.check('C78', '用户主动重置（删除全部键）后重启不会复活旧数据', async () => {
+  const dir = characterKvDir('reset-all')
+  const legacyMap = {
+    'fish:v2:meta': JSON.stringify({ days: ['2026-11-01'], lifeDays: [] }),
+    'fish:v2:state': '{"familiarity":88,"stage":3}',
+    'fish:v2:settings': '{"enabled":true}',
+    'fish:v2:day:2026-11-01': '{"day":1}'
+  }
+  const store = new CharacterKvStore({ dataDir: dir, legacy: legacyReader(legacyMap), logger: () => {} })
+  await store.importAllFromLegacy()
+  // 模拟 CharacterManager.deleteData('all') → store.reset('all')：逐键 set(null)，kv.json 仍是合法文件
+  for (const key of await store.keys()) await store.set(key, null)
+  assertEq((await store.keys()).length, 0, '重置后键应清空')
+  const afterRestart = new CharacterKvStore({
+    dataDir: dir,
+    legacy: legacyReader(legacyMap),
+    logger: () => {}
+  })
+  const result = await afterRestart.importAllFromLegacy()
+  assertEq(result.alreadyDone, true, 'kv.json 完好（只是被清空）→ 不应重导')
+  assertEq(await afterRestart.get('fish:v2:state'), null, '旧数据不能复活')
+  rmSync(dir, { recursive: true, force: true })
+  return '重置后重启不重导（区分「用户清空」与「文件丢失」）'
+})
+
+await recorder.check('C79', '启动超时取消本轮导入：不写 kv、不写标记，下次可重试', async () => {
+  const dir = characterKvDir('cancel')
+  const legacyMap = {
+    'fish:v2:meta': JSON.stringify({ days: [], lifeDays: [] }),
+    'fish:v2:state': '{"familiarity":88}'
+  }
+  let reads = 0
+  const legacy = {
+    async get(key) {
+      reads++
+      return Object.prototype.hasOwnProperty.call(legacyMap, key) ? legacyMap[key] : null
+    }
+  }
+  const cancelledImport = new CharacterKvStore({ dataDir: dir, legacy, logger: () => {} })
+  // 第一次读之后调用方判定超时（模拟 2s 护栏）：本轮必须放弃、不落盘
+  const cancelled = await cancelledImport.importAllFromLegacy({ isCancelled: () => reads >= 1 })
+  assertEq(cancelled.imported.length, 0, '取消后不应写入')
+  assertEq(cancelledImport.hasImportedLegacy(), false, '取消后不写标记')
+  assertEq(existsSync(join(dir, 'character', 'kv.json')), false, '取消后不写 kv.json')
+  // 下一次启动不再取消 → 正常导入
+  const retry = new CharacterKvStore({
+    dataDir: dir,
+    legacy: legacyReader(legacyMap),
+    logger: () => {}
+  })
+  const ok = await retry.importAllFromLegacy()
+  assertEq(ok.imported.includes('fish:v2:state'), true, '下次启动可正常导入')
+  assertEq(retry.hasImportedLegacy(), true, '成功后才写标记')
+  rmSync(dir, { recursive: true, force: true })
+  return '取消不落盘 → 下次重试成功'
+})
+
+const characterResult = recorder.toJSON()
+const ok = printResult(characterResult)
+writeJson(join(__dirname, 'accept-result-character.json'), characterResult)
 if (!ok) process.exit(1)
