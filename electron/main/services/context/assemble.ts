@@ -83,7 +83,7 @@ export interface AssembleLoopOptions<T, R> {
    * 打包一条：候选 T → 结果 R（可以是不同类型，如 KnowledgeRow → PackedKnowledge）。
    * truncate=true 时按 sliceBudget 截断正文。
    */
-  include(item: T, opts: { truncate: boolean; sliceBudget?: number }): R
+  include(item: T, opts: { truncate: boolean; sliceBudget?: number; matched?: boolean }): R
   /** 候选项 → dropped 条目（用于「未注入清单」与账本） */
   toDropped(item: T, reason: DroppedReason): DroppedEntry
   /** 标题的 token 成本（算 sliceBudget 用） */
@@ -114,7 +114,9 @@ export async function assembleLoop<T, R>(
   const initial = opts.initialDropped ?? []
 
   // ── 1. 全量能否装下 ──
-  const allPacked = opts.allCandidates.map((item) => opts.include(item, { truncate: false }))
+  const allPacked = opts.allCandidates.map((item) =>
+    opts.include(item, { truncate: false, matched: false })
+  )
   const fullTokens = opts.measureSelection(allPacked, initial, 'full')
   const mode: PackMode = fullTokens <= opts.budgetTokens ? 'full' : 'truncated'
 
@@ -140,7 +142,7 @@ export async function assembleLoop<T, R>(
     const rest = rankedEntries.slice(i + 1).map((e) => opts.toDropped(e.item, 'budget'))
     const probeDropped = [...initial, ...rest]
 
-    const packed = opts.include(entry.item, { truncate: false })
+    const packed = opts.include(entry.item, { truncate: false, matched: entry.matched })
     if (opts.measureSelection([...chosen, packed], probeDropped, 'truncated') <= opts.budgetTokens) {
       chosen.push(packed)
       continue
@@ -154,7 +156,9 @@ export async function assembleLoop<T, R>(
       opts.markerTokens -
       opts.titleTokens(entry.item)
     if (sliceBudget >= opts.minSliceTokens) {
-      chosen.push(opts.include(entry.item, { truncate: true, sliceBudget }))
+      chosen.push(
+        opts.include(entry.item, { truncate: true, sliceBudget, matched: entry.matched })
+      )
     }
     break
   }
