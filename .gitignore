@@ -5,7 +5,9 @@ release/
 release2/
 release-alt/
 release-build/
+release-build2/
 release-new/
+release-nsis/
 out/
 .DS_Store
 *.log

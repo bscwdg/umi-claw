@@ -1452,10 +1452,10 @@ W6-b 仍需拍板 `work:gateway` 归属并拆 `ipc/index.ts` barrel（域/host �
 ## 4.1 版本级收尾（2026-11-03）
 
 **4.1 版本级 · 事实核对**（独立子代理，只读，基线 HEAD 2e9e133；其后修复由「最终四件套」复核）：
-- 4.1 工程目标达成：WP5 index 1,767 ≤1,800、WP6 边界 9→0/0（硬约束）、双 typecheck 0/0、全量 32 套/607 断言/0、
+- 4.1 工程目标达成：WP5 index 1,767（4.0.2 P2 后 1,777）≤1,800、WP6 边界 9→0/0（硬约束）、双 typecheck 0/0、全量 32 套/607 断言/0、
   e2e D3 11/11；WP5/WP6 各有工作包级事实核对+对抗复核入档。
 - 偏差如实记录并处置：4.0.0 NSIS/win-unpacked 未刷新（环境阻塞，见 tag 前置）；4.0.1 当时 WP7 7/8（P2 未做，
-  已由 4.0.2 补完并经 task-36 复核）；V4 宿主 26,253>26,000（4.2 删减，非用户 4.1 目标）；accept 产物时点
+  已由 4.0.2 补完并经 task-36 复核）；V4 宿主 26,253（P2 后 26,373）>26,000（4.2 删减，非用户 4.1 目标）；accept 产物时点
   不合格（已在本段最终 HEAD 后重跑）；607 口径不含 config-writer 21 条、32 份产物≠32 套 1:1（已在 AGENTS 注明）。
 
 **4.1 版本级 · 对抗复核**（另一独立子代理 task-35，互不可见，基线 2e9e133）：
@@ -1479,7 +1479,9 @@ index **1,777** ≤1,800；宿主 **26,373**（V4 差 373，登记 4.2）。
    成功刷新 win-unpacked（app.asar 98 MB，05:55:42）；以 `UMI_PACKAGED_DIR=release-build2/win-unpacked` 跑
    packaged.smoke **7/7 通过**（验证的是本批代码，不再是旧包）。`npx electron-builder --win nsis
    --config.directories.output=release-nsis` 在 NSIS 阶段失败：`Exit code: null. Command failed:
-   release-nsis/Umi Claw Setup 4.0.0.exe` → **NSIS 安装包仍受本机环境阻塞**（需用户在其终端/管理员环境重打）；
+   release-nsis/Umi Claw Setup 4.0.0.exe` → 产出 537KB 安装器 + 94MB `.nsis.7z`，**判为不完整**
+   （无 latest.yml/builder-debug.yml、payload 未嵌入），不当作可用安装包证据；**NSIS 仍受本机环境阻塞**
+   （需用户在其终端/管理员环境重打）。规范目录 `release/win-unpacked` 未替换（新包在 release-build2/）；
 
 ③ 用户确认 tag/push。当前准确措辞：**4.1 代码与验收目标完成；发布打包/C0.3/tag 待人工**。
 
