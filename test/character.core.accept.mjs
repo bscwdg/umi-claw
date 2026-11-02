@@ -2313,6 +2313,19 @@ await recorder.check('C79', '启动超时取消本轮导入：不写 kv、不写
   return '取消不落盘 → 下次重试成功'
 })
 
+await recorder.check('C80', '单实例锁：拿不到锁直接退出，second-instance 唤回已有窗口（4.0.1 P4）', async () => {
+  const src = readFileSync(join(repoRoot, 'electron/main/index.ts'), 'utf8')
+  assert(src.includes('app.requestSingleInstanceLock()'), '入口必须请求单实例锁')
+  assert(src.includes("app.on('second-instance'"), '必须处理 second-instance（唤回窗口）')
+  const lockAt = src.indexOf('requestSingleInstanceLock')
+  const readyAt = src.indexOf('app.whenReady()')
+  assert(lockAt >= 0 && readyAt > lockAt, '单实例锁必须在 whenReady 之前（否则窗口已建）')
+  assert(/if \(!singleInstanceLock\) \{\s*app\.quit\(\)/.test(src), '拿不到锁要 app.quit()')
+  const guardAt = src.indexOf('if (!singleInstanceLock) return')
+  assert(guardAt > readyAt, 'whenReady 回调开头要有单实例守卫（quit 后 ready 仍可能触发）')
+  return '单实例接线 ✓'
+})
+
 const characterResult = recorder.toJSON()
 const ok = printResult(characterResult)
 writeJson(join(__dirname, 'accept-result-character.json'), characterResult)

@@ -111,6 +111,23 @@ let characterDispose: (() => Promise<void>) | null = null
 /** 应用是否已进入退出流程：角色后台初始化迟到的完成必须 dispose 而不是回填 */
 let appShuttingDown = false
 
+// ── 单实例（4.0.1 P4）─────────────────────────────────────────────────────────
+// 两个实例同指一个 dataDir 时：character/kv.json 的「写临时文件再改名」没有跨进程保护，
+// 插件 KV 的整文件 flush 也会互相覆盖（阶段 A 对抗复核明确接受、登记到 4.0.1）。
+// 拿不到锁的第二个实例直接退出；它的启动请求转给第一个实例（把窗口唤到前台）。
+const singleInstanceLock = app.requestSingleInstanceLock()
+if (!singleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const win = mainWindow
+    if (!win) return
+    if (win.isMinimized()) win.restore()
+    if (!win.isVisible()) win.show()
+    win.focus()
+  })
+}
+
 /**
  * 取 Gateway Client 单例（Commit 07 → 合并后指向 work 域的唯一实例）。
  *
@@ -2076,6 +2093,9 @@ if (app.isPackaged) {
 // 统一用上面那份（eventId 可选，兼容 2.0 的单参调用）。
 
 app.whenReady().then(async () => {
+  // 单实例守卫（4.0.1 P4）：拿不到锁时上方已 app.quit()，但 whenReady 仍可能被触发；
+  // 这里必须立刻返回，绝不能在第二个实例里建窗口/拉 DB worker/激活插件（会同写一个 dataDir）。
+  if (!singleInstanceLock) return
   electronApp.setAppUserModelId('com.clawdesktop.app')
   protocol.handle('app', async (request) => {
     let urlPath = request.url.replace('app://', '')
