@@ -219,6 +219,8 @@ export class OpenClawSummaryManager {
   private activeStream: GatewayStreamHandle | null = null
   /** 本次失败是否由「停用中止」造成：是则不计入自动尝试配额（不许停用顺手吃掉当天预算） */
   private aborting = false
+  /** 已停用（abortAll 置位）：readState 窗口里没有 stream 可 cancel，用它在建流前收场 */
+  private closed = false
 
   constructor(options: OpenClawSummaryManagerOptions) {
     if (!options || typeof options !== 'object') {
@@ -404,8 +406,14 @@ export class OpenClawSummaryManager {
     return run
   }
 
-  /** 停用插件/退出时中止在途总结（真断上游；返回成功 cancel 数） */
+  /**
+   * 停用插件/退出时中止在途总结（真断上游；返回成功 cancel 数）。
+   *
+   * 同时置 `closed`：doSummarize 在 `await readState()` 期间还没有 stream（abortAll 无从 cancel），
+   * 不置位的话这条流会在停用之后照常建出来并跑完（仍烧 token）。
+   */
   abortAll(): number {
+    this.closed = true
     const h = this.activeStream
     if (!h) return 0
     this.aborting = true
@@ -426,6 +434,15 @@ export class OpenClawSummaryManager {
     const now = this.now()
     const date = dateOf(now)
     const state = await this.readState(date)
+
+    // 停用发生在「读 state 期间」：此时还没有 stream 可 cancel，abortAll 只能置 closed；
+    // 这里必须收场，不能继续 createChatStream（否则停用后仍在烧 token）。
+    if (this.closed) {
+      this.aborting = true
+      throw new AppError(ERROR_CODES.OPENCLAW_NOT_READY, '插件已停用，本轮总结放弃', {
+        reason: 'disabled'
+      })
+    }
 
     // 流式而非一次性：网关冷启动实测 80s+，非流式的 120s 硬超时太贴脸；
     // 流式按 chunk 空闲计时，且首字快（实测 1.27s）

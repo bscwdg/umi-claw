@@ -480,19 +480,55 @@ try {
     assertEq(after.lastStatus, before.lastStatus, '停用中止不写失败状态')
     assertEq(m.abortAll(), 0, '收尾后没有在途')
 
-    // 同一 manager 的下一轮「真实失败」仍要记 attempts：aborting 不得残留
-    // （复现窗口：上一轮 result 已 resolve、activeStream 还没清的微任务里被 abortAll 命中）
-    mode = 'fail'
-    await m.setAutoEnabled(true)
-    const before2 = (await m.getStatus()).attempts
-    const rr = await m.runScheduled()
+    // 用新 manager 测「aborting 残留」：上面的 m 已 closed，下一轮会直接中止（见下）。
+    // 注入残留（模拟「result 已 resolve、activeStream 未清」的微任务窗口被 abortAll 命中）；
+    // 若 doSummarize 开头不复位，下面的真实失败会被误判成停用中止 → attempts 不增 → 本断言红。
+    const gwFail = {
+      createChatStream: () => ({
+        result: Promise.reject(new Error('网关真的挂了')),
+        iterator: (async function* () {})(),
+        cancel() {}
+      })
+    }
+    const m2 = makeManager(gwFail)
+    m2.aborting = true
+    await m2.setAutoEnabled(true)
+    const before2 = (await m2.getStatus()).attempts
+    const rr = await m2.runScheduled()
     assertEq(rr.status, 'error', '真实失败仍返回 error')
     assertEq(
-      (await m.getStatus()).attempts,
+      (await m2.getStatus()).attempts,
       before2 + 1,
       '真实失败仍计 attempts（aborting 未残留）'
     )
-    await m.setAutoEnabled(false)
+    await m2.setAutoEnabled(false)
+
+    // readState 窗口：停用时还没建流 → abortAll 返回 0，但不得再起模型流、也不记失败
+    let calls3 = 0
+    const gw3 = {
+      createChatStream() {
+        calls3 += 1
+        return {
+          result: Promise.resolve({ text: '', chunks: 0, usage: null, model: null, aborted: false, ms: 1 }),
+          iterator: (async function* () {})(),
+          cancel() {}
+        }
+      }
+    }
+    const m3 = makeManager(gw3)
+    const before3 = await m3.getStatus()
+    const p3 = m3.summarizeToday('manual')
+    assertEq(m3.abortAll(), 0, '流尚未建立 → 返回 0')
+    let err3 = null
+    try {
+      await p3
+    } catch (e) {
+      err3 = e
+    }
+    assertEq(err3?.code, 'OPENCLAW_NOT_READY', '窗口内停用按中止收场')
+    assertEq(calls3, 0, '停用后不得再起模型流（仍在烧 token 的反例）')
+    const after3 = await m3.getStatus()
+    assertEq(after3.attempts, before3.attempts, '窗口内停用不记失败尝试')
   })
 } catch (e) {
   console.error('验收脚本自身异常:', e)

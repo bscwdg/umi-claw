@@ -2321,9 +2321,11 @@ await recorder.check('C80', '单实例锁：拿不到锁直接退出，second-in
   const readyAt = src.indexOf('app.whenReady()')
   assert(lockAt >= 0 && readyAt > lockAt, '单实例锁必须在 whenReady 之前（否则窗口已建）')
   // Electron 单实例锁绑定 userData：必须在 app.setPath('userData', …) 之后请求，
-  // 否则便携版/安装版会被误判成同一实例（4.0.1 task-16 事实核对 P2-2）
+  // 否则便携版/安装版会被误判成同一实例（4.0.1 task-16 事实核对 P2-2）。
+  // 用 lastIndexOf：index.ts 文件头注释里也出现了 `app.setPath('userData'` 字样，
+  // indexOf 会命中注释、导致断言恒真（task-18 复核抓到的自失效）。
   assert(
-    src.indexOf("app.setPath('userData'") < lockAt,
+    src.lastIndexOf("app.setPath('userData'") < lockAt,
     '单实例锁必须在 userData 定向之后请求'
   )
   assert(/if \(!singleInstanceLock\) \{\s*app\.quit\(\)/.test(src), '拿不到锁要 app.quit()')
