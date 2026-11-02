@@ -25,7 +25,7 @@ export interface LoopCandidate<T> {
   matched?: boolean
 }
 
-export interface AssembleLoopOptions<T> {
+export interface AssembleLoopOptions<T, R> {
   budgetTokens: number
   /** 单条被截断时，额外要算进去的标记成本（ITEM_TRUNCATE_MARKER 的 token 数） */
   markerTokens: number
@@ -45,11 +45,15 @@ export interface AssembleLoopOptions<T> {
    * 渲染完整文本。**必须包含调用方认为要计入预算的全部内容**
    * （含固定段与「未注入清单」），否则预算账与实际渲染不同源。
    */
-  renderText(chosen: T[], dropped: DroppedEntry[]): string
+  renderText(chosen: R[], dropped: DroppedEntry[]): string
   /** 测量文本的 token 数（通常就是 estimateTokens） */
   measure(text: string): number
   /** 打包一条：truncate=true 时按 sliceBudget 截断正文 */
-  include(item: T, opts: { truncate: boolean; sliceBudget?: number }): T
+  /**
+   * 打包一条：候选 T → 结果 R（可以是不同类型，如 KnowledgeRow → PackedKnowledge）。
+   * truncate=true 时按 sliceBudget 截断正文。
+   */
+  include(item: T, opts: { truncate: boolean; sliceBudget?: number }): R
   /** 候选项 → dropped 条目（用于「未注入清单」与账本） */
   toDropped(item: T, reason: DroppedReason): DroppedEntry
   /** 标题的 token 成本（算 sliceBudget 用） */
@@ -58,9 +62,9 @@ export interface AssembleLoopOptions<T> {
   initialDropped?: DroppedEntry[]
 }
 
-export interface AssembleLoopResult<T> {
+export interface AssembleLoopResult<R> {
   mode: PackMode
-  chosen: T[]
+  chosen: R[]
   dropped: DroppedEntry[]
   usedTokens: number
   /** 最终渲染文本（= renderText(chosen, dropped) 的结果，与 usedTokens 同源） */
@@ -72,7 +76,7 @@ export interface AssembleLoopResult<T> {
  *
  * 纯函数（除了调用方注入的 render/measure/include），可重复调用、无副作用。
  */
-export function assembleLoop<T>(opts: AssembleLoopOptions<T>): AssembleLoopResult<T> {
+export function assembleLoop<T, R>(opts: AssembleLoopOptions<T, R>): AssembleLoopResult<R> {
   const initial = opts.initialDropped ?? []
 
   // ── 1. 全量能否装下 ──
@@ -91,7 +95,7 @@ export function assembleLoop<T>(opts: AssembleLoopOptions<T>): AssembleLoopResul
   }
 
   // ── 2. 逐条准入 + 截断 ──
-  const chosen: T[] = []
+  const chosen: R[] = []
   for (let i = 0; i < opts.ranked.length; i++) {
     const entry = opts.ranked[i]
     // 尚未轮到的一律先按「落选」计入探针——渲染出的未注入清单也占预算
