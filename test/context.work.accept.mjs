@@ -390,7 +390,7 @@ await r.check('E13', 'assembleLoop：全量/准入/截断/保险丝/预置 dropp
   // 合成模型：候选正文 = 'x'.repeat(n)（n 个 ASCII → ceil(n/4) token）
   // renderText = 正文 + 「未注入」清单（清单本身也占预算，与两域一致）
   const mk = (id, chars) => ({ id, body: 'x'.repeat(chars) })
-  const renderText = (chosen, dropped) =>
+  const renderText = (chosen, dropped, mode) =>
     [
       ...chosen.map((c) => c.body),
       ...(dropped.length ? ['【未注入】', ...dropped.map((d) => d.title)] : [])

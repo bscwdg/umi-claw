@@ -45,7 +45,13 @@ export interface AssembleLoopOptions<T, R> {
    * 渲染完整文本。**必须包含调用方认为要计入预算的全部内容**
    * （含固定段与「未注入清单」），否则预算账与实际渲染不同源。
    */
-  renderText(chosen: R[], dropped: DroppedEntry[]): string
+  /**
+   * 渲染完整文本。**必须传入当前 mode**：两域的渲染都依赖它
+   * （marketing 用它决定「全部注入」还是「已按相关度裁剪 N/M 条」）。
+   * 判定 mode 时内核传 'full'（与两域旧实现的 probeMode 一致），
+   * 取舍循环中传 'truncated'，收尾用最终 mode。
+   */
+  renderText(chosen: R[], dropped: DroppedEntry[], mode: PackMode): string
   /** 测量文本的 token 数（通常就是 estimateTokens） */
   measure(text: string): number
   /** 打包一条：truncate=true 时按 sliceBudget 截断正文 */
@@ -81,7 +87,7 @@ export function assembleLoop<T, R>(opts: AssembleLoopOptions<T, R>): AssembleLoo
 
   // ── 1. 全量能否装下 ──
   const allPacked = opts.allCandidates.map((item) => opts.include(item, { truncate: false }))
-  const fullText = opts.renderText(allPacked, initial)
+  const fullText = opts.renderText(allPacked, initial, 'full')
   const mode: PackMode = opts.measure(fullText) <= opts.budgetTokens ? 'full' : 'truncated'
 
   if (mode === 'full') {
@@ -103,7 +109,7 @@ export function assembleLoop<T, R>(opts: AssembleLoopOptions<T, R>): AssembleLoo
     const probeDropped = [...initial, ...rest]
 
     const packed = opts.include(entry.item, { truncate: false })
-    if (opts.measure(opts.renderText([...chosen, packed], probeDropped)) <= opts.budgetTokens) {
+    if (opts.measure(opts.renderText([...chosen, packed], probeDropped, 'truncated')) <= opts.budgetTokens) {
       chosen.push(packed)
       continue
     }
@@ -111,7 +117,7 @@ export function assembleLoop<T, R>(opts: AssembleLoopOptions<T, R>): AssembleLoo
     // 放不下整条：剩余空间够一段有意义的内容就截断收入，否则收手
     const sliceBudget =
       opts.budgetTokens -
-      opts.measure(opts.renderText(chosen, probeDropped)) -
+      opts.measure(opts.renderText(chosen, probeDropped, 'truncated')) -
       opts.overheadTokens -
       opts.markerTokens -
       opts.titleTokens(entry.item)
@@ -128,12 +134,12 @@ export function assembleLoop<T, R>(opts: AssembleLoopOptions<T, R>): AssembleLoo
     ...opts.ranked.slice(count).map((e) => opts.toDropped(e.item, 'budget'))
   ]
   let dropped = rebuildDropped()
-  while (count > 0 && opts.measure(opts.renderText(chosen.slice(0, count), dropped)) > opts.budgetTokens) {
+  while (count > 0 && opts.measure(opts.renderText(chosen.slice(0, count), dropped, 'truncated')) > opts.budgetTokens) {
     count -= 1
     dropped = rebuildDropped()
   }
 
   const finalChosen = chosen.slice(0, count)
-  const text = opts.renderText(finalChosen, dropped)
+  const text = opts.renderText(finalChosen, dropped, mode)
   return { mode, chosen: finalChosen, dropped, usedTokens: opts.measure(text), text }
 }
