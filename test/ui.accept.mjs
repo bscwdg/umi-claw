@@ -1083,8 +1083,12 @@ await r.check('U19', '就绪态接线：Dashboard 用 ready 门禁、语音页�
   // 主进程/桥接层接线（缺一环就静默掉回「用 running 当可用」）
   const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
   assert(/claw:waitReady/.test(preloadSrc), 'preload 暴露 claw:waitReady')
-  const mainSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
-  assert(/ipcMain\.handle\('claw:waitReady'/.test(mainSrc), '主进程注册 claw:waitReady')
+  // 4.1 WP5-a 起 claw 通道在 ipc/host/claw.ts，不再直接写在 index.ts
+  const clawIpcSrc = readFileSync(
+    join(repoRoot, 'electron', 'main', 'ipc', 'host', 'claw.ts'),
+    'utf-8'
+  )
+  assert(/ipc\.handle\(\s*'claw:waitReady'/.test(clawIpcSrc), '主进程（ipc/host/claw.ts）注册 claw:waitReady')
   const clawMgrSrc = readFileSync(join(repoRoot, 'electron', 'main', 'clawManager.ts'), 'utf-8')
   assert(/_fetchHealthOk/.test(clawMgrSrc), 'clawManager 用 /health 探活')
   assert(/async waitReady\(/.test(clawMgrSrc), 'clawManager 提供 waitReady')

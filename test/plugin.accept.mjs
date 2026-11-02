@@ -2013,24 +2013,58 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
   assert(!hostSrc.includes(`ipcMain.handle('config:`), 'index.ts 不应再直接注册 config:')
   assert(/registerConfigIpc\(\s*ipcMain/.test(hostSrc), 'index.ts 应调用 registerConfigIpc(ipcMain')
 
-  // handler 守恒：index 20 + misc 19 + skills 11 + channels 3 + config 8 = 61（原总数）
+  // 4.1 WP5-a 第四批：claw 7 + test-connection 1 拆到 ipc/host/{claw,modelConnection}.ts
+  const clawSrc = readFileSync(
+    join(repoRoot, 'electron', 'main', 'ipc', 'host', 'claw.ts'),
+    'utf-8'
+  )
+  for (const ch of [
+    'claw:start',
+    'claw:stop',
+    'claw:restart',
+    'claw:status',
+    'claw:waitReady',
+    'claw:openWeb',
+    'claw:get-token'
+  ]) {
+    assert(hasIpcHandler(clawSrc, ch, 'ipc'), 'claw.ts 应注册 ' + ch)
+  }
+  const modelConnSrc = readFileSync(
+    join(repoRoot, 'electron', 'main', 'ipc', 'host', 'modelConnection.ts'),
+    'utf-8'
+  )
+  assert(hasIpcHandler(modelConnSrc, 'test-connection', 'ipc'), 'modelConnection.ts 应注册 test-connection')
+  for (const prefix of ['claw:', 'test-connection']) {
+    assert(!hostSrc.includes(`ipcMain.handle('${prefix}`), 'index.ts 不应再直接注册 ' + prefix)
+  }
+  assert(/registerClawIpc\(\s*ipcMain/.test(hostSrc), 'index.ts 应调用 registerClawIpc(ipcMain')
+  assert(
+    /registerModelConnectionIpc\(\s*ipcMain/.test(hostSrc),
+    'index.ts 应调用 registerModelConnectionIpc(ipcMain'
+  )
+
+  // handler 守恒：index 12 + misc 19 + skills 11 + channels 3 + config 8 + claw 7 + modelConnection 1 = 61
   const countHandles = (src, api) => (src.match(new RegExp(`${api}\\.handle\\(`, 'g')) || []).length
   const hostCount = countHandles(hostSrc, 'ipcMain')
   const miscCount = countHandles(miscSrc, 'ipcMain')
   const skillsCount = countHandles(skillsSrc, 'ipc')
   const channelsCount = countHandles(channelsSrc, 'ipc')
   const configCount = countHandles(configSrc, 'ipc')
-  assertEq(hostCount, 20, 'index.ts 应剩 20 个 ipcMain.handle')
+  const clawCount = countHandles(clawSrc, 'ipc')
+  const modelConnCount = countHandles(modelConnSrc, 'ipc')
+  assertEq(hostCount, 12, 'index.ts 应剩 12 个 ipcMain.handle')
   assertEq(miscCount, 19, 'misc.ts 应注册 19 个通道')
   assertEq(skillsCount, 11, 'skills.ts 应注册 11 个通道')
   assertEq(channelsCount, 3, 'channels.ts 应注册 3 个通道')
   assertEq(configCount, 8, 'config.ts 应注册 8 个通道')
+  assertEq(clawCount, 7, 'claw.ts 应注册 7 个通道')
+  assertEq(modelConnCount, 1, 'modelConnection.ts 应注册 1 个通道')
   assertEq(
-    hostCount + miscCount + skillsCount + channelsCount + configCount,
+    hostCount + miscCount + skillsCount + channelsCount + configCount + clawCount + modelConnCount,
     61,
     '宿主 handler 总数应守恒为 61'
   )
-  return '宿主零注册 / 插件全注册 / 装配在 runtime / misc+skills+channels+config 已拆 / 61 守恒'
+  return '宿主零注册 / 插件全注册 / 装配在 runtime / misc+skills+channels+config+claw 已拆 / 61 守恒'
 })
 
 // ── P43 旧库导入走服务注入（防「清单忘了 inject」导致死代码）─────────────────

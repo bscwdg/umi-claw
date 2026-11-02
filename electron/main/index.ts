@@ -59,6 +59,8 @@ import { registerMiscIpc } from './ipc/host/misc'
 import { registerSkillsIpc } from './ipc/host/skills'
 import { registerChannelsIpc } from './ipc/host/channels'
 import { registerConfigIpc } from './ipc/host/config'
+import { registerClawIpc } from './ipc/host/claw'
+import { registerModelConnectionIpc } from './ipc/host/modelConnection'
 import {
   VoiceSecretStore,
   VoiceCloneManager,
@@ -1200,62 +1202,25 @@ function registerIpcHandlers(): void {
   })
 
 
-  // OpenClaw 进程管理
-  // 硬性闸门（北 2026-09-24）：启动前必须已同意用户协议，否则拒绝并让前端弹回协议弹窗。
-  const ensureConsentGate = async (): Promise<{ ok: true } | { ok: false; result: unknown }> => {
-    try {
-      await assertConsent()
-      return { ok: true }
-    } catch (e) {
-      return {
-        ok: false,
-        result: {
-          success: false,
-          reason: 'consent-required',
-          error: (e as Error)?.message ?? '请先同意用户协议'
-        }
-      }
-    }
-  }
-
-  ipcMain.handle('claw:start', async () => {
-    if (envUpdateInFlight) {
-      return { success: false, error: UPDATE_IN_PROGRESS_ERROR }
-    }
-    // 硬性闸门（3.0 安全改动，必须保留）：未同意用户协议不得启动
-    const gate = await ensureConsentGate()
-    if (!gate.ok) return gate.result
-    return clawManager.start()
+  // OpenClaw 进程管理（4.1 WP5-a 第四批拆到 ipc/host/claw.ts）
+  registerClawIpc(ipcMain, {
+    isEnvUpdateInFlight: () => envUpdateInFlight,
+    envUpdateInProgressError: UPDATE_IN_PROGRESS_ERROR,
+    assertConsent,
+    start: () => clawManager.start(),
+    stop: () => clawManager.stop(),
+    getStatus: () => clawManager.getStatus(),
+    waitReady: (timeoutMs) => clawManager.waitReady(timeoutMs),
+    getPort: () => configManager.getConfig().port || 3213,
+    openExternal: (url) => shell.openExternal(url),
+    configDir: (dir) => openClawPaths.configDir(dir),
+    getDataDir: () => configManager.getDataDir(),
+    getHomeDir: () => app.getPath('home'),
+    fileExists: (path) => existsSync(path),
+    readFile: (path) => readFileSync(path, 'utf-8'),
+    log: (line) => console.log(line)
   })
-  ipcMain.handle('claw:stop', async () => {
-    return clawManager.stop()
-  })
-  ipcMain.handle('claw:restart', async () => {
-    if (envUpdateInFlight) {
-      return { success: false, error: UPDATE_IN_PROGRESS_ERROR }
-    }
-    // 硬性闸门（3.0 安全改动，必须保留）：未同意用户协议不得启动
-    const gate = await ensureConsentGate()
-    if (!gate.ok) return gate.result
-    await clawManager.stop()
-    return clawManager.start()
-  })
-  ipcMain.handle('claw:status', () => {
-    return clawManager.getStatus()
-  })
-  // 等待网关真正就绪（/health 200）：UI 的「启动中/已就绪」与「打开网页」门禁都靠它。
-  // 只读探测，不启动、不做协议闸门（启动动作仍走 claw:start/restart 的闸门）。
-  ipcMain.handle('claw:waitReady', async (_e, timeoutMs?: number) => {
-    return clawManager.waitReady(
-      typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0
-        ? timeoutMs
-        : undefined
-    )
-  })
-  ipcMain.handle('claw:openWeb', () => {
-    const port = configManager.getConfig().port || 3213
-    shell.openExternal(`http://localhost:${port}`)
-  })
+  registerModelConnectionIpc(ipcMain)
 
 
   // 环境初始化
@@ -1484,61 +1449,6 @@ function registerIpcHandlers(): void {
 
 
 
-  // 一键获取token - 优化安全性与逻辑
-  ipcMain.handle('claw:get-token', async () => {
-    const userHome = app.getPath('home')
-    const dataDir = configManager.getDataDir()
-
-    // 移除硬编码的 C:\tmp 和当前盘符根目录的随意扫描，聚焦于标准配置路径
-    const envConfigDir = openClawPaths.configDir(dataDir);
-
-    const possiblePaths = [
-      // 1. 环境变量指定的核心目录 (最高优先级)
-      join(envConfigDir, 'openclaw.json'),
-
-      // 2. 用户家目录 (常见默认位置)
-      join(userHome, '.openclaw', 'openclaw.json'),
-
-      // 3. AppData 隔离数据目录的其他变体
-      join(dataDir, 'openclaw', 'openclaw.json'),
-    ]
-
-    console.log('--- 🛡️ 开始扫描 OpenClaw 配置文件 ---')
-
-    let finalPath = ''
-    for (const p of possiblePaths) {
-      if (existsSync(p)) {
-        finalPath = p
-        console.log(`✅ 命中配置文件: ${p}`)
-        break
-      }
-    }
-
-    try {
-      if (!finalPath) {
-        throw new Error(
-          `未找到 OpenClaw 配置文件。已检查以下路径：\n` +
-          possiblePaths.map(p => `- ${p}`).join('\n')
-        )
-      }
-
-      const configContent = readFileSync(finalPath, 'utf-8')
-      const configJson = JSON.parse(configContent)
-
-      // ⚠️ 安全警告：不要在生产环境日志中打印包含 Token 的完整 JSON
-      const token = configJson?.gateway?.token || configJson?.gateway?.auth?.token
-
-      if (!token) {
-        throw new Error(`配置文件存在 (${finalPath})，但缺少 gateway.token 字段`)
-      }
-
-      return { success: true, token }
-    } catch (err: any) {
-      console.error('获取 Token 失败:', err.message)
-      return { success: false, error: err.message }
-    }
-  })
-
   // ─── 终端相关 IPC (统一使用 term:* 命名空间) ───
 
   /**
@@ -1693,41 +1603,6 @@ function registerIpcHandlers(): void {
     // 目前 spawn 的标准子进程不支持动态 resize，除非使用 node-pty
     return true
   })
-  ipcMain.handle('test-connection', async (_, config) => {
-    try {
-      // 模型列表接口：modelsListUrl 支持完整 URL 或路径，留空默认 {baseUrl}/models
-      const customListUrl = String(config.modelsListUrl || '').trim()
-      const base = String(config.baseUrl || '').replace(/\/+$/, '')
-      const listUrl = customListUrl
-        ? /^https?:\/\//i.test(customListUrl)
-          ? customListUrl
-          : `${base}${customListUrl.startsWith('/') ? customListUrl : `/${customListUrl}`}`
-        : `${base}/models`
-      // 超时：未配置时默认 900 秒（15 分钟），与模型配置的默认超时保持一致
-      const rawTimeout = Number(config.timeoutSeconds)
-      const timeoutSeconds = Number.isFinite(rawTimeout) && rawTimeout > 0
-        ? Math.min(Math.round(rawTimeout), 86400)
-        : 900
-      const response = await fetch(listUrl, {
-        headers: { Authorization: `Bearer ${config.apiKey}` },
-        signal: AbortSignal.timeout(timeoutSeconds * 1000)
-      })
-      if (!response.ok) {
-        return { success: false, error: `HTTP ${response.status}` }
-      }
-      const data = await response.json()
-      const models = Array.isArray(data?.data) ? data.data.map((m: any) => m.id) : []
-      return { success: true, models }
-    } catch (error: any) {
-      const msg = error instanceof Error ? error.message : String(error)
-      const isTimeout = error?.name === 'TimeoutError' || /timeout/i.test(msg)
-      return {
-        success: false,
-        error: isTimeout ? `请求超时，国内模型卡顿可在配置中调大超时时间` : msg
-      }
-    }
-  })
-
 }
 
 // ─── 推送日志到渲染进程 ────────────────────────────────────────────────────────
