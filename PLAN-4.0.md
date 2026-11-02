@@ -497,11 +497,11 @@ Phase 0.5 / 0 / 1 / 2 / 3 / 4 全部完成；此外有**三块计划外已落地
 
 | 承诺（出处） | 现状证据 | 处理 |
 | --- | --- | --- |
-| knowledge / context 下沉为宿主服务（§〇.8、§十七 第 4 条） | **两份独立实现**：`electron/main/work/contextEngine.ts`(761 行)+`knowledgeManager.ts`(490 行)；`electron/main/marketing/contextEngine.ts`(776 行)+`knowledgeManager.ts`(807 行) | Phase 6 下沉，或明确修订 §〇.8 |
+| knowledge / context 下沉为宿主服务（§〇.8、§十七 第 4 条） | **已收敛**：解析器单一实现 `services/knowledge/parsers`、取舍循环 `services/context/assemble`（WP1/WP2，2026-11-02）；域侧只保留预算占比与测量回调，`computeBudget` 于 2026-11-03 接入两域 | 已完成（口径差异见 PLAN-4.1 WP2） |
 | 类型化 IPC 生成（§5.3、WP3） | 未做；实际用 `manifest.channels` 租约 + 手写 preload | 明确延后（不阻塞后续） |
-| `ctx.secrets`（§4.2 / §8.2） | `kernel/services.ts` 的 `SERVICE_NAMES` 无 `secrets` | Phase 6 实现，或改契约 |
+| `ctx.secrets`（§4.2 / §8.2） | `SERVICE_NAMES` 已含 `secrets`/`kv`（WP4 `e050910`）；但 **0 消费方 / 0 accept 断言**（2026-11-03 复核 P2-1） | 接口已补；消费与断言归 4.1 |
 | `contributes.settings` / `commands`（§7） | manifest 校验了，但无消费方 | 补实现或移除校验 |
-| 插件只经 `ctx`（§十七 第 2 条） | `plugins/work/main.ts`、`plugins/marketing/main.ts` 直接 import 宿主域模块；无 lint 兜底 | 加 lint 门禁 + 域代码迁 `plugins/<id>/main` |
+| 插件只经 `ctx`（§十七 第 2 条） | 门禁 `scripts/check-boundaries.mjs` 已上线（accept 首套 + CI）；域代码已迁 `plugins/<id>/domain/`；插件 `main.ts` 仍有 9 条 ipc 越界 | 越界清零归 WP6 |
 | 停用即中止在途 SSE（PROGRESS 记录） | marketing 已修；**work 未修**（只 `reminder.stop()`） | 4.0.x 修 |
 | 旧库导入失败可见 + 重试（PROGRESS 记录） | 只有 `ctx.logger`，插件管理页无入口 | 4.0.x 修 |
 | work 知识库原件写全局 `<dataDir>/knowledge` | 未迁移；RUNBOOK 未登记该目录 | 4.0.x 或文档登记 |

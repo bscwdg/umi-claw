@@ -27,7 +27,7 @@
 
 | 指标 | 实测 | 复核命令 | 目标 / 状态 |
 | --- | --- | --- | --- |
-| 宿主 `electron/main` 代码量 | 26,802 行 | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 802，WP5） |
+| 宿主 `electron/main` 代码量 | 26,797 行 | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 797，WP5） |
 | `electron/main/index.ts` | 2,491 行 | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800（差 691，WP5） |
 | 插件越界 import（非 type、非 kernel/services） | **11 条** | `npm run check:boundary` | 0（WP6） |
 | 门禁可绕过写法 | 已覆盖 static/export-from/dynamic/require + 路径穿越 + 注释掩码/正则字面量/字符串文案/模板字面量/非字面量/typeof | `node test/boundary.accept.mjs` | 8/8 保持 |
@@ -218,12 +218,12 @@ npm run typecheck:node; npm run typecheck:web
 | --- | --- | --- |
 | 包结构 | 7 段：①任务指令（永不裁）②画像 ③事项 ④待办 ⑤confirmed 记录 ⑥知识 ⑦对话历史（独立预算，进文本） | 16 个顶层字段，核心键 business / knowledge / watchlist / customer / platform / task |
 | 预算测算 | `measureWith()` **只拼知识条目正文 + dropped 标题**再加 `PACK_OVERHEAD_TOKENS`；第 2–5 段不算进账 | `measure()` 渲染**整个 probe pack**（含 `probeMode`） |
-| dropped 原因 | 类型里有 `budget`/`empty-content`/`cut-order`，但 **`cut-order` 从未被 push**（死代码） | `budget`/`empty-content` |
+| dropped 原因 | 类型里有 `budget`/`empty-content`/`cut-order`，但 **`cut-order` 从未被 push**（死代码，已于 2026-11-03 删除） | `budget`/`empty-content` |
 
 **两个必须知道的事实**（本轮审查实测，写进来免得下一个人重踩）：
 
 1. work 的 `measureWith` 是「代餐测量」：知识块当全包计费，固定五段的占用不在账上；实跑 E4 是 `used=1481 / budget=1540`（余量 59 token），站住是数字凑巧。若无超长条目、循环走完不 break，`usedTokens` 可以真的超预算。
-2. `cut-order` 只有类型定义、没有实现；§6.2 写的「6→5→4→3→2 裁剪」也不存在（2–5 段从不裁）。
+2. `cut-order` 只有类型定义、没有实现（已于 2026-11-03 删除）；§6.2 写的「6→5→4→3→2 裁剪」也不存在（2–5 段从不裁）。
 
 #### 拆分方案：泛型取舍循环（已实现，以代码为准）
 
@@ -296,6 +296,7 @@ export function assembleLoop<T>(opts: AssembleLoopOptions<T>): AssembleLoopResul
 | P3 | work 第 7 段对话历史「独立预算但进文本」 | 内核只负责进预算的段；历史由域侧拼接并另行记 `usedTokens`（保持现状） |
 
 **默认建议**：P1 选 (a)，P2 选 (a)，P3 保持现状——这样 WP2 仍是纯重构，行为变化留到 WP5。
+**已拍板（2026-11-03 事实核对回写）**：P1 (a) / P2 (a) / P3 保持——实际实现是「域侧保留预算占比与 pack 开销，内核提供 `assembleLoop` + 测量回调」，见 `services/context/limits.ts` 注释与 PROGRESS 的 WP2 等价性表；`computeBudget` 已于 2026-11-03 接入两域（`window×ratio` 的地板除收敛到内核），ratio/overhead 仍留域侧。
 
 #### 出口判据（整包）
 
@@ -375,8 +376,8 @@ export default [
 **C3.2 ratchet baseline**
 
 ```json
-// scripts/lint-baseline.json
-{ "pluginHostBoundary": 13, "managerElectron": 0 }
+// scripts/boundary-baseline.json
+{ "pluginHostBoundary": 11, "managerElectron": 0 }
 ```
 
 `scripts/check-lint-budget.mjs` 统计当前违规数，**大于 baseline 即失败**；`--update` 才写入新值（只准手动下调）。
@@ -391,8 +392,8 @@ CI 加一步：`npm run lint`（= eslint + check-lint-budget）。
 
 | 提交 | 动作 | 守它的测试 |
 | --- | --- | --- |
-| C3.3 | `electron/main/work/**`（22 文件 7,028 行）→ `plugins/work/main/**`；`ipc/work.ts` 跟着走 | `accept:work` `accept:record` `accept:today` `accept:report` `accept:qatool` `accept:wizard` `accept:context:work` `accept:knowledge:work` |
-| C3.4 | `electron/main/marketing/**`（18 文件 7,430 行）→ `plugins/marketing/main/**`；5 个 ipc 文件跟着走 | `accept:project` `accept:business` `accept:advisor` `accept:scan` `accept:content` `accept:hot` `accept:hotscore` `accept:platform` `accept:shooting` |
+| C3.3 | `electron/main/work/**`（22 文件 7,028 行）→ `plugins/work/domain/**`（实际落地路径；原计划写 `main/**`，已在 WP3 校正）；`ipc/work.ts` 跟着走：**未做**，留 WP6（现 9 条越界） | `accept:work` `accept:record` `accept:today` `accept:report` `accept:qatool` `accept:wizard` `accept:context:work` `accept:knowledge:work` |
+| C3.4 | `electron/main/marketing/**`（18 文件 7,430 行）→ `plugins/marketing/domain/**`（同上）；5 个 ipc 文件跟着走：**未做**，留 WP6 | `accept:project` `accept:business` `accept:advisor` `accept:scan` `accept:content` `accept:hot` `accept:hotscore` `accept:platform` `accept:shooting` |
 | C3.5 | baseline 归零，规则升 error；`index.ts` 删域装配段 | 全量 `npm run accept`；宿主 ≤ 26,000 行 |
 
 **关键约束**：C3.3 / C3.4 **只移动文件、改 import 路径，一行业务逻辑都不改**。逻辑改动已在 WP2 完成。这样出问题时能确定是"路径错了"而不是"逻辑坏了"。
@@ -402,7 +403,7 @@ CI 加一步：`npm run lint`（= eslint + check-lint-budget）。
 1. `test/_lib.mjs` 的 `domainSrc()` **只覆盖 `plugins/<id>/main/` ↔ `electron/main/`**：硬编码 `bundleEntry('electron/main/<域>/...')` / `join(repoRoot,'electron','main',...)` 的调用不受保护。WP3 搬前必须先把这些改成 `anySrc([...])`（见 WP1 的 8 处清单与 G7 的实测口径）。
 2. `tsconfig.node.json` 的 `include` 是 `plugins/*/main.ts`，需扩为 `plugins/*/main.ts` + `plugins/*/main/**/*.ts`。
 3. `plugins/*/plugin.json` 的 `id` 必须与目录名一致（`gen-plugin-entries.mjs` 已强制校验）。
-4. **不是「改走 domainSrc」**：两域分别搬进 `plugins/work/main/**` 与 `plugins/marketing/main/**`，`anySrc` 的候选数组按域给：`['plugins/work/main/work/X','electron/main/work/X']`。开工前先 `Select-String -Path test\*.mjs -Pattern "electron/main/(work|marketing)"` 清出清单（实测域内全写法 93 处 / 22 文件）。
+4. **不是「改走 domainSrc」**：两域分别搬进 `plugins/work/domain/**` 与 `plugins/marketing/domain/**`（实际落地；原计划写 `main/**`），`anySrc` 的候选数组按域给：`['plugins/work/domain/work/X','electron/main/work/X']`。开工前先 `Select-String -Path test\*.mjs -Pattern "electron/main/(work|marketing)"` 清出清单（实测域内全写法 93 处 / 22 文件）。
 
 **顺手清掉的小债**（都在本包）：
 
@@ -547,7 +548,7 @@ Get-ChildItem *.md | ForEach-Object {
 
 > 发布点已重排：原「WP1→4.0.1 / WP2→4.0.2 / WP3→4.0.3 / WP4→4.1」不再成立——四包全部合入同一棵未发布的 `release/4.0`，且 `v1.0.0` 之后没有 tag。现在按 **4.0.0（当前 HEAD + 阶段 A 收尾）/ 4.0.1（WP7）/ 4.1（WP5+WP6）** 发布。
 >
-> WP4 的判据 `index.ts ≤ 1,800` 仍未达成（2,486），已如实登记，归 WP5，不算 WP4 过关。
+> WP4 的判据 `index.ts ≤ 1,800` 仍未达成（2,491），已如实登记，归 WP5，不算 WP4 过关。
 
 ---
 
@@ -574,30 +575,36 @@ Get-ChildItem *.md | ForEach-Object {
 - **marker 损坏**：打日志并跳过（提示删除 marker+kv 后重启可重导）；不自动重导，避免误覆盖用户重置结果。
 - **门禁两条已登记边界**（B8 断言锁住）：模板字符串 `${}` 内的动态 import/require 检不出；`if (cond) /re/` 这种 `)` 后的正则字面量不识别——修时同步改 B8 与 AGENTS §5.1。
 - **便携 Node 低完整性（环境）**：本机 `data/runtime/node.exe` 被标 Low Mandatory Level，写不了 Medium 目录（测试已自动复制到系统临时目录规避）。**生产侧若真机 runtime 同样被标低完整性，DB 写入会失败**——打 tag 前需按 RUNBOOK 确认打包/便携 runtime 的完整性级别。
+- **测试脚本重复（P3，2026-11-03 事实核对登记）**：`test/hotscore.real-smoke.mjs` 与 `test/shooting.real-smoke.mjs` 逐字节相同（不在「parsers 重复文件 0」口径内）；不影响发布，4.0.1 清理或补用途说明。
 
 ---
 
 ## 八、后续工作包（4.0.1 / 4.1）
 
-### WP7 · 4.0.1 三个用户可感知修复（2–3.5 人天）
+### WP7 · 4.0.1 修复（用户可感知 ×3 + 契约/稳定性 ×3，2–3.5 人天）
 
 | # | 修复 | 证据 |
 | --- | --- | --- |
 | P1 | work 停用中止在途 SSE/提醒 | marketing 有 `stopBackgroundWork()` + `abortAll*`；work 只有 `reminder.stop()`，通道摘了但流还在烧 token |
 | P2 | 旧库导入失败可见 + 重试入口 | work/marketing `main.ts` 现在只 `ctx.logger.warn('下次启动重试')`，插件管理页无入口 |
 | P3 | knowledge 原件路径隔离 | work 写全局 `<dataDir>/knowledge`；marketing 写 `<dataDir>/projects/<id>`；卸载/迁移会漏 |
+| P4 | 单实例锁（入口 `requestSingleInstanceLock`） | 两个实例同指 dataDir 时 `character/kv.json` 的 tmp+rename 无跨进程保护（阶段 A 明确接受，4.0.1） |
+| P5 | 便携 Node 低完整性自检 | 本机 `data/runtime/node.exe` 被标 Low IL，写不了 Medium 目录；打包/真机同类问题会表现为「数据存不上」，启动时检测并给明确提示/引导重装 |
+| P6 | 测试 flake 台账 + 固定 sleep 清理 | e2e D3 已修（`d2f5ef9`）；`report.accept:281/305`、`content.accept:380` 等「固定 sleep + 读库断言」登记待改 |
+| P7 | `ctx.kv` / `ctx.secrets` 接测试断言 | 契约已补但 **0 消费 / 0 accept 断言**（2026-11-03 task-10 P2-1）；在 `plugin.accept` 加注入 kv/secrets 的 P-check（命名空间隔离 / round-trip / safeStorage 不可用语义） |
+| P8 | `pluginKv` 并发承诺与实现对齐 | 契约承诺「宿主保证并发安全」，实现是每实例整份 cache + 整文件 rename，可复现丢键（task-10 P2-2）；改为按 dataDir 共享单例 + 串行写队列，或降级承诺并写约束；补断言 |
 
 ### WP5 · index.ts ≤ 1800（3–4 人天）
 
 - **W5-a**：`registerIpcHandlers`（`index.ts:1304–1991`，688 行 / 61 个 `ipcMain.handle`）按前缀拆到 `electron/main/ipc/host/{window,claw,config,env,skills,obsidian,terminal}.ts`，`index.ts` 只留 `registerHostIpc(deps)`；`deps` 用 **getter** 形状（`getMainWindow()` 等）保住晚初始化语义。
 - **W5-b**：`initPlugins`（472–634，163 行）+ 三个服务工厂 → `electron/main/services/pluginRuntime.ts`，legacy 读库回调显式注入。
-- 推演：现状 2,491 → a+b 后约 **1,670 行**；宿主 26,802 → 约 25,990（顺带达成 V4 ≤26,000）。
+- 推演：现状 2,491 → a+b 后约 **1,670 行**；宿主 26,797 → 约 25,985（顺带达成 V4 ≤26,000）。
 - 出口判据：`(Get-Content electron\main\index.ts).Count -le 1800`；全量 32 套；61 个通道名逐条不变；双 typecheck 0。
 - **不要**引 DI 容器：要注入的只有 ~10 个模块级单例，getter 形状足够且不引入无类型注册表。
 
 ### WP6 · 边界清零（2.5–3.5 人天）
 
 - **W6-a**：`gatewayClient.ts`（1464 行、0 处 import electron）拆出纯工具到 `services/gateway/{parts,constants,normalize,stream}.ts`，类保留并 re-export → 11 → **9**。
-- **W6-b**：域 ipc 文件搬进 `plugins/<id>/main/ipc/`（`ipc/*.ts` 现在反向 import 插件域类型，搬走同时消掉宿主→插件依赖）→ 9 → **0**。**需拍板**：`work:gateway` 两条通道随插件启停（与 marketing 对齐），按 G4 单独提交 + CHANGELOG 登记。
+- **W6-b**：域 ipc 文件搬进 `plugins/<id>/main/ipc/`（`ipc/*.ts` 现在反向 import 插件域类型，搬走同时消掉宿主→插件依赖）→ 9 → **0**。**需拍板**：`work:gateway` 两条通道随插件启停（与 marketing 对齐），按 G4 单独提交 + CHANGELOG 登记。清账时一并处理 `index.ts:701-983` 的 11 处 `import('plugins/work/domain/{wizardManager,reminderManager}')` 内联类型导入，以及 `electron/main/ipc/*` 的 `import type ... from plugins/<id>/domain/*`（均 type-only，运行时无耦合，但属反向依赖）。
 - **W6-c**：基线写 0，`check:boundary` 从 ratchet 升为硬 error。
 

@@ -13,10 +13,10 @@
 ### 插件化
 - 控制台（`/dashboard`）与能力中心（`/skills`）导航；插件运行期启停、懒加载、独立路由/IPC/数据迁移
 - 2.0 营销域、3.0 工作域装箱为官方内置插件；宿主保留 OpenClaw 管理/渠道/终端/Obsidian/技能/更新等壳能力
-- 宿主服务下沉（db / gateway / knowledge / context / voice），插件通过 `ctx` 使用，配置与密钥归宿主
+- 宿主服务下沉（db / knowledge / context / voice），插件通过 `ctx` 使用，配置与密钥归宿主（gateway 客户端仍在宿主侧，按 WP6/4.1 再下沉）
 - work / marketing 域代码搬到 `plugins/<id>/domain/`；重复的文档解析器合并为 `services/knowledge`，
   上下文取舍循环收敛为 `services/context` 内核（两域共用，域侧只提供回调）
-- 插件契约补 `secrets` / `kv`；角色数据迁到 `<dataDir>/character/kv.json`
+- 插件契约补 `secrets` / `kv`（4.0 只有接口：当前无插件消费、无 accept 断言，消费与断言归 4.1）；角色数据迁到 `<dataDir>/character/kv.json`
   （旧 `fish:v2:*` 一次性导入，标记文件防重复；首次导入以旧库为准，可覆盖早期版本的默认值）
 - 边界门禁 `scripts/check-boundaries.mjs`（零依赖 ratchet：pluginHostBoundary=11 / managerElectron=0），
   已接入全量验收首套与 CI，覆盖静态 import / export-from / 动态 import / require / 路径穿越

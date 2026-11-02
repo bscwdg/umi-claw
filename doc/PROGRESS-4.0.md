@@ -933,6 +933,7 @@ marketing 搬迁后 `pluginHostBoundary` 从 10 → **11**。多出的 2 条：
   **加密不可用时拒绝写入**（不静默降级成明文）；读写走 tmp + rename
 - `PluginKvApi`：宿主持久化 `<dataDir>/plugin-kv.json`，键前缀 `plugin:<id>:`
 - 兑现 `PLAN-4.0 §18.3` 登记的「`ctx.secrets` 缺失」欠账
+  - **实现注（2026-11-03 复核 P2-1）**：接口已补，但全仓 **0 消费方、0 accept 断言**；`plugin.accept` 的 P30 仍只覆盖旧 5 个服务。属「契约在、无人用」，已在 PLAN §八 WP7 登记，消费与断言归 4.1。
 
 **C4.2 角色数据独立**
 
@@ -942,6 +943,7 @@ marketing 搬迁后 `pluginHostBoundary` 从 10 → **11**。多出的 2 条：
 - `importAllFromLegacy()` 一次性幂等导入：先读 `fish:v2:meta` 解析 days/lifeDays，
   再拼出完整键清单（`day:`/`life:` 是按日期生成的，日期列表在 meta 里）
 - 旧键保留只读一个版本，出问题可回滚
+- **实现注（2026-11-03 事实核对补记）**：`eed488c` 当时只有函数定义，`index.ts` **0 调用方**（= 升级用户旧记忆实际不会迁移）；阶段 A 的 `6ee5011`/`e426152` 才真正接线并补 C73–C79（含重置不复活、超时取消）。本包收尾时以最终 HEAD 为准。
 
 **C4.3 index.ts 瘦身**
 
@@ -1084,8 +1086,27 @@ CHANGELOG（4.0.0 条目、验收口径）、本文件（更正 WP4 的 954/476 
 | 模板 `${}` 内动态 import/require 检不出（新假阴性） | **接受并登记**：`lexMask` 注释 + AGENTS §5.1「已登记的门禁边界」+ B8 断言锁住；修复时同步改 B8 |
 | `if (cond) /re/` 的 `)` 后正则不识别 | **接受并登记**：同上（补 `)` 会带来除法误判，权衡后保留） |
 | 取消是协作式、adopt 循环内不早停 | **属实→已修**：每轮 adopt 后检查 `cancelled()` 并早停（不再做完剩余 DB 读取） |
-| `whenReady` 数字未回填（303→实际 306+） | **属实→已修**：按最终 HEAD 回填为 2078–2388=311（含本轮 +5 行）；index 2491 / host 26802 同步 |
+| `whenReady` 数字未回填（303→实际 306+） | **属实→已修**：按最终 HEAD 回填为 2078–2388=311（含本轮 +5 行）；index 2491 / host 26797 同步 |
 | 导入抛错路径 2s timer 未 clear | **属实→已修**：`Promise.race` 包 `try/finally` 清定时器 |
+
+### 4.0.0 版本收尾 · 两次独立检查（2026-11-03 补做）
+
+背景：`7122a94..eed488c` 的 44 个提交（**5 个 WP0 + 2 个前置（`8e7e2fa` UI 文案 / `1032d47` 视频文档）+ 37 个 WP1–WP4**）是 4.0.0 里唯一没被逐提交独立审过的大段 diff；按 AGENTS §12.2 补做两次互不可见的检查（task-9 事实核对 / task-10 对抗复核）。
+
+| 次序 | 检查 | 结论摘要 |
+| --- | --- | --- |
+| 第一次 | 事实核对（task-9） | 44 个提交构成 5 WP0 + 2 前置 + 37 WP1–4 ✓；WP1 parsers 单一实现、WP2 context 内核两域真实共用（含预算口径差异）、WP3 搬迁达成且测试无功能性硬编码、WP4 index 2557→2441 ✓。**关键事实**：① `eed488c` 时 `importAllFromLegacy` **0 调用方**（C4.2 当时未接线，已由 `6ee5011`/`e426152` 修复并补 C73–C79，character 78/78）；② `managerElectron=0` 当时扫的是已删目录（假绿，`7b72419` 已修）；③ `ctx.kv/secrets` 0 消费 0 断言。G5：断言 0 删除 / 0 改松。C1 38/44、**C2 4/44**（规则生效后 37 个里 3 条有、34 条缺，其中 20 条自承「沿用自查」）→ **明确记录：这 44 个提交不能声称按 §12.1 逐提交过审，以本轮两次补审入档。** |
+| 第二次 | 对抗复核（task-10） | **无 P0/P1**：核心承诺成立、无行为回退、断言未被改松、parsers/context 无残留双路径、搬迁 R100 零丢失。2 条 P2（`ctx.kv/secrets` 空转、`pluginKv` 并发承诺与实现不符 → 归 4.0.1 P7/P8）+ 9 条 P3。 |
+
+**处置（逐条三态）**：
+
+- **属实→已修（本批次）**：CHANGELOG「gateway 下沉」overclaim；PLAN C3.3/C3.4 的 ipc 未搬与 `main→domain` 路径；PLAN WP2 的 P1/P2/P3 回写；PLAN `lint-baseline/13` 与 `2,486`；PLAN-4.0 三条过期描述；`ServiceId` 与 `SERVICE_NAMES` 漂移（改为派生）；`computeBudget` 测试专用（两域已接入，行为不变）；`cut-order` 死 union 成员；2 处搬迁失效路径注释。
+- **属实→已登记**：`ctx.kv/secrets` 0 消费 0 断言（4.0.1 P7）；`pluginKv` 并发承诺（4.0.1 P8）；`character` marker `imported` 死数据 + RUNBOOK 缺排障（4.0.1）；`test/*.real-smoke.mjs` 重复一对（§七）；`index.ts`/`ipc/*` 的 type-only 反向依赖（W6-b）；D10/report/content 同类固定 sleep（P6 台账）。
+- **前提不成立/接受**：44 提交中唯一删掉的断言是 `scan.accept` 的 05a，同范围已改指 `services/knowledge/parsers/documentParsers.ts`、HEAD 有等价断言 → 属路径搬家非改松；baseline 10→11 有 `2adc781` 说明与 `--allow-raise --note` 机制 → 非悄悄放宽。
+
+**结论：4.0.0 可发布（无 P0/P1 阻断）**。打 tag 前仍需：① C0.3 真机 7 步（需用户 GUI）；② 重打 NSIS / 刷新 `win-unpacked`（本轮环境阻塞，见下）；③ 最终四件套留档晚于最终 HEAD；④ 用户确认 tag/push。
+
+> 本轮环境阻塞（记录如实）：`npx electron-builder --win` 在「生成 uninstaller 需执行安装器」一步被系统杀死（`Exit code: null`），重试在 `release/win-unpacked/resources/app.asar` 被占用处失败；已改用 `release-new` 输出目录重试。若最终仍失败，打包交给用户在自己的终端执行（`npx electron-builder --win`），代码与验收不因此阻塞。
 
 ### 已知欠账（阶段 A）
 
