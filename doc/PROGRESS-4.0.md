@@ -1120,3 +1120,40 @@ CHANGELOG（4.0.0 条目、验收口径）、本文件（更正 WP4 的 954/476 
 4. 四件套留档需在最终 HEAD 之后重跑（见 PLAN §七 第 4 条）。
 
 
+
+## 2026-11-03 · 4.0.1（WP7 修复；P2/P3 顺延 4.0.2）
+
+对应 WP7 八项：**P1 ✅ / P4 ✅ / P5 ✅ / P6 ✅ / P7 ✅ / P8 ✅**；**P2（旧库导入失败可见+重试入口）与 P3（knowledge 原件路径隔离）未做**，顺延 4.0.2——两者分别涉及渲染端/IPC 与数据目录迁移，塞进补丁版会重开验收面，按「一次只发可验证的修复」处理。
+
+### 提交
+
+| 提交 | 内容 |
+| --- | --- |
+| `4d27deb` | work 停用/退出中止全部在途 SSE（问答/工具/日报/OpenClaw 总结）；停用中止不占自动总结配额 |
+| `44906bd` | 单实例锁 + whenReady 守卫（第二实例退出并把请求转给已有窗口） |
+| `c694261` | pluginKv 共享缓存/串行队列（跨实例不丢键）+ ctx.kv/ctx.secrets 真注入断言 |
+| `aa6277d` | 便携 Node 写入探针（真写文件判定、EPERM/超时区分、告警落 dataDir/logs） |
+
+### P6 · 测试 flake 台账
+
+| 位置 | 状态 |
+| --- | --- |
+| `one-day.e2e` D3/D5/D7（写后固定 sleep） | **已修**：改 `waitFor` + 重读精确断言（`d2f5ef9`） |
+| `openclaw-summary` S12 假时钟跨午夜 | **已修**：假时钟取「今天 12:00」 |
+| `one-day.e2e` D10 `sleep(80)` | **登记未改**：QA ask 不写报告，等待与断言无因果关系，留待确认后删 |
+| `report.accept:281/305`、`content.accept:380`（sleep→countRows/versions） | **登记待改**（与 D7 同类，改 waitFor 需逐条确认等价） |
+| `qatool.accept:221`（sleep→断言「不产候选」） | **保留**：断言「无写入」不能用轮询证明不存在 |
+| `voice.accept:584/608`、`scan.accept:500/503` | 保留观察（后台状态推进 / 服务端断连 IO 时序，非 DB 写后读） |
+
+### 验证（2026-11-03 实跑）
+
+- 双 typecheck 0/0；`npm run build` 通过
+- 套件：node-runtime 8/8；plugin 63/63；character 79/79；qatool 11/11；report 14/14；openclaw-summary 16/16
+- 全量 `npm run accept`：32/32 套、**607 条断言**（以最终产物 `test/accept-result-*.json` 合计为准）
+
+### 已知欠账（4.0.1 收尾）
+
+1. **P2/P3 顺延 4.0.2**：旧库导入失败可见 + 重试入口；knowledge 原件路径隔离（两域原件都进各自插件目录，需迁移既有文件）。
+2. **P5 只到日志级**：探针告警写 `dataDir/logs/runtime-probe.log`；GUI 诊断横幅/引导重装入 4.0.2。
+3. 4.0.0 的 tag 前置未完成：C0.3 真机 7 步（用户）、重打 NSIS（本会话环境阻塞）、旧 44 提交复核已入档但需随 tag 前最终留档。
+4. 便携 Node 低完整性在生产侧是否存在，仍需真机确认。

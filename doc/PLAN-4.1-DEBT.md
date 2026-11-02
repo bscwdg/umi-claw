@@ -34,7 +34,7 @@
 | Manager 层 import electron | 0（扫描 `plugins/*/domain` 共 2 个目录） | `npm run check:boundary` | 0 |
 | 门禁是否自动执行 | `npm run accept` 首套 + CI verify job | `Select-String .github/workflows/release.yml -Pattern 'check:boundary'` | 必须有（已满足） |
 | CI 门禁 | typecheck×2 + boundary + build + accept（Windows），push release/** / tags v* / PR 触发 | `.github/workflows/release.yml` | 保持 |
-| accept 套件 | accept×30 + e2e + smoke = **32 套 / 600 条断言** | `npm run accept`（本机已 32/32 全绿，含 hot） | 不减少 |
+| accept 套件 | accept×30 + e2e + smoke = **32 套 / 607 条断言** | `npm run accept`（本机已 32/32 全绿，含 hot） | 不减少 |
 | 唯一实现 | parsers 3 份合并为 1；context 双实现收敛为 `services/context` 内核 | `Get-FileHash` / 目录结构 | 保持 |
 | 明文密钥字面量 | 0（仅 `Config.vue` 的 placeholder 示例） | 见 §三 校验清单 V9 | 0 |
 
@@ -442,7 +442,7 @@ CI 加一步：`npm run lint`（= eslint + check-lint-budget）。
 | # | 检查 | 判据 |
 | --- | --- | --- |
 | V1 | 双 typecheck | 0 错 |
-| V2 | 全量验收 | 32 套全绿（600 断言；本机已实跑含 hot） |
+| V2 | 全量验收 | 32 套全绿（607 断言；本机已实跑含 hot） |
 | V3 | 插件越界 import | ≤ `scripts/boundary-baseline.json` 的 `pluginHostBoundary`（当前 11；跑 `npm run check:boundary`，已接入 accept/CI） |
 | V4 | 宿主代码量 | ≤ 目标（见 §一） |
 | V5 | 重复文件 | 0 |
@@ -542,7 +542,7 @@ Get-ChildItem *.md | ForEach-Object {
 | WP3 | ✅ 完成 | 2026-11-02 | 并入 4.0.0 |
 | WP4 | ✅ 完成（C4.3 判据未达，见下） | 2026-11-02 | 并入 4.0.0 |
 | 阶段 A 收尾 | ✅ 完成（2026-11-02） | 2026-11-02 | 4.0.0 发布前 |
-| WP7（4.0.1 八项修复） | ⬜ 未开始 | — | 4.0.1 |
+| WP7（4.0.1） | 🟡 6/8 完成（P1/P4/P5/P6/P7/P8）；P2 导入失败可见/P3 知识库路径顺延 4.0.2 | 见 PROGRESS 4.0.1 段 | 4.0.1 |
 | WP5（index.ts ≤1800） | ⬜ 未开始 | — | 4.1 |
 | WP6（边界清零） | ⬜ 未开始 | — | 4.1 |
 
