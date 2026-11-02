@@ -39,7 +39,7 @@
 import { randomUUID } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { basename, extname, join, resolve } from 'node:path'
-import { AppError, ERROR_CODES, errorCodeOf } from '../services/errors'
+import { AppError, ERROR_CODES, errorCodeOf } from '../../../electron/main/services/errors'
 import type { MarketingDatabase } from './database'
 import { PROJECTS_SUBDIR } from './projectManager'
 import {
@@ -54,7 +54,7 @@ import {
   type HtmlFetcher,
   type ParseableFileType,
   type PdfjsAssets
-} from '../services/knowledge'
+} from '../../../electron/main/services/knowledge'
 
 /** §四 `knowledge_items.type`：05a 支持的全部取值（`image` 属 05b，不在其中） */
 export const KNOWLEDGE_TYPES = ['text', 'markdown', 'url', 'faq', 'docx', 'xlsx', 'pdf'] as const

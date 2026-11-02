@@ -1,4 +1,5 @@
 {
-  "pluginHostBoundary": 10,
-  "managerElectron": 0
+  "pluginHostBoundary": 11,
+  "managerElectron": 0,
+  "_note": "WP3 搬迁后从 10 升到 11：marketing/domain 的 contentManager 与 scanRecognizer 真实 import 了 gatewayClient 的值导出（textPart / imageDataPart / GATEWAY_ABORT_REASON），不是类型引用。搬迁前它们在宿主目录不受此规则约束，所以是新暴露的真实耦合。计划在 WP4 把 gateway 的纯工具部分下沉到 services 后清零，不得在此前继续上调。"
 }

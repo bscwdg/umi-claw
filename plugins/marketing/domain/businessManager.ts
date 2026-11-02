@@ -19,7 +19,7 @@
 // 第一次（无行）走 `businesses.create`，撞 `UNIQUE(project_id)` 时回落更新路径——见 upsertBusiness 注释。
 
 import { randomUUID } from 'node:crypto'
-import { AppError, ERROR_CODES, errorCodeOf } from '../services/errors'
+import { AppError, ERROR_CODES, errorCodeOf } from '../../../electron/main/services/errors'
 import type { MarketingDatabase } from './database'
 
 /** businesses 表可写字段白名单（与 §四 DDL / db-worker.mjs 的 businesses 白名单一一对应） */

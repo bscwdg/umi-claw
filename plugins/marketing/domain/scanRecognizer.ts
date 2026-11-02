@@ -44,15 +44,15 @@
 import { readFileSync, statSync } from 'node:fs'
 import { basename, extname } from 'node:path'
 import { deflateSync } from 'node:zlib'
-import { AppError, ERROR_CODES, errorCodeOf } from '../services/errors'
+import { AppError, ERROR_CODES, errorCodeOf } from '../../../electron/main/services/errors'
 import {
   GATEWAY_ABORT_REASON,
   imageDataPart,
   textPart,
   type GatewayChatMessage,
   type GatewayStreamHandle
-} from '../gatewayClient'
-import { loadPdfjsModule, asPdfjsDirUrl, type PdfjsAssets } from '../services/knowledge'
+} from '../../../electron/main/gatewayClient'
+import { loadPdfjsModule, asPdfjsDirUrl, type PdfjsAssets } from '../../../electron/main/services/knowledge'
 
 /** pdfjs 模块形状（类型取官方 d.ts；运行时从随包资产加载，见 documentParsers） */
 type PdfjsModule = typeof import('pdfjs-dist/legacy/build/pdf.js')

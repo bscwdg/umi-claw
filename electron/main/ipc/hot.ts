@@ -12,8 +12,8 @@
 import { type IpcMainInvokeEvent } from 'electron'
 import { channelHandleEvent } from './channelRegistrar'
 import { toErrorEnvelope, type ErrorEnvelope } from '../services/errors'
-import type { HotManager, RadarView, HotTopicRow, HotCollectStatus } from '../marketing/hotManager'
-import type { HotScoreManager, HotScoreBatchResult } from '../marketing/hotScoreManager'
+import type { HotManager, RadarView, HotTopicRow, HotCollectStatus } from '../../../plugins/marketing/domain/hotManager'
+import type { HotScoreManager, HotScoreBatchResult } from '../../../plugins/marketing/domain/hotScoreManager'
 
 export type HotIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
 

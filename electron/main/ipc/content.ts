@@ -33,7 +33,7 @@ import type {
   GenerateContentSpec,
   SaveVersionInput,
   UpdateContentInput
-} from '../marketing/contentManager'
+} from '../../../plugins/marketing/domain/contentManager'
 
 export type ContentIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }
 

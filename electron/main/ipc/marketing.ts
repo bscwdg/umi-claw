@@ -25,14 +25,14 @@ import type {
   ProjectManager,
   ProjectRow,
   UpdateProjectInput
-} from '../marketing/projectManager'
+} from '../../../plugins/marketing/domain/projectManager'
 import type {
   BusinessInput,
   BusinessManager,
   BusinessRow,
   WatchRow,
   WatchlistManager
-} from '../marketing/businessManager'
+} from '../../../plugins/marketing/domain/businessManager'
 import type {
   CreateKnowledgeInput,
   ImportKnowledgeInput,
@@ -40,7 +40,7 @@ import type {
   KnowledgeRow,
   KnowledgeSearchHit,
   UpdateKnowledgeInput
-} from '../marketing/knowledgeManager'
+} from '../../../plugins/marketing/domain/knowledgeManager'
 
 /** IPC 统一返回信封 */
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }

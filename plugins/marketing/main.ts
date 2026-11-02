@@ -5,7 +5,7 @@
 
 import type { PluginContext } from '../../electron/main/kernel'
 import { definePlugin } from '../../electron/main/kernel'
-import { createMarketingRuntime, type MarketingRuntime } from '../../electron/main/marketing/runtime'
+import { createMarketingRuntime, type MarketingRuntime } from './domain/runtime'
 import { setChannelRegistrar } from '../../electron/main/ipc/channelRegistrar'
 import { registerMarketingIpc } from '../../electron/main/ipc/marketing'
 import { registerAdvisorIpc } from '../../electron/main/ipc/advisor'

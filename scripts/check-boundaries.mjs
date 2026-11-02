@@ -31,12 +31,34 @@ function walk(dir, out = []) {
   return out
 }
 
-/** 抽出所有 import/export-from 的模块说明符 */
-function specifiers(src) {
+/**
+ * 抽出全部 import 语句（支持多行），并判定它是否「纯类型」。
+ *
+ * 为什么不能用「只看单行」：多行 import 的收尾行是 `} from '...'`，
+ * 首行才是 `import ...`。而且「全部成员都带 type」也是一种类型导入
+ * （`import { type A, type B } from '...'`），不能只认 `import type`。
+ */
+function importStatements(src) {
   const out = []
-  const re = /(?:from|import)\s*(?:\(\s*)?['"]([^'"]+)['"]/g
+  // 逐个匹配 import ... from '...'，允许跨行
+  const re = /import\s+(?:type\s+)?(?:[\s\S]*?)\s+from\s+['"]([^'"]+)['"]/g
   let m
-  while ((m = re.exec(src))) out.push(m[1])
+  while ((m = re.exec(src))) {
+    const stmt = m[0]
+    const spec = m[1]
+    const explicitlyType = /^import\s+type\b/.test(stmt)
+    // 取花括号内的成员列表
+    const brace = stmt.match(/\{([\s\S]*?)\}/)
+    let allMembersType = false
+    if (brace) {
+      const members = brace[1]
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean)
+      allMembersType = members.length > 0 && members.every((x) => x.startsWith('type '))
+    }
+    out.push({ spec, isTypeOnly: explicitlyType || allMembersType, stmt })
+  }
   return out
 }
 
@@ -47,21 +69,21 @@ function checkPlugins() {
   const hits = []
   for (const abs of files) {
     const src = readFileSync(abs, 'utf8')
-    const lines = src.split('\n')
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i]
-      if (!/from\s+['"][^'"]+['"]/.test(line)) continue
-      for (const spec of specifiers(line)) {
-        if (!spec.includes('electron/main/')) continue
-        if (PLUGIN_ALLOW.test(spec)) continue
-        if (/^import\s+type/.test(line.trim())) continue
-        hits.push({
-          file: relative(repoRoot, abs),
-          line: i + 1,
-          spec,
-          text: line.trim()
-        })
-      }
+    const lineOf = (spec) => {
+      const idx = src.indexOf(spec)
+      return idx < 0 ? 0 : src.slice(0, idx).split('\n').length
+    }
+    for (const stmt of importStatements(src)) {
+      const spec = stmt.spec
+      if (!spec.includes('electron/main/')) continue
+      if (PLUGIN_ALLOW.test(spec)) continue
+      if (stmt.isTypeOnly) continue
+      hits.push({
+        file: relative(repoRoot, abs),
+        line: lineOf(spec),
+        spec,
+        text: stmt.stmt.split('\n')[0].trim()
+      })
     }
   }
   return hits

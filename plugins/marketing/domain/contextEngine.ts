@@ -26,7 +26,7 @@
 // current-project 切换，属 Commit 03）。Context Pack 是**主进程内部**的数据结构，消费方是
 // 07/08/09 的主进程代码，所以本提交**不新增 IPC 通道**，只把引擎接进主进程 wiring（见汇报「待拍板」）。
 
-import { AppError, ERROR_CODES } from '../services/errors'
+import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
 import {
   BUSINESS_COMPLETENESS_FIELDS,
   WATCHLIST_MAX,
@@ -43,10 +43,10 @@ import {
 } from './knowledgeManager'
 import type { ProjectManager } from './projectManager'
 import { getPlatformRule } from './platformRules'
-import { estimateTokens, sliceToTokenBudget } from '../services/context/tokens'
-import { assembleLoop } from '../services/context/assemble'
+import { estimateTokens, sliceToTokenBudget } from '../../../electron/main/services/context/tokens'
+import { assembleLoop } from '../../../electron/main/services/context/assemble'
 export { estimateTokens, sliceToTokenBudget }
-import { shortTitle } from '../services/context/pack'
+import { shortTitle } from '../../../electron/main/services/context/pack'
 
 import {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
@@ -55,8 +55,8 @@ import {
   KNOWLEDGE_ITEM_MIN_TOKENS,
   ITEM_TRUNCATE_MARKER,
   DROPPED_TITLES_SHOWN,
-} from '../services/context/limits'
-export { DROPPED_TITLE_MAX_CHARS } from '../services/context/limits'
+} from '../../../electron/main/services/context/limits'
+export { DROPPED_TITLE_MAX_CHARS } from '../../../electron/main/services/context/limits'
 export {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
   MIN_CONTEXT_WINDOW_TOKENS,
