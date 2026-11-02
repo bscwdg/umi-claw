@@ -24,7 +24,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { Recorder, assert, assertEq, printResult, writeJson, __dirname, repoRoot, domainUiSrc } from './_lib.mjs'
+import { Recorder, assert, assertEq, printResult, writeJson, __dirname, repoRoot, domainUiSrc, waitFor } from './_lib.mjs'
 import {
   writeStubs, compileVuePage, importPreloadApi, mountPage, esbuildBundle,
   collectRendererChannels, loadWorkIpcChannels, serialize
@@ -192,10 +192,14 @@ try {
     assert(dom.includes('删除这条工作记录？'), '应显示确认弹窗')
     assert(dom.includes('召开 Q3 启动会'), '弹窗应点名要删的记录')
 
-    // 取消：不删，弹窗关闭
+    // 取消：不删，弹窗关闭（关闭是异步渲染，固定 flush 次数在重负载下会读早）
     allButtons(res.root).find((b) => btnText(b) === '取消')?.props.onClick()
     await flush()
     assertEq(calls().filter((c) => c.channel === 'work:records:delete').length, 0, '取消不删除')
+    await waitFor(() => !serialize(res.root).includes('删除这条工作记录？'), {
+      timeout: 2000,
+      label: 'U13 取消后弹窗关闭'
+    })
     assert(!serialize(res.root).includes('删除这条工作记录？'), '取消后弹窗关闭')
 
     // 重新点删除 → 弹窗内确认：真正删除，带上记录 id
@@ -203,6 +207,11 @@ try {
     assertEq(delBtns.length, 1, '取消后只剩记录行删除按钮')
     delBtns[0].props.onClick()
     await flush()
+    // 打开弹窗同样是异步渲染：等标题出现再数按钮
+    await waitFor(() => serialize(res.root).includes('删除这条工作记录？'), {
+      timeout: 2000,
+      label: 'U13 重新打开确认弹窗'
+    })
     // 弹窗内的「删除」是此刻第二个同名按钮
     delBtns = allButtons(res.root).filter((b) => btnText(b) === '删除')
     assertEq(delBtns.length, 2, '弹窗确认按钮出现')
@@ -219,6 +228,10 @@ try {
     assertEq(rowDels.length, 2, '展开后：事项行 + 记录行各一个删除按钮')
     rowDels[0].props.onClick() // 事项区在记录区之前
     await flush()
+    await waitFor(() => serialize(res.root).includes('删除这个事项？'), {
+      timeout: 2000,
+      label: 'U13 事项确认弹窗打开'
+    })
     assertEq(calls().filter((c) => c.channel === 'work:matters:delete').length, 0, '事项弹窗阶段不得删除')
     const matterDom = serialize(res.root)
     assert(matterDom.includes('删除这个事项？'), '事项确认弹窗标题')
@@ -278,15 +291,23 @@ try {
     assert(dom.includes('删除这条知识资料？'), '应显示确认弹窗')
     assert(dom.includes('报销制度'), '弹窗应点名要删的资料')
 
-    // 取消不删
+    // 取消不删（关闭是异步渲染，重负载下固定 flush 次数会读早）
     allButtons(res.root).find((b) => btnText(b) === '取消')?.props.onClick()
     await flush()
+    await waitFor(() => !serialize(res.root).includes('删除这条知识资料？'), {
+      timeout: 2000,
+      label: 'U14 取消后弹窗关闭'
+    })
     assert(!serialize(res.root).includes('删除这条知识资料？'), '取消后弹窗关闭')
 
     // 确认才删，带知识 id
     delBtns = allButtons(res.root).filter((b) => btnText(b) === '删除')
     delBtns[0].props.onClick()
     await flush()
+    await waitFor(() => serialize(res.root).includes('删除这条知识资料？'), {
+      timeout: 2000,
+      label: 'U14 重新打开确认弹窗'
+    })
     delBtns = allButtons(res.root).filter((b) => btnText(b) === '删除')
     assertEq(delBtns.length, 2, '弹窗确认按钮出现')
     delBtns[1].props.onClick()
