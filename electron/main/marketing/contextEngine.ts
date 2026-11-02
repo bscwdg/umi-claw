@@ -43,6 +43,8 @@ import {
 } from './knowledgeManager'
 import type { ProjectManager } from './projectManager'
 import { getPlatformRule } from './platformRules'
+import { estimateTokens, sliceToTokenBudget } from '../services/context/tokens'
+export { estimateTokens, sliceToTokenBudget }
 
 // ── 常量（§六 / §七 Commit 06 / §十） ─────────────────────────────────────────
 
@@ -212,71 +214,6 @@ export interface ContextEngineOptions {
   logger?: (message: string) => void
   /** 默认上下文窗口覆盖（主进程集中配置用；调用方仍可按次覆盖） */
   defaultContextWindowTokens?: number
-}
-
-// ── 本地 token 估算（§六：不依赖 Gateway 的 usage） ───────────────────────────
-
-/** 中日韩表意文字 / 假名 / 谚文 / 全角符号：按 1 token 一个字计（偏保守） */
-function isWideChar(cp: number): boolean {
-  return (
-    (cp >= 0x2e80 && cp <= 0x303f) || // CJK 部首、标点、〇
-    (cp >= 0x3040 && cp <= 0x30ff) || // 平假名 / 片假名
-    (cp >= 0x3400 && cp <= 0x4dbf) || // 扩展 A
-    (cp >= 0x4e00 && cp <= 0x9fff) || // 基本区
-    (cp >= 0xac00 && cp <= 0xd7af) || // 谚文音节
-    (cp >= 0xf900 && cp <= 0xfaff) || // 兼容表意
-    (cp >= 0xff00 && cp <= 0xffef) || // 全角 / 半角形式
-    (cp >= 0x20000 && cp <= 0x3ffff) // 扩展 B 及以后
-  )
-}
-
-/**
- * 本地 token 估算（确定性、零依赖、**偏保守**）。
- *
- * 口径：宽字符（CJK/全角/谚文）1 token/字；ASCII 1/4 token/字符；换行 1；
- * 其余（emoji、带变音符的拉丁字母等）1.5。最后向上取整。
- *
- * 保守方向的选择理由：低估预算会让请求真的超窗（被模型截断或报错），高估只会少塞一点资料，
- * 而 §六 的退化路径（LIKE 裁剪）本来就是为超预算准备的，所以「宁可少塞」是安全侧。
- * 实测对照（本机 Node 24，见验收脚本 C9）：纯中文 1000 字 = 1000 token 级，
- * 英文 `hello world` 类文本 ≈ 4 字符/token。
- */
-export function estimateTokens(text: unknown): number {
-  if (text === null || text === undefined) return 0
-  const s = typeof text === 'string' ? text : String(text)
-  if (!s) return 0
-  let weight = 0
-  for (const ch of s) {
-    if (ch === '\n' || ch === '\r') {
-      weight += 1
-      continue
-    }
-    const cp = ch.codePointAt(0) ?? 0
-    if (isWideChar(cp)) weight += 1
-    else if (cp < 0x80) weight += 0.25
-    else weight += 1.5
-  }
-  return Math.ceil(weight)
-}
-
-/** 在 token 预算内取最长的前缀（裁剪模式给单条资料切片用）；不劈开代理对 */
-export function sliceToTokenBudget(text: string, maxTokens: number): string {
-  const s = String(text ?? '')
-  if (maxTokens <= 0 || !s) return ''
-  if (estimateTokens(s) <= maxTokens) return s
-  let lo = 0
-  let hi = s.length
-  while (lo < hi) {
-    const mid = Math.floor((lo + hi + 1) / 2)
-    if (estimateTokens(s.slice(0, mid)) <= maxTokens) lo = mid
-    else hi = mid - 1
-  }
-  // 别把代理对劈成半个字符（半个代理对在 JSON / 模型侧都是坏数据）
-  if (lo > 0 && lo < s.length) {
-    const code = s.charCodeAt(lo - 1)
-    if (code >= 0xd800 && code <= 0xdbff) lo -= 1
-  }
-  return s.slice(0, lo)
 }
 
 // ── 确定性文本化（无 AI、无平台规则模板——模板归 Commit 10） ──────────────────

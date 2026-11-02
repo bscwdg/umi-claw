@@ -26,6 +26,8 @@
 import { AppError, ERROR_CODES } from '../database/errors'
 import type { WorkDatabase } from './database'
 import { dateOf, normalizeDate } from './todoManager'
+import { estimateTokens, sliceToTokenBudget } from '../services/context/tokens'
+export { estimateTokens, sliceToTokenBudget }
 
 // ── 常量（§六） ───────────────────────────────────────────────────────────────
 
@@ -66,63 +68,6 @@ export const RECORD_WINDOW_DAYS_BY_SCOPE: Record<SnapshotScope, number> = {
   qa: 3,
   report: 7,
   latest: 1
-}
-
-// ── 本地 token 估算（§6.3：不依赖 Gateway usage，偏保守）──────────────────────
-
-function isWideChar(cp: number): boolean {
-  return (
-    (cp >= 0x2e80 && cp <= 0x303f) ||
-    (cp >= 0x3040 && cp <= 0x30ff) ||
-    (cp >= 0x3400 && cp <= 0x4dbf) ||
-    (cp >= 0x4e00 && cp <= 0x9fff) ||
-    (cp >= 0xac00 && cp <= 0xd7af) ||
-    (cp >= 0xf900 && cp <= 0xfaff) ||
-    (cp >= 0xff00 && cp <= 0xffef) ||
-    (cp >= 0x20000 && cp <= 0x3ffff)
-  )
-}
-
-/**
- * 本地 token 估算（确定性、零依赖、偏保守）：
- * 宽字符 1 token/字；ASCII 1/4；换行 1；其余 1.5；向上取整。
- * 低估会真的超窗（被截断/报错），高估只少塞资料，而裁剪路径本就为超预算准备，故宁可少塞。
- */
-export function estimateTokens(text: unknown): number {
-  if (text === null || text === undefined) return 0
-  const s = typeof text === 'string' ? text : String(text)
-  if (!s) return 0
-  let weight = 0
-  for (const ch of s) {
-    if (ch === '\n' || ch === '\r') {
-      weight += 1
-      continue
-    }
-    const cp = ch.codePointAt(0) ?? 0
-    if (isWideChar(cp)) weight += 1
-    else if (cp < 0x80) weight += 0.25
-    else weight += 1.5
-  }
-  return Math.ceil(weight)
-}
-
-/** 在 token 预算内取最长前缀（裁剪单条资料用）；不劈开代理对 */
-export function sliceToTokenBudget(text: string, maxTokens: number): string {
-  const s = String(text ?? '')
-  if (maxTokens <= 0 || !s) return ''
-  if (estimateTokens(s) <= maxTokens) return s
-  let lo = 0
-  let hi = s.length
-  while (lo < hi) {
-    const mid = Math.floor((lo + hi + 1) / 2)
-    if (estimateTokens(s.slice(0, mid)) <= maxTokens) lo = mid
-    else hi = mid - 1
-  }
-  if (lo > 0 && lo < s.length) {
-    const code = s.charCodeAt(lo - 1)
-    if (code >= 0xd800 && code <= 0xdbff) lo -= 1
-  }
-  return s.slice(0, lo)
 }
 
 // ── 类型 ──────────────────────────────────────────────────────────────────────

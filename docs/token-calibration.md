@@ -3,7 +3,7 @@
 > 日期：2026-09-21 ｜ 结论：**本地估算器总体偏保守（安全侧），无需调整。**
 
 ## 方法
-- 本地估算：`contextEngine.ts` 的 `estimateTokens`（CJK 1 token/字，ASCII 0.25，换行 1，其余 1.5）。
+- 本地估算：`electron/main/services/context/tokens.ts` 的 `estimateTokens`（CJK 1 token/字，ASCII 0.25，换行 1，其余 1.5）。WP2 已把该函数从两个域的 contextEngine 下沉为单一实现，口径未变。
 - 对照分词器：`gpt-tokenizer`（cl100k_base，GPT-3.5/4 口径），独立临时目录安装，不进项目依赖。
 - 样本覆盖商家介绍、长文案、纯英文、中英混合、FAQ、价格表、数字密集套餐 7 种产品真实文本形态。
 
