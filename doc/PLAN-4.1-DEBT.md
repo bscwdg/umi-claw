@@ -612,6 +612,6 @@ Get-ChildItem *.md | ForEach-Object {
 ### WP6 · 边界清零（2.5–3.5 人天）
 
 - **W6-a（parts）✅ 部分完成（2026-11-03）**：gateway 纯工具已下沉 `services/gateway/parts.ts`（`textPart`/`imageDataPart`/`imageUrlPart`/`GATEWAY_ABORT_REASON` + `GatewayContentPart`），`gatewayClient` 保留 re-export；marketing 两个域 Manager 改从 services 取 → **11 → 9**。原计划中的 `constants/normalize/stream` 三个拆分**未做**（不影响边界目标，可选）。
-- **W6-b**：域 ipc 文件搬进 `plugins/<id>/main/ipc/`（`ipc/*.ts` 现在反向 import 插件域类型，搬走同时消掉宿主→插件依赖）→ 9 → **0**。**需拍板**：`work:gateway` 两条通道随插件启停（与 marketing 对齐），按 G4 单独提交 + CHANGELOG 登记。清账时一并处理 `index.ts:514–796` 的 10 处 `import('plugins/work/domain/…')` 内联类型导入（行号/处数已按 WP5 后 HEAD 重测），以及 `electron/main/ipc/*` 的 `import type ... from plugins/<id>/domain/*`（均 type-only，运行时无耦合，但属反向依赖）。
+- **W6-b（第一步 ✅ 2026-11-03）**：`services/gateway/stream.ts` 已下沉（`forwardGatewayStream`/`GATEWAY_STREAM_EVENTS`/`MARKETING_STREAM_EVENTS` + 结构类型；gatewayClient re-export 兼容），供插件 IPC 直接 import services；越界数不变（仍 9）。**后续**：域 ipc 文件搬进 `plugins/<id>/main/ipc/`（`ipc/*.ts` 现在反向 import 插件域类型，搬走同时消掉宿主→插件依赖）→ 9 → **0**。**需拍板**：`work:gateway` 两条通道随插件启停（与 marketing 对齐），按 G4 单独提交 + CHANGELOG 登记。清账时一并处理 `index.ts:514–796` 的 10 处 `import('plugins/work/domain/…')` 内联类型导入（行号/处数已按 WP5 后 HEAD 重测），以及 `electron/main/ipc/*` 的 `import type ... from plugins/<id>/domain/*`（均 type-only，运行时无耦合，但属反向依赖）。
 - **W6-c**：基线写 0，`check:boundary` 从 ratchet 升为硬 error。
 

@@ -1379,3 +1379,17 @@ send / log 全部注入。
 
 **对 WP6-b 的影响**：9 条越界未变差；`ipc/host/*` 与域 `ipc/*` 物理分离后归属更清楚；
 W6-b 仍需拍板 `work:gateway` 归属并拆 `ipc/index.ts` barrel（域/host 分开）。
+
+### WP6-b · 第一步：gateway 流透传助手下沉 services
+
+`services/gateway/stream.ts`（4.1 WP6-b 前置）：
+- 从 gatewayClient 迁出 `forwardGatewayStream` / `GATEWAY_STREAM_EVENTS` / `MARKETING_STREAM_EVENTS` /
+  `GatewayStreamEventSet` / `GatewayStreamSink` / `GatewayStreamDelta`（单一来源）与错误信封 helper
+- 不 import electron（sink 用结构接口）→ 插件 IPC 可直接 `import ... from services/gateway/stream`
+- gatewayClient 保留 re-export（既有调用方与 gateway.accept 零改动）；`GatewayStreamDelta`/`toEnvelope`
+  改为单一来源，消除重复定义
+- gateway.accept G16 增直接 bundle stream.ts 的断言（导出面 + 事件名一致性），证明该路径真实可用
+- 边界门禁仍 9（本步不改变越界数，是 WP6-b 搬家前置）
+
+下一步（W6-b 主体）：拆 `ipc/index.ts` barrel（host/域分开）、把 marketing 8 个域 ipc 文件搬进
+`plugins/marketing/main/ipc/` 并改 import 到 services；`work:gateway` 归属按「宿主保留 work 面」推进。
