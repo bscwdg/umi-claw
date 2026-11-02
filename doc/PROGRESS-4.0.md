@@ -1145,6 +1145,7 @@ CHANGELOG（4.0.0 条目、验收口径）、本文件（更正 WP4 的 954/476 
 | `report.accept:281/305`、`content.accept:380`（sleep→countRows/versions） | **已修（4.0.2）**：改 `waitFor` + 重读精确断言；report 14/14、content 12/12 各连跑 2 次 |
 | `report.accept:390`、`content.accept:697`（sleep(80)→收尾后计数断言） | **已修（4.0.2）**：改 `waitFor`（abortAll 幂等 / 注册表清空），同上连跑 2 次全绿 |
 | `qatool.accept:221`（sleep→断言「不产候选」） | **保留**：断言「无写入」不能用轮询证明不存在 |
+| `ui.accept` U13/U14「取消后弹窗关闭」（固定 flush 次数） | **已修（4.1 期间，`33beebd`）**：改 `waitFor`（墙钟 2s）+ 打开方向按钮计数同批保护；ui 23/23 连跑 2 次 |
 | `voice.accept:584/608`、`scan.accept:500/503` | 保留观察（后台状态推进 / 服务端断连 IO 时序，非 DB 写后读） |
 
 ### 验证（2026-11-03 实跑）
