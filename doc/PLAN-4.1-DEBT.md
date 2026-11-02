@@ -27,8 +27,8 @@
 
 | 指标 | 实测 | 复核命令 | 目标 / 状态 |
 | --- | --- | --- | --- |
-| 宿主 `electron/main` 代码量 | 27,358 行 | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 1,358；WP5 只搬不删，宿主不会因拆分下降） |
-| `electron/main/index.ts` | 2,031 行 | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800（差 231，WP5） |
+| 宿主 `electron/main` 代码量 | 27,463 行 | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 1,463；WP5 只搬不删，宿主不会因拆分下降） |
+| `electron/main/index.ts` | 1,767 行 | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800（✅ 已达成，WP5） |
 | 插件越界 import（非 type、非 kernel/services） | **9 条**（全部是插件 `main.ts` 直引宿主 `ipc/*`；W6-a 已下沉 gateway 纯工具） | `npm run check:boundary` | 0（WP6-b） |
 | 门禁可绕过写法 | 已覆盖 static/export-from/dynamic/require + 路径穿越 + 注释掩码/正则字面量/字符串文案/模板字面量/非字面量/typeof | `node test/boundary.accept.mjs` | 8/8 保持 |
 | Manager 层 import electron | 0（扫描 `plugins/*/domain` 共 2 个目录） | `npm run check:boundary` | 0 |
@@ -543,12 +543,12 @@ Get-ChildItem *.md | ForEach-Object {
 | WP4 | ✅ 完成（C4.3 判据未达，见下） | 2026-11-02 | 并入 4.0.0 |
 | 阶段 A 收尾 | ✅ 完成（2026-11-02） | 2026-11-02 | 4.0.0 发布前 |
 | WP7（4.0.1/4.0.2） | 🟡 7/8 完成：P1/P4/P5/P6/P7/P8 ✅（P6 于 4.0.2 补完 5 处 waitFor）；P3 ✅（4.0.2 knowledge 原件隔离）；**P2 导入失败可见/重试仍顺延** | 见 PROGRESS 4.0.1/4.0.2 段 | 4.0.1/4.0.2 |
-| WP5（index.ts ≤1800） | 🟡 W5-b ✅（pluginRuntime，2,551→2,394）；W5-a 第五批 ✅（misc 19 + skills 11 + channels 3 + config 8 + claw 7 + test-connection 1 + terminal 5 = 54/61，index → 2,031）；剩 7 个 handle（env） | 见 PROGRESS 4.1 段 | 4.1 |
+| WP5（index.ts ≤1800） | ✅ W5-b ✅（pluginRuntime，2,551→2,394）；W5-a ✅（6 批、61 个 handle 全下沉到 ipc/host/*）；W5-b ✅；**WP5 ✅：index 1,767 ≤ 1,800**（宿主 27,463，V4 ≤26,000 另做删减） | 见 PROGRESS 4.1 段 | 4.1 |
 | WP6（边界清零） | 🟡 W6-a 完成（11→9）；W6-b 域 ipc 搬插件 / W6-c 基线 0 待做 | 见 PROGRESS 4.1 段 | 4.1 |
 
 > 发布点已重排：原「WP1→4.0.1 / WP2→4.0.2 / WP3→4.0.3 / WP4→4.1」不再成立——四包全部合入同一棵未发布的 `release/4.0`，且 `v1.0.0` 之后没有 tag。现在按 **4.0.0（当前 HEAD + 阶段 A 收尾）/ 4.0.1（WP7）/ 4.1（WP5+WP6）** 发布。
 >
-> WP4 的判据 `index.ts ≤ 1,800` 仍未达成（2,031），已如实登记，归 WP5，不算 WP4 过关。
+> WP4 的判据 `index.ts ≤ 1,800` 已达成（1,767），已如实登记，归 WP5，不算 WP4 过关。
 
 ---
 
@@ -596,15 +596,16 @@ Get-ChildItem *.md | ForEach-Object {
 
 ### WP5 · index.ts ≤ 1800（3–4 人天）
 
-- **W5-a**（分批进行中）：`registerIpcHandlers`（HEAD 实测 `index.ts:1156–1475`，320 行 / 7 个 `ipcMain.handle`，原 61 个）按前缀拆到 `electron/main/ipc/host/*.ts`，`index.ts` 只留 registrar 调用；`deps` 用 **getter** 形状保住晚初始化语义。
+- **W5-a**（分批进行中）：`registerIpcHandlers`（HEAD 实测 `index.ts:1087–1211`，124 行 / 0 个 `ipcMain.handle`，原 61 个）按前缀拆到 `electron/main/ipc/host/*.ts`，`index.ts` 只留 registrar 调用；`deps` 用 **getter** 形状保住晚初始化语义。
   - **第一批 ✅（2026-11-03）**：`ipc/host/misc.ts` —— 窗口 5 / 版本 1 / 日志 2 / 外链 1 / 对话框 1 / Obsidian 9 = **19 个通道**，`registerMiscIpc(deps)`；handler 总数 61 → 42（42+19 守恒）；
   - **第二批 ✅（2026-11-03）**：`ipc/host/skills.ts`（11）+ `ipc/host/channels.ts`（3）= 14 个通道；handler 42→28（19+11+3+28=61 守恒）；
   - **第三批 ✅（2026-11-03）**：`ipc/host/config.ts` —— 8 个通道（get/save/reset/getDataDir/getPresetModels/refreshModelPresets/getModelPresetsInfo/openDataDir），save/reset 共用 `toSaveResult` 拆包；handler 28→20（19+11+3+8+20=61 守恒）；`config.ts` 用 `HostIpcRegistrar` 且 deps 收窄到 `AppConfig`（无 `as never`）；
   - **第四批 ✅（2026-11-03）**：`ipc/host/claw.ts`（7）+ `ipc/host/modelConnection.ts`（1）；claw 的 consent 闸门/env 更新拒绝/get-token 标准路径全部保留（token 只进返回值）；handler 20→12（19+11+3+8+7+1+12=61 守恒）；
   - **第五批 ✅（2026-11-03）**：`ipc/host/terminal.ts`（5：term:run/pty-start/pty-input/pty-stop/pty-resize），spawn/sessions Map 适配/kill/send 全注入；handler 12→7（19+11+3+8+7+1+5+7=61 守恒）；
-  - 剩余 7 个：`env`（env 批含 init/update/updateNode 大段逻辑，需把局部 helper 一并下沉或显式注入）。
+  - **第六批 ✅（2026-11-03）**：`ipc/host/env.ts` —— env 7 + 全局单飞闸 `runExclusiveEnvTask` + 三个 impl；`services/pluginServiceAdapters.ts` —— hostOps/notifications/openclaw 适配器；handler 7→0（0+19+11+3+8+7+1+5+7=61 守恒）；**index 1,767 ≤ 1,800 达成**；
+  - 剩余：无（61 个 handle 全部下沉；`index.ts` 只保留 registrar 调用与 deps 字面量）。
 - **W5-b** ✅（2026-11-03）：`initPlugins` + 服务适配 + 插件状态已抽到 `electron/main/services/pluginRuntime.ts`（index 净 −157 → 2,394；宿主总行数 27,090，只搬不删不会下降），legacy 读库 / hostOps / notifications / openclaw / ipc / appInfo / resume 全部显式注入；index 只保留 `pluginRuntime = createPluginRuntime(deps)` + `await pluginRuntime.init()`。
-- 推演：现状 2,031（W5-a 第五批后）→ 把剩余 7 个 env handle（约 600 行，扣除 deps 组装）拆完预计 **约 1,800–1,900 行**，需拆完实测再决定是否再抽角色/语音装配段；宿主总行数不因拆分下降（V4 ≤26,000 需另做删减，不在 WP5 范围）。
+- 实测：**index 1,767 行 ≤ 1,800，WP5 达成**；宿主 27,463（只搬不删，V4 ≤26,000 仍需另做删减，明确不在 WP5 范围）。
 - 出口判据：`(Get-Content electron\main\index.ts).Count -le 1800`；全量 32 套；61 个通道名逐条不变；双 typecheck 0。
 - **不要**引 DI 容器：要注入的只有 ~10 个模块级单例，getter 形状足够且不引入无类型注册表。
 

@@ -1336,3 +1336,20 @@ send / log 全部注入。
   其低完整性 SQLITE 14 失败属环境已知问题，不进 accept 链路）
 - 盲区：终端行为零 accept 覆盖（纯模块可 fake spawn/registrar），并入 P45
 - 行数：index 2,031（差 231）；剩余 7 个 env handle
+
+### W5-a · 第六批（env 7）+ 适配器拆出 —— **WP5 达成**
+
+- `ipc/host/env.ts`：env:check/init/update/checkLatest/getInfo/nodeVersions/updateNode + 全局单飞闸
+  `runExclusiveEnvTask` + envInitImpl/envUpdateImpl/updateNodeImpl；deps 注入 downloadManager/clawManager/
+  gatewayReady/setUpdateInFlight/decideRollback（保持本文件无 electron 运行时依赖）
+- `services/pluginServiceAdapters.ts`：hostOps/notifications/openclaw 三个适配器（deps 显式传入）
+- index：env 块/模块级单飞闸/三个适配器全部移出，`registerIpcHandlers` 只剩 7 个 registrar 调用 +
+  deps 字面量（124 行）；handler 7 → 0（0+19+11+3+8+7+1+5+7=61 守恒）
+- **index 1,767 行 ≤ 1,800：WP5 出口判据达成**（宿主 27,463；V4 ≤26,000 不在 WP5 范围）
+- 测试：P44 加 env 7 + index 0 个 handle + 守恒；N7 改读 env.ts，并补接线断言
+  （setUpdateInFlight 写回 envUpdateInFlight / claw 读同一变量）
+- 等价性（task-29）：三个 impl 逐段等价、单飞闸语义不变（单次注册下全局唯一）、
+  在途标记仍同一模块变量、hostOps 7 方法参数顺序核对
+- 盲区：env 三任务行为零 accept 覆盖（env.ts 现已无运行时 electron 依赖，decideRollback 可注入，
+  P45 可补）；单飞闸作用域已注释「每注册一次一把」的前提
+- WP5 收尾仍待：最终 HEAD 全量 accept 复跑 + 两次独立子代理检查（事实核对/对抗复核）入档
