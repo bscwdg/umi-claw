@@ -90,15 +90,24 @@ try {
 
   await r.check('N7', 'env:init 必须停/起网关并共用启动闸（Node 自动升级会结束进程）', () => {
     const mainSrc = readFileSync(join(__dirname, '..', 'electron', 'main', 'index.ts'), 'utf-8')
-    const start = mainSrc.indexOf('const envInitImpl')
-    const end = mainSrc.indexOf('const envUpdateImpl', start)
+    // 4.1 WP5-a 第六批：env 通道已拆到 ipc/host/env.ts，impl 与启动闸都随之搬走
+    assert(/registerEnvIpc\(\s*ipcMain/.test(mainSrc), 'index.ts 应调用 registerEnvIpc(ipcMain')
+    // 接线：env 的 setter 必须写回 index 的 envUpdateInFlight，claw 侧读同一变量
+    assert(/envUpdateInFlight = value/.test(mainSrc), 'setUpdateInFlight 必须写回 envUpdateInFlight')
+    assert(/isEnvUpdateInFlight: \(\) => envUpdateInFlight/.test(mainSrc), 'claw 侧应读同一 envUpdateInFlight')
+    const envSrc = readFileSync(
+      join(__dirname, '..', 'electron', 'main', 'ipc', 'host', 'env.ts'),
+      'utf-8'
+    )
+    const start = envSrc.indexOf('const envInitImpl')
+    const end = envSrc.indexOf('const envUpdateImpl', start)
     assert(start >= 0 && end > start, '找不到 envInitImpl（初始化入口被改名？）')
-    const block = mainSrc.slice(start, end)
-    assert(block.includes('clawManager.getStatus().running'), '必须记录 wasRunning')
-    assert(block.includes('clawManager.stop()'), '初始化前必须停网关')
-    assert(block.includes('clawManager.start()'), '初始化后必须按原状态恢复网关')
-    assert(block.includes('envUpdateInFlight = true'), '初始化期间必须闸住外部启动')
-    return '停网关 → 初始化 → 恢复，且 envUpdateInFlight 全程命中'
+    const block = envSrc.slice(start, end)
+    assert(block.includes('deps.claw.getStatus().running'), '必须记录 wasRunning')
+    assert(block.includes('deps.claw.stop()'), '初始化前必须停网关')
+    assert(block.includes('deps.claw.start()'), '初始化后必须按原状态恢复网关')
+    assert(block.includes('deps.setUpdateInFlight(true)'), '初始化期间必须闸住外部启动')
+    return '停网关 → 初始化 → 恢复，且更新在途标记全程命中'
   })
 
   await r.check('N5', '更新链路必须在建快照前做 Node 预检（防回归）', () => {

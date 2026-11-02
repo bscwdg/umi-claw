@@ -27,12 +27,12 @@ import { readFileSync, existsSync, readdirSync, mkdirSync, appendFileSync } from
 import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process'
 
 // ── 4.0 插件内核（Phase 0/1）──────────────────────────────────────────────────
-import {
-  type HostOpsApi,
-  type NotificationsApi,
-  type OpenClawApi
-} from './kernel'
 import { createPluginRuntime, type PluginRuntime } from './services/pluginRuntime'
+import {
+  createHostOpsService,
+  createNotificationsService,
+  createOpenClawService
+} from './services/pluginServiceAdapters'
 
 // ── 2.0 营销域 imports（合并自 release/2.0）────────────────────────────────────
 // 与 work 域同名的模块内标识符加 `Marketing*` / `*Lib` 别名区分：
@@ -62,6 +62,7 @@ import { registerConfigIpc } from './ipc/host/config'
 import { registerClawIpc } from './ipc/host/claw'
 import { registerModelConnectionIpc } from './ipc/host/modelConnection'
 import { registerTerminalIpc } from './ipc/host/terminal'
+import { registerEnvIpc } from './ipc/host/env'
 import {
   VoiceSecretStore,
   VoiceCloneManager,
@@ -403,57 +404,6 @@ let pluginRuntime: PluginRuntime | null = null
 
 // ── 服务适配器（Phase 1 WP1）：窄接口，不把 manager 递给插件 ─────────────────
 
-/** 宿主副作用（过渡服务，Phase 4 拆细）：通知 / 渠道外发 / 旧库只读 */
-function createHostOpsService(): HostOpsApi {
-  return {
-    notify: (id, payload) => showReminderNotification(id, payload as never),
-    push: async (_id, payload, dest) => (await pushReminderMessage(dest, payload as never)) as never,
-    listPushChannels: async () => (await listPushChannelOptions()) as never,
-    listPushTargets: async (channel) => (await listPushTargetOptions(channel)) as never,
-    locateOldDbs: () => locateLegacyDbs(configManager.getDataDir()) as never,
-    readOldDb: async (info) => (await readLegacyDb(info as never)) as never,
-    // 与网关同源按次读配置：扫描件识别用它做栅格化前预检
-    isMultimodalConfigured: () => Boolean(resolveGatewayModels().multimodal)
-  }
-}
-
-/** 系统通知：插件只能发标题 + 正文 */
-function createNotificationsService(): NotificationsApi {
-  return {
-    show({ title, body, silent }) {
-      try {
-        if (!Notification.isSupported()) return
-        new Notification({ title, body, silent: silent ?? false }).show()
-      } catch (e) {
-        console.warn('[plugin] 通知发送失败：', e)
-      }
-    }
-  }
-}
-
-/**
- * OpenClaw 能力：包一层唯一的 GatewayClient（单例约束不变）。
- * 插件拿不到 token、拿不到网关进程控制权，只能「问状态 / 聊天 / 流式」。
- */
-function createOpenClawService(): OpenClawApi {
-  return {
-    status: () => getWorkGatewayClient().getStatus(),
-    ensureReady: () => getWorkGatewayClient().ensureReady(),
-    async chat(input) {
-      const res = await getWorkGatewayClient().chat({ ...input, stream: false })
-      return { text: res.text, model: res.model }
-    },
-    stream(input) {
-      const handle = getWorkGatewayClient().createChatStream({ ...input, stream: true })
-      return {
-        iterator: handle.iterator,
-        result: handle.result.then((r) => ({ text: r.text, chunks: r.chunks, aborted: r.aborted })),
-        cancel: () => handle.cancel()
-      }
-    }
-  }
-}
-
 async function initPlugins(): Promise<void> {
   pluginRuntime = createPluginRuntime({
     dataDir: () => configManager.getDataDir(),
@@ -462,9 +412,18 @@ async function initPlugins(): Promise<void> {
     workDatabase: () => workDatabase,
     openLegacyDatabase: (fileName, domain) =>
       openLegacyDatabase(fileName, domain as 'marketing'),
-    hostOps: createHostOpsService,
-    notifications: createNotificationsService,
-    openclaw: createOpenClawService,
+    hostOps: () =>
+      createHostOpsService({
+        notify: (id, payload) => showReminderNotification(id, payload as never),
+        push: (_id, payload, dest) => pushReminderMessage(dest as never, payload as never),
+        listPushChannels: () => listPushChannelOptions(),
+        listPushTargets: (channel) => listPushTargetOptions(channel),
+        locateOldDbs: () => locateLegacyDbs(configManager.getDataDir()),
+        readOldDb: (info) => readLegacyDb(info as never),
+        isMultimodalConfigured: () => Boolean(resolveGatewayModels().multimodal)
+      }),
+    notifications: () => createNotificationsService(),
+    openclaw: () => createOpenClawService(getWorkGatewayClient),
     encryption: safeStorage,
     ipc: ipcMain,
     appInfo: () => ({
@@ -913,34 +872,6 @@ let envUpdateInFlight = false
 const UPDATE_IN_PROGRESS_ERROR = 'OpenClaw 正在更新，请等待更新完成后再启动'
 
 /**
- * 环境任务（初始化 / OpenClaw 更新 / Node 更新）的**全局**单飞 promise。
- *
- * 三个任务互相也不能并发：初始化与更新都要写同一个安装目录，Node 更新会替换
- * 正在被 npm 安装使用的运行时，任意两个并发都会互相抢文件/状态库锁。所以这里用
- * 一个共享闸，而不是每个任务各一个（那只能挡住自己的重复点击）。
- *
- * 用户在「环境初始化」页开始任务后切到别的页面再切回来（或重复点击）时，前端虽然有
- * 任务态防护，主进程仍需兜底：第二次调用直接拒绝。进度仍由 env:progress 广播推送，
- * 切回来的页面重新挂载即可看到最新进度。
- */
-let envTaskInFlight: Promise<unknown> | null = null
-const ENV_TASK_BUSY_ERROR = '已有环境任务在进行中，请等待当前任务完成'
-
-/** 环境任务统一入口：并发调用直接返回 inFlight 回执，绝不排队执行第二套安装/迁移 */
-function runExclusiveEnvTask<T>(
-  task: () => Promise<T>
-): Promise<T> | { success: false; error: string; inFlight: true } {
-  if (envTaskInFlight) {
-    return { success: false, error: ENV_TASK_BUSY_ERROR, inFlight: true }
-  }
-  const run = task().finally(() => {
-    if (envTaskInFlight === run) envTaskInFlight = null
-  })
-  envTaskInFlight = run
-  return run
-}
-
-/**
  * 统一的应用退出流程：标记退出、清理终端会话并停止 OpenClaw
  */
 function quitApp(): void {
@@ -1222,229 +1153,34 @@ function registerIpcHandlers(): void {
   })
   registerModelConnectionIpc(ipcMain)
 
-  // 环境初始化
-  ipcMain.handle('env:check', () => downloadManager.checkEnvironment())
-  // 初始化/重装会替换 node_modules，且 Node 不满足新核心要求时还会自动升级运行时
-  // （升级会结束占用便携 Node 的进程）——所以先停网关，结束后按原状态恢复。
-  const envInitImpl = async (options: { useMirror?: boolean }) => {
-    const wasRunning = clawManager.getStatus().running
-    if (wasRunning) {
-      await clawManager.stop()
+  // 环境初始化 / OpenClaw 更新 / Node 更新（4.1 WP5-a 第六批拆到 ipc/host/env.ts）
+  registerEnvIpc(ipcMain, {
+    download: {
+      checkEnvironment: () => downloadManager.checkEnvironment(),
+      initEnvironment: (options) => downloadManager.initEnvironment(options),
+      updateOpenClaw: (options) => downloadManager.updateOpenClaw(options),
+      restoreOpenClawBackup: () => downloadManager.restoreOpenClawBackup(),
+      discardOpenClawBackup: () => downloadManager.discardOpenClawBackup(),
+      checkLatestVersion: (options) => downloadManager.checkLatestVersion(options as never),
+      getEnvInfo: () => downloadManager.getEnvInfo(),
+      getNodeVersions: (options) => downloadManager.getNodeVersions(options as never),
+      updateNodeRuntime: (options) => downloadManager.updateNodeRuntime(options)
+    },
+    claw: {
+      getStatus: () => clawManager.getStatus(),
+      start: () => clawManager.start(),
+      stop: () => clawManager.stop(),
+      prepareForDoctor: () => clawManager.prepareForDoctor(),
+      readSchemaVersions: () => clawManager.readSchemaVersions(),
+      runDoctorFix: () => clawManager.runDoctorFix(),
+      probeStartup: (isReady) => clawManager.probeStartup(isReady)
+    },
+    gatewayReady: () => getWorkGatewayClient().getStatus().then((status) => status.ready),
+    decideRollback,
+    setUpdateInFlight: (value) => {
+      envUpdateInFlight = value
     }
-    let result: { success: boolean; error?: string; warning?: string } =
-      await downloadManager.initEnvironment(options)
-    if (wasRunning) {
-      try {
-        const restarted = await clawManager.start()
-        // start() 自己吞异常、以 {success:false} 返回；'已在运行中' 也会返回
-        // success:false 但进程确实在跑，所以以「是否真的有进程」为准。
-        if (!restarted.success && !clawManager.getStatus().running) {
-          throw new Error(restarted.error || '未知原因')
-        }
-      } catch (e: any) {
-        // 网关重启失败不改变初始化结果本身：成功转 warning，失败拼进 error，
-        // 否则 UI 在失败分支只显示 error，这条信息会被吞掉。
-        const restartWarning = `网关重启失败：${e.message}`
-        result = result.success
-          ? { ...result, warning: restartWarning }
-          : { ...result, error: `${result.error ?? '初始化失败'}；${restartWarning}` }
-      }
-    }
-    return result
-  }
-  ipcMain.handle('env:init', (_e, options) =>
-    runExclusiveEnvTask(async () => {
-      // 与 update / updateNode 共用同一把启动闸：安装期间手动「启动」或网关客户端
-      // 自动拉起会抢同一个安装目录与状态库，必须挡在外面。
-      envUpdateInFlight = true
-      try {
-        return await envInitImpl(options)
-      } finally {
-        envUpdateInFlight = false
-      }
-    })
-  )
-  const envUpdateImpl = async (options: { useMirror?: boolean }) => {
-    // 更新期间状态库不能被占用：先停网关，然后 update repair 收敛插件、
-    // doctor 迁移 schema、启动探针裁决，最后按需重启（全程由 envUpdateInFlight 闸住外部启动）
-    const wasRunning = clawManager.getStatus().running
-    if (wasRunning) {
-      await clawManager.stop()
-    }
-    // stop() 只收直接子进程，网关派生的 worker 与 DB 应用级租约可能残留；
-    // update repair 内的 doctor 必须独占状态库，先清残留进程与僵尸租约。
-    await clawManager.prepareForDoctor()
-    const result = await downloadManager.updateOpenClaw(options)
-    /** 探针跑完后网关是否已经处于运行中（避免下方再 start 一次） */
-    let gatewayRunning = false
-    if (result.success) {
-      // 回滚快照里只有二进制（node_modules / lock / npm），**没有数据库**。
-      // 所以先量一遍各库的 schema 版本，doctor 跑完再量一遍：变了就说明数据
-      // 已被迁移，此后回滚旧二进制会让它读不了新库。
-      const before = await clawManager.readSchemaVersions()
-
-      // doctor 只作参考，不再单独决定回滚：它在完成 schema 迁移**之后**，
-      // 仍可能因为与迁移无关的检查（插件白名单过期、memory provider 没配 key 等）
-      // 非 0 退出。拿它的退出码当回滚判据，会把迁移其实成功、版本完全可用的新包误回滚。
-      // （状态库独占由 runDoctorFix 内部保证：先清残留网关，命中争用再重试一次。）
-      const doctor = await clawManager.runDoctorFix()
-      const after = await clawManager.readSchemaVersions()
-      // 比的是「变没变」而不是绝对值，所以半迁移（state 升了、agent 没升）也能检出
-      const dataMigrated = JSON.stringify(before) !== JSON.stringify(after)
-      if (!doctor.success) {
-        result.warning =
-          `数据库迁移（doctor --fix）未正常结束：${doctor.error || '未知错误'}；` +
-          '已改用实际启动校验判断新版本是否可用'
-      }
-
-      // 真判据：用新版本实际启动一次，看它能不能真的起来。
-      // 探针无持久化副作用 —— 网关遇到旧 schema 是「拒绝启动」而非自己去迁移。
-      const probe = await clawManager.probeStartup(() =>
-        // 单一 client（work 域创建，marketing 同源）——这里只借它探存活
-        getWorkGatewayClient()
-          .getStatus()
-          .then((s) => s.ready)
-      )
-
-      // 回滚是单向的（_restoreOpenClawSnapshot 会先删掉新版本的 node_modules），
-      // 滚错就没有再滚回来的机会 —— 判据必须偏保守，详见 decideRollback 的注释。
-      const { rollback: canRollback, reason: rollbackRefusedReason } = decideRollback(
-        probe,
-        dataMigrated
-      )
-
-      if (probe.ok) {
-        // 新版本确实可用：候选版本正式生效，此前保留的回滚快照可以删除
-        // （清理失败仅留调试日志，残留快照不影响运行，下次更新会自动清理）。
-        downloadManager.discardOpenClawBackup()
-        gatewayRunning = true
-        if (!wasRunning) {
-          // 探针是为了验证才把网关拉起来的，更新前它并没在跑 —— 恢复原状
-          await clawManager.stop()
-          gatewayRunning = false
-        }
-      } else if (canRollback) {
-        // 拿到「进程自己退出」的正面证据，且数据没被动过 —— 回滚是干净的环境恢复。
-        // 快照缺失时降级为警告。注意探针此时已经把进程跑挂了，gatewayRunning 保持 false。
-        const rollback = await downloadManager.restoreOpenClawBackup()
-        if (rollback.restored) {
-          result.success = false
-          result.rolledBack = true
-          result.currentVersion = rollback.version
-          result.error =
-            `新版本无法启动（${probe.reason}），已自动回滚到 v${rollback.version ?? '原版本'}，` +
-            '旧环境可继续使用，可稍后重试更新。'
-        } else {
-          result.warning = [
-            result.warning,
-            `新版本无法启动（${probe.reason}），且回滚快照不可用，请重新执行更新`
-          ]
-            .filter(Boolean)
-            .join('；')
-        }
-      } else if (probe.refused) {
-        // 进程自退，但回滚不安全（数据已迁移 / 数据待迁移）—— 只能保留新版本。
-        // 把补救动作说清楚：重新执行更新会再跑一次迁移。
-        result.warning = [
-          result.warning,
-          `新版本启动后自退（${probe.reason}）。${rollbackRefusedReason}，` +
-            '故保留新版本；请重新执行更新以再次尝试迁移，或点击「启动」触发自动修复。'
-        ]
-          .filter(Boolean)
-          .join('；')
-      } else {
-        // 进程还在跑但迟迟没就绪：证据不足以判定新版本不可用，不贸然回滚。
-        result.warning = [
-          result.warning,
-          `新版本启动后未在预期时间内就绪（${probe.reason}），已保留新版本；如异常持续请重新执行更新`
-        ]
-          .filter(Boolean)
-          .join('；')
-        gatewayRunning = true
-        if (!wasRunning) {
-          await clawManager.stop()
-          gatewayRunning = false
-        }
-      }
-    }
-    // 恢复网关运行（旧版本回滚后重启可做到更新不中断工作）；
-    // 更新本身就没成功且没回滚时环境不确定，不贸然重启。
-    // unchanged：更新在动手前就中止（Node 预检未过）——环境没动过，照常重启。
-    if (
-      wasRunning &&
-      !gatewayRunning &&
-      (result.success || result.rolledBack || result.unchanged)
-    ) {
-      try {
-        const restarted = await clawManager.start()
-        // start() 自己吞掉异常、以 {success:false} 返回，只 try/catch 的话
-        // 重启失败会完全静默（原实现就是这个毛病）。'已在运行中' 会返回
-        // success:false 但进程确实在跑，故以「是否真的有进程」为准，不匹配错误文案。
-        if (!restarted.success && !clawManager.getStatus().running) {
-          throw new Error(restarted.error || '未知原因')
-        }
-      } catch (e: any) {
-        // 网关重启失败不改变更新结果本身，附加警告由 UI 展示
-        const restartWarning = `网关重启失败：${e.message}`
-        if (result.success) {
-          result.warning = [result.warning, restartWarning].filter(Boolean).join('；')
-        } else {
-          result.error = `${result.error}；${restartWarning}，请稍后在控制台手动启动`
-        }
-      }
-    }
-    return result
-  }
-  ipcMain.handle('env:update', (_e, options) =>
-    runExclusiveEnvTask(async () => {
-      // 全程闸住外部启动（claw:start/restart、网关客户端自动拉起），
-      // 防止 doctor 迁移 / update repair 与手动启动抢同一个状态库
-      envUpdateInFlight = true
-      try {
-        return await envUpdateImpl(options)
-      } finally {
-        envUpdateInFlight = false
-      }
-    })
-  )
-  ipcMain.handle('env:checkLatest', async (_e, options) => {
-    return downloadManager.checkLatestVersion(options)
   })
-  ipcMain.handle('env:getInfo', () => downloadManager.getEnvInfo())
-  // 查询可安装的 Node 版本列表（LTS + 当前版本，标记 OpenClaw 兼容性）
-  ipcMain.handle('env:nodeVersions', async (_e, options) => {
-    return downloadManager.getNodeVersions(options)
-  })
-  // 更新内置便携 Node：先停网关释放文件锁，结束后（无论成败）恢复原运行状态。
-  // 单飞由 runExclusiveEnvTask 保证（与 init/update 共享同一把闸，防止并发改安装目录）。
-  const updateNodeImpl = async (options: { version?: string; useMirror?: boolean }) => {
-    const wasRunning = clawManager.getStatus().running
-    if (wasRunning) {
-      await clawManager.stop()
-    }
-    let result = await downloadManager.updateNodeRuntime(options)
-    if (wasRunning) {
-      try {
-        await clawManager.start()
-      } catch (e: any) {
-        // 网关重启失败不改变更新结果本身，附加警告由 UI 展示
-        result = { ...result, warning: `网关重启失败：${e.message}` }
-      }
-    }
-    return result
-  }
-  ipcMain.handle('env:updateNode', (_e, options) =>
-    runExclusiveEnvTask(async () => {
-      // Node 更新会替换正在使用的运行时并停/起网关，同样要闸住外部启动，
-      // 否则手动「启动」可能在 node_modules 被替换到一半时拉起进程。
-      envUpdateInFlight = true
-      try {
-        return await updateNodeImpl(options)
-      } finally {
-        envUpdateInFlight = false
-      }
-    })
-  )
 
   // 终端 / PTY（4.1 WP5-a 第五批拆到 ipc/host/terminal.ts）
   registerTerminalIpc(ipcMain, {

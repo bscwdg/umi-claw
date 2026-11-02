@@ -2054,7 +2054,26 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
   assert(!hostSrc.includes(`ipcMain.handle('term:`), 'index.ts 不应再直接注册 term:')
   assert(/registerTerminalIpc\(\s*ipcMain/.test(hostSrc), 'index.ts 应调用 registerTerminalIpc(ipcMain')
 
-  // handler 守恒：index 7 + misc 19 + skills 11 + channels 3 + config 8 + claw 7 + modelConn 1 + term 5 = 61
+  // 4.1 WP5-a 第六批（收尾）：env 7 通道拆到 ipc/host/env.ts
+  const envSrc = readFileSync(
+    join(repoRoot, 'electron', 'main', 'ipc', 'host', 'env.ts'),
+    'utf-8'
+  )
+  for (const ch of [
+    'env:check',
+    'env:init',
+    'env:update',
+    'env:checkLatest',
+    'env:getInfo',
+    'env:nodeVersions',
+    'env:updateNode'
+  ]) {
+    assert(hasIpcHandler(envSrc, ch, 'ipc'), 'env.ts 应注册 ' + ch)
+  }
+  assert(!hostSrc.includes(`ipcMain.handle('env:`), 'index.ts 不应再直接注册 env:')
+  assert(/registerEnvIpc\(\s*ipcMain/.test(hostSrc), 'index.ts 应调用 registerEnvIpc(ipcMain')
+
+  // handler 守恒：index 0 + misc 19 + skills 11 + channels 3 + config 8 + claw 7 + modelConn 1 + term 5 + env 7 = 61
   const countHandles = (src, api) => (src.match(new RegExp(`${api}\\.handle\\(`, 'g')) || []).length
   const hostCount = countHandles(hostSrc, 'ipcMain')
   const miscCount = countHandles(miscSrc, 'ipcMain')
@@ -2064,7 +2083,8 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
   const clawCount = countHandles(clawSrc, 'ipc')
   const modelConnCount = countHandles(modelConnSrc, 'ipc')
   const termCount = countHandles(terminalSrc, 'ipc')
-  assertEq(hostCount, 7, 'index.ts 应剩 7 个 ipcMain.handle')
+  const envCount = countHandles(envSrc, 'ipc')
+  assertEq(hostCount, 0, 'index.ts 应不再直接注册 ipcMain.handle')
   assertEq(miscCount, 19, 'misc.ts 应注册 19 个通道')
   assertEq(skillsCount, 11, 'skills.ts 应注册 11 个通道')
   assertEq(channelsCount, 3, 'channels.ts 应注册 3 个通道')
@@ -2072,6 +2092,7 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
   assertEq(clawCount, 7, 'claw.ts 应注册 7 个通道')
   assertEq(modelConnCount, 1, 'modelConnection.ts 应注册 1 个通道')
   assertEq(termCount, 5, 'terminal.ts 应注册 5 个通道')
+  assertEq(envCount, 7, 'env.ts 应注册 7 个通道')
   assertEq(
     hostCount +
       miscCount +
@@ -2080,7 +2101,8 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
       configCount +
       clawCount +
       modelConnCount +
-      termCount,
+      termCount +
+      envCount,
     61,
     '宿主 handler 总数应守恒为 61'
   )
