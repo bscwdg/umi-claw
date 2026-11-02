@@ -26,15 +26,13 @@ import {
   assertFileTypeMatchesPath,
   extensionOf,
   parseDocumentFile,
-  parseTextFile
-} from './parsers/documentParsers'
-import {
+  parseTextFile,
   assertImportableUrl,
   extractTextFromHtml,
   fetchHtmlPage,
-  type HtmlFetcher
-} from './parsers/urlParser'
-import type { PdfjsAssets } from './parsers/pdfjsAssets'
+  type HtmlFetcher,
+  type PdfjsAssets
+} from '../services/knowledge'
 
 export const KNOWLEDGE_TYPES = ['text', 'markdown', 'url', 'faq', 'docx', 'xlsx', 'pdf'] as const
 export type KnowledgeType = (typeof KNOWLEDGE_TYPES)[number]

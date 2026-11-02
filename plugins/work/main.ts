@@ -9,7 +9,7 @@
 import { definePlugin, type PluginContext } from '../../electron/main/kernel'
 import { createWorkRuntime, type WorkRuntime } from '../../electron/main/work/runtime'
 import { registerWorkIpc, setWorkIpcRegistrar, type WorkIpcDeps } from '../../electron/main/ipc/work'
-import { resolvePdfjsAssets } from '../../electron/main/work/parsers/pdfjsAssets'
+import { resolvePdfjsAssets } from '../../electron/main/services/knowledge/parsers/pdfjsAssets'
 import { importWorkDataIfNeeded } from '../../electron/main/work/migrate'
 import type { GatewayClient } from '../../electron/main/gatewayClient'
 import { join } from 'node:path'

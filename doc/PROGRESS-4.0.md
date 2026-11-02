@@ -710,3 +710,51 @@ CI 不产出 NSIS，`UMI_ALLOW_PACKAGE_SKIP=1` 跳过 S6/S7（真机安装仍是
 
 - WP0 C0.1 / C0.2 完成；**C0.3（NSIS 真机 7 步）未执行**，阻塞打 tag，不阻塞 WP1/WP2。
 - WP1（parsers 下沉，3 个文件字节完全相同）为下一步。
+## 2026-11-02 · WP1 · parsers 下沉（4.0.1 候选）
+
+### 做了什么
+
+work 与 marketing 各有一份**逐字节相同**的文档解析实现（`git rev-parse` 的 blob 哈希三对全等：
+documentParsers `1f3c42c`、pdfjsAssets `9f2c34b`、urlParser `7ea3456`）。合并为一份：
+
+| 提交 | 内容 |
+| --- | --- |
+| `31df3a0` | 先加 `anySrc(candidates)`（返回第一个存在**且是文件**的仓库相对路径），8 处硬编码改双候选；**先绿再搬** |
+| 本提交 | 3 个文件搬入 `electron/main/services/knowledge/parsers/`，删两域副本，10 条 import 收敛；`index.ts` 用具名白名单；README 目录树同步 |
+
+### 实测数字
+
+| 项 | 值 |
+| --- | --- |
+| 合并文件 | 3 个（两域各一份 → 共 3 个） |
+| 宿主代码净减 | **932 行 / 2 个文件**（126 文件 42,771 行 → 124 文件 41,839 行，按 ts/tsx/js/mjs/cjs 计） |
+| 硬编码改造 | 8 处（4 `bundleEntry` + 4 `join(repoRoot,...)`/readFileSync） |
+| import 收敛 | 10 条 → 3 个域文件统一从 `../services/knowledge` 取；2 个 plugin 仍直引 `parsers/pdfjsAssets`（避免把 mammoth/exceljs 拖进插件包） |
+| 双 typecheck | 0 错 / 0 错 |
+| build | 通过 |
+| 全量验收 | **31 套 / 582 条断言 / 0 失败** |
+
+### G10 两次独立检查
+
+**第一次 · 事实核对**：判据 **7/8 达成**。唯一未达成项是「全仓无旧路径字面量」——`test/` 内 8 处旧路径
+仍是 `anySrc` 的**第二候选**（第一候选恒存在，实际从不解析）。这是 G7 有意保留的过渡态，
+**WP3 搬域代码时收敛为单候选**（写在此处，免得下一个人以为可以永久保留）。
+其余：源码/插件/脚本/配置 0 残留、六套验收 6/6、净减 932 行、3 个 R 重命名被正确识别。
+
+**第二次 · 对抗复核**：结论 `[仅次要]`，5 条逐条处置：
+
+| # | 意见 | 处置 |
+| --- | --- | --- |
+| 1 | `index.ts` 声称「统一出口」，但 10 处调用全绕过 | **属实→已修**：3 个域文件收敛到 barrel；插件侧保留子路径并写明原因 |
+| 2 | `export *` 把 20 个内部符号抬成公共 API | **属实→已修**：改具名白名单（不含 `parseErrorOf`、上限常量、UA、内部工具） |
+| 3 | README 写「插件经 ctx 注入」与实际（直引）不符 | **属实→已修**：改为「pluginDb 经 ctx 注入；knowledge 由域代码直引」，并展开 `index.ts` / `parsers/` |
+| 4 | `anySrc` 第二候选已是死路径 | **属实→记入本条目**（见上：WP3 收敛） |
+| 5 | marketing 残留「见 parsers/urlParser.ts」失效注释 | **属实→已修** |
+
+复核里一条**前提不成立**：`PARSEABLE_FILE_TYPES` 被列为「零消费者」，
+实际两个 `knowledgeManager.ts` 都 import 它（移除会 TS2307）。已保留在白名单内。
+
+### 状态
+
+- WP1 完成，可发 **4.0.1**（WP0 的 C0.3 真机 7 步仍待北执行：阻塞打 tag，不阻塞本包）。
+- 下一步 WP2：context / knowledge 真下沉（内核 + section provider）。

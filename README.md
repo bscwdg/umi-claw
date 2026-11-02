@@ -114,6 +114,10 @@ umi-claw/
 │   │   ├── openClawPaths.ts      # OpenClaw 路径解析（安装版/便携版）
 │   │   ├── skillSyncService.ts   # 技能远程同步更新
 │   │   ├── subprocessRegistry.ts # 子进程登记 / 统一清理
+│   │   ├── services/             # 宿主能力层（pluginDb 经 ctx 注入；knowledge 由域代码直引）
+│   │   │   └── knowledge/        # 文档解析 / pdfjs 资产 / URL 抓取（两域共用一份）
+│   │   │       ├── index.ts      # 公共面（具名白名单）
+│   │   │       └── parsers/      # Word/Excel/PDF/TXT + pdfjs 资产 + URL 抓取
 │   │   ├── ipc/                  # IPC handler 分组注册
 │   │   │   ├── index.ts          # 汇总注册
 │   │   │   ├── gateway.ts        # 窗口/进程/配置/环境/技能等管理侧
@@ -142,11 +146,7 @@ umi-claw/
 │   │       ├── knowledgeManager.ts   # 工作知识库
 │   │       ├── wizardManager.ts  # 首启向导 / 用户协议
 │   │       ├── reminderManager.ts    # 到点提醒 / 外发推送
-│   │       ├── openclawSummaryManager.ts # 桥接 OpenClaw 总结当天工作 → 候选
-│   │       └── parsers/           # 工作知识库文档解析
-│   │           ├── documentParsers.ts # Word/Excel/PDF/TXT
-│   │           ├── pdfjsAssets.ts     # 打包态 pdfjs 资源定位
-│   │           └── urlParser.ts       # URL 解析
+│   │       └── openclawSummaryManager.ts # 桥接 OpenClaw 总结当天工作 → 候选
 │   └── preload/
 │       ├── index.ts           # Preload / IPC 桥接
 │       └── index.d.ts         # window.api 类型声明

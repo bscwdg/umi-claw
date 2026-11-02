@@ -19,7 +19,7 @@ import {
   abortAllScanStreams
 } from '../../electron/main/ipc'
 import { join } from 'node:path'
-import { resolvePdfjsAssets } from '../../electron/main/work/parsers/pdfjsAssets'
+import { resolvePdfjsAssets } from '../../electron/main/services/knowledge/parsers/pdfjsAssets'
 import { buildOpenClawGateway } from './gatewayAdapter'
 import { importTableData, MARKETING_TABLES, HOST_APP_META_PREFIXES } from '../../electron/main/pluginDataImport'
 

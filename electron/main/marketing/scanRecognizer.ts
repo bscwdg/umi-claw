@@ -52,8 +52,7 @@ import {
   type GatewayChatMessage,
   type GatewayStreamHandle
 } from '../gatewayClient'
-import { loadPdfjsModule } from './parsers/documentParsers'
-import { asPdfjsDirUrl, type PdfjsAssets } from './parsers/pdfjsAssets'
+import { loadPdfjsModule, asPdfjsDirUrl, type PdfjsAssets } from '../services/knowledge'
 
 /** pdfjs 模块形状（类型取官方 d.ts；运行时从随包资产加载，见 documentParsers） */
 type PdfjsModule = typeof import('pdfjs-dist/legacy/build/pdf.js')

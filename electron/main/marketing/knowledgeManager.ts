@@ -12,7 +12,7 @@
 //
 //   ⚠️ 本模块**绝不采集**（硬规则 11/12）：不爬站、不遍历站点、不建队列、无任何后台定时写入；
 //     采集/抓取只属于 Commit 11 的 collector adapter，与本模块无关。
-//     唯一的出站动作是 url 类导入时对**用户显式粘贴的 URL** 发一次 GET（见 parsers/urlParser.ts）
+//     唯一的出站动作是 url 类导入时对**用户显式粘贴的 URL** 发一次 GET（见 services/knowledge/parsers/urlParser.ts）
 //     —— 那是人工触发的「把这篇自家文章存进知识库」，不是采集。
 //
 // 导入语义（§七 05a 原文，逐字落实）：
@@ -48,10 +48,13 @@ import {
   extensionOf,
   parseDocumentFile,
   parseTextFile,
-  type ParseableFileType
-} from './parsers/documentParsers'
-import { assertImportableUrl, extractTextFromHtml, fetchHtmlPage, type HtmlFetcher } from './parsers/urlParser'
-import type { PdfjsAssets } from './parsers/pdfjsAssets'
+  assertImportableUrl,
+  extractTextFromHtml,
+  fetchHtmlPage,
+  type HtmlFetcher,
+  type ParseableFileType,
+  type PdfjsAssets
+} from '../services/knowledge'
 
 /** §四 `knowledge_items.type`：05a 支持的全部取值（`image` 属 05b，不在其中） */
 export const KNOWLEDGE_TYPES = ['text', 'markdown', 'url', 'faq', 'docx', 'xlsx', 'pdf'] as const

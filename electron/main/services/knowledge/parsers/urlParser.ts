@@ -14,7 +14,7 @@
 //   - ✅ 只有用户**显式**粘贴 URL 并点「导入」时才会走到这里（人工触发，不是后台采集）。
 // 采集（热点雷达）是 Commit 11 的 collector adapter，与本模块无关。
 
-import { AppError, ERROR_CODES } from '../../database/errors'
+import { AppError, ERROR_CODES } from '../../../database/errors'
 
 /** 单页体积上限（超出即断流，避免把整个视频站首页拖进内存） */
 export const MAX_FETCH_BYTES = 5 * 1024 * 1024
