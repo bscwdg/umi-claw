@@ -911,3 +911,68 @@ marketing 搬迁后 `pluginHostBoundary` 从 10 → **11**。多出的 2 条：
 
 双 typecheck 0 错；build 通过；全量 **31 套 / 585 断言 / 0 失败**；
 两域及其下游 23 套全部 exit 0。
+
+## 2026-11-02 · WP4 完成（契约补齐 + 角色归位）
+
+### 提交
+
+| 提交 | 内容 |
+| --- | --- |
+| `c3b9b73` | 角色依赖装配抽到 `services/characterHost.ts`（C4.3 第一步，149 行 → 31 行调用） |
+| `e050910` | 插件契约补 `secrets` / `kv`（C4.1）；新增 `services/pluginSecrets.ts` |
+| `6c69711` | 角色数据独立存储（C4.2）：`services/characterKv.ts`，落 `<dataDir>/character/kv.json` |
+| `9eb7103` | 修 C4.1 插入时挤坏的注释归属 |
+| `d41c5ee` | 插件 KV 工厂抽到 `services/pluginKv.ts`（C4.3 第二步） |
+
+### 三项落地细节
+
+**C4.1 插件契约补 secrets / kv**
+
+- `ServiceId` / `SERVICE_NAMES` / `PluginServiceBag` / `ServiceFactories` 各补两项
+- `PluginSecretsApi`：safeStorage 按 `plugin:<id>:<key>` 隔离，一插件一个 `secrets.bin`；
+  **加密不可用时拒绝写入**（不静默降级成明文）；读写走 tmp + rename
+- `PluginKvApi`：宿主持久化 `<dataDir>/plugin-kv.json`，键前缀 `plugin:<id>:`
+- 兑现 `PLAN-4.0 §18.3` 登记的「`ctx.secrets` 缺失」欠账
+
+**C4.2 角色数据独立**
+
+- 原先落宿主 `work.db` 的 `app_meta`（`fish:v2:*`）；work 域数据早搬 `plugins/work/data.db`，
+  宿主 `work.db` 只剩 voice + character + wizard 在用 —— 「每插件独立库」在这里是半吊子
+- 现落 `<dataDir>/character/kv.json`；纯 KV（角色数据量小），不引入 SQLite 依赖
+- `importAllFromLegacy()` 一次性幂等导入：先读 `fish:v2:meta` 解析 days/lifeDays，
+  再拼出完整键清单（`day:`/`life:` 是按日期生成的，日期列表在 meta 里）
+- 旧键保留只读一个版本，出问题可回滚
+
+**C4.3 index.ts 瘦身**
+
+- 角色装配 149 行 → 31 行调用（`c3b9b73`）
+- 插件 KV 工厂 51 行搬走（`d41c5ee`）
+- `index.ts`：2557 → **2441 行（净减 116 行）**
+
+### ⚠️ 未达标的判据（如实登记，不算过关）
+
+`PLAN-4.1-DEBT` 的 C4.3 判据写的是 **`index.ts ≤ 1800 行`**，实测 **2441 行**，差 641 行。
+把它写成「完成」是自欺，所以单列在此：
+
+- 剩余最大两块：`4.0 插件宿主` 节 954 行、`marketing DB Worker wiring` 节 476 行
+- 这两块都在 `whenReady` 的闭包作用域里，抽走需要先引入显式依赖注入（与 C4.3 同性质，
+  但范围更大），不是机械搬运
+- **建议**：作为 WP5 单独立项，不混进 WP4 的完成定义
+
+### 门禁与验收
+
+```
+✓ pluginHostBoundary=11（基线 11）、managerElectron=0
+```
+
+双 typecheck 0 错；build 通过；全量 **31 套 / 585 断言 / 0 失败**；character 71/71。
+
+### 已知欠账（跨包）
+
+1. **独立对抗复审缺失**：`review_w2c` / `review_w2c_retry` / `wp2_adv_review` 分别
+   `error` / `killed` / `timeout`，均无结论。W2-c 之后的所有提交只有自查，
+   低于 `AGENTS.md §12.1` 的要求。**这是本计划最大的流程欠账**。
+2. `index.ts ≤ 1800` 未达成（见上）。
+3. `pluginHostBoundary` 11 条：9 条是插件 `main.ts` 直接 import 宿主 `ipc/*`，
+   2 条是 marketing domain 的 `gatewayClient` 值导入。计划在 WP6 下沉 gateway 纯工具后清零。
+4. C0.3 NSIS 真机 7 步仍待北执行（阻塞打 tag）。
