@@ -12,12 +12,14 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   Recorder,
+  __dirname,
   assert,
   assertEq,
   bundleEntry,
   printResult,
   repoRoot,
-  tmpDir
+  tmpDir,
+  writeJson
 } from './_lib.mjs'
 
 const runDir = join(tmpDir, `voice-${Date.now()}`)
@@ -1204,5 +1206,10 @@ await recorder.check('V7', '角色语音条：format/sampleRate 覆盖为 pcm/16
   return 'pcm/16k 覆盖生效'
 })
 
-const ok = printResult(recorder.toJSON({ cacheDir, catalog: join(repoRoot, 'resources/voice/curated-voices.v1.json') }))
+const voiceResult = recorder.toJSON({
+  cacheDir,
+  catalog: join(repoRoot, 'resources/voice/curated-voices.v1.json')
+})
+const ok = printResult(voiceResult)
+writeJson(join(__dirname, 'accept-result-voice.json'), voiceResult)
 if (!ok) process.exit(1)
