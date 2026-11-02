@@ -1123,7 +1123,7 @@ CHANGELOG（4.0.0 条目、验收口径）、本文件（更正 WP4 的 954/476 
 
 ## 2026-11-03 · 4.0.1（WP7 修复；P2/P3 顺延 4.0.2）
 
-对应 WP7 八项：**P1 ✅ / P4 ✅ / P5 ✅ / P7 ✅ / P8 ✅**；**P6 🟡 部分**（台账 ✅；`report.accept:281/305`、`content.accept:380` 三处固定 sleep 清理顺延 4.0.2）；**P2（旧库导入失败可见+重试入口）与 P3（knowledge 原件路径隔离）未做**，顺延 4.0.2——两者分别涉及渲染端/IPC 与数据目录迁移，塞进补丁版会重开验收面，按「一次只发可验证的修复」处理。
+对应 WP7 八项：**P1 ✅ / P4 ✅ / P5 ✅ / P7 ✅ / P8 ✅**；**P6 ✅（4.0.2 收尾：台账 + 5 处固定 sleep 全部改 waitFor）**；**P2（旧库导入失败可见+重试入口）与 P3（knowledge 原件路径隔离）未做**，顺延 4.0.2——两者分别涉及渲染端/IPC 与数据目录迁移，塞进补丁版会重开验收面，按「一次只发可验证的修复」处理。
 
 ### 提交
 
@@ -1142,7 +1142,8 @@ CHANGELOG（4.0.0 条目、验收口径）、本文件（更正 WP4 的 954/476 
 | `one-day.e2e` D3/D5/D7（写后固定 sleep） | **已修**：改 `waitFor` + 重读精确断言（`d2f5ef9`） |
 | `openclaw-summary` S12 假时钟跨午夜 | **已修**：假时钟取「今天 12:00」 |
 | `one-day.e2e` D10 `sleep(80)` | **登记未改**：QA ask 不写报告，等待与断言无因果关系，留待确认后删 |
-| `report.accept:281/305`、`content.accept:380`（sleep→countRows/versions） | **登记待改**（与 D7 同类，改 waitFor 需逐条确认等价） |
+| `report.accept:281/305`、`content.accept:380`（sleep→countRows/versions） | **已修（4.0.2）**：改 `waitFor` + 重读精确断言；report 14/14、content 12/12 各连跑 2 次 |
+| `report.accept:390`、`content.accept:697`（sleep(80)→收尾后计数断言） | **已修（4.0.2）**：改 `waitFor`（abortAll 幂等 / 注册表清空），同上连跑 2 次全绿 |
 | `qatool.accept:221`（sleep→断言「不产候选」） | **保留**：断言「无写入」不能用轮询证明不存在 |
 | `voice.accept:584/608`、`scan.accept:500/503` | 保留观察（后台状态推进 / 服务端断连 IO 时序，非 DB 写后读） |
 
