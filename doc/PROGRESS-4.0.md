@@ -1544,12 +1544,14 @@ index **1,777** ≤1,800；宿主 **26,373**（V4 差 373，登记 4.2）。
 | `index.ts` | 退出流程 28 行 → 一段 `abortRegistry.abortAll()`；`registerWorkGatewayIpc` 改直接 import `./ipc/gateway` |
 | `ipc/index.ts` | 标注 `@test-only`（生产依赖已归零，剩余 re-export 只服务既有验收脚本） |
 
-**判据实测（5/5）**
+**判据实测（5/5，但第 4 条后来被复核对推翻 → 已补修）**
 
 1. 生产代码对 ipc barrel 依赖 **0 处**
 2. 宿主直调插件 abort 函数 **0 处**
 3. 宿主经 `abortRegistry.abortAll()` ✓
-4. work / marketing 均自注册 ✓
+4. work / marketing 均自注册 ✓ → ⚠️ **复核发现当时并未生效**：`plugins/{work,marketing}/plugin.json`
+   的 `inject` 未声明 `abort`，内核只注入 inject 列表，故 `ctx.services.abort` 为 undefined、
+   两处 `if (abort)` 静默跳过，`abortRegistry` 恒为空（见「4.2 复核补修」）
 5. `ipc/index.ts` 仍转出插件域模块 11 处 → 已标 `@test-only`，归 4.3 清理
 
 **断言改动（G5 单独说明）**：`content`/`scan`/`hot` 三套原先断言 `index.ts` 的**源码字面量**
@@ -1613,13 +1615,149 @@ build               通过
 | `resources/resources/character/persona/SOUL.md.tpl` | ✓ |
 
 `packaged.smoke`：**7/7**（S6 打包产物结构正确、S7 角色资源/桌宠 preload/NOTICE ✓）
-全量 `npm run accept`：**617 PASS / 0 FAIL**
+全量 `npm run accept`：**617 PASS / 0 FAIL**（复核补修 P58 后为 **619**；产物仍是 4.1.0，见下）
 
-4.2 判据最终状态：
+4.2 判据最终状态（复核补修后）：
 
 | # | 判据 | 实测 | 状态 |
 | --- | --- | --- | --- |
 | J1 | `index.ts` ≤1,800 | 1,800 | ✅ |
-| J2 | 单文件 ≤1,500 | 6 个超标 | ⚠️ 待治理（不阻塞发布，见 PLAN-4.2） |
+| J2 | 单文件 ≤1,500 | 非 index 5 个超标（index 由 J1 约束） | ⚠️ 待治理（不阻塞发布，见 PLAN-4.2） |
 | J3 | 边界 0/0/0 | 0/0/0 | ✅ |
-| J4 | 全量 accept 全绿 | 617/617 | ✅ |
+| J4 | 全量 accept 全绿 | 619/619（33 套） | ✅ |
+
+### 2026-11-03 · 4.2 补记 · consent 单源（`f120ef7`，提交信息标 4.1.1，随 `v4.1.0` tag 合入）
+
+**说明**：`git describe --tags --contains f120ef7` → `v4.1.0~1`，即该提交在 `v4.1.0`（`54e7484`）
+之前合入；但 4.1.0 发布说明与 PROGRESS 当时均未单列。此处补记，避免 4.2 收尾时版本口径不清。
+
+**修两个真实缺陷**：
+
+1. work 插件停用 → `work:wizard:status` 无 handler，渲染端启动必抛 `No handler registered`，
+   且协议弹窗被 `catch` 静默跳过（用户被锁在门外且找不到同意入口）；
+2. `assertConsent()` 原为「插件库优先、回落宿主库」——插件库撤销后仍会继续读宿主库历史
+   `granted` 而放行（升级用户两库都有 `granted` 时撤销永远无效）。
+
+**落点**
+
+| 文件 | 作用 |
+| --- | --- |
+| `services/consent.ts` | 宿主单源：`status/grant/revoke` + 迁移；权威写宿主 `work.db` 的 `app_meta`（`wizard_consent` / `wizard_consent_at`）；`revoke` 写墓碑 `consent_revoked_at`，迁移遇墓碑跳过 |
+| `ipc/host/consent.ts` | `consent:status` / `consent:grant` / `consent:revoke`（宿主通道） |
+| `services/pluginRuntime.ts` | `afterEnable` 钩子：work 启用后补跑迁移（停用态启动读不到插件库，也不为读开关建库） |
+| `plugins/work/domain/wizardManager.ts` | `status/grant/revoke/ensure/complete` 委托 `ctx.services.consent`；未注入回落自身 db（测试兼容） |
+| `kernel/services.ts` + `plugins/work/plugin.json` | `SERVICE_NAMES` / `PluginServiceBag` / `ServiceFactories` 增 `consent`；work `inject` 增 `consent`（**原提交漏声明，复核补修后才真正注入**，见「4.2 复核补修」） |
+| `preload` | `api.consent.status/grant/revoke` |
+| `src/App.vue` / `src/views/Setup.vue` / `WizardModal.vue` | 首启门禁改宿主 consent；work 停用时不调 work 通道；`WizardModal` 条件挂载 |
+| `src/renderer/pluginUi.ts` | 导出 `enabledPluginIds`（响应式），App/Setup 共用 |
+
+**验收**：`consent.accept` C1–C10（宿主单源 / 委托 / 墓碑 / 迁移 / 停用态 / 撤销双保险）；
+2026-11-03 复核补修后复测全量 **33 套 / 619 PASS / 0 FAIL**。
+
+### 2026-11-03 · 4.2 收尾口径修正（复查实测）
+
+- J2：>1,500 行共 6 个，其中 `index.ts` 1,800 由 J1 约束；J2 待治理为 **5 个**
+  （clawManager 2321 / downloadManager 2043 / configManager 2024 / marketing-ui store 2001 /
+  VoicePage 1842）。
+- 全量 accept：**33 套 / 619 PASS / 0 FAIL**（CHANGELOG 原写「32 套」已改；复核补修后复测）。
+- 打包产物：`release/` 仍是 **4.1.0**（`latest.yml version: 4.1.0`、`Umi Claw.exe 4.1.0`），
+  是版本号 bump 之前打的包；`packaged.smoke` 7/7 验的是旧包。4.2.0 发布前需重打并重跑
+  （`e88b235` 提交体已声明）。
+- **P45**（env/claw/terminal/config 宿主通道行为级测试，4.1 结转 4.2）仍未做，已登记 4.3
+  （CHANGELOG 4.2「已知残差」、PLAN-4.2「发布状态与待办」）。
+
+### 2026-11-03 · 4.2 复核补修 · 服务注入闭包（abort / consent）
+
+**发现**（独立对抗复核子代理 `bce507d2-389d-41fc-ae95-47b3f247c247`，只读，基线 `e88b235` + 本轮文档改动前）：
+
+> P0：`plugins/{work,marketing}/main.ts` 使用 `ctx.services.abort`（B3）与
+> `ctx.services.consent`（4.1.1 宿主单源），但两个 `plugin.json` 的 `inject` 均未声明；
+> 内核只注入 `manifest.inject`（`kernel/lifecycle.ts:343-355`），故服务为 `undefined`：
+> - B3 的两处 `if (abort)` 静默跳过，`abortRegistry.abortAll()` 恒为 0，宿主退出兜底能力丢失；
+> - 4.1.1 的 `ctx.services.consent` 为 `undefined`，wizardManager 回落自身 db，
+>   「宿主单源 / 撤销 / 迁移」在生产中不生效。
+
+**核实**：`Select-String -Path plugins\*\plugin.json -Pattern '"inject"'` 当时为
+`host,db,config,openclaw,hostOps,legacyDb`（无 abort/consent）；`git show f120ef7 --stat` 未改
+`plugins/work/plugin.json`；`ctx.services.abort`/`consent` 的访问点在
+`plugins/work/main.ts:95,97`、`plugins/marketing/main.ts:75`。
+
+**处置（属实 → 已修）**：
+
+| 改动 | 文件 |
+| --- | --- |
+| work `inject` 补 `consent`、`abort`；marketing `inject` 补 `abort` | `plugins/work/plugin.json`、`plugins/marketing/plugin.json`（`resources/plugins/*` 由 `npm run plugin:gen` 重新生成） |
+| 构建期静态校验：`ctx.services.X` 必须出现在该插件 `inject` 里，否则 `plugin:gen` 直接失败 | `scripts/plugin-service-scan.mjs`（新：注释/字符串掩码 + 点号/可选链/字符串下标/解构；`gen-plugin-entries.mjs` 与 P58 共用，避免两份正则漂移；扫描覆盖 `plugins/<id>/**/*.ts`） |
+| 验收断言 P58：全插件 `ctx.services.* ⊆ inject`；被 inject 的服务必须有生产工厂；并显式钉住 work 的 `abort/consent`、marketing 的 `abort` | `test/plugin.accept.mjs`（假宿主工厂补 abort/consent fake；P37/P41 增加「abort.register 真的发生」行为断言；plugin.accept 63→64 项） |
+
+**验证（本机实测）**：`plugin.accept` **64/64**；全量 `npm run accept` **33 套 / 619 PASS / 0 FAIL**；
+`typecheck:node/web` 0 错；`build` 通过；`check:boundary` 0/0/0。
+
+### 2026-11-03 · 4.2 复核补修（第二轮 · consent 接线 + 渲染端守卫）
+
+**来源**（独立对抗复核子代理 `1464be2c-41cf-4db6-b9f3-8f9bd024cbe3`，只读）：
+
+| # | 发现 | 结论 | 处置 |
+| --- | --- | --- | --- |
+| P1-1 | 启动时没有迁移：`migrateFromPluginDb` 唯一调用点在 `afterEnable`，而它只在 `plugin:setEnabled` 时触发；4.0/4.1 的同意写在插件库，已启用直接升级启动的用户会被重复要求同意、autoStart 被拦 | **属实** | `initPlugins()` 末尾在 `pluginRuntime.init()` 之后补跑迁移（链式 `.then`，失败 `console.warn` 不阻塞启动）；`consent.accept` 新增 C10 静态锁「两处迁移调用」 |
+| P1-2 | 3.0 升级且 4.0 期间点过撤销的用户：宿主库仍是历史 `granted`、无墓碑可判，无法自动区分 | **属实（数据不可判定）** | 不让服务去猜；登记 4.3（CHANGELOG / PLAN-4.2 欠账清单），需产品决策（如强制复核一次） |
+| P2-1 | consent 测试只测纯服务；生产接线/启动迁移/委托/渲染端无断言 | **部分属实** | C10 补静态接线核对；行为级用例仍缺 → 登记 4.3 |
+| P2-2 | `enabledPluginIds` 用 `enabled` 而非 `enabled && activated`，激活失败时 App 仍挂 WizardModal 并盲调 work 通道 | **属实** | `src/renderer/main.ts` 改为只收 `enabled && state==='activated'` |
+| P2-3 | 首启竞态：App 在 `plugins.list()` 返回前就用共享 ref 判断 work | **属实** | `App.vue` 新增 `isWorkPluginActive()`（直接查 `api.plugins.list()`），首启与同意后流程共用 |
+| P2-4 | 迁移失败被吞；hostDb 为 null 时 `skipped` 写成 `host-already-decided` | **属实** | `consent.ts` 改 `host-db-unavailable`（类型 union 同步）；启动迁移失败 `console.warn` |
+| P2-5 | 撤销同意无渲染端入口，修复只能经 IPC/devtools 验证 | **属实（历史缺口）** | 登记 4.3（撤销入口） |
+
+**验证（本机实测）**：`index.ts` 保持 **1,800**（J1）；`consent.accept` **10/10**；`plugin.accept` **64/64**；
+全量 `npm run accept` **33 套 / 619 PASS / 0 FAIL**；双 typecheck 0 错；build 通过；`check:boundary` 0/0/0。
+
+### 2026-11-03 · 4.2 提交审查记录补记（C1/C2 现状审计）
+
+**审计命令**：对 `git log v4.1.0..HEAD --format='%h'` 逐条 `git show -s --format=%b`，匹配
+`对抗审查:`（C1）与 `属实|前提不成立|无问题`（C2）。
+
+**现状（11 个 4.2 提交）**：
+
+| 提交 | C1 | C2 | 说明 |
+| --- | --- | --- | --- |
+| `b7c5166` B4 / `1d0728d` B3 / `5ddd44f` B2 / `ef31f52` B1 审计 / `94e87f0` B1 决策 | ✓ | ✗ | 均只写「对抗审查: 沿用自查（本批独立对抗审查子代理仍不可用）」；执行时确无独立子代理可用 |
+| `e88b235` / `22534eb` / `fc8fc05` / `e276db5` / `97f9981` / `e13d665`（docs/chore） | ✗ | ✗ | 纯文档/版本变更，提交体未附审查记录 |
+
+**`f120ef7`（consent 单源，4.1.0 tag 内含）**：C1 ✓（`对抗审查: 结论来自用户提供的独立复审`），
+C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/无问题` 三态；实质复审已发生）。
+
+**处置**：
+
+1. **不改写已推送历史**（分支与 origin 同步；不为 C1/C2 措辞 rebase/force-push）。
+   与 4.1 先例一致：旧提交不合规如实记录（4.1 段已记 C1 38/44、C2 4/44），不追溯改写。
+2. **本轮补跑 4.2 版本级两轮独立复核**（事实核对 + 对抗复核，见下段），覆盖 B1–B4 与 consent；
+   两轮结论与逐条处置即作为 4.2 收尾的审查记录。
+3. 此后提交严格执行 §12.1/§12.4：`%b` 同时含 `对抗审查:` 与三态结论；本轮 docs 提交同样适用。
+
+## 4.2 版本级收尾复核（2026-11-03 补跑）
+
+**4.2 版本级 · 事实核对**（独立子代理 `2178420b-323e-49dc-8e2f-f752f2cd3f4b`，只读，基线 `e88b235` + 工作区改动）：
+
+- 复核实测：`index.ts` 1,800；>1,500 行 6 个（非 index 5 个）；边界 0/0/0；accept 33 套（当时 618 断言）；plugin.accept 64；tag/产物仍是 4.1.0。
+- 发现并处置：
+
+| 发现 | 结论 | 处置 |
+| --- | --- | --- |
+| RUNBOOK 写 plugin.accept「60 项」/「19 个脚本套件」 | 属实 | 已改 64 项 / 33 套（accept×31 + e2e + smoke） |
+| PLAN-4.2 起点写「32 套 / 616」 | 部分属实 | v4.1.0 的 ACCEPT 已 31 条（含 consent），起点即 33 套 / 616；已改 |
+| 「`ipc/index.ts` 79 行 / `stt.ts` 66 行（145）」 | 部分属实 | 内容行 78 / 65（合计 143）；`split('\n')` 才多 1；CHANGELOG/PLAN-4.2 已改并注明口径 |
+| `release/latest.yml` 的 url 是连字符名、磁盘是空格名 | 属实（自动更新会 404） | 不改构建配置（超范围）；登记 PLAN-4.2 发布待办 #8 + CHANGELOG 发布状态 |
+| 「登记 4.3」无计划落点 | 属实 | PLAN-4.2 新增「4.3 欠账清单」集中登记 |
+| PROGRESS 1618 叙述仍写 617 | 部分属实 | 已加「复核补修后 619」限定 |
+| 「双 typecheck 0 / build 通过」 | 未独立核实（只读约束未跑） | 执行者本轮实测：双 typecheck 0 错、build 通过 |
+
+**4.2 版本级 · 对抗复核**（3 个独立子代理，互不可见；此前两次宽范围复核因平台失败，收窄后重跑）：
+
+- `bce507d2-389d-41fc-ae95-47b3f247c247`：P0 `abort`/`consent` 未在 `plugin.json.inject` 声明，服务静默 undefined —— B3 退出兜底与 4.1.1 宿主单源在生产中均不生效。**属实，已修**（inject 补声明 + 共享扫描 + P58 + P37/P41 行为断言）。
+- `3549e1b2-1f84-4546-b40a-42a5a34b81ba`：修复后仍存在的守卫缺口 —— 正则可被解构/可选链/下标绕过、注释误报、漏扫 `main/ipc`、无 abort 注册行为断言、无生产工厂断言、两份正则副本。**属实，已修**（抽 `scripts/plugin-service-scan.mjs`：词法掩码 + 可选链/下标/解构 + 覆盖 `plugins/**/*.ts`；P58 加「被 inject 服务均有工厂」；P37/P41 加 register 行为断言）；别名 `const s = ctx.services` 与动态键登记为已知边界（写进扫描器头注释，与 AGENTS §5.1 同档）。
+- `1464be2c-41cf-4db6-b9f3-8f9bd024cbe3`：consent P1-1/P1-2/P2-1…P2-5 —— P1-1/P2-2/P2-3/P2-4 **属实已修**（启动迁移 / `activated` 集合 / C10 / `host-db-unavailable`）；P1-2/P2-5/P2-1 **属实但需产品决策或超出本轮**，登记 4.3。
+- 未采纳：无（P2-1 行为级用例只补静态 C10，其余如实登记 4.3）。
+
+**最终验证（本机实测，工作区）**：双 typecheck 0 错；build 通过；`check:boundary` 0/0/0；
+全量 accept **33 套 / 619 PASS / 0 FAIL**；`index.ts` **1,800**；`plugin.accept` **64/64**；
+`consent.accept` **10/10**。C1/C2：本轮 docs+fix 提交按 §12.4 写 `对抗审查:` + 三态结论；
+历史提交见上「提交审查记录补记」（不改写已推送历史）。

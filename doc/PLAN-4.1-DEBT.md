@@ -27,14 +27,14 @@
 
 | 指标 | 实测 | 复核命令 | 目标 / 状态 |
 | --- | --- | --- | --- |
-| 宿主 `electron/main` 代码量 | 26,373 行（4.0.2 P2 后；WP6 搬家时 26,253） | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ≤ 26,000（差 373，V4 待 4.2 删减） |
-| `electron/main/index.ts` | 1,777 行（WP5 出口时 1,767） | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800（✅ 已达成，WP5；P2 后仍达标） |
-| 插件越界 import（非 type、非 kernel/services） | **0 条**（WP6-b/c 已把域 ipc 搬进 `plugins/<id>/main/ipc/`；仅存 14 处 type-only 宿主类型引用，按门禁口径放行，收敛登记 4.2） | `npm run check:boundary` | 0（已达成，基线 0 硬约束） |
+| 宿主 `electron/main` 代码量 | 26,373 行（4.0.2 P2 后；WP6 搬家时 26,253） | `(Get-ChildItem electron\main -Recurse -Filter *.ts \| Get-Content \| Measure-Object -Line).Lines` | ~~≤ 26,000~~（**已废弃**：4.2 P1 改用结构性判据，见 `doc/PLAN-4.2.md §B1-audit`） |
+| `electron/main/index.ts` | 1,777 行（WP5 出口时 1,767） | `(Get-Content electron\main\index.ts).Count` | ≤ 1,800（✅ 已达成，WP5；4.2 收尾仍 1,800） |
+| 插件越界 import（非 type、非 kernel/services） | **0 条**（WP6-b/c 已把域 ipc 搬进 `plugins/<id>/main/ipc/`；type-only 14 处已由 4.2 B4 清零，`pluginHostTypeOnly=0`） | `npm run check:boundary` | 0（已达成，基线 0 硬约束） |
 | 门禁可绕过写法 | 已覆盖 static/export-from/dynamic/require + 路径穿越 + 注释掩码/正则字面量/字符串文案/模板字面量/非字面量/typeof | `node test/boundary.accept.mjs` | 8/8 保持 |
 | Manager 层 import electron | 0（扫描 `plugins/*/domain` 共 2 个目录） | `npm run check:boundary` | 0 |
 | 门禁是否自动执行 | `npm run accept` 首套 + CI verify job | `Select-String .github/workflows/release.yml -Pattern 'check:boundary'` | 必须有（已满足） |
 | CI 门禁 | typecheck×2 + boundary + build + accept（Windows），push release/** / tags v* / PR 触发 | `.github/workflows/release.yml` | 保持 |
-| accept 套件 | accept×30 + e2e + smoke = **32 套 / 607 条断言** | `npm run accept`（本机已 32/32 全绿，含 hot） | 不减少 |
+| accept 套件 | accept×30 + e2e + smoke = **32 套 / 607 条断言**（4.2 复核补修后实测 33 套 / 619 条） | `npm run accept`（本机已全绿，含 hot） | 不减少 |
 | 唯一实现 | parsers 3 份合并为 1；context 双实现收敛为 `services/context` 内核 | `Get-FileHash` / 目录结构 | 保持 |
 | 明文密钥字面量 | 0（仅 `Config.vue` 的 placeholder 示例） | 见 §三 校验清单 V9 | 0 |
 
@@ -595,7 +595,7 @@ Get-ChildItem *.md | ForEach-Object {
 | P2 | 旧库导入失败可见 + 重试入口 | ✅ 4.0.2：`pluginDataImport` 写 `import-status.json` + 重试执行器注册表；宿主 `plugin:import:status`/`retry` 通道 + preload + `App.vue` 全局横幅（失败原因 + 重试导入） |
 | P3 | knowledge 原件路径隔离 | ✅ 4.0.2（`6a4096b`）：work 新导入写 `<dataDir>/plugins/work/knowledge/`，`originalsSubdir` 默认仍 `knowledge`（旧文件不迁移、旧条目仍可读） |
 | P4 | 单实例锁（入口 `requestSingleInstanceLock`） | 两个实例同指 dataDir 时 `character/kv.json` 的 tmp+rename 无跨进程保护（阶段 A 明确接受，4.0.1） |
-| P5 | 便携 Node 低完整性自检 | 本机 `data/runtime/node.exe` 被标 Low IL，写不了 Medium 目录；打包/真机同类问题会表现为「数据存不上」。（4.0.1 已完成**检测 + 日志级告警**（`dataDir/logs/runtime-probe.log`），P5 核心计 ✅；GUI 横幅/引导重装并入 4.2。） |
+| P5 | 便携 Node 低完整性自检 | 本机 `data/runtime/node.exe` 被标 Low IL，写不了 Medium 目录；打包/真机同类问题会表现为「数据存不上」。（4.0.1 已完成**检测 + 日志级告警**（`dataDir/logs/runtime-probe.log`），P5 核心计 ✅；GUI 横幅/引导重装**已由 4.2 B2 完成**（`5ddd44f`，`env:runtimeProbe` + App 横幅/一键重装）。） |
 | P6 | 测试 flake 台账 + 固定 sleep 清理 | e2e D3 已修（`d2f5ef9`）；`report.accept:281/305`、`content.accept:380` 等「固定 sleep + 读库断言」登记待改 |
 | P7 | `ctx.kv` / `ctx.secrets` 接测试断言 | ✅ 已补：`plugin.accept` P56/P57 覆盖注入 kv/secrets（命名空间隔离 / round-trip / 并发） |
 | P8 | `pluginKv` 并发承诺与实现对齐 | ✅ 已修：按 dataDir 共享单例 + 串行写队列（每文件 cache/queue），P57 并发断言锁住 |

@@ -10,14 +10,14 @@
 ## 0. 一分钟上手
 
 ```powershell
-cd D:\work2026\files\claw-desktop
+cd D:\work2026\umi-claw
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 32 套验收（accept×30 + e2e + smoke，607 条断言；hot 见 §10 注）
+npm run accept         # 33 套验收（accept×31 + e2e + smoke，619 条断言；hot 见 §10 注）
 npm run build          # 构建（含 plugin:gen）
 ```
 
-**开工前必读**：本文件 → `PLAN-4.0.md §〇`（已拍板结论）→ `doc/PLAN-4.1-DEBT.md`（当前欠账与顺序）。
+**开工前必读**：本文件 → `PLAN-4.0.md §〇`（已拍板结论）→ `doc/PLAN-4.2.md`（当前欠账与顺序）→ `doc/PLAN-4.1-DEBT.md`（历史）。
 
 ---
 
@@ -49,7 +49,7 @@ electron/main/
 ├── work/            # 已删除：work 域代码在 plugins/work/domain/
 ├── marketing/       # 已删除：marketing 域代码在 plugins/marketing/domain/
 ├── clawManager.ts / configManager.ts / downloadManager.ts / channelManager.ts ...
-└── index.ts         # 只做组装；目标 ≤ 1,800 行（现状 1,777 ✅，4.0.2 P2 后）
+└── index.ts         # 只做组装；目标 ≤ 1,800 行（现状 1,800 ✅，4.2 收尾后）
 
 plugins/             # 官方内置插件（同仓源码，参与宿主构建）
 ├── work/  main.ts + renderer.ts + ui/
@@ -108,7 +108,7 @@ doc/                 # 计划、施工日志、运维手册、调研
 
 **规则**：`plugins/<id>/domain/**/*Manager.ts` 与 `contextEngine.ts` **禁止** `import ... from 'electron'`（WP3 起域代码住在 `plugins/<id>/domain/`；宿主 `electron/main/{work,marketing}` 已删除）。
 
-**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 32 套验收能在纯 Node 里跑真源码的前提。
+**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 33 套验收能在纯 Node 里跑真源码的前提。
 
 **写法**：工厂函数 + 显式 options，不 `new`、不单例、不从全局推。
 
@@ -161,20 +161,20 @@ export const WORK_TODOS_CHANNELS = {
 
 ---
 
-## 5. 插件边界（4.0 的核心，也是当前最大的欠账）
+## 5. 插件边界（4.0 的核心；4.1/4.2 后值越界与 type 越界均已清零）
 
 ### 5.1 插件只能经 `ctx` 访问宿主
 
 **允许 import**：`electron/main/kernel/**`、`electron/main/services/**`、本插件目录内文件。
 **禁止 import**：其余一切 `electron/main/*`（`runtime`、`ipc`、域实现、`pluginDataImport` 等）。
 
-**现状**：**非 type 越界 0 条**（4.1 WP6-b/c：域 ipc 已搬进 `plugins/<id>/main/ipc/`，gateway 流助手/宿主 UI 适配下沉 `services`；仍存 14 处 type-only 宿主类型引用，门禁按「非 type」口径放行，收敛登记 4.2；裸 `electron` 包也只有非 type 引用才判违规）。门禁：`npm run check:boundary`（零依赖脚本，已接入 `npm run accept` 首套与 CI verify job）。
+**现状**：**非 type 越界 0 条、type-only 越界 0 条**（4.1 WP6-b/c：域 ipc 已搬进 `plugins/<id>/main/ipc/`，gateway 流助手/宿主 UI 适配下沉 `services`；4.2 B4 已把 14 处 type-only 宿主类型引用清零，门禁新增 `pluginHostTypeOnly` 分级计数、基线 0；裸 `electron` 包也只有非 type 引用才判违规）。门禁：`npm run check:boundary`（零依赖脚本，已接入 `npm run accept` 首套与 CI verify job）。
 
 **读这条规则时要知道**：现状是「新代码不得新增越界，旧越界按 WP6 逐步清零」，不是「现在已经合规」。`scripts/boundary-baseline.json` 的 ratchet 会锁死这个数（只准降不准升，`--update` 才写，上调必须 `--allow-raise --note "<原因>"`）。
 
 **非字面量引用**：`import(someVar)` / `require(someVar)` 无法静态判定目标，记成 `<non-literal>` **按违规处理**（宁可多报）；`typeof import(...)` 是类型查询，放行。注释与字符串/模板文案里的示例 `import(...)` 不算引用（门禁先做词法掩码）。
 
-**反向依赖（host→plugin）**：4.1 WP6-b 后宿主 `electron/main/ipc/index.ts` 仍 re-export 插件 registrar、宿主退出清理从插件模块取 `abortAll*`。当前无环、无顶层副作用、未激活时安全；但这是登记在 4.2 的清理项，新代码不得再依赖 host→plugin 值导出（类型可 type-only）。
+**反向依赖（host→plugin）**：4.2 B3 已拆除——插件在 activate 时自注册「中止我的后台任务」到 `abortRegistry`，宿主退出统一 `abortRegistry.abortAll()`；`electron/main/ipc/index.ts` 仅剩 `@test-only` re-export（生产依赖 0），测试依赖清理登记 4.3。新代码不得再依赖 host→plugin 值导出（类型可 type-only）。
 
 **已登记的门禁边界**（2026-11-02 G10 复核接受，B8 有断言锁住）：① 模板字符串 `${}` 内的动态 `import`/`require` 暂被视为模板内容、检不出；② `if (cond) /re/` 这种 `)` 后的正则字面量不识别（补 `)` 会带来除法误判，权衡后保留）。修这两条时同步改 `test/boundary.accept.mjs` 的 B8 断言。
 
@@ -202,7 +202,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 - 禁止运行时从磁盘/网络加载可执行模块（`PLAN-4.0 §17.3`）
 - 注册物一律返回 disposer，停用由宿主 LIFO 清理；不要在 `deactivate` 里才擦屁股
 
-**现状证据**：`lifecycle.ts` 已实现 LIFO + 激活超时 + 迟到注册拒绝 + 失败隔离；`plugin.accept` **63 项**。
+**现状证据**：`lifecycle.ts` 已实现 LIFO + 激活超时 + 迟到注册拒绝 + 失败隔离；`plugin.accept` **64 项**（P58 锁「ctx.services 使用 ⊆ inject」）。
 
 ### 5.3 大肥鱼为什么不是插件
 
@@ -241,7 +241,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 - 验收脚本**零 npm 依赖**，只用 `node:` 内置 + `test/_lib.mjs`
 - 断言打**真源码**：`bundleEntry('electron/main/work/todoManager.ts', 'todo-todo.mjs')` 后 `import()`，不 mock 被测逻辑
 
-**现状证据**：31 个 `.accept.mjs`；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。
+**现状证据**：32 个 `.accept.mjs`；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。
 
 ### 7.2 `_lib.mjs` 提供的工具
 
@@ -334,7 +334,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 32 套（accept×30 + e2e + smoke，607 条断言）
+# ② 全量验收 33 套（accept×31 + e2e + smoke，619 条断言）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）
@@ -433,7 +433,8 @@ Select-String doc\PROGRESS-4.0.md -Pattern '事实核对|对抗复核'
 ## 13. 相关文档
 
 - 架构契约：[PLAN-4.0.md](PLAN-4.0.md)
-- 欠账执行：[doc/PLAN-4.1-DEBT.md](doc/PLAN-4.1-DEBT.md)
+- 当前欠账执行：[doc/PLAN-4.2.md](doc/PLAN-4.2.md)
+- 欠账历史：[doc/PLAN-4.1-DEBT.md](doc/PLAN-4.1-DEBT.md)
 - 施工日志：[doc/PROGRESS-4.0.md](doc/PROGRESS-4.0.md)
 - 运维手册：[doc/RUNBOOK-4.0.md](doc/RUNBOOK-4.0.md)
 - 合并仲裁：[doc/MERGE-INVENTORY.md](doc/MERGE-INVENTORY.md)

@@ -9,6 +9,7 @@
 ## [4.2.0]（待发布，4.1.0 之后）— 2026-11-03
 
 > `package.json` / `package-lock.json` version = **4.2.0**；tag 尚未创建。
+> 安装包/`win-unpacked` 仍是 **4.1.0** 产物（版本号 bump 之前打的包），正式发布前需按 4.2.0 重打；NSIS 真机安装仍待人工。
 >
 > 主题：**架构收尾（对使用者零行为变化，除一项体验改善）**。
 > 完成 4.1 遗留的残留越界、反向依赖与便携环境诊断三块。
@@ -28,21 +29,56 @@
   `abortHotCollectors`（实体在 marketing 插件里）。现在插件在 activate 时自注册
   「中止我的后台任务」，宿主统一 `abortRegistry.abortAll()`。
   `ipc/index.ts` 已标注 `@test-only`（生产依赖归零）。
+  （复核补修：两插件 `plugin.json` 的 `inject` 补 `abort`——此前未声明，自注册被静默跳过、
+  退出兜底为空；`plugin.accept` 新增 P58 锁「ctx.services 使用 ⊆ inject」。）
 - **宿主任意行数指标退役**（B1）：实测宿主 114 文件里仅 3 个零外部引用
-  （其中 `index.ts` 是入口），逐字节相同文件 0 对，真可删仅 145 行。
+  （其中 `index.ts` 是入口），逐字节相同文件 0 对，真可删仅 143 行。
   「总行数」已无法反映模块化程度，改用结构性判据：`index.ts` ≤1,800（当前 **1,800**）、
-  单文件 ≤1,500（6 个文件待治理，不阻塞发布）、插件边界 0/0/0。
+  非 index 单文件 ≤1,500（5 个文件待治理，不阻塞发布）、插件边界 0/0/0。
 
 ### 验收
 - 双 typecheck 0 错；build 通过；插件边界 `pluginHostBoundary=0` /
   `pluginHostTypeOnly=0` / `managerElectron=0`
-- 全量 32 套 **617 PASS / 0 FAIL**（重新打包后 `packaged.smoke` S6/S7 转绿）
+- 全量 33 套 **619 PASS / 0 FAIL**（2026-11-03 复核补修后复测；`packaged.smoke` 7/7，
+  但验证的是 4.1.0 产物）
+
+### 补充说明（版本口径）
+- `v4.1.0` tag（`54e7484`）内含 `f120ef7`「用户协议闸门改宿主单源」
+  （提交信息标 `4.1.1`，但 4.1.0 发布说明未单列条目；行为见下）：
+  work 插件停用/撤销同意不再导致协议闸门静默失效，`assertConsent()` 与渲染端统一读宿主
+  `work.db` 的 `app_meta`，`consent:status/grant/revoke` 为宿主通道，work 插件经
+  `ctx.services.consent` 完全委托；`consent.accept` C1–C10 覆盖墓碑、迁移、停用态与撤销。
+  （复核补修：work `plugin.json` 的 `inject` 补 `consent`——此前未声明导致
+  `ctx.services.consent` 为 undefined、回落插件自库，宿主单源与撤销语义不生效；
+  另启动时补跑一次插件库→宿主库迁移，覆盖「work 已启用直接升级启动」的用户，
+  避免被重复要求同意 / autoStart 被拦。）
+
+### 已知残差（登记 4.3，不阻塞 4.2 发布）
+- J2 单文件 >1,500 行：`clawManager.ts` 2,321 / `downloadManager.ts` 2,043 /
+  `configManager.ts` 2,024 / `plugins/marketing/ui/store.ts` 2,001 / `VoicePage.vue` 1,842
+  （`index.ts` 1,800 由 J1 约束）；
+- `electron/main/ipc/index.ts`（78 行，`@test-only` barrel）待清测试依赖后删除；
+- `electron/main/character/stt.ts`（65 行，仅单测引用）待删或写明保留理由；
+- **P45**：4.1 结转的 env/claw/terminal/config 宿主通道行为级测试仍未补；
+- **consent 历史撤销判定**：3.0 升级且 4.0 期间点过撤销的用户，宿主库仍是历史 `granted`、
+  无墓碑可判，无法自动区分；需产品定复核策略；
+- **撤销入口**：`api.consent.revoke` 已在 preload 暴露，但设置页/宿主 UI 尚无调用入口；
+- **consent 接线行为测试**：C10 目前是静态核对；启动迁移、委托分支、渲染端仍缺行为级用例。
+
+### 发布状态
+- tag `v4.2.0` 未创建（本地仅 `v1.0.0` / `v4.1.0`）；4.2.0 安装器/`win-unpacked`
+  需重新打包；NSIS 与 Windows 真机安装 7 步（RUNBOOK §6）待人工。
+- 重打时注意安装器文件名：`release/latest.yml` 的 url 是连字符名
+  （`Umi-Claw-Setup-4.1.0.exe`），磁盘实际是 `Umi Claw Setup 4.1.0.exe`（`package.json`
+  的 build 未设 `artifactName`）——不对齐会让 4.2.0 自动更新指向不存在的文件。
 
 ---
 
 ## [4.1.0]（已发布，4.0.2 之后）— 2026-11-03
 
-> `package.json` version = **4.1.0**；tag `v4.1.0` 已打（发布证据见 PROGRESS「4.1 版本级收尾」）
+> `package.json` version = **4.1.0**；tag `v4.1.0` 已打（发布证据见 PROGRESS「4.1 版本级收尾」）。
+> 补充：本 tag 内含 `f120ef7`「用户协议闸门改宿主单源」（提交信息标 `4.1.1`，
+> 当时发布说明未单列；细节见 4.2.0「补充说明（版本口径）」）。
 
 > 主题：**架构收口（无用户可见行为变化）**。完成 4.0 遗留的组装层与插件边界两块欠账。
 
@@ -55,9 +91,10 @@
 - 副作用：宿主 `electron/main` 27,463 → **26,373 行**（4.0.2 P2 后；离 V4 ≤26,000 差 373，后续删减）。
 
 ### 已知残差（登记 4.2）
-- `electron/main/ipc/index.ts` 仍 re-export 插件 registrar（host→plugin 兼容依赖，无环）；
-- 14 处 type-only 宿主类型引用（门禁口径「非 type 越界 0」）；
-- 拆分后 env/claw/terminal/config 等宿主通道的行为级测试仍待补（P45）。
+- `electron/main/ipc/index.ts` 仍 re-export 插件 registrar（host→plugin 兼容依赖，无环）
+  → 4.2 B3 已拆除生产依赖并标 `@test-only`，测试依赖清理登记 4.3；
+- 14 处 type-only 宿主类型引用（门禁口径「非 type 越界 0」）→ 4.2 B4 已清零（`pluginHostTypeOnly=0`）；
+- 拆分后 env/claw/terminal/config 等宿主通道的行为级测试仍待补（P45）→ 4.2 未做，登记 4.3。
 
 ---
 
