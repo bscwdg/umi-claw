@@ -437,7 +437,7 @@ async function registerCharacterInternal(
       },
       // 4.3 知识导入：只写既有 Obsidian vault 的 `大肥鱼/<类别>/`，不新增知识库
       knowledge: {
-        status: () => deps.knowledgeStatus?.(),
+        ...(deps.knowledgeStatus ? { status: () => deps.knowledgeStatus!() } : {}),
         import: async (payload) => {
           const vault = deps.obsidianVaultPath?.()?.trim()
           if (!vault) {

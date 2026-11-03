@@ -2680,16 +2680,22 @@ await recorder.check('C85', '知识体检：vault/MCP/索引/角色笔记数 →
   const { countCharacterNotes, buildKnowledgeHealth } = knowledgeHealthMod
   const vault = join(repoRoot, 'test', '.tmp', 'knowledge-health-' + process.pid)
   rmSync(vault, { recursive: true, force: true })
-  mkdirSync(join(vault, '大肥鱼', '世界书'), { recursive: true })
+  mkdirSync(join(vault, '大肥鱼', '世界书', '归档'), { recursive: true })
   mkdirSync(join(vault, '大肥鱼', '日记'), { recursive: true })
   mkdirSync(join(vault, '大肥鱼', '归档'), { recursive: true })
   mkdirSync(join(vault, '工作'), { recursive: true })
   writeFileSync(join(vault, '大肥鱼', '世界书', 'a.md'), '# a')
   writeFileSync(join(vault, '大肥鱼', '世界书', 'b.md'), '# b')
   writeFileSync(join(vault, '大肥鱼', '日记', 'c.md'), '# c')
+  writeFileSync(join(vault, '大肥鱼', '世界书', '归档', 'nested.md'), '# nested')
   writeFileSync(join(vault, '大肥鱼', '归档', 'old.md'), '# old')
+  writeFileSync(join(vault, '大肥鱼', '.hidden.md'), '# hidden')
   writeFileSync(join(vault, '工作', 'x.md'), '# x')
-  assertEq(countCharacterNotes(vault), 3, '只数 大肥鱼/ 下 .md，排除 归档 与其它目录')
+  assertEq(
+    countCharacterNotes(vault),
+    4,
+    '只数 大肥鱼/ 下 .md：排除顶层 归档、隐藏文件与其它目录；嵌套归档仍计入'
+  )
   assertEq(countCharacterNotes(join(vault, '不存在')), 0, 'vault 不存在返回 0')
   assertEq(countCharacterNotes(vault, 2), 2, 'maxNotes 截断生效')
 
@@ -2697,29 +2703,90 @@ await recorder.check('C85', '知识体检：vault/MCP/索引/角色笔记数 →
     vaultPath: vault,
     vaultExists: true,
     obsidianEnabled: true,
-    index: { noteCount: 10, indexing: false, lastError: null },
-    characterNotes: 3
+    index: { chunkCount: 10, noteCount: 4, vaultPath: vault, indexing: false, lastError: null },
+    characterNotes: 4
   })
   assertEq(good.searchable, true, '全部就绪时 searchable=true')
   assertEq(good.reasons.length, 0, '全部就绪无原因')
 
   const cases = [
-    ['no-vault', { vaultPath: '', vaultExists: false, obsidianEnabled: true, index: { noteCount: 1 }, characterNotes: 3 }],
-    ['vault-missing', { vaultPath: vault, vaultExists: false, obsidianEnabled: true, index: { noteCount: 1 }, characterNotes: 0 }],
-    ['mcp-disabled', { vaultPath: vault, vaultExists: true, obsidianEnabled: false, index: { noteCount: 1 }, characterNotes: 3 }],
-    ['no-notes', { vaultPath: vault, vaultExists: true, obsidianEnabled: true, index: { noteCount: 1 }, characterNotes: 0 }],
-    ['index-empty', { vaultPath: vault, vaultExists: true, obsidianEnabled: true, index: { noteCount: 0 }, characterNotes: 3 }],
-    ['indexing', { vaultPath: vault, vaultExists: true, obsidianEnabled: true, index: { noteCount: 5, indexing: true }, characterNotes: 3 }],
-    ['index-error', { vaultPath: vault, vaultExists: true, obsidianEnabled: true, index: { noteCount: 5, lastError: 'boom' }, characterNotes: 3 }]
+    ['no-vault', { vaultPath: '', vaultExists: false, obsidianEnabled: true, index: { chunkCount: 1 }, characterNotes: 3 }, false],
+    ['vault-missing', { vaultPath: vault, vaultExists: false, obsidianEnabled: true, index: { chunkCount: 1 }, characterNotes: 0 }, false],
+    ['mcp-disabled', { vaultPath: vault, vaultExists: true, obsidianEnabled: false, index: { chunkCount: 1 }, characterNotes: 3 }, false],
+    ['no-notes', { vaultPath: vault, vaultExists: true, obsidianEnabled: true, index: { chunkCount: 1 }, characterNotes: 0 }, false],
+    ['index-empty', { vaultPath: vault, vaultExists: true, obsidianEnabled: true, index: { chunkCount: 0, noteCount: 1 }, characterNotes: 3 }, false],
+    ['index-other-vault', { vaultPath: vault, vaultExists: true, obsidianEnabled: true, index: { chunkCount: 5, vaultPath: join(vault, '另一个') }, characterNotes: 3 }, false],
+    ['indexing', { vaultPath: vault, vaultExists: true, obsidianEnabled: true, index: { chunkCount: 5, indexing: true, vaultPath: vault }, characterNotes: 3 }, true],
+    ['index-error', { vaultPath: vault, vaultExists: true, obsidianEnabled: true, index: { chunkCount: 5, lastError: 'boom', vaultPath: vault }, characterNotes: 3 }, true]
   ]
-  for (const [reason, input] of cases) {
+  for (const [reason, input, expectedSearchable] of cases) {
     const health = buildKnowledgeHealth(input)
     assert(health.reasons.includes(reason), '应报告原因 ' + reason + '，实际 ' + health.reasons.join(','))
-    assertEq(health.searchable, false, reason + ' 时 searchable=false')
+    assertEq(health.searchable, expectedSearchable, reason + ' 时 searchable=' + expectedSearchable)
   }
-  assertEq(buildKnowledgeHealth(cases[1][1]).reasons.includes('vault-missing'), true, '原因码稳定可映射')
+  // warnings 不阻断：索引中/上次失败时旧索引仍可检索
+  const indexing = buildKnowledgeHealth(cases[6][1])
+  assertEq(indexing.warnings.includes('indexing'), true, 'indexing 归入 warnings')
+  const errored = buildKnowledgeHealth(cases[7][1])
+  assertEq(errored.warnings.includes('index-error'), true, 'index-error 归入 warnings')
+  // 多原因顺序稳定（UI 文案顺序依赖）
+  const multi = buildKnowledgeHealth({
+    vaultPath: '',
+    vaultExists: false,
+    obsidianEnabled: false,
+    index: null,
+    characterNotes: 0
+  })
+  assertEq(
+    multi.reasons.join(','),
+    'no-vault,mcp-disabled,no-notes,index-empty',
+    '多原因顺序稳定'
+  )
   rmSync(vault, { recursive: true, force: true })
-  return 'count/build/searchable/reasons ✓'
+  return 'count/build/searchable/reasons/warnings ✓'
+})
+
+await recorder.check('C86', 'MCP 检索 tag 嵌套语义 + 归档排除（resources/obsidian/db.mjs）', async () => {
+  const dbMod = await import(pathToFileURL(bundleEntry('resources/obsidian/db.mjs', 'obsidian-db.mjs')).href)
+  const dbPath = join(repoRoot, 'test', '.tmp', 'obsidian-tag-' + process.pid + '.db')
+  rmSync(dbPath, { force: true })
+  const db = dbMod.openDb(dbPath)
+  const insert = (path, tags, vec) =>
+    dbMod.insertChunk(db, {
+      file_path: path,
+      heading_path: '',
+      content: 'content of ' + path,
+      tags: JSON.stringify(tags),
+      chunk_index: 0,
+      embedding: new Float32Array(vec)
+    })
+  insert('大肥鱼/日记/2026-02-01.md', ['大肥鱼/日记'], [1, 0])
+  insert('大肥鱼/世界书/a.md', ['大肥鱼', '大肥鱼/世界书'], [0.9, 0.1])
+  insert('大肥鱼/归档/2026-01-01.md', ['大肥鱼/日记'], [1, 0])
+  insert('工作/x.md', ['工作'], [1, 0])
+  const q = new Float32Array([1, 0])
+  const byTag = dbMod.searchTopK(db, q, 10, '大肥鱼').map((h) => h.file_path)
+  assert(byTag.includes('大肥鱼/日记/2026-02-01.md'), 'tag=大肥鱼 命中 大肥鱼/日记（嵌套语义）')
+  assert(byTag.includes('大肥鱼/世界书/a.md'), 'tag=大肥鱼 命中 大肥鱼/世界书')
+  assert(!byTag.includes('工作/x.md'), 'tag=大肥鱼 不命中其它目录')
+  const noArchive = dbMod.searchTopK(db, q, 10, '大肥鱼', ['大肥鱼/归档/']).map((h) => h.file_path)
+  assert(!noArchive.includes('大肥鱼/归档/2026-01-01.md'), '排除前缀后归档不参与检索')
+  assert(
+    byTag.includes('大肥鱼/归档/2026-01-01.md'),
+    '不传排除前缀时归档会命中（证明 MCP 必须显式排除）'
+  )
+  assertEq(dbMod.searchTopK(db, q, 10, '大肥鱼x').length, 0, '不相关 tag 不误命中')
+  db.close()
+  rmSync(dbPath, { force: true })
+  // MCP 侧必须把排除/读取拦截真的接上（静态兜底）
+  const mcpSrc = readFileSync(join(repoRoot, 'resources', 'obsidian', 'mcp-server.mjs'), 'utf8')
+  assert(mcpSrc.includes('CHARACTER_ARCHIVE_PREFIX'), 'MCP 应定义归档前缀')
+  assert(
+    /searchTopK\([\s\S]{0,160}?CHARACTER_ARCHIVE_PREFIX/.test(mcpSrc),
+    'searchNotes 应传归档排除前缀'
+  )
+  assert(mcpSrc.includes('该笔记已归档'), 'readNote 应拒绝读取归档')
+  return '嵌套 tag + 归档排除 ✓'
 })
 
 const characterResult = recorder.toJSON()

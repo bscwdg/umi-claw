@@ -125,7 +125,7 @@
         </div>
         <div>
           <span class="k">角色笔记</span>
-          <span class="v">{{ knowledgeHealth ? knowledgeHealth.characterNotes + ' 篇' : '…' }}</span>
+          <span class="v">{{ knowledgeHealth ? knowledgeHealth.characterNotes + (knowledgeHealth.characterNotes >= 500 ? '+ 篇' : ' 篇') : '…' }}</span>
         </div>
       </div>
       <p v-if="knowledgeHealth && !knowledgeHealth.searchable" class="hint" style="color: var(--text-secondary)">
@@ -134,6 +134,9 @@
       <div class="row">
         <button class="btn ghost" :disabled="busy" @click="refreshKnowledgeHealth">重新检查</button>
       </div>
+      <p v-if="knowledgeHealth && knowledgeHealth.warnings && knowledgeHealth.warnings.length" class="hint">
+        提示：{{ knowledgeWarningText }}（旧索引通常仍可用）
+      </p>
       <p v-if="knowledgeHint" class="hint">{{ knowledgeHint }}</p>
     </section>
 
@@ -326,10 +329,18 @@ interface KnowledgeHealthView {
   vaultPath: string
   vaultExists: boolean
   obsidianEnabled: boolean
-  index: { indexing?: boolean; noteCount?: number; lastIndexedAt?: number | string | null; lastError?: string | null } | null
+  index: {
+    indexing?: boolean
+    noteCount?: number
+    chunkCount?: number
+    lastIndexedAt?: number | string | null
+    lastError?: string | null
+    vaultPath?: string | null
+  } | null
   characterNotes: number
   searchable: boolean
   reasons: string[]
+  warnings: string[]
 }
 const knowledgeHealth = ref<KnowledgeHealthView | null>(null)
 const KNOWLEDGE_REASON_TEXT: Record<string, string> = {
@@ -338,6 +349,7 @@ const KNOWLEDGE_REASON_TEXT: Record<string, string> = {
   'mcp-disabled': '「知识库」页的 Obsidian MCP 未启用',
   'no-notes': '大肥鱼/ 下还没有笔记（先导入知识）',
   'index-empty': '还没建索引',
+  'index-other-vault': '索引属于另一个 vault（切换后需重建）',
   'indexing': '正在索引',
   'index-error': '上次索引失败'
 }
@@ -345,9 +357,17 @@ const knowledgeIndexText = computed(() => {
   const index = knowledgeHealth.value?.index
   if (!index) return '—'
   if (index.indexing) return '… 索引中'
-  const count = Number(index.noteCount ?? 0)
+  const count = Number(index.chunkCount ?? 0)
   if (count <= 0) return '× 未建'
   return `✓ ${count} 块`
+})
+const KNOWLEDGE_WARNING_TEXT: Record<string, string> = {
+  'indexing': '正在索引',
+  'index-error': '上次索引失败（可能是取消/旧索引仍可用）'
+}
+const knowledgeWarningText = computed(() => {
+  const list = knowledgeHealth.value?.warnings ?? []
+  return list.map((w) => KNOWLEDGE_WARNING_TEXT[w] ?? w).join('；')
 })
 const knowledgeReasonText = computed(() => {
   const reasons = knowledgeHealth.value?.reasons ?? []

@@ -29,6 +29,8 @@ function parseArgs() {
 const args = parseArgs()
 const vaultPath = args.vault
 const dbPath = args.db
+/** 归档目录 = 删除过的角色记忆：MCP 检索/读取统一排除（用户仍可在 Obsidian 里自己看） */
+const CHARACTER_ARCHIVE_PREFIX = '大肥鱼/归档/'
 
 // 修复 #2（symlink 越权）：用 realpathSync 解析 vault 真实路径，后续所有路径
 // 校验都以真实路径为准，避免 symlink 逃逸到 vault 之外的文件。
@@ -192,7 +194,7 @@ async function searchNotes({ query, limit = 5, tag }) {
   // 修复 #1：改用 searchTopK（粗筛 + JS 精确 cosine），不再一次性 load 全库 embedding。
   let scored
   try {
-    scored = searchTopK(d, qVec, Math.max(limit * 3, 15), tag)  // 多取一些以供多样性剪枝
+    scored = searchTopK(d, qVec, Math.max(limit * 3, 15), tag, [CHARACTER_ARCHIVE_PREFIX])  // 多取一些以供多样性剪枝
   } catch (e) {
     return '检索失败：' + e.message
   }
@@ -215,6 +217,10 @@ async function searchNotes({ query, limit = 5, tag }) {
 }
 
 function readNote({ path }) {
+  // 归档 = 「删除过的记忆」：不参与检索/读取（用户仍可在 Obsidian 里自己看）
+  if (String(path ?? '').replace(/\\/g, '/').startsWith(CHARACTER_ARCHIVE_PREFIX)) {
+    return '该笔记已归档，不参与检索/读取'
+  }
   const abs = resolveVaultPath(path)
   if (!existsSync(abs)) return '笔记不存在：' + path
   return readFileSync(abs, 'utf-8')
@@ -223,6 +229,7 @@ function readNote({ path }) {
 function listNotes({ folder, tag }) {
   const d = ensureDb()
   let rows = d.prepare('SELECT path FROM files').all().map((r) => r.path)
+  rows = rows.filter((p) => !String(p).replace(/\\/g, '/').startsWith(CHARACTER_ARCHIVE_PREFIX))
   if (folder) {
     const f = folder.replace(/\\/g, '/').replace(/\/$/, '')
     rows = rows.filter((p) => p.startsWith(f + '/') || p === f)

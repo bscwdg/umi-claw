@@ -103,7 +103,7 @@ export function buildCharacterDeps(src: CharacterHostSources): CharacterWiringDe
       return buildKnowledgeHealth({
         vaultPath,
         vaultExists,
-        obsidianEnabled: Boolean(cfg?.enabled),
+        obsidianEnabled: Boolean(cfg?.enabled && vaultPath),
         index,
         characterNotes
       })

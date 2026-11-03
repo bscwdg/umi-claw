@@ -222,11 +222,13 @@ const PAGE_SIZE = 1000
  * @param {DatabaseSync} db
  * @param {Float32Array} queryVec  query 向量
  * @param {number} limit           返回数量
- * @param {string|null} tag        可选 tag 过滤
+ * @param {string|null} tag        可选 tag 过滤（嵌套 tag 语义：tag=大肥鱼 命中 大肥鱼/日记）
+ * @param {string[]} excludePrefixes 可选路径前缀排除（如 ['大肥鱼/归档/']，删除记忆不参与检索）
  * @returns {Array<{id,file_path,heading_path,content,tags,score}>}
  */
-export function searchTopK(db, queryVec, limit, tag) {
+export function searchTopK(db, queryVec, limit, tag, excludePrefixes = []) {
   const dim = queryVec.length
+  const excluded = Array.isArray(excludePrefixes) ? excludePrefixes.filter(Boolean) : []
   // 维度一致性：meta.embedding_dim 与 query vector 长度必须一致，否则 top-K 会脏
   const metaDim = parseInt(getMeta(db, 'embedding_dim') || '0', 10)
   if (metaDim && metaDim !== dim) {
@@ -261,6 +263,10 @@ export function searchTopK(db, queryVec, limit, tag) {
             : false
           if (!matched) continue
         } catch { continue }
+      }
+      if (excluded.length) {
+        const path = String(r.file_path || '')
+        if (excluded.some((prefix) => path.startsWith(prefix))) continue
       }
       const buf = r.embedding
       if (!buf || buf.byteLength / 4 !== dim) continue
