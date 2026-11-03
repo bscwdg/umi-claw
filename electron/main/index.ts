@@ -431,7 +431,7 @@ async function initPlugins(): Promise<void> {
       grant: () => consentService.grant(),
       revoke: () => consentService.revoke()
     }),
-    // P2：插件启用后补一次旧数据迁移（work 停用期间启动时读不到它的库）
+    // P2：插件启用后补一次旧数据迁移（work 停用期间启动时读不到它的库）；P1-1：启动时也补一次
     afterEnable: async (pluginId: string) => {
       if (pluginId !== 'work') return
       const result = await consentService.migrateFromPluginDb()
@@ -456,7 +456,7 @@ async function initPlugins(): Promise<void> {
     },
     logger: (line) => console.log(line)
   })
-  await pluginRuntime.init()
+  await pluginRuntime.init().then(() => consentService.migrateFromPluginDb()).catch((e) => console.warn('[consent] 启动迁移失败（不阻塞启动）：', (e as Error)?.message ?? e))
 }
 
 /**

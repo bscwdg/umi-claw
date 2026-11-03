@@ -55,8 +55,11 @@ void (async () => {
 const pluginUi = new PluginUiRegistry(router)
 
 async function syncPluginUi(statuses: PluginStatus[]): Promise<void> {
-  // P3：把「已启用」同步给 UI 层——宿主首启流程据此决定要不要调 work:* 通道
-  enabledPluginIds.value = new Set(statuses.filter((x) => x.enabled).map((x) => x.id))
+  // P3/4.2 复核补修：把「已启用且已激活」同步给 UI 层——宿主首启流程据此决定要不要调
+  // work:* 通道。只判 enabled 不够：激活失败的插件没有注册通道，盲调会 No handler。
+  enabledPluginIds.value = new Set(
+    statuses.filter((x) => x.enabled && x.state === 'activated').map((x) => x.id)
+  )
 
   for (const status of statuses) {
     const entry = PLUGIN_UI_ENTRIES[status.id]

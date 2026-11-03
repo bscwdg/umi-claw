@@ -12,11 +12,14 @@
 //   C6 ensure：未同意抛 VALIDATION_ERROR（reason=consent-required）
 //   C7 未注入宿主库时 status 不崩（返回未同意）
 //   C8 P2：work 停用时 pluginDb 返回 null → 迁移给 plugin-db-unavailable 而不是建库
+//   C9 revoke 双保险：work 启用时顺手清插件库旧键
+//   C10 生产接线静态核对：启动迁移 + work 委托 + 渲染端宿主 consent（4.2 复核补修 P1-1）
 //
 // 用法：node test/consent.accept.mjs（npm run accept:consent）
 
+import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
-import { Recorder, __dirname, assert, assertEq, bundleEntry, printResult, writeJson } from './_lib.mjs'
+import { Recorder, __dirname, assert, assertEq, bundleEntry, printResult, repoRoot, writeJson } from './_lib.mjs'
 import { join } from 'node:path'
 
 const mod = await import(
@@ -215,6 +218,40 @@ await r.check('C9', 'revoke 双保险：work 启用时顺手清插件库旧键',
   assert(!('wizard_consent' in dump), '插件库 granted 应被清')
   assert(!('wizard_consent_at' in dump), '插件库时间应被清')
   return '插件库旧键已清空（墓碑 + 双保险）'
+})
+
+// ── C10 生产接线静态核对（4.2 复核补修：启动迁移不能只靠 afterEnable）──
+await r.check('C10', '生产接线：启动迁移 + work 委托 + 渲染端读宿主 consent', async () => {
+  const read = (rel) => readFileSync(join(repoRoot, rel), 'utf-8')
+
+  // 启动迁移与 afterEnable 迁移必须是两处调用（删掉启动那处 = 4.0/4.1 升级用户重复弹协议）
+  const hostSrc = read('electron/main/index.ts')
+  const migrateCalls = (hostSrc.match(/migrateFromPluginDb\(\)/g) || []).length
+  assert(migrateCalls >= 2, `migrateFromPluginDb 应有启动 + afterEnable 两处调用（实际 ${migrateCalls}）`)
+
+  // work 插件把宿主 consent 透传给 wizardManager（任一处断开都会回落到插件库）
+  assert(
+    /consent:\s*consent\s*\?\?\s*undefined/.test(read('plugins/work/main.ts')),
+    'work main 应把 ctx.services.consent 传给 runtime'
+  )
+  assert(
+    /consent:\s*deps\.consent/.test(read('plugins/work/domain/runtime.ts')),
+    'runtime 应把 consent 传给 wizardManager'
+  )
+  const manifest = JSON.parse(read('plugins/work/plugin.json'))
+  assert(manifest.inject.includes('consent'), 'work plugin.json 必须声明 consent')
+
+  // 渲染端首启读宿主通道；决定向导前查插件激活态（避免 plugins.list 竞态）
+  const appSrc = read('src/App.vue')
+  assert(/api\.consent\.status\(\)/.test(appSrc), 'App 首启应读宿主 consent 通道')
+  assert(/api\.plugins\.list\(\)/.test(appSrc), 'App 决定向导前应查插件状态（避免竞态）')
+
+  // enabled 集合只收「已激活」：激活失败的插件没有通道，盲调会 No handler
+  assert(
+    /state === 'activated'/.test(read('src/renderer/main.ts')),
+    'enabledPluginIds 应只收 enabled 且 activated 的插件'
+  )
+  return '启动迁移 / 委托 / 渲染端接线静态核对通过'
 })
 
 const result = r.toJSON({})

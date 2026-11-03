@@ -53,7 +53,12 @@ export interface MigrateResult {
   /** 是否真的写入宿主库 */
   migrated: boolean
   /** 跳过原因（migrated=false 时给出） */
-  skipped?: 'tombstone' | 'host-already-decided' | 'no-source' | 'plugin-db-unavailable'
+  skipped?:
+    | 'tombstone'
+    | 'host-already-decided'
+    | 'host-db-unavailable'
+    | 'no-source'
+    | 'plugin-db-unavailable'
 }
 
 export interface ConsentService {
@@ -145,7 +150,7 @@ export function createConsentService(deps: ConsentServiceDeps): ConsentService {
 
     async migrateFromPluginDb() {
       const host = deps.hostDb()
-      if (!host) return { migrated: false, skipped: 'host-already-decided' }
+      if (!host) return { migrated: false, skipped: 'host-db-unavailable' }
 
       // 1) 墓碑优先：撤销过就不再复活（P1）
       const revokedRaw = await host.metaGet(CONSENT_KEYS.REVOKED_AT)

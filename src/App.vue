@@ -412,8 +412,10 @@ async function ensureFirstRunWizard(): Promise<void> {
       openAgreementBlocking()
       return
     }
-    // 向导属于 work 插件：未启用时不查询（否则同样是 No handler registered）
-    if (!isPluginEnabled('work')) return
+    // 向导属于 work 插件：未启用/未激活时不查询（否则同样是 No handler registered）。
+    // 4.2 复核补修：不读共享 ref（plugins.list 是独立 IIFE，首启可能还没回来），
+    // 直接查一次状态，避免首启竞态导致向导要等下次启动。
+    if (!(await isWorkPluginActive())) return
     const wizard = await api.work.wizard.status()
     if (!wizard.completed) {
       // 向导改为弹窗（北 2026-09-24）：不再跳路由，只开弹窗
@@ -421,6 +423,17 @@ async function ensureFirstRunWizard(): Promise<void> {
     }
   } catch {
     // 读取失败不阻断：按原流程进控制台
+  }
+}
+
+/** work 是否真的可调：启用 + 已激活（激活失败时通道不存在） */
+async function isWorkPluginActive(): Promise<boolean> {
+  try {
+    const statuses = await api.plugins.list()
+    return statuses.some((p) => p.id === 'work' && p.enabled && p.state === 'activated')
+  } catch {
+    // 插件子系统异常时退回共享状态（有 v-if 挂载兜底，不会盲调）
+    return isPluginEnabled('work')
   }
 }
 
@@ -439,7 +452,7 @@ async function onAgreementAgreed(): Promise<void> {
     syncConsent(true, res?.consentAt ?? Date.now())
     agreementVisible.value = false
     // 同意后继续走完向导其余步骤（弹窗，不跳路由）；work 未启用则只落协议
-    if (!isPluginEnabled('work')) return
+    if (!(await isWorkPluginActive())) return
     const status = await api.work.wizard.status()
     if (!status.completed) wizardVisible.value = true
   } catch {
