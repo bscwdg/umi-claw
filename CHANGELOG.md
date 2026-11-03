@@ -6,6 +6,39 @@
 
 ---
 
+## [4.2.0]（开发中，4.1.0 之后）— 2026-11-03
+
+> 主题：**架构收尾（对使用者零行为变化，除一项体验改善）**。
+> 完成 4.1 遗留的残留越界、反向依赖与便携环境诊断三块。
+
+### 体验
+- **便携运行环境异常可见**（B2）：便携 Node 被系统限制写入（低完整性 / 目录只读，
+  历史实测会让数据库报 `readonly database`、用户只看到「数据存不上」）时，
+  现在会在应用顶部显示横幅说明原因，并提供「重装运行环境」按钮（复用既有环境更新流程）。
+  此前只有 `data/logs/runtime-probe.log` 一条日志，打包版用户看不到。
+
+### 重构（无行为变化）
+- **插件类型依赖清零**（B4）：插件对宿主的 14 处仅类型引用（`gatewayClient` ×13、
+  `database/database` ×1）改为引用 `services/gateway/types`、`services/dbTypes`
+  的窄接口。边界门禁新增 `pluginHostTypeOnly` 分级计数（当前 0）。
+- **拆除宿主对插件域的反向依赖**（B3）：退出流程原先直接调用插件内部
+  `abortAllAdvisorStreams` / `abortAllScanStreams` / `abortAllContentGenerations` /
+  `abortHotCollectors`（实体在 marketing 插件里）。现在插件在 activate 时自注册
+  「中止我的后台任务」，宿主统一 `abortRegistry.abortAll()`。
+  `ipc/index.ts` 已标注 `@test-only`（生产依赖归零）。
+- **宿主任意行数指标退役**（B1）：实测宿主 114 文件里仅 3 个零外部引用
+  （其中 `index.ts` 是入口），逐字节相同文件 0 对，真可删仅 145 行。
+  「总行数」已无法反映模块化程度，改用结构性判据：`index.ts` ≤1,800（当前 **1,800**）、
+  单文件 ≤1,500（6 个文件待治理，不阻塞发布）、插件边界 0/0/0。
+
+### 验收
+- 双 typecheck 0 错；build 通过；插件边界 `pluginHostBoundary=0` /
+  `pluginHostTypeOnly=0` / `managerElectron=0`
+- 全量 32 套 **615 PASS / 2 FAIL**；2 条为 `packaged.smoke` S6/S7
+  （本机打包产物不完整，已在干净基线复现同样结果，与本版改动无关）
+
+---
+
 ## [4.1.0]（已发布，4.0.2 之后）— 2026-11-03
 
 > `package.json` version = **4.1.0**；tag `v4.1.0` 已打（发布证据见 PROGRESS「4.1 版本级收尾」）
