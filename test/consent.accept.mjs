@@ -224,10 +224,14 @@ await r.check('C9', 'revoke 双保险：work 启用时顺手清插件库旧键',
 await r.check('C10', '生产接线：启动迁移 + work 委托 + 渲染端读宿主 consent', async () => {
   const read = (rel) => readFileSync(join(repoRoot, rel), 'utf-8')
 
-  // 启动迁移与 afterEnable 迁移必须是两处调用（删掉启动那处 = 4.0/4.1 升级用户重复弹协议）
+  // 启动迁移与 afterEnable 迁移必须是两处调用；启动那处必须是 init().then 链式（删掉 = 升级用户重复弹协议）
   const hostSrc = read('electron/main/index.ts')
   const migrateCalls = (hostSrc.match(/migrateFromPluginDb\(\)/g) || []).length
   assert(migrateCalls >= 2, `migrateFromPluginDb 应有启动 + afterEnable 两处调用（实际 ${migrateCalls}）`)
+  assert(
+    /pluginRuntime\.init\(\)\.then\(\(\) => consentService\.migrateFromPluginDb\(\)\)/.test(hostSrc),
+    '启动迁移必须挂在 pluginRuntime.init().then(...) 之后（activateAll 之后才迁移）'
+  )
 
   // work 插件把宿主 consent 透传给 wizardManager（任一处断开都会回落到插件库）
   assert(
@@ -244,13 +248,31 @@ await r.check('C10', '生产接线：启动迁移 + work 委托 + 渲染端读�
   // 渲染端首启读宿主通道；决定向导前查插件激活态（避免 plugins.list 竞态）
   const appSrc = read('src/App.vue')
   assert(/api\.consent\.status\(\)/.test(appSrc), 'App 首启应读宿主 consent 通道')
-  assert(/api\.plugins\.list\(\)/.test(appSrc), 'App 决定向导前应查插件状态（避免竞态）')
-
-  // enabled 集合只收「已激活」：激活失败的插件没有通道，盲调会 No handler
   assert(
-    /state === 'activated'/.test(read('src/renderer/main.ts')),
-    'enabledPluginIds 应只收 enabled 且 activated 的插件'
+    /api\.plugins\.list\(\)/.test(appSrc) && /async function isWorkPluginActive/.test(appSrc),
+    'App 应通过 isWorkPluginActive() 查插件状态（避免使用共享 ref 的竞态）'
   )
+  const workActiveCalls = (appSrc.match(/await isWorkPluginActive\(\)/g) || []).length
+  assert(workActiveCalls >= 2, `首启与同意后两处都应走 isWorkPluginActive()（实际 ${workActiveCalls}）`)
+
+  // enabled 集合只收「已激活」：激活失败的插件没有通道，盲调会 No handler。
+  // 注意 main.ts 里还有一处 `status.enabled && status.state === 'activated'`（安装 UI 用），
+  // 所以必须精确断言 enabledPluginIds 的赋值表达式，不能全文搜 activated。
+  assert(
+    /enabledPluginIds\.value = new Set\(\s*statuses\.filter\(\(x\) => x\.enabled && x\.state === 'activated'\)/.test(
+      read('src/renderer/main.ts')
+    ),
+    'enabledPluginIds 只应收 enabled && activated 的插件'
+  )
+
+  // P2-4：宿主库未就绪时的 skipped 必须是 host-db-unavailable（且不抛错）
+  const nullHostSvc = createConsentService({
+    hostDb: () => null,
+    pluginDb: () => makeStore({ [CONSENT_KEYS.GRANTED]: CONSENT_GRANTED }),
+    now: () => 1
+  })
+  const nullHostMigrate = await nullHostSvc.migrateFromPluginDb()
+  assertEq(nullHostMigrate.skipped, 'host-db-unavailable', 'hostDb 为 null 时跳因应为 host-db-unavailable')
   return '启动迁移 / 委托 / 渲染端接线静态核对通过'
 })
 

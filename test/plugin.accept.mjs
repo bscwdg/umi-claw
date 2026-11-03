@@ -34,7 +34,7 @@ import {
   resolveNodePath,
   domainSrc
 } from './_lib.mjs'
-import { findUndeclaredServiceRefs } from '../scripts/plugin-service-scan.mjs'
+import { extractServiceRefs, findUndeclaredServiceRefs } from '../scripts/plugin-service-scan.mjs'
 
 const r = new Recorder('Phase 0 · 插件内核（manifest / registry / lifecycle / UI registry）')
 
@@ -2552,10 +2552,36 @@ await r.check(
       const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'))
       for (const name of manifest.inject ?? []) if (name !== 'host') injected.add(name)
     }
+    // 只在 buildServiceFactories 的返回对象里找工厂：PluginRuntimeDeps 的类型声明里
+    // 也有 `abort: () => ...` 之类的字面量，全文件正则会把它们当成工厂（假绿）。
+    const factoriesStart = runtimeSrc.indexOf('const buildServiceFactories')
+    const factoriesEnd = runtimeSrc.indexOf('const registerHostIpc')
+    assert(factoriesStart >= 0 && factoriesEnd > factoriesStart, '应在 pluginRuntime 找到 buildServiceFactories 段')
+    const factoriesSrc = runtimeSrc.slice(factoriesStart, factoriesEnd)
     const missingFactory = [...injected].filter(
-      (name) => !new RegExp(`\\b${name}\\s*:\\s*\\(`).test(runtimeSrc)
+      (name) => !new RegExp(`\\b${name}\\s*:\\s*\\(`).test(factoriesSrc)
     )
     assertEq(missingFactory.length, 0, 'pluginRuntime 缺少被插件 inject 的服务工厂：' + missingFactory.join(','))
+
+    // 正向控制：扫描器本身必须能认出四种写法（否则「空扫描」也会绿）
+    for (const [src, expected] of [
+      ['const a = ctx.services.abort', 'abort'],
+      ['const c = ctx.services?.consent', 'consent'],
+      ["const k = ctx.services['kv']", 'kv'],
+      ['const { abort = noop, consent: c } = ctx.services', 'abort'],
+      ['const { abort = noop, consent: c } = ctx.services', 'consent']
+    ]) {
+      assert(extractServiceRefs(src).includes(expected), `扫描器应识别 ${expected}：${src}`)
+    }
+    for (const [pluginId, expected] of [
+      ['work', ['abort', 'consent', 'db']],
+      ['marketing', ['abort']]
+    ]) {
+      const refs = extractServiceRefs(readFileSync(join(repoRoot, 'plugins', pluginId, 'main.ts'), 'utf-8'))
+      for (const name of expected) {
+        assert(refs.includes(name), `${pluginId}/main.ts 扫描应包含 ${name}（实际 ${refs.join(',')}）`)
+      }
+    }
     return 'ctx.services 使用与 inject 一致；被 inject 的服务均有工厂'
   }
 )

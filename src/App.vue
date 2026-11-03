@@ -154,7 +154,7 @@ import {
 
 const api = window.api
 const { toast: appToast, showToast } = useToast()
-// work 插件是否启用：决定向导弹窗能否挂载（停用时 work:* 通道不存在）
+// work 插件是否已启用且已激活：决定向导弹窗能否挂载（停用/激活失败时 work:* 通道不存在）
 const workPluginEnabled = computed(() => isPluginEnabled('work'))
 const router = useRouter()
 // 桌宠窗口复用同一个渲染端入口：按路由切成裸页面，不加载主壳（工具栏/侧栏/弹窗都不该出现在透明窗口里）

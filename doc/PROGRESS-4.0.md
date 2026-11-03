@@ -1755,7 +1755,8 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 - `bce507d2-389d-41fc-ae95-47b3f247c247`：P0 `abort`/`consent` 未在 `plugin.json.inject` 声明，服务静默 undefined —— B3 退出兜底与 4.1.1 宿主单源在生产中均不生效。**属实，已修**（inject 补声明 + 共享扫描 + P58 + P37/P41 行为断言）。
 - `3549e1b2-1f84-4546-b40a-42a5a34b81ba`：修复后仍存在的守卫缺口 —— 正则可被解构/可选链/下标绕过、注释误报、漏扫 `main/ipc`、无 abort 注册行为断言、无生产工厂断言、两份正则副本。**属实，已修**（抽 `scripts/plugin-service-scan.mjs`：词法掩码 + 可选链/下标/解构 + 覆盖 `plugins/**/*.ts`；P58 加「被 inject 服务均有工厂」；P37/P41 加 register 行为断言）；别名 `const s = ctx.services` 与动态键登记为已知边界（写进扫描器头注释，与 AGENTS §5.1 同档）。
 - `1464be2c-41cf-4db6-b9f3-8f9bd024cbe3`：consent P1-1/P1-2/P2-1…P2-5 —— P1-1/P2-2/P2-3/P2-4 **属实已修**（启动迁移 / `activated` 集合 / C10 / `host-db-unavailable`）；P1-2/P2-5/P2-1 **属实但需产品决策或超出本轮**，登记 4.3。
-- 未采纳：无（P2-1 行为级用例只补静态 C10，其余如实登记 4.3）。
+- `7ad8acb5-e2f8-4e49-96a8-eda91d7de61d`（对修复本身的复核）：P1-1 P58 的工厂正则会先命中 `PluginRuntimeDeps` 类型声明（abort/consent/openclaw/hostOps 假绿）——**属实，已修**（只切 `buildServiceFactories` 段匹配）；P1-2 C10 只搜全文 `activated`/`plugins.list`，回退 P2-2/P2-3 仍绿——**属实，已修**（精确断言赋值表达式、`init().then` 链、`isWorkPluginActive()` 两处调用）；P2-1 字符串下标是死分支、解构默认值漏扫——**属实，已修**（保留字符串的独立掩码 + `= 默认值` 解析；模板插值/别名/动态键/正则字面量登记为已知边界）；P2-2 无正向控制——**属实，已修**（P58 增加 `extractServiceRefs` 五种样本与两插件真实扫描断言）；P2-3 `host-db-unavailable` 零断言——**属实，已修**（C10 增加行为断言）；P2-4 注释漂移——**属实，已修**（pluginUi/App 注释改为「启用且激活」）。
+- 未采纳：无（P2-1 行为级用例只补静态 C10，其余如实登记 4.3；打包路径证据仍以重打后 smoke 为准）。
 
 **最终验证（本机实测，工作区）**：双 typecheck 0 错；build 通过；`check:boundary` 0/0/0；
 全量 accept **33 套 / 619 PASS / 0 FAIL**；`index.ts` **1,800**；`plugin.accept` **64/64**；

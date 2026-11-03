@@ -5,19 +5,24 @@
 // （4.2 复核发现 B3 的 abort、4.1.1 的 consent 都踩过）。构建期与 P58 各写一份正则
 // 会漂移，所以抽成这一份，两边只调用。
 //
+// 支持：点号 / 可选链（ctx.services.abort、ctx.services?.abort）、字符串下标
+// （ctx.services['abort']，在保留字符串的掩码上扫）、解构（含默认值 `a = x` 与别名 `a: b`）。
 // 已知边界（与 AGENTS §5.1 的门禁边界同档，扫描口依赖简单词法，不做类型分析）：
 //   - 别名绕过：`const s = ctx.services; s.abort` 扫不到（当前仓库无此写法）；
+//   - 模板插值：`` `${ctx.services.x}` `` 整体被掩掉，扫不到；
+//   - 正则字面量未掩码：`/ctx.services.x/` 可能被误报（保守方向：宁可让构建失败）；
 //   - 动态键：`ctx.services[key]` 扫不到（记录为不可判定，不误报）；
-//   - 只扫描 plugins/**/*.ts（不含 vendor/生成物）；注释与字符串会先被掩码，避免误报。
+//   - 只扫描 plugins/**/*.ts（不含 vendor/生成物）；注释与普通字符串/模板会先被掩码。
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
- * 把注释与字符串/模板字面量替换成空格（保留换行，便于定位）。
- * 只做够用的词法掩码，不处理正则字面量；对本扫描（ctx.services 点号访问）足够。
+ * 把注释与模板字面量替换成空格（保留换行，便于定位）。
+ * `keepStrings=true` 时保留普通字符串字面量（字符串下标需要用原字符识别）。
+ * 不处理正则字面量（已知边界，见文件头）。
  */
-export function maskCommentsAndStrings(src) {
+function maskSource(src, { keepStrings = false } = {}) {
   let out = ''
   let i = 0
   const n = src.length
@@ -51,12 +56,13 @@ export function maskCommentsAndStrings(src) {
         else j += 1
       }
       const stop = Math.min(n, j + 1)
-      blank(src.slice(i, stop))
+      if (keepStrings) append(src.slice(i, stop))
+      else blank(src.slice(i, stop))
       i = stop
       continue
     }
     if (c === '`') {
-      // 模板字面量整体掩码（${} 里的表达式也一并掩掉：本扫描只关心点号访问）
+      // 模板字面量整体掩码（${} 里的表达式也一并掩掉：已知边界，见文件头）
       let j = i + 1
       while (j < n) {
         if (src[j] === '\\') j += 2
@@ -75,30 +81,43 @@ export function maskCommentsAndStrings(src) {
   return out
 }
 
+/** 掩码注释与字符串/模板（用于点号/解构扫描） */
+export function maskCommentsAndStrings(src) {
+  return maskSource(src)
+}
+
+/** 掩码注释与模板、保留普通字符串（用于 ctx.services['name'] 扫描） */
+export function maskCommentsKeepStrings(src) {
+  return maskSource(src, { keepStrings: true })
+}
+
 const SERVICE_ACCESS_PATTERNS = [
   // 直接点号 / 可选链：ctx.services.abort、ctx.services?.abort
   /ctx\.services\?\.([A-Za-z_][A-Za-z0-9_]*)/g,
   /ctx\.services\.([A-Za-z_][A-Za-z0-9_]*)/g,
-  // 字符串下标：ctx.services['abort'] / ctx.services["abort"]
-  /ctx\.services\[\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\]/g,
-  // 解构：const { abort, consent: c } = ctx.services
+  // 解构：const { abort, consent: c } = ctx.services（`a = 默认值` 也要取 a）
   /(?:const|let|var)\s*\{([^}]*)\}\s*=\s*ctx\.services/g
 ]
 
-/** 从一段源码中提取被访问的服务名（已掩码注释/字符串；去重） */
+// 字符串下标单独在「保留字符串」的掩码上扫（否则引号已被掩成空格，永远匹配不到）
+const BRACKET_SERVICE_PATTERN = /ctx\.services\[\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\]/g
+
+/** 从一段源码中提取被访问的服务名（注释/模板已掩码；去重） */
 export function extractServiceRefs(src) {
   const masked = maskCommentsAndStrings(src)
   const names = new Set()
-  for (const re of SERVICE_ACCESS_PATTERNS.slice(0, 3)) {
+  for (const re of SERVICE_ACCESS_PATTERNS.slice(0, 2)) {
     re.lastIndex = 0
     for (const m of masked.matchAll(re)) names.add(m[1])
   }
-  const destructure = SERVICE_ACCESS_PATTERNS[3]
+  BRACKET_SERVICE_PATTERN.lastIndex = 0
+  for (const m of maskCommentsKeepStrings(src).matchAll(BRACKET_SERVICE_PATTERN)) names.add(m[1])
+  const destructure = SERVICE_ACCESS_PATTERNS[2]
   destructure.lastIndex = 0
   for (const m of masked.matchAll(destructure)) {
     for (const part of m[1].split(',')) {
-      // `consent: c` 取 birth 前冒号左侧；`...rest` 忽略
-      const raw = part.split(':')[0].trim()
+      // `a: b` 取冒号左侧；`a = 默认值` 取等号左侧；`...rest` 忽略
+      const raw = part.split('=')[0].split(':')[0].trim()
       if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(raw)) names.add(raw)
     }
   }
