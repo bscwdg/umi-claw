@@ -1590,3 +1590,36 @@ build               通过
 （98MB），缺 `Umi Claw.exe` 与 `resources/resources/` 子树；且该目录被 node 进程占用
 无法移开，而 `UMI_ALLOW_PACKAGE_SKIP=1` **只在目录不存在时**生效。
 → 属发布环境问题，登记待重打包。
+
+### 2026-11-03 · 4.2 收尾（重新打包后全量全绿）
+
+前面三包（B4/B3/B2）与 B1 的 P1 决策落地后，全量验收一直卡在 `packaged.smoke` S6/S7
+两条 FAIL。归因已做过实验：stash 收起全部改动、在干净基线 `54e7484` 重跑，
+`packaged.smoke` 同样 5/7、S6/S7 同样失败——说明与代码无关。
+
+根因：A3 那次打包中断，`release/win-unpacked` 只剩 `resources/app.asar`（98MB），
+缺 `Umi Claw.exe` 与 `resources/resources/` 子树；且该目录被 node 进程占用移不开，
+而 `UMI_ALLOW_PACKAGE_SKIP=1` 只在「目录不存在」时生效（对本场景无效）。
+
+**重新打包后复核**
+
+产物完整性（逐项确认）：
+
+| 关键路径 | 存在 |
+| --- | --- |
+| `Umi Claw.exe` | ✓ |
+| `resources/app.asar` | ✓ |
+| `resources/resources/plugins/work/plugin.json` | ✓ |
+| `resources/resources/character/persona/SOUL.md.tpl` | ✓ |
+
+`packaged.smoke`：**7/7**（S6 打包产物结构正确、S7 角色资源/桌宠 preload/NOTICE ✓）
+全量 `npm run accept`：**617 PASS / 0 FAIL**
+
+4.2 判据最终状态：
+
+| # | 判据 | 实测 | 状态 |
+| --- | --- | --- | --- |
+| J1 | `index.ts` ≤1,800 | 1,800 | ✅ |
+| J2 | 单文件 ≤1,500 | 6 个超标 | ⚠️ 待治理（不阻塞发布，见 PLAN-4.2） |
+| J3 | 边界 0/0/0 | 0/0/0 | ✅ |
+| J4 | 全量 accept 全绿 | 617/617 | ✅ |
