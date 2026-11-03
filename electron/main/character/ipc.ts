@@ -39,6 +39,13 @@ export interface CharacterIpcDeps {
     /** 知识体检：vault/MCP/索引/角色笔记数（4.3） */
     status?: () => unknown
   }
+  /** 记忆/关系管理（4.3 P3）：只读列表 + 单条读取 + 日记编辑 + 单条归档删除 */
+  memoryAdmin?: {
+    list: () => unknown
+    read: (target: unknown) => unknown
+    save: (payload: unknown) => unknown
+    delete: (target: unknown) => unknown
+  }
 }
 
 export function registerCharacterIpc(
@@ -202,6 +209,18 @@ export function registerCharacterIpc(
     }
     return manager.maybeRunDailyMemory(undefined, true)
   })
+  // 记忆/关系管理（4.3 P3）：列表/读取/保存日记/单条归档删除；未接线抛 NOT_READY
+  const requireMemoryAdmin = () => {
+    if (!deps.memoryAdmin) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '记忆管理功能未接线')
+    }
+    return deps.memoryAdmin
+  }
+  handle(CHARACTER_CHANNELS.memoryList, () => requireMemoryAdmin().list())
+  handle(CHARACTER_CHANNELS.memoryRead, (payload) => requireMemoryAdmin().read(payload))
+  handle(CHARACTER_CHANNELS.memorySave, (payload) => requireMemoryAdmin().save(payload))
+  handle(CHARACTER_CHANNELS.memoryDelete, (payload) => requireMemoryAdmin().delete(payload))
+
   handle(CHARACTER_CHANNELS.voiceSend, async (payload) => {
     if (!manager.isEnabled()) {
       throw new CharacterError(CHARACTER_ERROR_CODES.DISABLED, '大肥鱼未启用')

@@ -19,6 +19,7 @@ const personaMod = await import(pathToFileURL(bundleEntry('electron/main/charact
 const knowledgeMod = await import(pathToFileURL(bundleEntry('electron/main/character/knowledgeImport.ts', 'character-knowledge-import.mjs')).href)
 const knowledgeHealthMod = await import(pathToFileURL(bundleEntry('electron/main/character/knowledgeHealth.ts', 'character-knowledge-health.mjs')).href)
 const memoryRecallMod = await import(pathToFileURL(bundleEntry('electron/main/character/memoryRecall.ts', 'character-memory-recall.mjs')).href)
+const memoryAdminMod = await import(pathToFileURL(bundleEntry('electron/main/character/memoryAdmin.ts', 'character-memory-admin.mjs')).href)
 const agentConfigMod = await import(pathToFileURL(bundleEntry('electron/main/character/agentConfig.ts', 'character-agent-config.mjs')).href)
 const bootstrapMod = await import(pathToFileURL(bundleEntry('electron/main/character/bootstrap.ts', 'character-bootstrap.mjs')).href)
 const chatMod = await import(pathToFileURL(bundleEntry('electron/main/character/chat.ts', 'character-chat.mjs')).href)
@@ -2668,15 +2669,20 @@ await recorder.check('C84', 'character 新通道三处一致：types/ipc/preload
     'character:persona:export',
     'character:persona:import',
     'character:knowledge:import',
-    'character:knowledge:status'
+    'character:knowledge:status',
+    'character:memory:list',
+    'character:memory:read',
+    'character:memory:save',
+    'character:memory:delete'
   ]) {
     assert(typesSrc.includes(ch), ch + ' 应在 CHARACTER_CHANNELS 常量里')
     assert(preloadSrc.includes("'" + ch + "'"), ch + ' 应在 preload 暴露')
   }
-  for (const name of ['personaExport', 'personaImport', 'knowledgeImport', 'knowledgeStatus']) {
+  for (const name of ['personaExport', 'personaImport', 'knowledgeImport', 'knowledgeStatus', 'memoryList', 'memoryRead', 'memorySave', 'memoryDelete']) {
     assert(ipcSrc.includes('CHARACTER_CHANNELS.' + name), 'ipc 应注册 ' + name)
   }
   assert(ipcSrc.includes('deps.persona') && ipcSrc.includes('deps.knowledge'), '未接 deps 时要能报 NOT_READY')
+  assert(ipcSrc.includes('deps.memoryAdmin'), '记忆管理未接 deps 时要能报 NOT_READY')
   return '通道 types/ipc/preload 三处一致 ✓'
 })
 
@@ -2873,6 +2879,104 @@ await recorder.check('C87', '本地结构化记忆召回：近期日记 + 约定
     assert(delSlice.includes(rel), '删除记忆应归档 ' + rel)
   }
   return '日期窗口/日记/约定/注入过滤/脱敏/截断 ✓'
+})
+
+await recorder.check('C88', '记忆/关系管理：列表/读取/日记保存/单条归档删除（4.3 P3）', async () => {
+  const { listMemories, readMemory, saveMemoryDiary, deleteMemory, isValidMemoryDate, MemoryAdminError } =
+    memoryAdminMod
+  const now = new Date(2026, 10, 3, 12).getTime()
+  const root = join(repoRoot, 'test', '.tmp', 'memory-admin-' + process.pid)
+  rmSync(root, { recursive: true, force: true })
+  const workspace = join(root, 'workspace')
+  const vault = join(root, 'vault')
+  mkdirSync(join(workspace, 'memory'), { recursive: true })
+  mkdirSync(join(vault, '大肥鱼', '日记'), { recursive: true })
+  mkdirSync(join(vault, '大肥鱼', '关系', '约定'), { recursive: true })
+  writeFileSync(
+    join(workspace, 'memory', '2026-11-02.md'),
+    '---\ndate: 2026-11-02\ntags: [大肥鱼/日记]\n---\n昨天一起改方案。'
+  )
+  writeFileSync(join(vault, '大肥鱼', '日记', '2026-11-01.md'), '---\ndate: 2026-11-01\n---\n前天吃火锅。')
+  writeFileSync(join(vault, '大肥鱼', '关系', '约定.md'), '每周日复盘。')
+  writeFileSync(join(vault, '大肥鱼', '关系', '约定', '第二条.md'), '不翻旧账。')
+
+  const list = listMemories({ workspaceDir: workspace, vaultPath: vault, now, days: 5 })
+  assertEq(list.diaries.length, 2, '列出 workspace + vault 日记')
+  assertEq(list.diaries[0].date, '2026-11-02', 'workspace 优先/日期倒序')
+  assert(list.diaries.some((d) => d.source === 'obsidian'), '缺失 workspace 时回落 Obsidian')
+  assertEq(list.relations.length, 2, '列出单文件 + 目录形态的约定')
+  assert(list.relations.some((r) => r.id === '约定'), '单文件 id=约定')
+  assert(list.relations.some((r) => r.id === '约定/第二条.md'), '目录 id=约定/文件名')
+
+  const read = readMemory(
+    { workspaceDir: workspace, vaultPath: vault, now, days: 5 },
+    { kind: 'diary', id: '2026-11-02' }
+  )
+  assert(read.content.includes('昨天一起改方案'), '读取日记正文')
+  const relation = readMemory(
+    { workspaceDir: workspace, vaultPath: vault, now, days: 5 },
+    { kind: 'relation', id: '约定' }
+  )
+  assert(relation.content.includes('每周日复盘'), '读取关系笔记')
+  let bad = null
+  try {
+    readMemory({ workspaceDir: workspace, vaultPath: vault, now, days: 5 }, { kind: 'relation', id: '../工作/x.md' })
+  } catch (e) {
+    bad = e
+  }
+  assert(bad instanceof MemoryAdminError && bad.code === 'CHARACTER_BAD_PAYLOAD', '非白名单 id 拒绝')
+  assert(bad.name === 'CharacterError' && bad.code === 'CHARACTER_BAD_PAYLOAD', 'MemoryAdminError 以 CharacterError 身份抛出（IPC 才透传 code）')
+  assert(
+    readFileSync(join(repoRoot, 'electron', 'main', 'character', 'memoryAdmin.ts'), 'utf8').includes('extends CharacterError'),
+    'memoryAdmin 错误必须继承 CharacterError'
+  )
+  assertEq(isValidMemoryDate('2026-02-30'), false, '拒绝非法日期 02-30')
+  assertEq(isValidMemoryDate('2026-11-02'), true, '合法日期通过')
+
+  // read → save 往返：UI 拿到的是正文（无 frontmatter），保存后 frontmatter 仍恰好 1 个
+  const roundTrip = readMemory(
+    { workspaceDir: workspace, vaultPath: vault, now, days: 5 },
+    { kind: 'diary', id: '2026-11-02' }
+  )
+  assert(!roundTrip.content.includes('date: 2026-11-02'), 'read 返回正文（frontmatter 不暴露给编辑器）')
+  saveMemoryDiary(workspace, '2026-11-02', roundTrip.content + '\n再补一句。')
+  const afterRound = readFileSync(join(workspace, 'memory', '2026-11-02.md'), 'utf8')
+  assertEq((afterRound.match(/^---$/gm) || []).length, 2, '往返保存后 frontmatter 只有一组（---/---）')
+  assert(afterRound.includes('date: 2026-11-02'), 'frontmatter 保留')
+  assert(afterRound.includes('再补一句'), '往返正文写入')
+  saveMemoryDiary(workspace, '2026-11-02', '改写后的正文。')
+  const saved = readFileSync(join(workspace, 'memory', '2026-11-02.md'), 'utf8')
+  assert(saved.includes('date: 2026-11-02'), '保存保留 frontmatter')
+  assert(saved.includes('改写后的正文'), '保存写入新正文')
+  assert(!saved.includes('昨天一起改方案'), '保存替换旧正文')
+  let tooLong = null
+  try {
+    saveMemoryDiary(workspace, '2026-11-02', 'x'.repeat(20001))
+  } catch (e) {
+    tooLong = e
+  }
+  assert(tooLong && tooLong.code === 'CHARACTER_BAD_PAYLOAD', '超长正文拒绝')
+
+  const delDiary = deleteMemory({ workspaceDir: workspace, vaultPath: vault, now }, { kind: 'diary', id: '2026-11-02' })
+  assert(!existsSync(join(workspace, 'memory', '2026-11-02.md')), '删除后 workspace 日记移走')
+  assert(existsSync(delDiary.archivedTo), '归档文件存在')
+  deleteMemory({ workspaceDir: workspace, vaultPath: vault, now }, { kind: 'diary', id: '2026-11-01' })
+  assert(!existsSync(join(vault, '大肥鱼', '日记', '2026-11-01.md')), 'Obsidian 日记一并归档')
+  const delRel = deleteMemory(
+    { workspaceDir: workspace, vaultPath: vault, now },
+    { kind: 'relation', id: '约定/第二条.md' }
+  )
+  assert(!existsSync(join(vault, '大肥鱼', '关系', '约定', '第二条.md')), '关系笔记删除')
+  assert(existsSync(delRel.archivedTo), '关系笔记归档到 大肥鱼/归档')
+  // 单文件关系笔记删除也必须保留 .md（Obsidian 才识别）
+  const delSingle = deleteMemory(
+    { workspaceDir: workspace, vaultPath: vault, now },
+    { kind: 'relation', id: '约定' }
+  )
+  assert(delSingle.archivedTo.endsWith('.md'), '单文件约定归档保留 .md 扩展名')
+  assert(!existsSync(join(vault, '大肥鱼', '关系', '约定.md')), '单文件约定已移走')
+  rmSync(root, { recursive: true, force: true })
+  return '列表/读取/白名单/保存/归档删除 ✓'
 })
 
 const characterResult = recorder.toJSON()

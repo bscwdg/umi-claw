@@ -734,7 +734,37 @@ const api = {
           'character:memory:status'
         ),
       runNow: () =>
-        call<{ ran: boolean; reason: string; errors?: string[] }>('character:memory:runNow')
+        call<{ ran: boolean; reason: string; errors?: string[] }>('character:memory:runNow'),
+      list: () =>
+        call<{
+          diaries: Array<{
+            date: string
+            chars: number
+            excerpt: string
+            source: 'workspace' | 'obsidian'
+          }>
+          relations: Array<{
+            kind: '约定' | '大事记'
+            id: string
+            chars: number
+            excerpt: string
+          }>
+        }>('character:memory:list'),
+      read: (kind: 'diary' | 'relation', id: string) =>
+        call<{
+          kind: 'diary' | 'relation'
+          id: string
+          content: string
+          source: 'workspace' | 'obsidian'
+        }>('character:memory:read', { kind, id }),
+      save: (id: string, content: string) =>
+        call<{ date: string; chars: number }>('character:memory:save', {
+          kind: 'diary',
+          id,
+          content
+        }),
+      delete: (kind: 'diary' | 'relation', id: string) =>
+        call<{ archivedTo: string }>('character:memory:delete', { kind, id })
     },
     voice: {
       send: (text?: string) =>

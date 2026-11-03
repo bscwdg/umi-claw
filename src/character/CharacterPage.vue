@@ -236,6 +236,47 @@
       <p class="hint">问起过去时，最近 5 天日记 + 约定/大事记会直接进对话上下文（不依赖 Obsidian 索引）。</p>
     </section>
 
+    <section class="card">
+      <h3>记忆与关系</h3>
+      <p class="hint">
+        查看/修正她的日记、约定与大事记。删除是移到「大肥鱼/归档」或本地 memory-archive，不会物理删除；
+        日记保存只改本地记忆（她召回用），Obsidian 原始日记不动。
+      </p>
+      <div class="row">
+        <button class="btn ghost" :disabled="busy" @click="refreshMemoriesGuarded">刷新列表</button>
+        <span class="hint">关系：{{ relationshipSummary }}</span>
+      </div>
+      <div v-if="memoryEditor" class="memo-editor">
+        <div class="row">
+          <strong>{{ memoryEditor.kind === 'diary' ? memoryEditor.id + ' 的日记' : memoryEditor.id }}</strong>
+          <button v-if="memoryEditor.kind === 'diary'" class="btn" :disabled="busy || !memoryEditorDirty" @click="saveMemoryEntry">保存</button>
+          <span v-if="memoryEditor.kind === 'diary' && memoryEditorDirty" class="hint">未保存</span>
+          <button class="btn ghost" :disabled="busy" @click="confirmDiscardEdit(() => { memoryEditor = null })">关闭</button>
+        </div>
+        <textarea v-if="memoryEditor.kind === 'diary'" v-model="memoryEditor.content" rows="8" class="memo-text"></textarea>
+        <pre v-else class="memo-text memo-readonly">{{ memoryEditor.content }}</pre>
+        <p v-if="memoryEditor.kind === 'relation'" class="hint">关系笔记在 Obsidian 里编辑（这里只读）；删除会归档。</p>
+      </div>
+      <h4 class="memo-title">日记（最近 30 天）</h4>
+      <ul class="memo-list">
+        <li v-for="d in memoryDiaries" :key="d.date" class="memo-item">
+          <button class="memo-open" @click="openMemory('diary', d.date)">{{ d.date }}</button>
+          <span class="hint">{{ d.excerpt }}</span>
+          <button class="btn ghost" :disabled="busy" @click="deleteMemoryEntry('diary', d.date)">删除</button>
+        </li>
+      </ul>
+      <p v-if="!memoryDiaries.length" class="hint">还没有日记；可以点上面「现在写一篇」。</p>
+      <h4 class="memo-title">约定 / 大事记</h4>
+      <ul class="memo-list">
+        <li v-for="r in memoryRelations" :key="r.id" class="memo-item">
+          <button class="memo-open" @click="openMemory('relation', r.id)">{{ r.id }}</button>
+          <span class="hint">{{ r.excerpt }}</span>
+          <button class="btn ghost" :disabled="busy" @click="deleteMemoryEntry('relation', r.id)">删除</button>
+        </li>
+      </ul>
+      <p v-if="!memoryRelations.length" class="hint">还没有约定/大事记；可先在「知识」导入，或让她在聊天里记下约定。</p>
+    </section>
+
     <CharacterSettings
       ref="settingsRef"
       :settings="settingsRaw"
@@ -511,6 +552,7 @@ onMounted(async () => {
   offStream = window.api.character.chat.onStream(onStreamEvent)
   await refresh()
   void refreshKnowledgeHealth()
+  void refreshMemories()
 })
 
 onBeforeUnmount(() => {
@@ -622,6 +664,93 @@ async function runMemory(): Promise<void> {
     else if (!result.ran) error.value = `这次没写：${MEMORY_REASON_TEXT[result.reason] ?? result.reason}`
     else showToast('日记写好了')
   })
+}
+
+interface MemoryDiaryView { date: string; chars: number; excerpt: string; source: string }
+interface MemoryRelationView { kind: string; id: string; chars: number; excerpt: string }
+const memoryDiaries = ref<MemoryDiaryView[]>([])
+const memoryRelations = ref<MemoryRelationView[]>([])
+const memoryEditor = ref<{ kind: 'diary' | 'relation'; id: string; content: string; original: string } | null>(
+  null
+)
+const memoryEditorDirty = computed(
+  () => Boolean(memoryEditor.value && memoryEditor.value.content !== memoryEditor.value.original)
+)
+const relationshipSummary = computed(() => {
+  const stageLabels = ['初识', '眼熟', '熟客', '自己人', '搭子以上']
+  return `${stageLabels[state.value.stage] ?? '初识'} · ${state.value.mood || '平静'} · 连续 ${state.value.streakDays ?? 0} 天`
+})
+
+async function refreshMemories(): Promise<void> {
+  await run(async () => {
+    const list = await window.api.character.memory.list()
+    memoryDiaries.value = list.diaries ?? []
+    memoryRelations.value = list.relations ?? []
+  })
+}
+
+function confirmDiscardEdit(action: () => void): void {
+  if (!memoryEditorDirty.value) {
+    action()
+    return
+  }
+  askConfirm(
+    {
+      title: '放弃未保存的修改？',
+      message: '当前日记有未保存的修改，继续会丢弃这些内容。',
+      confirmText: '放弃修改',
+      danger: true
+    },
+    action
+  )
+}
+
+function refreshMemoriesGuarded(): void {
+  confirmDiscardEdit(() => void refreshMemories())
+}
+
+function openMemory(kind: 'diary' | 'relation', id: string): void {
+  confirmDiscardEdit(() => {
+    void (async () => {
+      await run(async () => {
+        const item = await window.api.character.memory.read(kind, id)
+        memoryEditor.value = { kind, id, content: item.content, original: item.content }
+      })
+    })()
+  })
+}
+
+async function saveMemoryEntry(): Promise<void> {
+  if (!memoryEditor.value) return
+  const editor = memoryEditor.value
+  if (editor.kind !== 'diary') return
+  await run(async () => {
+    await window.api.character.memory.save(editor.id, editor.content)
+    memoryEditor.value = { ...editor, original: editor.content }
+    showToast('日记已保存')
+    await refreshMemories()
+  })
+}
+
+function deleteMemoryEntry(kind: 'diary' | 'relation', id: string): void {
+  askConfirm(
+    {
+      title: '删除这条记忆',
+      message: `${id} 会被归档（本地日记进 memory-archive，Obsidian 笔记进「大肥鱼/归档」，可找回），确定删除？`,
+      confirmText: '删除',
+      danger: true
+    },
+    async () => {
+      await run(async () => {
+        await window.api.character.memory.delete(kind, id)
+        if (memoryEditor.value && memoryEditor.value.kind === kind && memoryEditor.value.id === id) {
+          memoryEditor.value = null
+        }
+        showToast('已归档')
+        await refreshMemories()
+      })
+    }
+  )
 }
 
 async function cancelQuiet(): Promise<void> {
@@ -1189,4 +1318,28 @@ select {
     opacity: 0;
   }
 }
+.memo-editor {
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+}
+.memo-text {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px;
+  background: transparent;
+  color: inherit;
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  font: inherit;
+  resize: vertical;
+}
+.memo-title { margin: 14px 0 6px; font-size: 13px; }
+.memo-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.memo-item { display: flex; align-items: center; gap: 10px; }
+.memo-open { background: none; border: none; color: inherit; cursor: pointer; font: inherit; padding: 0; text-decoration: underline; flex: 0 0 auto; }
+.memo-item .hint { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; }
+.memo-readonly { white-space: pre-wrap; max-height: 240px; overflow: auto; margin: 8px 0 0; }
+
 </style>

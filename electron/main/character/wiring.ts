@@ -19,6 +19,7 @@ import { formatSearchContext, looksLikeRecallQuery, withTimeout } from './search
 import { buildMemoryContext, recallDates } from './memoryRecall'
 import { composePersonaFiles, exportPersonaPackage, importPersonaPackage, writeManagedFiles } from './persona'
 import { validateKnowledgeImport, writeKnowledgeFiles } from './knowledgeImport'
+import { deleteMemory, listMemories, readMemory, saveMemoryDiary } from './memoryAdmin'
 import { PetWindowController, type PetMenuAction } from './petWindow'
 import { CharacterChatService, type CharacterChatFn } from './chat'
 import {
@@ -474,6 +475,40 @@ async function registerCharacterInternal(
       persona: {
         export: async () => exportPersonaPackage(workspaceDir),
         import: async (raw) => importPersonaPackage(workspaceDir, raw)
+      },
+      // 4.3 P3 记忆/关系管理：列表/读取/日记编辑/单条归档删除（id 必须来自列表白名单）
+      memoryAdmin: {
+        list: () =>
+          listMemories({
+            workspaceDir,
+            vaultPath: deps.obsidianVaultPath?.(),
+            now: deps.now ? deps.now() : Date.now(),
+            days: 30
+          }),
+        read: (target) =>
+          readMemory(
+            {
+              workspaceDir,
+              vaultPath: deps.obsidianVaultPath?.(),
+              now: deps.now ? deps.now() : Date.now(),
+              days: 30
+            },
+            target as { kind: 'diary' | 'relation'; id: string }
+          ),
+        save: (payload) => {
+          const p = payload as { kind?: unknown; id?: unknown; content?: unknown }
+          if (p?.kind !== 'diary') throw new Error('只能编辑日记')
+          return saveMemoryDiary(workspaceDir, String(p.id ?? ''), String(p.content ?? ''))
+        },
+        delete: (target) =>
+          deleteMemory(
+            {
+              workspaceDir,
+              vaultPath: deps.obsidianVaultPath?.(),
+              now: deps.now ? deps.now() : Date.now()
+            },
+            target as { kind: 'diary' | 'relation'; id: string }
+          )
       },
       // 4.3 知识导入：只写既有 Obsidian vault 的 `大肥鱼/<类别>/`，不新增知识库
       knowledge: {

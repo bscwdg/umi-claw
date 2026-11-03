@@ -1236,6 +1236,24 @@ await r.check('U21', '二次确认弹窗统一：插件管理/角色页不再用
   assert(/KNOWLEDGE_REASON_TEXT/.test(characterSrc), '知识体检应用原因文案映射')
   assert(/searchable/.test(characterSrc), '知识体检应展示 searchable 判定')
   assert(/不依赖 Obsidian 索引/.test(characterSrc), '角色页应说明最近日记/约定直接进上下文')
+
+  // 记忆/关系管理（4.3 P3）：列表/读取/编辑/单条归档删除
+  assert(/记忆与关系/.test(characterSrc), '角色页应有记忆与关系管理卡')
+  for (const api of ['character.memory.list', 'character.memory.read', 'character.memory.save', 'character.memory.delete']) {
+    assert(characterSrc.includes(api), '记忆管理要调 ' + api)
+  }
+  assert(/refreshMemoriesGuarded/.test(characterSrc), '记忆管理应能刷新列表（带未保存守卫）')
+  assert(/@click="openMemory\('diary'/.test(characterSrc) && /@click="openMemory\('relation'/.test(characterSrc), '日记/关系条目应可打开')
+  assert(/@click="saveMemoryEntry"/.test(characterSrc), '日记编辑应有保存按钮')
+  assert(/memoryEditorDirty/.test(characterSrc), '日记编辑应有 dirty 守卫')
+  assert(/confirmDiscardEdit/.test(characterSrc), '切换/刷新未保存编辑必须二次确认')
+  assert(/memo-readonly/.test(characterSrc), '关系笔记应为只读展示（不做假保存按钮）')
+  assert(!characterSrc.includes("\${'\${"), '关系摘要不得出现把表达式当字符串拼接的写法')
+  assert(/@click="deleteMemoryEntry\('diary'/.test(characterSrc) && /@click="deleteMemoryEntry\('relation'/.test(characterSrc), '日记/关系条目应可删除')
+  const preloadAll = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
+  for (const ch of ['character:memory:list', 'character:memory:read', 'character:memory:save', 'character:memory:delete']) {
+    assert(preloadAll.includes("'" + ch + "'"), 'preload 应暴露 ' + ch)
+  }
   assert(
     preloadSrc.includes("'character:knowledge:status'"),
     'preload 应暴露 character:knowledge:status'

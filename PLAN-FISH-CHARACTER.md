@@ -234,6 +234,10 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 | `character:persona:import` | `{version:1, files}` | 校验+备份后写人格；AGENTS 自动补边界硬段 |
 | `character:knowledge:import` | `{category, files:[{name,text}]}` | 写入既有 Obsidian `大肥鱼/<类别>/`（不新增知识库） |
 | `character:knowledge:status` | — | 知识体检：{vaultPath,vaultExists,obsidianEnabled,index,characterNotes,searchable,reasons} |
+| `character:memory:list` | — | 记忆列表：最近 30 天日记 + 约定/大事记（单文件/目录两种形态） |
+| `character:memory:read` | `{kind, id}` | 单条读取（id 必须来自列表白名单） |
+| `character:memory:save` | `{kind:'diary', id, content}` | 保存日记正文；保留 frontmatter，只写本地 memory |
+| `character:memory:delete` | `{kind, id}` | 单条归档删除（日记→memory-archive/归档，关系笔记→大肥鱼/归档） |
 
 **错误码**：`CHARACTER_NOT_READY` / `CHARACTER_AGENT_MISSING` / `CHARACTER_VAULT_MISSING`（实现用 `CHARACTER_NOT_READY`：vault 未配置/不存在）/ `CHARACTER_TTS_UNAVAILABLE` / `CHARACTER_QQ_TARGET_MISSING` / `CHARACTER_QUIET_HOURS` / `CHARACTER_DAILY_CAP` / `CHARACTER_STORE_IO`。
 **推送**：`character:state`（状态变更）、`character:bubble`（气泡）、`character:stream:*`。
@@ -298,6 +302,7 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 - **边界硬段（4.3）**：AGENTS.md 由 `normalizeAgentsDoc` 确定性规范化：剥旧受管段/孤儿标记 → 空白归一 → 固定顺序追加 memory 段与 `fish:managed:boundary` 段（AI 明示/危机转介不可被人格包移除）；连续 sync 不增长。
 - **知识导入（4.3）**：`character:knowledge:import` 写既有 Obsidian vault 的 `大肥鱼/<世界书|角色卡|关系/约定>/`，`title` 用 YAML 双引号转义，同名 `-2/-3` 不覆盖；单文件 512KB、一次 20 个/2MB；路径做词法+realpath 双重 containment；不新增知识库（红线 9）。
 - **知识体检 / 检索作用域（4.3 P1）**：`character:knowledge:status` 返回 vault/MCP/索引/`大肥鱼/` 笔记数与 `searchable`（启用+vault 存在+有笔记+索引非空且无错误才 true），reason 码稳定；host 预检索仍只取 `大肥鱼/`（`filterCharacterHits`）；导入 frontmatter 同时带扁平 tag `大肥鱼` 与类别 tag；MCP tag 过滤为嵌套前缀匹配（`tag=大肥鱼` 命中 `大肥鱼/日记`、`大肥鱼/世界书`）；MCP `search_notes`/`list_notes`/`read_note` 排除 `大肥鱼/归档/`（删除记忆不可回忆）；AGENTS 模板要求 agent 只查 `大肥鱼/`（工具级无 tag 检索仍为软约束，登记 4.4）。
+- **记忆/关系管理（4.3 P3）**：`character:memory:list|read|save|delete`；列表只给白名单 id（日期/扫描到的关系文件），渲染端不能构造任意路径；日记编辑只写本地 `memory/<date>.md`（保留 frontmatter、编辑器只给正文，Obsidian 原件不同步；切换/刷新未保存需确认）；关系笔记只读（删除=归档）；单条删除一律归档（workspace → `memory-archive/<ts>/`，Obsidian → `大肥鱼/归档/<ts>/`），不做物理删除。
 - **本地结构化记忆召回（4.3 P2）**：`looksLikeRecallQuery` 命中时，宿主先直接读 workspace `memory/YYYY-MM-DD.md`（最近 5 天，缺失回落 vault `大肥鱼/日记/`）与 vault `大肥鱼/关系/约定`（目录 `*.md` 或单文件 `约定.md`）、`大肥鱼/关系/大事记`（同两种形态），压成 ≤900 字注入本轮（带 `<<UNTRUSTED_MEMORY>>` 数据边界 + 注入话术过滤 + 密钥脱敏）；不依赖 MCP/索引，之后仍叠加语义检索。召回词含「昨天/前天/昨晚/上周/第一次/去年」等；「删除记忆」时约定/大事记（文件与目录）一并归档，不再被本地召回或 MCP 检索。
 - **详细设置页（4.3）**：`CharacterSettings.vue` 覆盖 §4.2 设置树中已接线的 14 个字段；`contentTypes/confirmImportant/sttEnabled/pet.*` 尚未接线，UI 显式 disabled + 文案；安全行为不提供关闭入口。
 

@@ -1817,3 +1817,13 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 - 测试 C87：日期窗口、workspace 日记、vault 约定/大事记、vault 日记回落、注入话术过滤、密钥脱敏、总长截断/空返回、空白归一。
 - 验证：character 86/86；全量 accept **33 套 / 626 断言 / 0 失败**；双 typecheck 0/0；build 通过；boundary 0/0/0。
 - 已知边界（登记 4.4）：只在 recall 类问句注入（普通问候不会主动回忆，避免每轮 token）；单文件 >256KB 跳过召回；注入过滤是常见话术黑名单（边界+标题说明才是主防线）；界面暂无「最近记忆来源/命中」展示。
+
+### P3 · 记忆/关系管理页（4.3，2026-11-03 晚）
+
+- 新增 `memoryAdmin.ts`（纯 Node）：`listMemories`（最近 30 天日记：workspace 优先、vault 回落；约定/大事记单文件 + 目录两种形态）、`readMemory`（id 白名单：日期校验/重新扫描关系文件，不拼任意路径）、`saveMemoryDiary`（保留 frontmatter、只写本地 memory、上限 2 万字）、`deleteMemory`（日记归档到 workspace `memory-archive/<ts>/`、Obsidian 日记/关系笔记归档到 `大肥鱼/归档/<ts>/`）。
+- 新通道 `character:memory:list|read|save|delete`（types/ipc/wiring/preload 四处）；UI 角色页新增「记忆与关系」卡：关系摘要、日记列表（查看/编辑/删除）、约定/大事记列表（查看/归档删除）、刷新；删除走二次确认。
+- 测试 C88：列表（workspace 优先/vault 回落/两种关系形态）、读取、非白名单 id 拒绝、非法日期、read→save 往返（frontmatter 恰好一组）、保存保留 frontmatter/替换正文/超长拒绝、日记与关系（单文件/目录）归档删除；C84 通道 +memoryAdmin；ui 结构断言（卡片/api/dirty/只读关系/preload 通道）。
+- 复核修复：`MemoryAdminError` 继承 `CharacterError`（IPC 透传 BAD_PAYLOAD/NOT_READY，不再退化为 STORE_IO）；`readMemory` 只返回正文、`saveMemoryDiary` 再剥一次 frontmatter（修「打开→保存」重复 frontmatter 的数据损坏）；关系笔记只读展示（去掉假保存按钮），日记编辑器加 dirty 守卫（切换/刷新/关闭未保存需确认）；单文件关系归档保留 `.md`；删除不存在的日记不再留空归档目录。
+- 验证：character 87/87；全量 accept **33 套 / 627 断言 / 0 失败**；双 typecheck 0/0；build 通过；boundary 0/0/0。
+- 已知边界（登记 4.4）：关系只读展示（阶段/心情/连续天数），称呼/禁忌仍在设置页；日记编辑只改本地记忆，Obsidian 原件不同步；归档不做自动清理；列表固定最近 30 天；关系目录列表无条数上限（后续可 cap）；relation 未做 realpath containment（本地单用户风险低）。
+- flake 观察：voice V11「后台轮询推进」在 22:12 全量跑失败一次（固定 sleep(200) 竞态），单跑 21/21 绿；与本次改动无关，登记观察，后续可改轮询等待。
