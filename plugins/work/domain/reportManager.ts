@@ -24,7 +24,7 @@ import {
   type FactMatterInfo,
   type FactRecord
 } from './factAggregator'
-import type { GatewayClient, GatewayStreamHandle } from '../../../electron/main/gatewayClient'
+import type { GatewayClient, GatewayStreamHandle } from '../../../electron/main/services/gateway/types'
 import { dateOf, normalizeDate } from './todoManager'
 import { addDays } from './contextEngine'
 

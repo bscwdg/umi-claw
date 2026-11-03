@@ -18,7 +18,7 @@
 // 本模块不 import electron；DB / RecordManager / GatewayClient 注入，纯 Node 可测。
 
 import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
-import type { GatewayClient, GatewayStreamHandle } from '../../../electron/main/gatewayClient'
+import type { GatewayClient, GatewayStreamHandle } from '../../../electron/main/services/gateway/types'
 import {
   OUTPUT_TYPE_CLASSIFICATION,
   type OutputType

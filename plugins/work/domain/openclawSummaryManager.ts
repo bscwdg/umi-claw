@@ -25,7 +25,7 @@
 import { createHash } from 'crypto'
 import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
 import type { WorkDatabase } from './database'
-import type { GatewayClient, GatewayStreamHandle } from '../../../electron/main/gatewayClient'
+import type { GatewayClient, GatewayStreamHandle } from '../../../electron/main/services/gateway/types'
 import type { RecordManager } from './recordManager'
 import { dateOf } from './todoManager'
 

@@ -4,7 +4,7 @@
 // 插件既拿不到 token，也控制不了网关进程。
 
 import type { OpenClawApi } from '../../electron/main/kernel'
-import type { GatewayClient } from '../../electron/main/gatewayClient'
+import type { GatewayClient } from '../../electron/main/services/gateway/types'
 
 export function buildOpenClawGateway(openclaw: OpenClawApi): GatewayClient {
   return {

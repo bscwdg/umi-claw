@@ -29,7 +29,7 @@ import {
   type Platform
 } from './contextEngine'
 import { renderPackRuleSection } from './platformRules'
-import type { GatewayClient, GatewayChatMessage, GatewayStreamHandle, GatewayUsage } from '../../../electron/main/gatewayClient'
+import type { GatewayClient, GatewayChatMessage, GatewayStreamHandle, GatewayUsage } from '../../../electron/main/services/gateway/types'
 
 /** 提问长度上限（防把整篇文档粘进来；顾问问题是短问句） */
 export const ADVISOR_QUESTION_MAX_LENGTH = 1_000

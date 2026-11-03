@@ -52,8 +52,8 @@ import {
 } from '../../../electron/main/services/gateway/parts'
 import type {
   GatewayChatMessage,
-  GatewayStreamHandle
-} from '../../../electron/main/gatewayClient'
+  GatewayStreamHandle,
+} from '../../../electron/main/services/gateway/types'
 import { loadPdfjsModule, asPdfjsDirUrl, type PdfjsAssets } from '../../../electron/main/services/knowledge'
 
 /** pdfjs 模块形状（类型取官方 d.ts；运行时从随包资产加载，见 documentParsers） */

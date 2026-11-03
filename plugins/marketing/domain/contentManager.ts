@@ -54,8 +54,8 @@ import type {
   GatewayClient,
   GatewayChatMessage,
   GatewayStreamHandle,
-  GatewayStreamResult
-} from '../../../electron/main/gatewayClient'
+  GatewayStreamResult,
+} from '../../../electron/main/services/gateway/types'
 
 // ── 常量（§四 列值与产品口径） ───────────────────────────────────────────────
 

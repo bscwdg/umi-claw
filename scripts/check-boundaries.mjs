@@ -301,6 +301,31 @@ export function classifyPluginSpecifier(fromFileRel, spec, typeOnly = false) {
   return PLUGIN_ALLOW_RE.test(tail) ? null : tail
 }
 
+/**
+ * 扫描 plugins/**：返回「type-only 但指向非白名单宿主模块」的引用（4.2 B4）。
+ *
+ * 为什么不复用 findPluginHostViolations：那份只收**违规**（value import），
+ * 且 `boundary.accept` 的 B2 明确断言「纯类型引用放行」——把类型引用并入违规
+ * 会推翻既有契约。这里单独计数、单独 ratchet：
+ * 类型依赖同样把插件与宿主实现绑死（宿主换实现插件就编译不过），
+ * 但它的严重度低于运行时依赖，所以分级治理而不是一刀切。
+ */
+export function findPluginHostTypeOnlyRefs(root = repoRoot) {
+  const hits = []
+  for (const abs of walk(join(root, 'plugins'))) {
+    const fileRel = relative(root, abs).replace(/\\/g, '/')
+    const src = readFileSync(abs, 'utf8')
+    for (const ref of moduleReferences(src)) {
+      if (!ref.typeOnly) continue
+      // 复用同一个判定，但把 typeOnly 当 false 走一遍分支，判断目标是否越界
+      const target = classifyPluginSpecifier(fileRel, ref.spec, false)
+      if (!target) continue
+      hits.push({ file: fileRel, line: ref.line, spec: ref.spec, target, kind: ref.kind })
+    }
+  }
+  return hits
+}
+
 /** 扫描 plugins/**：返回宿主越界引用 */
 export function findPluginHostViolations(root = repoRoot) {
   const hits = []
@@ -361,9 +386,14 @@ const isMain =
 
 if (isMain) {
   const pluginHits = findPluginHostViolations()
+  const typeOnlyHits = findPluginHostTypeOnlyRefs()
   const managerHits = findManagerElectronHits()
   const managerDirs = listManagerDirs()
-  const current = { pluginHostBoundary: pluginHits.length, managerElectron: managerHits.length }
+  const current = {
+    pluginHostBoundary: pluginHits.length,
+    pluginHostTypeOnly: typeOnlyHits.length,
+    managerElectron: managerHits.length
+  }
 
   const baseline = existsSync(baselinePath)
     ? JSON.parse(readFileSync(baselinePath, 'utf8'))
@@ -423,11 +453,19 @@ if (isMain) {
 
   if (process.argv.includes('--json')) {
     console.log(
-      JSON.stringify({ current, baseline, managerDirs, failures, pluginHits, managerHits }, null, 2)
+      JSON.stringify(
+        { current, baseline, managerDirs, failures, pluginHits, typeOnlyHits, managerHits },
+        null,
+        2
+      )
     )
     process.exit(failures.length ? 1 : 0)
   }
 
+  if (typeOnlyHits.length) {
+    console.log(`\n插件 type-only 越界（${typeOnlyHits.length} 条，仅类型依赖）：`)
+    for (const h of typeOnlyHits) console.log(`  ${h.file}:${h.line}  [${h.kind}] ${h.spec}`)
+  }
   if (pluginHits.length) {
     console.log(`\n插件越界 import（${pluginHits.length} 条）：`)
     for (const h of pluginHits) console.log(`  ${h.file}:${h.line}  [${h.kind}] ${h.spec}`)
@@ -445,6 +483,7 @@ if (isMain) {
 
   console.log(
     `\n✓ 边界门禁通过：pluginHostBoundary=${current.pluginHostBoundary}（基线 ${baseline.pluginHostBoundary}），` +
+      `pluginHostTypeOnly=${current.pluginHostTypeOnly}（基线 ${baseline.pluginHostTypeOnly ?? 0}），` +
       `managerElectron=${current.managerElectron}（基线 ${baseline.managerElectron}，扫描 ${managerDirs.length} 个域目录）`
   )
   process.exit(0)

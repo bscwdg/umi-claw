@@ -14,6 +14,7 @@ import {
   NONLITERAL_SPEC,
   classifyPluginSpecifier,
   findManagerElectronHits,
+  findPluginHostTypeOnlyRefs,
   findPluginHostViolations,
   listManagerDirs,
   managerElectronRefs,
@@ -130,6 +131,33 @@ await r.check('B7', 'live 扫描与基线一致（不高于基线，且基线文
     )
   }
   return `实测 ${hits.length} 条 ≤ 基线 ${baseline.pluginHostBoundary}`
+})
+
+await r.check('B9', 'type-only 越界单列统计：基线 0，且与值越界分开计数（4.2 B4）', async () => {
+  const baseline = JSON.parse(readFileSync(join(repoRoot, 'scripts', 'boundary-baseline.json'), 'utf8'))
+  assertEq(typeof baseline.pluginHostTypeOnly, 'number', '基线应有 pluginHostTypeOnly')
+  assertEq(baseline.pluginHostTypeOnly, 0, 'pluginHostTypeOnly 必须保持 0（类型依赖同样绑死实现）')
+
+  const typeHits = findPluginHostTypeOnlyRefs()
+  assert(
+    typeHits.length <= baseline.pluginHostTypeOnly,
+    `type-only 实测 ${typeHits.length} 不得高于基线 ${baseline.pluginHostTypeOnly}`
+  )
+
+  // 与值越界分开计数：两套命中不得互相污染
+  const valueHits = findPluginHostViolations()
+  assert(
+    valueHits.every((h) => !typeHits.some((t) => t.file === h.file && t.line === h.line)),
+    '值越界与类型越界命中列表不得重叠'
+  )
+
+  // 纯类型也判越界（白名单内不算）
+  const bad = classifyPluginSpecifier(PLUGIN_FILE, '../../electron/main/ipc/work', true)
+  assertEq(bad, null, 'classifyPluginSpecifier 本身仍对 typeOnly 放行（兼容 B2 契约）')
+  const viaRefs = findPluginHostTypeOnlyRefs
+  assert(typeof viaRefs === 'function', 'findPluginHostTypeOnlyRefs 应导出')
+
+  return `type-only ${typeHits.length} ≤ 基线 ${baseline.pluginHostTypeOnly}；与值越界不重叠`
 })
 
 await r.check('B8', '注释 / 模板字面量 / 非字面量 / typeof / API 调用 的判定', async () => {

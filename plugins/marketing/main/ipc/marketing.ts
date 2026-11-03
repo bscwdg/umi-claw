@@ -18,7 +18,7 @@
 import { showOpenDialog } from '../../../../electron/main/services/hostUi'
 import { channelHandle } from './channelRegistrar'
 import { toErrorEnvelope, type ErrorEnvelope } from '../../../../electron/main/services/errors'
-import type { BackupResult, DatabaseClient, DatabaseStatus } from '../../../../electron/main/database/database'
+import type { BackupResult, DatabaseLike, DatabaseStatus } from '../../../../electron/main/services/dbTypes'
 import type {
   CreateProjectInput,
   DeleteProjectResult,
@@ -108,7 +108,7 @@ function handle(channel: string, fn: (...args: any[]) => Promise<IpcResult<unkno
 }
 
 export function registerMarketingIpc(
-  database: DatabaseClient,
+  database: DatabaseLike,
   projectManager: ProjectManager,
   businessManager: BusinessManager,
   watchlistManager: WatchlistManager,
@@ -228,7 +228,7 @@ export async function pickKnowledgeFile(): Promise<{ filePath: string | null }> 
 
 /** 主进程内部使用（不做 IPC 暴露）：备份链路验证与退出前清理 */
 export async function withMarketingBackup(
-  database: DatabaseClient,
+  database: DatabaseLike,
   reason: string
 ): Promise<BackupResult> {
   return database.backup(reason)

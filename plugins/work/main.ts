@@ -12,7 +12,7 @@ import { registerWorkIpc, setWorkIpcRegistrar, type WorkIpcDeps } from './main/i
 import { resolvePdfjsAssets } from '../../electron/main/services/knowledge/parsers/pdfjsAssets'
 import { importWorkDataIfNeeded } from './domain/migrate'
 import { clearLegacyImportRetry, registerLegacyImportRetry } from '../../electron/main/services/pluginDataImport'
-import type { GatewayClient } from '../../electron/main/gatewayClient'
+import type { GatewayClient } from '../../electron/main/services/gateway/types'
 import { join } from 'node:path'
 
 let runtime: WorkRuntime | null = null
