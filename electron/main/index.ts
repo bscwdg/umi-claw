@@ -472,8 +472,7 @@ async function initPlugins(): Promise<void> {
  * 便携 Node 写入探针结果（4.2 B2）。
  *
  * 4.0.1 只做了「检测 + 写日志」（console 在打包 GUI 里看不到）；
- * 这里把结果存成状态，由 `env:runtimeProbe` 通道推给渲染端做横幅。
- * null = 还没探过（启动早期 / 便携 Node 不存在）。
+ * 这里把结果存成状态，由 `env:runtimeProbe` 推给渲染端做横幅；null = 还没探过。
  */
 let runtimeProbeState: {
   ok: boolean
