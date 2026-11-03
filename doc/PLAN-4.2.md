@@ -137,6 +137,28 @@ gateway{parts,stream,types} / dbTypes / abortRegistry）+ `ipc/host/*` 七个文
 净效果：**代码从 index.ts 搬到了别处，总量反而从 26,373 涨到 29,115（+2,742）**。
 这正是 G12 描述的陷阱：搬家不等于瘦身。
 
+### 超尺寸文件实测（P1 的依据）
+
+如果采纳 P1（改判据为「单文件 ≤1500 行」），需要治理的文件实测如下
+（全部 ts/vue 共 224 个文件，>1500 行 6 个，1000–1500 行 5 个）：
+
+| 文件 | 行数 | 层 |
+| --- | --- | --- |
+| `electron/main/clawManager.ts` | 2,322 | 宿主壳 |
+| `electron/main/downloadManager.ts` | 2,044 | 宿主壳 |
+| `electron/main/configManager.ts` | 2,025 | 宿主壳 |
+| `plugins/marketing/ui/store.ts` | 2,002 | 插件 UI |
+| `src/views/voice/VoicePage.vue` | 1,843 | 宿主页面 |
+| `electron/main/index.ts` | 1,801 | 宿主入口（判据 ≤1,800，**超 1 行**） |
+
+次一档（1000–1500）：`gatewayClient` 1,262 / `character/manager` 1,135 /
+`ChannelsPage.vue` 1,090 / `marketing/contentManager` 1,082 / `marketing/scanRecognizer` 1,071。
+
+> 注：`index.ts` 1,801 比 4.1 记录的 1,777 涨了 24 行（4.2 B3 的 abort 注册表接线 +
+> B2 的探针状态声明）。若 P1 采纳且判据严格为 ≤1,800，需再压 1 行。
+
+---
+
 ### 三条可选路径（需拍板）
 
 | 选项 | 做法 | 能否达 ≤26,000 | 代价 |
