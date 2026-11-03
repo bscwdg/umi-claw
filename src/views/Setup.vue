@@ -345,6 +345,7 @@ import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import ConfirmDialog from "@/views/components/ConfirmDialog.vue";
 import { openWizard } from "@/composables/useWizardGate";
+import { isPluginEnabled } from "@/renderer/pluginUi";
 import { useEnvSetupStore, type EnvTaskKind } from "@/stores/envSetup";
 
 const router = useRouter();
@@ -514,16 +515,20 @@ function openDataDir() {
 }
 
 async function goToDashboard() {
-  // §八：首启向导「Setup 后接续」——向导未完成先开向导弹窗，否则进控制台
-  try {
-    const s = await window.api.work.wizard.status()
-    if (!s.completed) {
-      // 向导已改为弹窗（北 2026-09-24）：不跳路由，开弹窗即可
-      openWizard()
-      return
+  // §八：首启向导「Setup 后接续」——向导未完成先开向导弹窗，否则进控制台。
+  // work 是插件：停用时 `work:wizard:status` 没有 handler，盲调会抛
+  // No handler registered（真实缺陷，非潜在风险），所以先判启用态。
+  if (isPluginEnabled("work")) {
+    try {
+      const s = await window.api.work.wizard.status()
+      if (!s.completed) {
+        // 向导已改为弹窗（北 2026-09-24）：不跳路由，开弹窗即可
+        openWizard()
+        return
+      }
+    } catch {
+      // 读取失败不阻断：按原流程进控制台（绝不阻塞启动）
     }
-  } catch {
-    // 读取失败不阻断：按原流程进控制台（绝不阻塞启动）
   }
   router.push("/dashboard")
 }

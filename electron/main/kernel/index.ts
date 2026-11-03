@@ -53,6 +53,7 @@ export {
   type OpenClawStreamHandle,
   type PluginDbApi,
   type PluginKvApi,
+  type PluginConsentApi,
   type PluginSecretsApi,
   type PluginServiceBag,
   type ServiceFactories,

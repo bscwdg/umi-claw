@@ -47,6 +47,7 @@ const ACCEPT = [
   ['voice', 'test/voice.accept.mjs'],
   ['character', 'test/character.core.accept.mjs'],
   ['plugin', 'test/plugin.accept.mjs'],
+  ['consent', 'test/consent.accept.mjs'],
   ['ui', 'test/ui.accept.mjs']
 ]
 // 全部单模块绿后

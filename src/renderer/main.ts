@@ -3,7 +3,7 @@ import { createPinia } from 'pinia'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import App from '../App.vue'
 import '../assets/style.css'
-import { PluginUiRegistry } from './pluginUi'
+import { PluginUiRegistry, enabledPluginIds } from './pluginUi'
 import { PLUGIN_UI_ENTRIES } from './plugins.renderer.generated'
 import type { PluginStatus } from '../../electron/main/kernel/lifecycle'
 
@@ -55,6 +55,9 @@ void (async () => {
 const pluginUi = new PluginUiRegistry(router)
 
 async function syncPluginUi(statuses: PluginStatus[]): Promise<void> {
+  // P3：把「已启用」同步给 UI 层——宿主首启流程据此决定要不要调 work:* 通道
+  enabledPluginIds.value = new Set(statuses.filter((x) => x.enabled).map((x) => x.id))
+
   for (const status of statuses) {
     const entry = PLUGIN_UI_ENTRIES[status.id]
     const shouldApply = status.enabled && status.state === 'activated' && Boolean(entry)

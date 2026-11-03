@@ -96,7 +96,7 @@
     />
 
     <!-- 冷启动向导（弹窗形态；走完或逐步跳过才关，只出现一次） -->
-    <WizardModal v-model:visible="wizardVisible" @done="onWizardDone" />
+    <WizardModal v-if="workPluginEnabled" v-model:visible="wizardVisible" @done="onWizardDone" />
 
     <!-- 关闭窗口确认 -->
     <ConfirmDialog
@@ -123,7 +123,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useClawStore } from '@/stores/claw'
 import { useConfigStore } from '@/stores/config'
-import { pluginNavGroups, pluginSlots } from '@/renderer/pluginUi'
+import { pluginNavGroups, pluginSlots, isPluginEnabled } from '@/renderer/pluginUi'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 import UserAgreementModal from '@/views/components/UserAgreementModal.vue'
 import WizardModal from '@/views/components/WizardModal.vue'
@@ -138,6 +138,8 @@ import {
 } from '@/composables/useAgreementGate'
 
 const api = window.api
+// work 插件是否启用：决定向导弹窗能否挂载（停用时 work:* 通道不存在）
+const workPluginEnabled = computed(() => isPluginEnabled('work'))
 const router = useRouter()
 // 桌宠窗口复用同一个渲染端入口：按路由切成裸页面，不加载主壳（工具栏/侧栏/弹窗都不该出现在透明窗口里）
 const isPetWindow = computed(() => router.currentRoute.value.path === '/character-pet')
@@ -340,14 +342,19 @@ onUnmounted(() => {
  */
 async function ensureFirstRunWizard(): Promise<void> {
   try {
-    const status = await api.work.wizard.status()
+    // 协议状态走**宿主通道**：work 停用时 `work:wizard:status` 没有 handler，
+    // 盲调会抛 No handler registered，且协议弹窗会静默不弹（真实缺陷）。
+    const status = await api.consent.status()
     syncConsent(status.consent, status.consentAt ?? null)
     if (!status.consent) {
       // 阻断：不同意就不能用
       openAgreementBlocking()
       return
     }
-    if (!status.completed) {
+    // 向导属于 work 插件：未启用时不查询（否则同样是 No handler registered）
+    if (!isPluginEnabled('work')) return
+    const wizard = await api.work.wizard.status()
+    if (!wizard.completed) {
       // 向导改为弹窗（北 2026-09-24）：不再跳路由，只开弹窗
       wizardVisible.value = true
     }
@@ -367,10 +374,11 @@ async function onAgreementAgreed(): Promise<void> {
   if (agreementBusy.value) return
   agreementBusy.value = true
   try {
-    const res = await api.work.wizard.grantConsent()
+    const res = await api.consent.grant()
     syncConsent(true, res?.consentAt ?? Date.now())
     agreementVisible.value = false
-    // 同意后继续走完向导其余步骤（弹窗，不跳路由）
+    // 同意后继续走完向导其余步骤（弹窗，不跳路由）；work 未启用则只落协议
+    if (!isPluginEnabled('work')) return
     const status = await api.work.wizard.status()
     if (!status.completed) wizardVisible.value = true
   } catch {

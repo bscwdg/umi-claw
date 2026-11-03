@@ -75,6 +75,8 @@ import {
 } from './fish/voice'
 import { registerCharacter } from './character/wiring'
 import { buildCharacterDeps } from './services/characterHost'
+import { createConsentService } from './services/consent'
+import { registerConsentIpc } from './ipc/host/consent'
 import { CharacterKvStore } from './services/characterKv'
 import { probeNodeWritable } from './services/runtimeProbe'
 import type { CharacterManager } from './character/manager'
@@ -426,6 +428,18 @@ async function initPlugins(): Promise<void> {
       }),
     notifications: () => createNotificationsService(),
     openclaw: () => createOpenClawService(getWorkGatewayClient),
+    // 用户协议（4.1.1 宿主单源）：插件经 ctx.services.consent 读写，不碰自己的库
+    consent: () => ({
+      status: () => consentService.status(),
+      grant: () => consentService.grant(),
+      revoke: () => consentService.revoke()
+    }),
+    // P2：插件启用后补一次旧数据迁移（work 停用期间启动时读不到它的库）
+    afterEnable: async (pluginId: string) => {
+      if (pluginId !== 'work') return
+      const result = await consentService.migrateFromPluginDb()
+      if (result.migrated) console.log('[consent] 插件启用后完成历史同意状态迁移')
+    },
     encryption: safeStorage,
     ipc: ipcMain,
     appInfo: () => ({
@@ -449,32 +463,29 @@ async function initPlugins(): Promise<void> {
 }
 
 /**
- * 用户协议闸门（宿主自持，Phase 2 审查 P1-3）。
+ * 用户协议闸门（宿主单源，4.1.1）。
  *
- * 以前依赖 work 插件的 wizardManager：插件停用或激活失败时 `?.` 会静默放行，
- * 未同意协议也能拉起 OpenClaw。现在直接读**插件库的 app_meta**——库由宿主 runtime 持有
- * （pluginRuntime），不依赖插件是否激活；读不到时回落宿主 work.db。
+ * 此前读**插件库优先、回落宿主库**，导致「插件库已撤销但宿主库有历史 granted」时
+ * 撤销失效；且 work 停用时渲染端连状态都读不到（No handler registered）。
+ *
+ * 现在权威只有一个：宿主 work.db 的 app_meta（见 services/consent.ts）。
+ * 插件库仅在「宿主库无结论 + 无撤销墓碑」时作为一次性迁移来源。
  */
+const consentService = createConsentService({
+  // 惰性取值：workDatabase 晚于本函数定义才创建
+  hostDb: () =>
+    workDatabase
+      ? { metaGet: (k) => workDatabase!.metaGet(k), metaSet: (k, v) => workDatabase!.metaSet(k, v) }
+      : null,
+  // 只有 work 启用时才读插件库：否则会为了读一个开关把库建出来（审查 #4）
+  pluginDb: () =>
+    pluginRuntime?.isEnabled('work') ? pluginRuntime.pluginDbFor('work') : null,
+  now: () => Date.now(),
+  logger: (m) => console.log(m)
+})
+
 async function assertConsent(): Promise<void> {
-  const granted = (value: string | null): boolean => value === 'granted'
-
-  try {
-    // 只有 work 插件启用时才读插件库：否则会为了读一个开关把库建出来（审查 #4）
-    const db = pluginRuntime?.isEnabled('work') ? pluginRuntime.pluginDbFor('work') : null
-    if (db) {
-      if (granted(await db.metaGet('wizard_consent'))) return
-    }
-  } catch (e) {
-    console.warn('[Main] 读取插件库协议状态失败，回落宿主库：', (e as Error)?.message ?? e)
-  }
-
-  try {
-    if (workDatabase && granted(await workDatabase.metaGet('wizard_consent'))) return
-  } catch {
-    // 读不到即视为未同意
-  }
-
-  throw new Error('请先同意用户协议，再启动 OpenClaw')
+  await consentService.ensure()
 }
 
 /**
@@ -1210,6 +1221,9 @@ function registerIpcHandlers(): void {
     log: (line) => console.log(line),
     logError: (...args) => console.error(...args)
   })
+  // 用户协议闸门（宿主单源）：与 work 插件启停解耦。
+  // 此前渲染端只能走 work:wizard:*，work 停用即 No handler registered。
+  registerConsentIpc(ipcMain, { consent: consentService })
   // 旧库导入状态 / 重试入口（4.0.2 P2：失败对用户可见 + 一键重试）
   registerImportStatusIpc(ipcMain, {
     listStatuses: () =>

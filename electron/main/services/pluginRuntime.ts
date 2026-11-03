@@ -23,6 +23,7 @@ import {
   type LegacyDbApi,
   type NotificationsApi,
   type OpenClawApi,
+  type PluginConsentApi,
   type PluginStatus,
   type ServiceFactories
 } from '../kernel'
@@ -54,6 +55,19 @@ export interface PluginRuntimeDeps {
   hostOps: () => HostOpsApi
   notifications: () => NotificationsApi
   openclaw: () => OpenClawApi
+  /**
+   * 用户协议服务（4.1.1 宿主单源）。
+   * 插件（work 的 wizardManager）通过 ctx.services.consent 读写，
+   * **不再碰自己的 app_meta.wizard_consent**——那是撤销失效的根因。
+   */
+  consent: () => PluginConsentApi
+  /**
+   * 插件被启用后的回调（P2）。
+   *
+   * 为什么要它：宿主协议状态可能还需要从插件库补一次迁移，但启动时 work 若处于停用态
+   * 就读不到插件库（为避免「为了读一个开关建库」）。等用户手动启用时再补。
+   */
+  afterEnable?: (pluginId: string) => Promise<void>
   encryption: SecretEncryptionLike
   ipc: {
     handle(channel: string, listener: (event: unknown, ...args: any[]) => unknown): void
@@ -115,6 +129,8 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
         new PluginSecretStore(join(dataDir, 'plugins', info.id, 'secrets.bin'), deps.encryption),
       // 插件偏好：宿主持久化，按插件命名空间隔离
       kv: (info) => createPluginKvService(dataDir, info.id),
+      // 用户协议（宿主单源）：插件不写自己的库，避免两边状态分裂
+      consent: () => deps.consent(),
       // 旧库只读：work → work.db，marketing → umi-claw.db（插件自己决定怎么搬）
       legacyDb: (info) => {
         const client =
@@ -149,6 +165,14 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
         await host.setEnabled(id, enabled)
         await stateStore.save(registry.enabledSnapshot())
         broadcastStatus()
+        // P2：启用后补一次宿主侧迁移（work 启用时才能读到它的库）
+        if (enabled && deps.afterEnable) {
+          try {
+            await deps.afterEnable(id)
+          } catch (e) {
+            deps.logger(`[plugin:${id}] afterEnable 失败（不影响启用）: ${(e as Error)?.message ?? e}`)
+          }
+        }
         return { ok: true, data: statuses() }
       } catch (e) {
         return {

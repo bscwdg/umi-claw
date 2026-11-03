@@ -90,6 +90,9 @@ export default definePlugin({
     const db = ctx.services.db
     const openclaw = ctx.services.openclaw
     const hostOps = ctx.services.hostOps
+    // 用户协议（4.1.1 宿主单源）：插件经 ctx 读写，不碰自己的 app_meta。
+    // 未注入时 WizardManager 回落自身 db（保持直接构造 Manager 的测试用法）。
+    const consent = ctx.services.consent
     if (!db || !openclaw || !hostOps) {
       throw new Error('work 插件缺少必需服务（db / openclaw / hostOps）')
     }
@@ -111,7 +114,8 @@ export default definePlugin({
       listPushChannels: async () => (await hostOps.listPushChannels()) as never,
       listPushTargets: async (channel) => (await hostOps.listPushTargets(channel)) as never,
       locateOldDbs: () => hostOps.locateOldDbs() as never,
-      readOldDb: async (info) => (await hostOps.readOldDb(info)) as never
+      readOldDb: async (info) => (await hostOps.readOldDb(info)) as never,
+      consent: consent ?? undefined
     })
 
     // work:* 通道交给插件注册器：停用插件时由内核统一摘除

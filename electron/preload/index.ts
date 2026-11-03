@@ -54,6 +54,13 @@ async function call<T = unknown>(channel: string, ...args: unknown[]): Promise<T
 }
 
 // 完整类型化的 API
+/** 用户协议状态（与 main 侧 ConsentStatus 同形） */
+export interface ConsentStatus {
+  consent: boolean
+  consentAt: number | null
+  revokedAt: number | null
+}
+
 const api = {
   // 窗口控制
   window: {
@@ -155,6 +162,14 @@ const api = {
 
   dialog: {
     showMessage: (options: any) => ipcRenderer.invoke('dialog:showMessage', options)
+  },
+
+  // 用户协议（宿主单源）：与 work 插件启停解耦，work 停用也能读写。
+  // 走 call()：与其它通道一致——成功解包成 data，失败抛 WorkError（带 code）。
+  consent: {
+    status: () => call<ConsentStatus>('consent:status'),
+    grant: () => call<{ consent: true; consentAt: number }>('consent:grant'),
+    revoke: () => call<{ consent: false }>('consent:revoke')
   },
 
   // 渠道

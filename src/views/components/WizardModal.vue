@@ -254,7 +254,8 @@ function next(): void {
 
 async function onConsent(): Promise<void> {
   try {
-    await window.api.work.wizard.grantConsent()
+    // 同意写**宿主库**（唯一权威）：work 停用时也能落，且与启动闸门同源
+    await window.api.consent.grant()
     consented.value = true
     next()
   } catch (e: any) {
@@ -363,7 +364,9 @@ async function initState(): Promise<void> {
   error.value = ''
   try {
     status.value = await window.api.work.wizard.status()
-    consented.value = status.value.consent
+    // 同意状态以宿主为准（宿主单源）；读取失败则回落向导返回值
+    const consent = await window.api.consent.status().catch(() => null)
+    consented.value = consent ? consent.consent : status.value.consent
     if (status.value.oldDbDecision) oldDbChoice.value = status.value.oldDbDecision as any
     stepIndex.value = status.value.consent ? 1 : 0
   } catch (e: any) {

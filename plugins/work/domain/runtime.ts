@@ -21,7 +21,11 @@ import { createReportManager, type ReportManager } from './reportManager'
 import { createQaManager, type QaManager } from './qaManager'
 import { createToolManager, type ToolManager } from './toolManager'
 import { createKnowledgeManager, type KnowledgeManager } from './knowledgeManager'
-import { createWizardManager, type WizardManager } from './wizardManager'
+import {
+  createWizardManager,
+  type WizardConsentPort,
+  type WizardManager
+} from './wizardManager'
 import { createReminderManager, type ReminderManager } from './reminderManager'
 import {
   createOpenClawSummaryManager,
@@ -61,6 +65,11 @@ export interface WorkRuntimeDeps {
   listPushTargets: (channel: string) => ReturnType<PushChannelProvider> | Promise<unknown>
   locateOldDbs: OldDbLocator
   readOldDb: OldDbReader
+  /**
+   * 宿主协议服务（4.1.1 宿主单源）。插件侧由 `ctx.services.consent` 注入；
+   * 未注入时 WizardManager 回落自身 db（保持直接构造 Manager 的测试用法）。
+   */
+  consent?: WizardConsentPort
 }
 
 export interface WorkRuntime {
@@ -142,6 +151,7 @@ export function createWorkRuntime(deps: WorkRuntimeDeps): WorkRuntime {
 
   const wizard = createWizardManager({
     database,
+    consent: deps.consent,
     locateOldDbs: deps.locateOldDbs,
     readOldDb: deps.readOldDb,
     logger: log

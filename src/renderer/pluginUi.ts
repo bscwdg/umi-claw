@@ -47,6 +47,22 @@ export const pluginNavGroups = shallowRef<PluginNavGroup[]>([])
 /** 当前生效的插槽组件（name → 各插件贡献的组件，按安装顺序） */
 export const pluginSlots = shallowRef<Record<string, Component[]>>({})
 
+/**
+ * 已启用的插件 id 集合（P3）。
+ *
+ * 为什么要在 UI 层暴露：宿主启动流程需要判断「work 是否启用」来决定要不要
+ * 调 `api.work.wizard.status()`——插件停用时那个通道没有 handler，盲调会抛
+ * `No handler registered`。此前这份状态只存在于 main.ts 的局部变量里，App 读不到。
+ *
+ * 由 syncPluginUi 写入（它是 plugins.onChanged 的唯一消费方），与导航/路由同源。
+ */
+export const enabledPluginIds = shallowRef<Set<string>>(new Set())
+
+/** 判断某插件是否已启用（渲染端唯一口径） */
+export function isPluginEnabled(id: string): boolean {
+  return enabledPluginIds.value.has(id)
+}
+
 interface AppliedPlugin {
   routeRemovers: Array<() => void>
   routePaths: string[]

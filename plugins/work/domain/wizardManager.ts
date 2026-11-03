@@ -71,8 +71,23 @@ export type OldDbLocator = () => OldDbInfo[]
 /** 旧库只读读取器（注入：读旧库映射字段；绝不写） */
 export type OldDbReader = (info: OldDbInfo) => Promise<OldDbMapping>
 
+/** 宿主协议服务的最小形状（与 kernel 的 PluginConsentApi 一致） */
+export interface WizardConsentPort {
+  status(): Promise<{ consent: boolean; consentAt: number | null; revokedAt: number | null }>
+  grant(): Promise<{ consent: true; consentAt: number }>
+  revoke(): Promise<{ consent: false }>
+}
+
 export interface WizardManagerOptions {
   database: WorkDatabase
+  /**
+   * 宿主协议服务（4.1.1 宿主单源）。
+   *
+   * 注入时：同意状态**只读宿主**，本模块不再碰 app_meta.wizard_consent——
+   * 那是「插件库已撤销但宿主库有历史 granted → 撤销失效」的根因。
+   * 未注入时（如 test/wizard.accept.mjs 直接构造）：回落自身 db，行为与旧版一致。
+   */
+  consent?: WizardConsentPort
   locateOldDbs?: OldDbLocator
   readOldDb?: OldDbReader
   now?: () => number
@@ -81,6 +96,7 @@ export interface WizardManagerOptions {
 
 export class WizardManager {
   private readonly database: WorkDatabase
+  private readonly consent?: WizardConsentPort
   private readonly locateOldDbs: OldDbLocator
   private readonly readOldDb?: OldDbReader
   private readonly now: () => number
@@ -94,6 +110,7 @@ export class WizardManager {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, 'WizardManager 缺少依赖: database')
     }
     this.database = options.database
+    this.consent = options.consent
     this.locateOldDbs = options.locateOldDbs ?? (() => [])
     this.readOldDb = options.readOldDb
     this.now = options.now ?? (() => Date.now())
@@ -104,10 +121,20 @@ export class WizardManager {
     this.logger?.(m)
   }
 
+  /** 本地同意状态（未注入宿主服务时的回落路径） */
+  private async localConsent(): Promise<{ consent: boolean; consentAt: number | null }> {
+    const raw = await this.database.metaGet(META.CONSENT)
+    const atRaw = await this.database.metaGet(META.CONSENT_AT)
+    const granted = raw === CONSENT_GRANTED
+    return { consent: granted, consentAt: granted ? Number(atRaw ?? 0) || null : null }
+  }
+
   /** 向导首屏状态（不阻塞；旧库检测失败也不抛——检测不到视为无旧库） */
   async status(): Promise<WizardStatus> {
-    const consentRaw = await this.database.metaGet(META.CONSENT)
-    const consentAtRaw = await this.database.metaGet(META.CONSENT_AT)
+    // 同意状态：注入宿主服务时以宿主为准（宿主单源），否则回落本地
+    const consentPart = this.consent
+      ? await this.consent.status().catch(() => this.localConsent())
+      : await this.localConsent()
     const completedRaw = await this.database.metaGet(META.COMPLETED)
     const decisionRaw = (await this.database.metaGet(META.OLDDB_DECISION)) as OldDbDecision | null
 
@@ -121,8 +148,8 @@ export class WizardManager {
     }
 
     return {
-      consent: consentRaw === CONSENT_GRANTED,
-      consentAt: consentRaw === CONSENT_GRANTED ? Number(consentAtRaw ?? 0) || null : null,
+      consent: consentPart.consent,
+      consentAt: consentPart.consentAt,
       completed: completedRaw === '1',
       oldDb,
       oldDbDecision: isValidDecision(decisionRaw) ? decisionRaw : null
@@ -134,8 +161,10 @@ export class WizardManager {
    * 未同意 → 拒绝启动，让前端弹回用户协议弹窗。
    */
   async ensureConsent(): Promise<{ consent: true }> {
-    const raw = await this.database.metaGet(META.CONSENT)
-    if (raw !== CONSENT_GRANTED) {
+    const granted = this.consent
+      ? (await this.consent.status().catch(() => this.localConsent())).consent
+      : (await this.localConsent()).consent
+    if (!granted) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, '请先同意用户协议，再启动 OpenClaw', {
         reason: 'consent-required'
       })
@@ -145,6 +174,10 @@ export class WizardManager {
 
   /** 记录隐私告知同意（必过；只接受 granted）。重复同意保留首次时间。 */
   async grantConsent(): Promise<{ consent: true; consentAt: number }> {
+    // 注入宿主服务时：同意写**宿主库**（唯一权威），插件库不再留副本
+    if (this.consent) {
+      return this.consent.grant()
+    }
     const prev = await this.database.metaGet(META.CONSENT_AT)
     const at = Number(prev ?? 0) || this.now()
     await this.database.metaSet(META.CONSENT, CONSENT_GRANTED)
@@ -159,6 +192,10 @@ export class WizardManager {
    * 撤销后下次启动会重新弹阻断式协议弹窗（且启动闸门重新生效）。
    */
   async revokeConsent(): Promise<{ consent: false }> {
+    // 注入宿主服务时：撤销写**宿主库**并落墓碑——否则下次迁移会把旧 granted 搬回来
+    if (this.consent) {
+      return this.consent.revoke()
+    }
     await this.database.metaSet(META.CONSENT, null)
     await this.database.metaSet(META.CONSENT_AT, null)
     return { consent: false }
@@ -168,8 +205,10 @@ export class WizardManager {
    * 完成向导。前置：必须已同意隐私告知，否则 VALIDATION_ERROR（不能跳过必过页）。
    */
   async complete(): Promise<{ completed: true }> {
-    const consentRaw = await this.database.metaGet(META.CONSENT)
-    if (consentRaw !== CONSENT_GRANTED) {
+    const granted = this.consent
+      ? (await this.consent.status().catch(() => this.localConsent())).consent
+      : (await this.localConsent()).consent
+    if (!granted) {
       throw new AppError(ERROR_CODES.VALIDATION_ERROR, '必须先同意隐私告知才能完成向导', {
         reason: 'consent-required'
       })

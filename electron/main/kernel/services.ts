@@ -17,6 +17,7 @@ export const SERVICE_NAMES = [
   'voice',
   'secrets',
   'kv',
+  'consent',
   'hostOps',
   'legacyDb'
 ] as const
@@ -147,6 +148,21 @@ export interface PluginKvApi {
 }
 
 /**
+ * 用户协议共识（4.1.1：宿主单源）。
+ *
+ * 为什么放进契约：work 插件的 wizardManager 原本自己读写 `wizard_consent`，
+ * 而宿主闸门也读同一批键——两边一旦不同步就是「撤销失效」这类真缺陷。
+ * 现在权威只有宿主一份，插件通过这个窄接口读写，**不再碰自己的库**。
+ *
+ * 未注入时插件必须回落自身 db（保持 `test/wizard.accept.mjs` 直接构造 Manager 的用法）。
+ */
+export interface PluginConsentApi {
+  status(): Promise<{ consent: boolean; consentAt: number | null; revokedAt: number | null }>
+  grant(): Promise<{ consent: true; consentAt: number }>
+  revoke(): Promise<{ consent: false }>
+}
+
+/**
  * 宿主副作用集合（过渡服务，Phase 4 会拆细）。
  *
  * work 装箱时遇到的三类宿主能力：系统通知、渠道外发（spawn OpenClaw CLI）、旧库只读定位。
@@ -188,6 +204,7 @@ export interface PluginServiceBag {
   voice?: VoiceApi
   secrets?: PluginSecretsApi
   kv?: PluginKvApi
+  consent?: PluginConsentApi
   hostOps?: HostOpsApi
   legacyDb?: LegacyDbApi
 }
@@ -201,6 +218,7 @@ export interface ServiceFactories {
   voice?: (info: ServiceInfo) => VoiceApi
   secrets?: (info: ServiceInfo) => PluginSecretsApi
   kv?: (info: ServiceInfo) => PluginKvApi
+  consent?: (info: ServiceInfo) => PluginConsentApi
   hostOps?: (info: ServiceInfo) => HostOpsApi
   legacyDb?: (info: ServiceInfo) => LegacyDbApi
 }
