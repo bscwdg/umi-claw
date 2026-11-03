@@ -1502,3 +1502,91 @@ index **1,777** ≤1,800；宿主 **26,373**（V4 差 373，登记 4.2）。
 无脚本依赖被隐藏（`git check-ignore` 命中、`git ls-files` 无输出）；**不用** `release-*/` 通配（会静默吞掉
 任意层级 `release-notes` 类目录）；位置/风格与现有 7 条一致。P2-1（与版本元数据混在一个 chore）已知并
 接受（未 push，不为粒度 rebase；后续同类改动单独提交）；P2-3（NSIS 证据措辞）已按当前磁盘实测校正。
+
+## 2026-11-03 · 4.2 施工记录（B4 / B3 / B2）
+
+> 基线：`v4.1.0`（`54e7484`）｜计划：`doc/PLAN-4.2.md`
+
+### B4 · 插件 type-only 越界清零（`b7c5166`）
+
+**问题**：插件对宿主非白名单模块有 **14 处仅类型引用**（`gatewayClient` ×13、
+`database/database` ×1）。门禁只数「值引用」所以放过了，但类型依赖同样绑死实现。
+
+**落点**
+
+| 文件 | 作用 |
+| --- | --- |
+| `services/gateway/types.ts` | 7 个共享类型下沉（纯类型，无运行时值）+ `GatewayClient` 别名指向窄接口 `GatewayApi`（插件实际只用 4 个方法） |
+| `services/dbTypes.ts` | `DatabaseLike` 窄接口 + `DatabaseStatus` / `BackupResult` |
+| `gatewayClient.ts` | 改 `import type` + re-export（既有引用面不变） |
+| `services/gateway/types.ts` | 保留宿主内部 3 个类型（`GatewayStarterResult` / `GatewayStarter` / `GatewayActualPortResolver`） |
+
+**门禁分级**：新增 `pluginHostTypeOnly` 计数，与值越界**分列**——
+不推翻 `boundary.accept` 的 B2 契约（「纯类型引用放行」），但让类型越界变成可 ratchet 的数字。
+基线 `pluginHostTypeOnly=0`，`boundary.accept` 新增 B9 钉住「两套计数不重叠」。
+
+**实测**：type-only **14 → 0**；`boundary.accept` **9/9**。
+
+### B3 · 拆除宿主对插件域的反向依赖（`1d0728d`）
+
+**问题**：宿主退出流程直接从 `ipc/index.ts` 取 4 个 `abort*` 函数，实体都在
+`plugins/marketing/main/ipc/*`——方向是「宿主 → 插件内部实现」，而门禁只扫插件→宿主。
+而且它们在 `disposeHost()` **之后**才调，插件 `deactivate` 早已跑过 `stopBackgroundWork`，
+属冗余兜底。
+
+**落点**
+
+| 文件 | 作用 |
+| --- | --- |
+| `services/abortRegistry.ts` | 插件 activate 时自注册「中止我的后台任务」，`ctx.onDispose` 自动摘除；宿主统一 `abortAll()`（返回按插件归属的计数） |
+| `kernel/services.ts` | 契约补 `PluginAbortApi`；`SERVICE_NAMES` 增 `abort` |
+| `plugins/{work,marketing}/main.ts` | 各自登记（work：qa/tools/reports/openclawSummary；marketing：hot/advisor/scan/content） |
+| `index.ts` | 退出流程 28 行 → 一段 `abortRegistry.abortAll()`；`registerWorkGatewayIpc` 改直接 import `./ipc/gateway` |
+| `ipc/index.ts` | 标注 `@test-only`（生产依赖已归零，剩余 re-export 只服务既有验收脚本） |
+
+**判据实测（5/5）**
+
+1. 生产代码对 ipc barrel 依赖 **0 处**
+2. 宿主直调插件 abort 函数 **0 处**
+3. 宿主经 `abortRegistry.abortAll()` ✓
+4. work / marketing 均自注册 ✓
+5. `ipc/index.ts` 仍转出插件域模块 11 处 → 已标 `@test-only`，归 4.3 清理
+
+**断言改动（G5 单独说明）**：`content`/`scan`/`hot` 三套原先断言 `index.ts` 的**源码字面量**
+（如 `/abortAllContentGenerations()/`），意图是「退出时中止第四路」。机制改为注册表后，
+改为断言「宿主经 abortRegistry **且** 插件自注册覆盖该路」——意图不变且更强（同时钉住两侧）。
+
+### B2 · 便携 Node 探针可见 + 一键重装（`5ddd44f`）
+
+**背景**：4.0.1 只做了「检测 + 写 `logs/runtime-probe.log`」。打包 GUI 里 console 无人可见，
+用户遇到「数据存不上」（便携 Node 被标低完整性 / 目录只读，DB worker 报
+`readonly database`）时没有任何线索。
+
+**落点**
+
+| 文件 | 作用 |
+| --- | --- |
+| `index.ts` | `runtimeProbeState`（ok/reason/detail/at），无论成败都记；经 `registerEnvIpc` 的 getter 暴露 |
+| `ipc/host/env.ts` | 新增 `env:runtimeProbe`（第 8 个 env 通道） |
+| `preload` | `api.env.runtimeProbe()` |
+| `src/App.vue` | 复用旧库导入失败横幅样式：失败时显示原因 + 细节；「重装运行环境」按钮复用既有 `env:update`；`onMounted` 立即 + 3s 后各读一次 |
+
+**断言改动（G5）**：`plugin.accept` P44 的 env 通道计数 `7→8`、handler 总数 `63→64`
+（新增通道必然影响守恒式，属契约同步而非放宽）。
+
+### 4.2 当前验收基线
+
+```
+双 typecheck        0 错
+build               通过
+边界门禁            pluginHostBoundary=0 / pluginHostTypeOnly=0 / managerElectron=0
+全量 accept         615 PASS / 2 FAIL
+                      └ 2 条 FAIL 均为 packaged.smoke S6/S7
+```
+
+关于那 2 条 FAIL：**已证明与本轮改动无关**。做法是把全部改动 stash 收起，
+在干净基线 `54e7484` 上重跑 `packaged.smoke`，结果同样是 **5/7、S6/S7 同样失败**。
+根因是 A3 的打包产物不完整——`release/win-unpacked` 全目录只有 `resources/app.asar`
+（98MB），缺 `Umi Claw.exe` 与 `resources/resources/` 子树；且该目录被 node 进程占用
+无法移开，而 `UMI_ALLOW_PACKAGE_SKIP=1` **只在目录不存在时**生效。
+→ 属发布环境问题，登记待重打包。
