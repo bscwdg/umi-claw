@@ -1235,6 +1235,7 @@ await r.check('U21', '二次确认弹窗统一：插件管理/角色页不再用
   }
   assert(/KNOWLEDGE_REASON_TEXT/.test(characterSrc), '知识体检应用原因文案映射')
   assert(/searchable/.test(characterSrc), '知识体检应展示 searchable 判定')
+  assert(/不依赖 Obsidian 索引/.test(characterSrc), '角色页应说明最近日记/约定直接进上下文')
   assert(
     preloadSrc.includes("'character:knowledge:status'"),
     'preload 应暴露 character:knowledge:status'

@@ -1806,5 +1806,14 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 - 新通道 `character:knowledge:status`（types/ipc/wiring/characterHost/preload 五处）；UI 知识卡显示 vault/MCP/索引/角色笔记四行 + 不可检索原因 + 「重新检查」，导入/重建索引成功后自动刷新。
 - 检索作用域：host 预检索 `filterCharacterHits` 只取 `大肥鱼/`；导入 frontmatter 改为 `tags: [大肥鱼, 大肥鱼/<类别>]`，MCP tag 过滤改嵌套前缀匹配（`tag=大肥鱼` 命中 `大肥鱼/日记`、`大肥鱼/世界书`，修复「按 tag 查会漏日记」）；MCP `search_notes`（searchTopK 排除前缀）、`list_notes`、`read_note` 均排除 `大肥鱼/归档/`（删除记忆不可回忆）；AGENTS 模板新增「只查 大肥鱼/ 目录」指令（工具级无 tag 检索仍是软约束，登记 4.4）。
 - 测试：C85（count 排除归档/其它目录、maxNotes、searchable 全就绪、7 种 reason 矩阵）；C82 tag 断言更新；C84 通道 +knowledgeStatus；ui 结构断言（四行/重新检查/原因映射/status 调用/preload 通道）。
-- 验证：character 85/85；全量 accept **33 套 / 625 断言 / 0 失败**；双 typecheck 0/0；build 通过；boundary 0/0/0。
+- 验证：character 85/85；全量 accept **33 套 / 625 断言 / 0 失败**（P2 加入 C87 后为 626/86）；双 typecheck 0/0；build 通过；boundary 0/0/0。
 - 已知边界（登记 4.4）：MCP 工具级检索（agent 自行调 search_notes 且不带 tag）仍可命中全库非归档笔记，目前靠 AGENTS 指令 + tag 软约束；`归档/` 不计入角色笔记数且三种 MCP 入口都排除；大 vault 每次体检递归计数上限 500 篇。
+
+### P2 · 本地结构化记忆召回（4.3，2026-11-03 晚）
+
+- 新增 `memoryRecall.ts`（纯 Node）：`recallDates`（本地时区，从昨天起 N 天、上限 14、不含今天）+ `sanitizeMemoryText`（BOM/零宽/frontmatter/控制符/伪造边界/注入话术/密钥/空白）+ `buildMemoryContext`（vault `关系/约定`、`大事记` 的目录与单文件两种形态 → workspace 日记 → vault 日记回落；`<<UNTRUSTED_MEMORY>>` 边界，先算正文预算再截断并保留闭合边界；单篇 220 字、总 900 字；全空返回空串）。
+- wiring `contextProvider`：recall 类问题先注入本地记忆，再叠加原 MCP 语义检索（语义命中只去重「最近 5 天」日记，旧日记保留）；读失败不影响对话。角色页日记卡补说明「问起过去时，最近 5 天日记+约定直接进上下文（不依赖索引）」。
+- 复核修复：召回词补「昨天/前天/昨晚/上周/第一次/去年」；「约定/大事记」同时支持知识导入的目录形态与单文件形态；删除记忆时把 `关系/约定|大事记`（文件与目录）一并归档到 `归档/<ts>`；单文件读取上限 256KB（超大文件跳过）；伪造边界先删零宽/控制符再匹配，闭合边界先算预算再截正文。
+- 测试 C87：日期窗口、workspace 日记、vault 约定/大事记、vault 日记回落、注入话术过滤、密钥脱敏、总长截断/空返回、空白归一。
+- 验证：character 86/86；全量 accept **33 套 / 626 断言 / 0 失败**；双 typecheck 0/0；build 通过；boundary 0/0/0。
+- 已知边界（登记 4.4）：只在 recall 类问句注入（普通问候不会主动回忆，避免每轮 token）；单文件 >256KB 跳过召回；注入过滤是常见话术黑名单（边界+标题说明才是主防线）；界面暂无「最近记忆来源/命中」展示。

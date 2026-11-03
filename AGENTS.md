@@ -13,7 +13,7 @@
 cd D:\work2026\umi-claw
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 33 套验收（accept×31 + e2e + smoke，625 条断言；hot 见 §10 注）
+npm run accept         # 33 套验收（accept×31 + e2e + smoke，626 条断言；hot 见 §10 注）
 npm run build          # 构建（含 plugin:gen）
 ```
 
@@ -334,7 +334,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 33 套（accept×31 + e2e + smoke，625 条断言）
+# ② 全量验收 33 套（accept×31 + e2e + smoke，626 条断言）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）

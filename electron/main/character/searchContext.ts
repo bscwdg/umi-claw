@@ -35,7 +35,7 @@ export function filterCharacterHits(hits: KnowledgeHit[]): KnowledgeHit[] {
  * 避免普通提问每轮多 300ms、并把无关笔记片段塞进上下文。
  */
 const RECALL_PATTERN =
-  /(之前|上次|以前|那次|那天|记过|记得|写过|说过|提到过|约定|生日|回忆|回顾|查一下|找一下)|((我的|这个|那个)?笔记(里|中|上|库))|(咱们.{0,6}(聊|说)过)/
+  /(之前|上次|以前|那次|那天|昨天|昨夜|昨晚|前天|上周|上个月|去年|第一次|记过|记得|写过|说过|提到过|约定|生日|回忆|回顾|查一下|找一下)|((我的|这个|那个)?笔记(里|中|上|库))|(咱们.{0,6}(聊|说)过)/
 
 export function looksLikeRecallQuery(text: string): boolean {
   const raw = (text ?? '').trim()

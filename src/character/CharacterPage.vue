@@ -233,6 +233,7 @@
         <button class="btn" :disabled="busy || !status.enabled" @click="runMemory">现在写一篇</button>
       </div>
       <p class="hint">每天 23:00 自动写；先写 workspace，再写 Obsidian 的「大肥鱼/日记」。需要先在「隐私与安全」确认年龄。</p>
+      <p class="hint">问起过去时，最近 5 天日记 + 约定/大事记会直接进对话上下文（不依赖 Obsidian 索引）。</p>
     </section>
 
     <CharacterSettings

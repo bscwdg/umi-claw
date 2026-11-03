@@ -5,7 +5,7 @@
 
 import { globalShortcut, screen } from 'electron'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { CharacterManager } from './manager'
 import { registerCharacterIpc, type CharacterIpcDisposer } from './ipc'
 import { CharacterStore } from './store'
@@ -16,6 +16,7 @@ import { parseLifeDeck } from './contentCards'
 import { deliverVoice, type QqBotCreds } from './qqVoice'
 import { isVoiceRequest } from './voicePolicy'
 import { formatSearchContext, looksLikeRecallQuery, withTimeout } from './searchContext'
+import { buildMemoryContext, recallDates } from './memoryRecall'
 import { composePersonaFiles, exportPersonaPackage, importPersonaPackage, writeManagedFiles } from './persona'
 import { validateKnowledgeImport, writeKnowledgeFiles } from './knowledgeImport'
 import { PetWindowController, type PetMenuAction } from './petWindow'
@@ -215,9 +216,9 @@ async function registerCharacterInternal(
         // 日记：从 Obsidian 日记目录移到 归档/<时间戳>，不直接删用户笔记
         const vault = deps.obsidianVaultPath?.()?.trim()
         if (vault) {
+          const archiveDir = join(vault, '大肥鱼', '归档', String(Date.now()))
           const diaryDir = join(vault, '大肥鱼', '日记')
           if (existsSync(diaryDir)) {
-            const archiveDir = join(vault, '大肥鱼', '归档', String(Date.now()))
             try {
               mkdirSync(archiveDir, { recursive: true })
               for (const file of readdirSync(diaryDir)) {
@@ -225,6 +226,18 @@ async function registerCharacterInternal(
               }
             } catch (error) {
               logger(`[character] 日记归档失败: ${(error as Error)?.message ?? String(error)}`)
+            }
+          }
+          // 约定/大事记（含知识导入的目录形态）也是「记忆」：删除记忆必须一并归档，
+          // 否则本地召回/知识检索仍会读到（4.3 P2 复核 P2-4）
+          for (const rel of ['关系/约定.md', '关系/约定', '关系/大事记.md', '关系/大事记']) {
+            const abs = join(vault, '大肥鱼', ...rel.split('/'))
+            if (!existsSync(abs)) continue
+            try {
+              mkdirSync(archiveDir, { recursive: true })
+              renameSync(abs, join(archiveDir, basename(abs)))
+            } catch (error) {
+              logger(`[character] ${rel} 归档失败: ${(error as Error)?.message ?? String(error)}`)
             }
           }
         }
@@ -387,12 +400,39 @@ async function registerCharacterInternal(
           } catch {
             /* 状态读失败不影响对话 */
           }
+          // 结构化记忆：像在问过去时，先直接读本地最近日记 + 约定/大事记（不依赖 MCP/索引），
+          // 再叠加语义检索；MCP 没配好也不会变金鱼。
+          let localMemory = ''
+          if (looksLikeRecallQuery(text)) {
+            try {
+              localMemory = buildMemoryContext({
+                workspaceDir,
+                vaultPath: deps.obsidianVaultPath?.(),
+                now: deps.now ? deps.now() : Date.now()
+              })
+              if (localMemory) parts.push(localMemory)
+            } catch {
+              /* 本地记忆读失败不影响对话 */
+            }
+          }
           // 预检索：像在问过去/笔记时，宿主直接查 Obsidian（200–500ms），
           // 把命中片段注入本轮，省掉模型 tool_search → search_notes 的 40s+ 链路。
           if (deps.searchKnowledge && looksLikeRecallQuery(text)) {
             try {
               const hits = await withTimeout(deps.searchKnowledge(text), 1200)
-              const context = formatSearchContext(hits ?? [])
+              // 本地记忆块已包含「最近 5 天」日记：只去重这些日期，旧日记（如去年今天）保留，
+              // 否则「更早的日记」会被整段误删（4.3 P2 复核）。
+              const recentDates = new Set(
+                recallDates(deps.now ? deps.now() : Date.now(), 5).map((date) => date)
+              )
+              const deduped = localMemory
+                ? (hits ?? []).filter((hit) => {
+                    const path = String(hit.path ?? '').replace(/\\/g, '/')
+                    const match = /^大肥鱼\/日记\/(\d{4}-\d{2}-\d{2})\.md$/.exec(path)
+                    return !(match && recentDates.has(match[1]))
+                  })
+                : (hits ?? [])
+              const context = formatSearchContext(deduped)
               if (context) parts.push(context)
             } catch {
               /* 预检索失败就退回让模型自己决定是否检索 */
