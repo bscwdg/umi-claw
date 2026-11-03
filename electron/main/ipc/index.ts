@@ -20,6 +20,14 @@
 //   10 → 「一天」端到端（仅验收，无新业务通道）
 //
 // 契约先于代码（硬规则 11）：任何新增通道先改 PLAN-3.0.md §14，再动实现。
+//
+// ── @test-only（4.2 B3）────────────────────────────────────────────────────
+// 生产代码对本 barrel 的依赖已归零：
+//   - 退出中止改为插件自注册（services.abort）+ 宿主统一 abortRegistry.abortAll()
+//   - registerWorkGatewayIpc 改为直接 import './ipc/gateway'
+// 剩下的 re-export 只服务既有验收脚本（business/content/scan 等断言"三处一致"）。
+// **新代码不要从这里取插件域通道**：那是「宿主知道插件内部结构」的反向依赖。
+// 待这些脚本改完（归 4.3），本文件可整删。
 
 export { registerGatewayIpc, registerWorkGatewayIpc, WORK_GATEWAY_CHANNELS } from './gateway'
 export type { GatewayIpcResult } from './gateway'

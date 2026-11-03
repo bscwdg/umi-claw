@@ -39,12 +39,6 @@ import {
 //   ContextEngine / KnowledgeManager 两域各有一套完全不同的实现，不能合并成一份。
 // 其余（DatabaseClient / Voice* / ipc / gatewayClient / AppError / fs）两域同源，只在下方
 // work 域 import 块里出现一次，避免重复声明。
-import {
-  abortAllAdvisorStreams,
-  abortAllScanStreams,
-  abortAllContentGenerations,
-  abortHotCollectors
-} from './ipc'
 import type { TerminalRuntime } from '../../src/types/terminal'
 import {
   createGatewayClient,
@@ -54,7 +48,7 @@ import {
   type GatewayModels,
   type GatewayStarterResult
 } from './gatewayClient'
-import { registerWorkGatewayIpc } from './ipc'
+import { registerWorkGatewayIpc } from './ipc/gateway'
 import { registerMiscIpc } from './ipc/host/misc'
 import { registerSkillsIpc } from './ipc/host/skills'
 import { registerChannelsIpc } from './ipc/host/channels'
@@ -76,6 +70,7 @@ import {
 import { registerCharacter } from './character/wiring'
 import { buildCharacterDeps } from './services/characterHost'
 import { createConsentService } from './services/consent'
+import { createAbortRegistry } from './services/abortRegistry'
 import { registerConsentIpc } from './ipc/host/consent'
 import { CharacterKvStore } from './services/characterKv'
 import { probeNodeWritable } from './services/runtimeProbe'
@@ -429,6 +424,8 @@ async function initPlugins(): Promise<void> {
     notifications: () => createNotificationsService(),
     openclaw: () => createOpenClawService(getWorkGatewayClient),
     // 用户协议（4.1.1 宿主单源）：插件经 ctx.services.consent 读写，不碰自己的库
+    // 后台任务中止登记（4.2 B3）：插件自注册，宿主不再反向依赖插件内部函数
+    abort: () => abortRegistry,
     consent: () => ({
       status: () => consentService.status(),
       grant: () => consentService.grant(),
@@ -471,6 +468,9 @@ async function initPlugins(): Promise<void> {
  * 现在权威只有一个：宿主 work.db 的 app_meta（见 services/consent.ts）。
  * 插件库仅在「宿主库无结论 + 无撤销墓碑」时作为一次性迁移来源。
  */
+// 4.2 B3：后台任务中止登记表（插件 activate 时自注册）
+const abortRegistry = createAbortRegistry()
+
 const consentService = createConsentService({
   // 惰性取值：workDatabase 晚于本函数定义才创建
   hostDb: () =>
@@ -1735,34 +1735,21 @@ async function runQuitCleanup(): Promise<void> {
   await step('关闭插件库', () => pluginRuntime?.disposeDb(), 3000)
   // 确保在退出前杀死所有子进程，防止孤儿进程
   killAllTerminalSessions()
-  // 在途的 Advisor 流先中止：否则应用退出时上游可能还在生成（白烧 token）
+  // 4.2 B3：中止所有插件的在途后台任务（流式生成 / 扫描识别 / 热点采集）。
+  // 由插件 activate 时自注册（services.abort），宿主不再直接引用插件内部函数——
+  // 那曾是一条「宿主反向依赖插件实现」的隐性越界（门禁只扫插件→宿主，扫不到）。
   try {
-    const aborted = abortAllAdvisorStreams()
-    if (aborted > 0) console.log(`[Main] 已中止 ${aborted} 条在途 Advisor 流`)
+    const { total, byPlugin } = abortRegistry.abortAll()
+    if (total > 0) {
+      const detail = Object.entries(byPlugin)
+        .map(([id, n]) => `${id}=${n}`)
+        .join('，')
+      console.log(`[Main] 退出前已中止 ${total} 个在途后台任务（${detail}）`)
+    }
   } catch (e) {
-    console.error('[Main] 中止 Advisor 流失败:', e)
+    console.error('[Main] 中止插件后台任务失败:', e)
   }
-  // 在途的扫描件识别同理（05b 四路中止的第四路：停止按钮/切商家/卸载在渲染端，退出在这）
-  try {
-    const aborted = abortAllScanStreams()
-    if (aborted > 0) console.log(`[Main] 已中止 ${aborted} 条在途扫描件识别`)
-  } catch (e) {
-    console.error('[Main] 中止扫描件识别失败:', e)
-  }
-  // 在途的内容生成（09 四路中止之退出路；规格同 08/05b）
-  try {
-    const aborted = abortAllContentGenerations()
-    if (aborted > 0) console.log(`[Main] 已中止 ${aborted} 个在途内容生成任务`)
-  } catch (e) {
-    console.error('[Main] 中止内容生成失败:', e)
-  }
-  // 在途的热点 collector（11：短命子进程，退出时别留下孤儿）
-  try {
-    const killed = abortHotCollectors()
-    if (killed > 0) console.log('[Main] 已停止在途热点采集进程')
-  } catch (e) {
-    console.error('[Main] 停止热点采集失败:', e)
-  }
+
   // 注册表内的常驻子进程（marketing DB Worker）先优雅停：
   // wal_checkpoint(TRUNCATE) → close → exit(0)，避免留下 -wal/-shm 残骸
   try {

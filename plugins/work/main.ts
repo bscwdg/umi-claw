@@ -93,6 +93,9 @@ export default definePlugin({
     // 用户协议（4.1.1 宿主单源）：插件经 ctx 读写，不碰自己的 app_meta。
     // 未注入时 WizardManager 回落自身 db（保持直接构造 Manager 的测试用法）。
     const consent = ctx.services.consent
+    // 4.2 B3：后台任务中止登记（宿主退出时统一调用）
+    const abort = ctx.services.abort
+
     if (!db || !openclaw || !hostOps) {
       throw new Error('work 插件缺少必需服务（db / openclaw / hostOps）')
     }
@@ -117,6 +120,27 @@ export default definePlugin({
       readOldDb: async (info) => (await hostOps.readOldDb(info)) as never,
       consent: consent ?? undefined
     })
+
+    // 4.2 B3：把「中止本插件后台任务」登记给宿主（停用时自动摘除）
+    if (abort) {
+      ctx.onDispose(
+        abort.register('work', () => {
+          let n = 0
+          const attempt = (fn: () => number): void => {
+            try {
+              n += fn()
+            } catch {
+              /* 尽力而为 */
+            }
+          }
+          attempt(() => work.qa.abortAll())
+          attempt(() => work.tools.abortAll())
+          attempt(() => work.reports.abortAll())
+          attempt(() => work.openclawSummary.abortAll())
+          return n
+        })
+      )
+    }
 
     // work:* 通道交给插件注册器：停用插件时由内核统一摘除
     setWorkIpcRegistrar({

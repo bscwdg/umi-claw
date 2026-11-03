@@ -18,6 +18,7 @@ export const SERVICE_NAMES = [
   'secrets',
   'kv',
   'consent',
+  'abort',
   'hostOps',
   'legacyDb'
 ] as const
@@ -163,6 +164,20 @@ export interface PluginConsentApi {
 }
 
 /**
+ * 后台任务中止登记（4.2 B3）。
+ *
+ * 为什么放进契约：宿主的退出流程原先直接从 `ipc/index.ts` 取 4 个 `abort*` 函数
+ * （实体在 plugins/marketing/main/ipc/*）——宿主反向依赖插件内部实现。
+ * 现在改为插件在 activate 时自注册「中止我的后台任务」，停用时自动摘除。
+ *
+ * 用法：`ctx.onDispose(ctx.services.abort.register(pluginId, fn))`
+ */
+export interface PluginAbortApi {
+  /** 登记中止函数，返回摘除函数（适合直接交给 ctx.onDispose） */
+  register(pluginId: string, abort: () => number): () => void
+}
+
+/**
  * 宿主副作用集合（过渡服务，Phase 4 会拆细）。
  *
  * work 装箱时遇到的三类宿主能力：系统通知、渠道外发（spawn OpenClaw CLI）、旧库只读定位。
@@ -205,6 +220,7 @@ export interface PluginServiceBag {
   secrets?: PluginSecretsApi
   kv?: PluginKvApi
   consent?: PluginConsentApi
+  abort?: PluginAbortApi
   hostOps?: HostOpsApi
   legacyDb?: LegacyDbApi
 }
@@ -219,6 +235,7 @@ export interface ServiceFactories {
   secrets?: (info: ServiceInfo) => PluginSecretsApi
   kv?: (info: ServiceInfo) => PluginKvApi
   consent?: (info: ServiceInfo) => PluginConsentApi
+  abort?: (info: ServiceInfo) => PluginAbortApi
   hostOps?: (info: ServiceInfo) => HostOpsApi
   legacyDb?: (info: ServiceInfo) => LegacyDbApi
 }

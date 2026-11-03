@@ -745,7 +745,19 @@ const runtimeSrc = readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
     assert(/currentProjectId[\s\S]{0,200}clearScan/.test(vueSrc), '切换商家 → clearScan 中止（四路之切商家路）')
     assert(/stopRecognize\(\)/.test(vueSrc), '停止按钮（四路之停止路）')
     assert(preloadSrc.includes("'marketing:knowledge:recognize', projectId"), 'preload 显式传 projectId（硬规则 9）')
-    assert(mainSrc.includes('abortAllScanStreams()'), 'main before-quit 接第四路')
+    // 4.2 B3：退出中止改由插件自注册，宿主统一经 abortRegistry
+    assert(
+      /abortRegistry\.abortAll\(\)/.test(mainSrc),
+      'main before-quit 经 abortRegistry 统筹（扫描识别第四路含在插件自注册里）'
+    )
+    const pluginMainSrc2 = readFileSync(
+      join(repoRoot, 'plugins', 'marketing', 'main.ts'),
+      'utf-8'
+    )
+    assert(
+      /abortAllScanStreams\(\)/.test(pluginMainSrc2),
+      '插件自注册的中止函数覆盖扫描识别'
+    )
     return '3 通道三处一致；两路 abort；预检 wiring；picker 资料图；store 14 项；UI 触发/人话/价格/确认/干净文本/四路 ✓'
   })
 

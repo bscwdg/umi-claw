@@ -599,12 +599,25 @@ const runtimeSrc = readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
       assert(ipcSrc.includes(`'${c}'`), `ipc/content.ts 应声明 ${c}`)
       assert(preloadSrc.includes(`'${c}'`), `preload 应暴露 ${c}`)
     }
-    assert(/MARKETING_CONTENT_CHANNELS/.test(indexSrc) && /abortAllContentGenerations/.test(indexSrc), 'index.ts 转出 content 面')
+    // 4.2 B3：宿主不再从 ipc barrel 转出域通道/中止函数（反向依赖已拆除）；
+    // 改为断言「插件自注册」这件事在两边都成立。
+    assert(
+      /registerContentIpc\(/i.test(pluginMainSrc) || /MARKETING_CONTENT_CHANNELS/.test(ipcSrc),
+      '插件侧注册 content IPC'
+    )
     assert(!/\.send\(\s*['"]marketing:(?!gateway)/.test(ipcSrc), '不自造流事件名（复用 07 三事件）')
     assert(/forwardGatewayStream\(/.test(ipcSrc), '经 07 forwardGatewayStream')
     assert(/abortGenerate:\s*\(genTaskId\?: string \| null, projectId\?: string \| null\)/.test(preloadSrc), 'preload abort 两路参数')
     assert(/registerContentIpc\(marketing\.content\)/.test(pluginMainSrc), '插件注册 content IPC')
-    assert(/abortAllContentGenerations\(\)/.test(mainSrc), 'before-quit 第四路')
+    // 4.2 B3：退出中止改由插件自注册（services.abort），宿主统一调 abortRegistry.abortAll()。
+    assert(
+      /abortRegistry\.abortAll\(\)/.test(mainSrc),
+      'before-quit 经 abortRegistry 统筹中止（第四路含在插件自注册里）'
+    )
+    assert(
+      /abortAllContentGenerations\(\)/.test(pluginMainSrc),
+      '插件自注册的中止函数覆盖内容生成'
+    )
     // §五 扩面在代码注释里注明
     assert(/扩面/.test(ipcSrc), '扩面注释在位（delete/abort/versions）')
 

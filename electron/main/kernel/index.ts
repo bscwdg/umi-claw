@@ -52,6 +52,7 @@ export {
   type OpenClawStatus,
   type OpenClawStreamHandle,
   type PluginDbApi,
+  type PluginAbortApi,
   type PluginKvApi,
   type PluginConsentApi,
   type PluginSecretsApi,

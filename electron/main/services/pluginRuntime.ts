@@ -23,6 +23,7 @@ import {
   type LegacyDbApi,
   type NotificationsApi,
   type OpenClawApi,
+  type PluginAbortApi,
   type PluginConsentApi,
   type PluginStatus,
   type ServiceFactories
@@ -61,6 +62,11 @@ export interface PluginRuntimeDeps {
    * **不再碰自己的 app_meta.wizard_consent**——那是撤销失效的根因。
    */
   consent: () => PluginConsentApi
+  /**
+   * 后台任务中止登记（4.2 B3）。
+   * 插件自注册后，宿主退出时不再直接调插件内部函数（消除反向依赖）。
+   */
+  abort: () => PluginAbortApi
   /**
    * 插件被启用后的回调（P2）。
    *
@@ -131,6 +137,8 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       kv: (info) => createPluginKvService(dataDir, info.id),
       // 用户协议（宿主单源）：插件不写自己的库，避免两边状态分裂
       consent: () => deps.consent(),
+      // 后台任务中止登记（4.2 B3）：插件自注册，宿主不认插件内部实现
+      abort: () => deps.abort(),
       // 旧库只读：work → work.db，marketing → umi-claw.db（插件自己决定怎么搬）
       legacyDb: (info) => {
         const client =

@@ -711,9 +711,22 @@ try {
       read('electron/main/index.ts') +
       readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8') +
       readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
-    for (const token of ['registerHotIpc', 'ctx.jobs.every', 'abortHotCollectors']) {
+    // 4.2 B3：abortHotCollectors 不再由宿主直接引用（改插件自注册）；
+    // 这里断言「有中止机制 + 有注册接线」，机制实体在插件侧。
+    for (const token of ['registerHotIpc', 'ctx.jobs.every']) {
       assert(mainSrc.includes(token), '主进程接线含 ' + token)
     }
+
+    assert(
+      /abortRegistry\.abortAll\(\)/.test(read('electron/main/index.ts')),
+      '宿主退出经 abortRegistry 统筹中止'
+    )
+    assert(
+      /cancelActiveCollectors\(\)/.test(
+        readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
+      ),
+      '插件自注册的中止函数覆盖热点采集'
+    )
 
     const storeSrc = read('plugins/marketing/ui/store.ts')
     for (const token of ['hotRadar', 'loadHotRadar', 'refreshHot', 'clearHot', 'HOT_SOURCE_ERROR']) {

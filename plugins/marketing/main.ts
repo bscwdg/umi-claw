@@ -71,6 +71,9 @@ export default definePlugin({
   async activate(ctx) {
     const db = ctx.services.db
     const openclaw = ctx.services.openclaw
+    // 4.2 B3：后台任务中止登记（宿主退出时统一调用，不再反向依赖本插件内部函数）
+    const abort = ctx.services.abort
+
     if (!db || !openclaw) throw new Error('marketing 插件缺少必需服务（db / openclaw）')
 
     await db.migrate()
@@ -180,6 +183,27 @@ export default definePlugin({
 
     runtime = marketing
     ctx.logger.info(`营销域就绪（库 ${db.path}）`)
+
+    // 4.2 B3：把「中止本插件后台任务」登记给宿主（停用时自动摘除）
+    if (abort) {
+      ctx.onDispose(
+        abort.register('marketing', () => {
+          let n = 0
+          const attempt = (fn: () => number): void => {
+            try {
+              n += fn()
+            } catch {
+              /* 尽力而为 */
+            }
+          }
+          attempt(() => marketing.hot.cancelActiveCollectors())
+          attempt(() => abortAllAdvisorStreams())
+          attempt(() => abortAllScanStreams())
+          attempt(() => abortAllContentGenerations())
+          return n
+        })
+      )
+    }
 
     return () => {
       // 停用要把后台任务一起收掉：collector 最长 45s、SSE 还在烧 token，
