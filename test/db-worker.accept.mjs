@@ -190,7 +190,8 @@ try {
   await r.check('W1', 'worker 启动即建库（spawn 前不存在）', async () => {
     assert(!existsSync(dbPath), '建库前不应存在 umi-claw.db')
     main = fresh('main')
-    await sleep(400)
+    // spawn + Worker 初始化在慢机器/杀软扫描下可能超过 400ms：轮询等建库，避免固定 sleep 假失败
+    for (let i = 0; i < 60 && !existsSync(dbPath); i += 1) await sleep(50)
     assert(existsSync(dbPath), 'spawn 后应创建 umi-claw.db')
     const pong = await main.call('ping')
     assertEq(pong.ok, true, 'ping 应成功')
