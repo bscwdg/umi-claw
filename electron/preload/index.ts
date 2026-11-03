@@ -119,6 +119,12 @@ const api = {
     update: (options?: any) => ipcRenderer.invoke('env:update', options),
     checkLatest: (options?: any) => ipcRenderer.invoke('env:checkLatest', options),
     getInfo: () => ipcRenderer.invoke('env:getInfo'),
+    // 4.2 B2：便携 Node 写入探针结果（null = 尚未探过）
+    runtimeProbe: () =>
+      ipcRenderer.invoke('env:runtimeProbe') as Promise<
+        | { ok: boolean; reason: 'ok' | 'probe-failed' | 'timeout'; detail?: string; at: number }
+        | null
+      >,
     getNodeVersions: (options?: any) => ipcRenderer.invoke('env:nodeVersions', options),
     updateNode: (options?: any) => ipcRenderer.invoke('env:updateNode', options),
     onProgress: (cb: (progress: any) => void) => {

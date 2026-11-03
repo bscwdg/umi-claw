@@ -95,6 +95,20 @@
       @agreed="onAgreementAgreed"
     />
 
+    <!-- 4.2 B2：便携 Node 写入探针失败横幅（低完整性/目录只读时数据库会写不进去 -->
+    <div v-if="runtimeProbeBanner" class="import-banner">
+      <span class="import-banner-text">
+        {{ runtimeProbeBanner.message }}
+      </span>
+      <button
+        class="import-banner-retry"
+        :disabled="runtimeReinstalling"
+        @click="reinstallRuntime"
+      >
+        {{ runtimeReinstalling ? '重装中…' : '重装运行环境' }}
+      </button>
+    </div>
+
     <!-- 冷启动向导（弹窗形态；走完或逐步跳过才关，只出现一次） -->
     <WizardModal v-if="workPluginEnabled" v-model:visible="wizardVisible" @done="onWizardDone" />
 
@@ -128,6 +142,7 @@ import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 import UserAgreementModal from '@/views/components/UserAgreementModal.vue'
 import WizardModal from '@/views/components/WizardModal.vue'
 import { wizardVisible } from '@/composables/useWizardGate'
+import { useToast } from '@/composables/useToast'
 import {
   agreementVisible,
   agreementBlocking,
@@ -138,6 +153,7 @@ import {
 } from '@/composables/useAgreementGate'
 
 const api = window.api
+const { toast: appToast, showToast } = useToast()
 // work 插件是否启用：决定向导弹窗能否挂载（停用时 work:* 通道不存在）
 const workPluginEnabled = computed(() => isPluginEnabled('work'))
 const router = useRouter()
@@ -149,6 +165,48 @@ const version = ref('')
 // 4.0.2 P2：旧库导入失败可见 + 重试入口（宿主壳全局横幅）
 type ImportFailure = { pluginId: string; error?: string; at: number }
 const importFailures = ref<ImportFailure[]>([])
+// 4.2 B2：便携 Node 写入探针失败时的横幅（低完整性 / 目录只读 → 数据库写不进去）
+const runtimeProbeBanner = ref<{ message: string } | null>(null)
+const runtimeReinstalling = ref(false)
+
+/** 读一次探针结果；失败才显示横幅（成功静默） */
+async function refreshRuntimeProbe(): Promise<void> {
+  try {
+    const probe = await api.env.runtimeProbe()
+    if (!probe || probe.ok) {
+      runtimeProbeBanner.value = null
+      return
+    }
+    const reason =
+      probe.reason === 'timeout'
+        ? '运行环境探测超时（可能是安全软件或慢盘）'
+        : '运行环境可能被限制写入（低完整性/目录只读），数据将无法保存'
+    runtimeProbeBanner.value = {
+      message: `${reason}。${probe.detail ? `（${probe.detail}）` : ''}`
+    }
+  } catch {
+    // 探测本身失败不打扰用户：横幅是增强提示，不是主流程
+  }
+}
+
+/** 一键重装运行环境：复用既有的 env:update（会先停网关、装完恢复） */
+async function reinstallRuntime(): Promise<void> {
+  if (runtimeReinstalling.value) return
+  runtimeReinstalling.value = true
+  try {
+    const res = await api.env.update({})
+    if (res?.success) {
+      showToast('运行环境已重装，重启应用后生效', 'success')
+      runtimeProbeBanner.value = null
+    } else {
+      showToast(`重装失败：${res?.error ?? '未知错误'}`, 'error')
+    }
+  } catch (e: any) {
+    showToast(`重装失败：${e?.message ?? e}`, 'error')
+  } finally {
+    runtimeReinstalling.value = false
+  }
+}
 const importRetrying = ref('')
 let importPollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -266,6 +324,9 @@ onMounted(async () => {
   void refreshCharacterNav()
   // 4.0.2 P2：启动时检查旧库导入是否失败；导入是后台跑，短轮询到失败出现或 16s 后停
   void refreshImportStatus()
+  // 4.2 B2：便携 Node 写入探针在宿主启动后异步跑，这里短轮询两次把结果取回来
+  void refreshRuntimeProbe()
+  setTimeout(() => void refreshRuntimeProbe(), 3000)
   let importPolls = 0
   importPollTimer = setInterval(() => {
     importPolls += 1

@@ -2074,14 +2074,16 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
     'env:checkLatest',
     'env:getInfo',
     'env:nodeVersions',
-    'env:updateNode'
+    'env:updateNode',
+    // 4.2 B2：便携 Node 写入探针结果（横幅 + 一键重装的数据源）
+    'env:runtimeProbe'
   ]) {
     assert(hasIpcHandler(envSrc, ch, 'ipc'), 'env.ts 应注册 ' + ch)
   }
   assert(!hostSrc.includes(`ipcMain.handle('env:`), 'index.ts 不应再直接注册 env:')
   assert(/registerEnvIpc\(\s*ipcMain/.test(hostSrc), 'index.ts 应调用 registerEnvIpc(ipcMain')
 
-  // handler 守恒：index 0 + misc 19 + skills 11 + channels 3 + config 8 + claw 7 + modelConn 1 + term 5 + env 7 + importStatus 2 = 63
+  // handler 守恒：index 0 + misc 19 + skills 11 + channels 3 + config 8 + claw 7 + modelConn 1 + term 5 + env 8 + importStatus 2 = 64
   const importStatusSrc = readFileSync(
     join(repoRoot, 'electron', 'main', 'ipc', 'host', 'importStatus.ts'),
     'utf-8'
@@ -2105,7 +2107,7 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
   assertEq(clawCount, 7, 'claw.ts 应注册 7 个通道')
   assertEq(modelConnCount, 1, 'modelConnection.ts 应注册 1 个通道')
   assertEq(termCount, 5, 'terminal.ts 应注册 5 个通道')
-  assertEq(envCount, 7, 'env.ts 应注册 7 个通道')
+  assertEq(envCount, 8, 'env.ts 应注册 8 个通道（4.2 B2 新增 env:runtimeProbe）')
   assertEq(importCount, 2, 'importStatus.ts 应注册 2 个通道（4.0.2 P2）')
   assertEq(
     hostCount +
@@ -2118,10 +2120,10 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
       termCount +
       envCount +
       importCount,
-    63,
-    '宿主 handler 总数应为 61+2（4.0.2 P2 import 通道）'
+    64,
+    '宿主 handler 总数应为 61+2+1（4.0.2 P2 import 通道 + 4.2 B2 runtimeProbe）'
   )
-  return '宿主零注册 / 插件全注册 / 装配在 runtime / 61+2 通道守恒'
+  return '宿主零注册 / 插件全注册 / 装配在 runtime / 61+2+1 通道守恒'
 })
 
 // ── P43 旧库导入走服务注入（防「清单忘了 inject」导致死代码）─────────────────

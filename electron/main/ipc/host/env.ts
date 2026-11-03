@@ -59,6 +59,16 @@ export interface EnvIpcDeps {
   setUpdateInFlight: (value: boolean) => void
   /** 回滚判据（纯函数，注入以便本文件保持无 electron 依赖、可做行为测试） */
   decideRollback: (probe: StartupProbeResult, dataMigrated: boolean) => { rollback: boolean; reason: string }
+  /**
+   * 便携 Node 写入探针结果（4.2 B2）。
+   * null = 尚未探过（启动早期 / 便携 Node 不存在）。
+   */
+  runtimeProbe?: () => {
+    ok: boolean
+    reason: 'ok' | 'probe-failed' | 'timeout'
+    detail?: string
+    at: number
+  } | null
 }
 
 const ENV_TASK_BUSY_ERROR = '已有环境任务在进行中，请等待当前任务完成'
@@ -272,6 +282,8 @@ export function registerEnvIpc(
     deps.download.checkLatestVersion(options)
   )
   ipc.handle('env:getInfo', () => deps.download.getEnvInfo())
+  // 4.2 B2：便携 Node 写入探针结果（渲染端据此显示横幅 + 一键重装）
+  ipc.handle('env:runtimeProbe', () => (deps.runtimeProbe ? deps.runtimeProbe() : null))
   // 查询可安装的 Node 版本列表（LTS + 当前版本，标记 OpenClaw 兼容性）
   ipc.handle('env:nodeVersions', async (_e, options: EnvIdOptions) =>
     deps.download.getNodeVersions(options)

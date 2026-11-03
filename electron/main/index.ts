@@ -468,6 +468,20 @@ async function initPlugins(): Promise<void> {
  * 现在权威只有一个：宿主 work.db 的 app_meta（见 services/consent.ts）。
  * 插件库仅在「宿主库无结论 + 无撤销墓碑」时作为一次性迁移来源。
  */
+/**
+ * 便携 Node 写入探针结果（4.2 B2）。
+ *
+ * 4.0.1 只做了「检测 + 写日志」（console 在打包 GUI 里看不到）；
+ * 这里把结果存成状态，由 `env:runtimeProbe` 通道推给渲染端做横幅。
+ * null = 还没探过（启动早期 / 便携 Node 不存在）。
+ */
+let runtimeProbeState: {
+  ok: boolean
+  reason: 'ok' | 'probe-failed' | 'timeout'
+  detail?: string
+  at: number
+} | null = null
+
 // 4.2 B3：后台任务中止登记表（插件 activate 时自注册）
 const abortRegistry = createAbortRegistry()
 
@@ -1189,6 +1203,8 @@ function registerIpcHandlers(): void {
       probeStartup: (isReady) => clawManager.probeStartup(isReady)
     },
     gatewayReady: () => getWorkGatewayClient().getStatus().then((status) => status.ready),
+    // 4.2 B2：便携 Node 写入探针结果（渲染端据此显示横幅 + 一键重装）
+    runtimeProbe: () => runtimeProbeState,
     decideRollback,
     setUpdateInFlight: (value) => {
       envUpdateInFlight = value
@@ -1412,6 +1428,13 @@ app.whenReady().then(async () => {
         probeFile: join(configManager.getDataDir(), '.node-write-probe')
       })
         .then((probe) => {
+          // 4.2 B2：无论成败都记状态，渲染端据此决定是否显示横幅
+          runtimeProbeState = {
+            ok: probe.ok,
+            reason: probe.reason,
+            detail: probe.detail,
+            at: Date.now()
+          }
           if (probe.ok) return
           const reason =
             probe.reason === 'timeout'
