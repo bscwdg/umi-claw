@@ -580,10 +580,14 @@ await recorder.check('V11', '训练后由主进程后台轮询推进，页面关
   // 所以刚提交时不该有状态查询，等调度触发后才出现。
   assertEq(statusCalls, 0, '提交后先不查，避免阻塞训练响应')
 
-  // 关键：不再手动 refresh，等主进程自己把状态推进一步
-  await sleep(200)
+  // 关键：不再手动 refresh，等主进程自己把状态推进一步。
+  // 用轮询等落盘（固定 sleep(200) 在慢机/杀软扫描下会假失败，V11 已偶发两次）。
+  let records = await cloneManager.list()
+  for (let i = 0; i < 60 && records[0]?.demos?.length < 1; i += 1) {
+    await sleep(50)
+    records = await cloneManager.list()
+  }
   assert(statusCalls >= 1, '后台轮询已自行发起状态查询')
-  const records = await cloneManager.list()
   assertEq(records[0].status, 'success', '后台轮询把状态推进到成功')
   assert(records[0].demos.length >= 1, '试听已由后台轮询落盘')
   assert(
