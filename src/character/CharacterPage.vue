@@ -227,6 +227,41 @@
     </section>
 
     <section class="card">
+      <h3>桌宠形象</h3>
+      <p class="hint">
+        可以直接导入你自己的图片当形象（PNG / JPEG / WebP / GIF，动图会动；≤8MB）。
+        不支持 SVG；导入后角色页立即预览，桌宠窗口接线恢复后会自动使用这张图；恢复默认则回到内置小鱼。
+      </p>
+      <div class="pet-preview">
+        <img
+          v-if="petAppearance && petAppearance.kind === 'image'"
+          class="pet-preview-img"
+          :src="petAppearance.dataUrl"
+          alt="桌宠形象预览"
+        />
+        <FishState v-else state="idle" class="pet-preview-art" />
+      </div>
+      <div class="row">
+        <button class="btn" :disabled="busy" @click="pickPetAppearance">导入图片</button>
+        <button
+          v-if="petAppearance && petAppearance.kind === 'image'"
+          class="btn ghost"
+          :disabled="busy"
+          @click="clearPetAppearance"
+        >
+          恢复默认
+        </button>
+        <input
+          ref="petAppearanceInput"
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          style="display: none"
+          @change="onPetAppearancePicked"
+        />
+      </div>
+    </section>
+
+    <section class="card">
       <h3>今天的日记</h3>
       <p class="hint">{{ memoryText }}</p>
       <div class="row">
@@ -327,6 +362,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 import CharacterSettings from './CharacterSettings.vue'
+import FishState from './art/FishState.vue'
 import type { BootstrapReport } from '../../electron/main/character/bootstrap'
 import type { CharacterChatStreamEvent } from '../../electron/main/character/chat'
 import type { CharacterSettings as CharacterSettingsShape, CharacterSettingsPatch } from '../../electron/main/character/types'
@@ -553,6 +589,7 @@ onMounted(async () => {
   await refresh()
   void refreshKnowledgeHealth()
   void refreshMemories()
+  void refreshPetAppearance()
 })
 
 onBeforeUnmount(() => {
@@ -664,6 +701,72 @@ async function runMemory(): Promise<void> {
     else if (!result.ran) error.value = `这次没写：${MEMORY_REASON_TEXT[result.reason] ?? result.reason}`
     else showToast('日记写好了')
   })
+}
+
+type PetAppearanceView =
+  | { kind: 'builtin' }
+  | { kind: 'image'; dataUrl: string; meta?: { file: string; mime: string; bytes: number } }
+const petAppearance = ref<PetAppearanceView | null>(null)
+const petAppearanceInput = ref<HTMLInputElement | null>(null)
+
+async function refreshPetAppearance(): Promise<void> {
+  try {
+    petAppearance.value = await window.api.character.pet.appearance.get()
+  } catch {
+    petAppearance.value = null
+  }
+}
+
+function pickPetAppearance(): void {
+  petAppearanceInput.value?.click()
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () =>
+      resolve(String(reader.result ?? '').replace(/^data:[^;]+;base64,/, ''))
+    reader.onerror = () => reject(new Error('读取图片失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function onPetAppearancePicked(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (file.size > 8 * 1024 * 1024) {
+    error.value = '图片过大（最多 8MB）'
+    return
+  }
+  // 某些 Windows 环境 file.type 为空：交给宿主魔数校验（宿主只认真正的栅格图）
+  if (file.type && !/^image\/(png|jpeg|webp|gif)$/.test(file.type)) {
+    error.value = '只支持 PNG / JPEG / WebP / GIF（不支持 SVG）'
+    return
+  }
+  await run(async () => {
+    const dataBase64 = await fileToBase64(file)
+    petAppearance.value = await window.api.character.pet.appearance.import(file.name, dataBase64)
+    showToast('形象已更新')
+  })
+}
+
+function clearPetAppearance(): void {
+  askConfirm(
+    {
+      title: '恢复默认形象',
+      message: '会删除已导入的图片并回到内置小鱼，确定？',
+      confirmText: '恢复默认',
+      danger: true
+    },
+    async () => {
+      await run(async () => {
+        petAppearance.value = await window.api.character.pet.appearance.clear()
+        showToast('已恢复默认形象')
+      })
+    }
+  )
 }
 
 interface MemoryDiaryView { date: string; chars: number; excerpt: string; source: string }
@@ -1341,5 +1444,23 @@ select {
 .memo-open { background: none; border: none; color: inherit; cursor: pointer; font: inherit; padding: 0; text-decoration: underline; flex: 0 0 auto; }
 .memo-item .hint { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; }
 .memo-readonly { white-space: pre-wrap; max-height: 240px; overflow: auto; margin: 8px 0 0; }
+
+.pet-preview {
+  width: 160px;
+  height: 176px;
+  margin: 8px auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pet-preview-art {
+  width: 100%;
+  height: 100%;
+}
+.pet-preview-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
 
 </style>

@@ -234,6 +234,7 @@ export class CharacterStore {
     if (scope === 'all') {
       await this.kv.set(FISH_KEYS.settings, null)
       await this.kv.set(FISH_KEYS.pet, null)
+      await this.kv.set(FISH_KEYS.petAppearance, null)
       // 清空全部 = 上下文也不该复活：轮换聊天代际
       await this.kv.set(FISH_KEYS.chatGen, null)
     }

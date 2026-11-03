@@ -39,6 +39,12 @@ export interface CharacterIpcDeps {
     /** 知识体检：vault/MCP/索引/角色笔记数（4.3） */
     status?: () => unknown
   }
+  /** 桌宠形象（4.3 P4）：用户直接导入 PNG/JPEG/WebP/GIF；不传 SVG */
+  petAppearance?: {
+    get: () => Promise<unknown>
+    import: (payload: unknown) => Promise<unknown>
+    clear: () => Promise<unknown>
+  }
   /** 记忆/关系管理（4.3 P3）：只读列表 + 单条读取 + 日记编辑 + 单条归档删除 */
   memoryAdmin?: {
     list: () => unknown
@@ -216,6 +222,17 @@ export function registerCharacterIpc(
     }
     return deps.memoryAdmin
   }
+  // 桌宠形象（4.3 P4）：导入/恢复默认；未接线抛 NOT_READY
+  const requirePetAppearance = () => {
+    if (!deps.petAppearance) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '桌宠形象功能未接线')
+    }
+    return deps.petAppearance
+  }
+  handle(CHARACTER_CHANNELS.petAppearanceGet, () => requirePetAppearance().get())
+  handle(CHARACTER_CHANNELS.petAppearanceImport, (payload) => requirePetAppearance().import(payload))
+  handle(CHARACTER_CHANNELS.petAppearanceClear, () => requirePetAppearance().clear())
+
   handle(CHARACTER_CHANNELS.memoryList, () => requireMemoryAdmin().list())
   handle(CHARACTER_CHANNELS.memoryRead, (payload) => requireMemoryAdmin().read(payload))
   handle(CHARACTER_CHANNELS.memorySave, (payload) => requireMemoryAdmin().save(payload))

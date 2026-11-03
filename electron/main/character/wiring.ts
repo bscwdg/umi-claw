@@ -20,6 +20,12 @@ import { buildMemoryContext, recallDates } from './memoryRecall'
 import { composePersonaFiles, exportPersonaPackage, importPersonaPackage, writeManagedFiles } from './persona'
 import { validateKnowledgeImport, writeKnowledgeFiles } from './knowledgeImport'
 import { deleteMemory, listMemories, readMemory, saveMemoryDiary } from './memoryAdmin'
+import {
+  loadPetAppearance,
+  removePetAppearanceFile,
+  savePetAppearance,
+  type PetAppearanceMeta
+} from './petAppearance'
 import { PetWindowController, type PetMenuAction } from './petWindow'
 import { CharacterChatService, type CharacterChatFn } from './chat'
 import {
@@ -27,6 +33,7 @@ import {
   CharacterError,
   CHARACTER_ERROR_CODES,
   clampPetPosition,
+  FISH_KEYS,
   type CharacterEvent,
   type CharacterKv
 } from './types'
@@ -154,6 +161,40 @@ async function registerCharacterInternal(
   try {
     const store = new CharacterStore({ kv: deps.kv, now: deps.now })
     const workspaceDir = join(deps.dataDir, 'config', '.openclaw', 'workspace-feiyu')
+
+    // 桌宠自定义形象：文件在 <dataDir>/character/pet-appearance/，元数据在 KV（4.3 P4）
+    const petAppearanceBase = join(deps.dataDir, 'character')
+    const readPetAppearanceMeta = async (): Promise<PetAppearanceMeta | null> => {
+      try {
+        const raw = await deps.kv.get(FISH_KEYS.petAppearance)
+        if (!raw) return null
+        const parsed = JSON.parse(raw) as Partial<PetAppearanceMeta>
+        if (
+          typeof parsed?.file !== 'string' ||
+          !parsed.file ||
+          typeof parsed?.mime !== 'string' ||
+          typeof parsed?.importedAt !== 'number' ||
+          typeof parsed?.bytes !== 'number'
+        ) {
+          return null
+        }
+        return {
+          file: parsed.file,
+          mime: parsed.mime as PetAppearanceMeta['mime'],
+          importedAt: parsed.importedAt,
+          bytes: parsed.bytes
+        }
+      } catch {
+        return null
+      }
+    }
+    const broadcastPetAppearance = (): void => {
+      try {
+        pet?.broadcast('character:event', { type: 'appearance', at: Date.now() })
+      } catch {
+        /* 桌宠窗口可能还没创建 */
+      }
+    }
     // 删除全量时再摘 agent 条目（runner 在下方创建，先留可调用位）
     let removeAgentEntryFn: (() => Promise<unknown>) | null = null
     const manager = new CharacterManager({
@@ -260,6 +301,16 @@ async function registerCharacterInternal(
           removeSafe(join(workspaceDir, '.fish-managed.json'))
           // 人格备份里也是用户数据（USER.md 等）：全量删除必须一起清，否则"删除全部"不彻底
           removeSafe(join(workspaceDir, '.persona-backup'))
+          // 自定义桌宠形象属于用户数据：删除全部时一并清（放在同一 all 分支，保持删除语义集中）
+          {
+            const meta = await readPetAppearanceMeta()
+            removePetAppearanceFile(petAppearanceBase, meta)
+            try {
+              await deps.kv.set(FISH_KEYS.petAppearance, null)
+            } catch {
+              /* KV 失败不阻断删除流程 */
+            }
+          }
           // §13.1-4：全量删除后 openclaw.json 里不应再有 feiyu 条目
           if (removeAgentEntryFn) {
             try {
@@ -471,6 +522,28 @@ async function registerCharacterInternal(
       pet,
       chat: chatService,
       deliverVoice: deliverVoiceFn,
+      // 4.3 P4 桌宠形象：用户直接导入栅格图（PNG/JPEG/WebP/GIF），不提供 SVG
+      petAppearance: {
+        get: async () => loadPetAppearance(petAppearanceBase, await readPetAppearanceMeta()),
+        import: async (payload) => {
+          const p = payload as { name?: unknown; dataBase64?: unknown }
+          const meta = savePetAppearance(petAppearanceBase, {
+            name: String(p?.name ?? 'pet-image'),
+            dataBase64: String(p?.dataBase64 ?? ''),
+            now: deps.now ? deps.now() : Date.now()
+          })
+          await deps.kv.set(FISH_KEYS.petAppearance, JSON.stringify(meta))
+          broadcastPetAppearance()
+          return loadPetAppearance(petAppearanceBase, meta)
+        },
+        clear: async () => {
+          const meta = await readPetAppearanceMeta()
+          removePetAppearanceFile(petAppearanceBase, meta)
+          await deps.kv.set(FISH_KEYS.petAppearance, null)
+          broadcastPetAppearance()
+          return { kind: 'builtin' as const }
+        }
+      },
       // 4.3 人格包：只读写 workspace 的 4 个用户人格文件；导入前备份、导入后不受模板覆盖
       persona: {
         export: async () => exportPersonaPackage(workspaceDir),

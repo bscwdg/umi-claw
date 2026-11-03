@@ -1827,3 +1827,15 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 - 验证：character 87/87；全量 accept **33 套 / 627 断言 / 0 失败**；双 typecheck 0/0；build 通过；boundary 0/0/0。
 - 已知边界（登记 4.4）：关系只读展示（阶段/心情/连续天数），称呼/禁忌仍在设置页；日记编辑只改本地记忆，Obsidian 原件不同步；归档不做自动清理；列表固定最近 30 天；关系目录列表无条数上限（后续可 cap）；relation 未做 realpath containment（本地单用户风险低）。
 - flake 观察：voice V11「后台轮询推进」在 22:12 全量跑失败一次（固定 sleep(200) 竞态），单跑 21/21 绿；与本次改动无关，登记观察，后续可改轮询等待。
+
+### P4 · 桌宠形象可导入（4.3，2026-11-03 晚）
+
+- 背景：用户明确「不要 AI 画，要支持直接导入」。撤掉手绘改版（`FishState.vue` 回到已提交版本），改为用户自带图片。
+- 新增 `petAppearance.ts`（纯 Node）：魔数嗅探只认 PNG/JPEG/WebP/GIF（拒绝 SVG/HTML）、base64 解码与 8MB 上限、文件名消毒+时间戳、落盘 `<dataDir>/character/pet-appearance/`、读回 data URL、恢复默认时删文件（只删目录内 basename）。
+- 新通道 `character:pet:appearance:get|import|clear`（types/ipc/wiring/preload 四处；元数据存 `fish:v2:petAppearance`）；未接线抛 NOT_READY；错误继承 CharacterError 透传 code。
+- PetWindow：有自定义形象时渲染 `<img>`（object-fit contain），否则回退内置 `FishState`；导入/恢复后通过 character:event 通知桌宠刷新。
+- 角色页「桌宠形象」卡：预览（自定义图 / 内置小鱼）、导入按钮（accept 栅格图、8MB 预检）、恢复默认（二次确认）。
+- 测试 C89：魔数/拒绝 SVG/空/非 base64/超 8MB、文件名消毒、落盘元数据、data URL 读取、恢复默认删除、丢失回退；C84 通道 +petAppearance；ui 结构断言（卡片/api/accept/预检/preview/PetWindow 回退）。
+- 验证：character 88/88；全量 accept **33 套 / 628 断言 / 0 失败**；双 typecheck 0/0；build 通过；boundary 0/0/0。
+- 复核修复：base64 长度预检放到解码前（超大串快速拒绝，防主进程内存 DoS）；重复导入只保留最新一张、clear/删除全部清空 `pet-appearance/` 目录（不残留历史图片）；`loadPetAppearance` 校验 mime 白名单并在读前 stat 大小；文件名去掉 Windows 不接受的尾部点/空格；UI 文案改为「角色页立即预览，桌宠窗口接线恢复后自动使用」；`store.reset("all")` 同步清 KV。
+- 已知边界（登记 4.4）：桌宠窗口「恢复接线」尚未做（用户要求后续再做），所以导入后要等恢复后才能在日常桌宠上看到；当前可在角色页预览；不支持 SVG（安全取舍）；不支持九宫格精灵表/Live2D（后续 M3）；只做整图缩放，无逐帧控制；图片像素尺寸无上限（8MB 压缩图可解码很大，后续可加宽高限制）；自定义形象不随导出迁移。

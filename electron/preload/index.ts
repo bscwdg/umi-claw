@@ -822,7 +822,28 @@ const api = {
         call<{ x: number; y: number; width: number; height: number }>(
           'character:window:pet:pos',
           { x, y }
-        )
+        ),
+      appearance: {
+        get: () =>
+          call<
+            | { kind: 'builtin' }
+            | {
+                kind: 'image'
+                meta: { file: string; mime: string; importedAt: number; bytes: number }
+                dataUrl: string
+              }
+          >('character:pet:appearance:get'),
+        import: (name: string, dataBase64: string) =>
+          call<
+            | { kind: 'builtin' }
+            | {
+                kind: 'image'
+                meta: { file: string; mime: string; importedAt: number; bytes: number }
+                dataUrl: string
+              }
+          >('character:pet:appearance:import', { name, dataBase64 }),
+        clear: () => call<{ kind: 'builtin' }>('character:pet:appearance:clear')
+      }
     },
     chat: {
       send: (input: { text: string; session?: 'main' | 'night' }) =>

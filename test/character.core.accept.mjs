@@ -20,6 +20,7 @@ const knowledgeMod = await import(pathToFileURL(bundleEntry('electron/main/chara
 const knowledgeHealthMod = await import(pathToFileURL(bundleEntry('electron/main/character/knowledgeHealth.ts', 'character-knowledge-health.mjs')).href)
 const memoryRecallMod = await import(pathToFileURL(bundleEntry('electron/main/character/memoryRecall.ts', 'character-memory-recall.mjs')).href)
 const memoryAdminMod = await import(pathToFileURL(bundleEntry('electron/main/character/memoryAdmin.ts', 'character-memory-admin.mjs')).href)
+const petAppearanceMod = await import(pathToFileURL(bundleEntry('electron/main/character/petAppearance.ts', 'character-pet-appearance.mjs')).href)
 const agentConfigMod = await import(pathToFileURL(bundleEntry('electron/main/character/agentConfig.ts', 'character-agent-config.mjs')).href)
 const bootstrapMod = await import(pathToFileURL(bundleEntry('electron/main/character/bootstrap.ts', 'character-bootstrap.mjs')).href)
 const chatMod = await import(pathToFileURL(bundleEntry('electron/main/character/chat.ts', 'character-chat.mjs')).href)
@@ -2673,16 +2674,20 @@ await recorder.check('C84', 'character 新通道三处一致：types/ipc/preload
     'character:memory:list',
     'character:memory:read',
     'character:memory:save',
-    'character:memory:delete'
+    'character:memory:delete',
+    'character:pet:appearance:get',
+    'character:pet:appearance:import',
+    'character:pet:appearance:clear'
   ]) {
     assert(typesSrc.includes(ch), ch + ' 应在 CHARACTER_CHANNELS 常量里')
     assert(preloadSrc.includes("'" + ch + "'"), ch + ' 应在 preload 暴露')
   }
-  for (const name of ['personaExport', 'personaImport', 'knowledgeImport', 'knowledgeStatus', 'memoryList', 'memoryRead', 'memorySave', 'memoryDelete']) {
+  for (const name of ['personaExport', 'personaImport', 'knowledgeImport', 'knowledgeStatus', 'memoryList', 'memoryRead', 'memorySave', 'memoryDelete', 'petAppearanceGet', 'petAppearanceImport', 'petAppearanceClear']) {
     assert(ipcSrc.includes('CHARACTER_CHANNELS.' + name), 'ipc 应注册 ' + name)
   }
   assert(ipcSrc.includes('deps.persona') && ipcSrc.includes('deps.knowledge'), '未接 deps 时要能报 NOT_READY')
   assert(ipcSrc.includes('deps.memoryAdmin'), '记忆管理未接 deps 时要能报 NOT_READY')
+  assert(ipcSrc.includes('deps.petAppearance'), '桌宠形象未接 deps 时要能报 NOT_READY')
   return '通道 types/ipc/preload 三处一致 ✓'
 })
 
@@ -2977,6 +2982,110 @@ await recorder.check('C88', '记忆/关系管理：列表/读取/日记保存/�
   assert(!existsSync(join(vault, '大肥鱼', '关系', '约定.md')), '单文件约定已移走')
   rmSync(root, { recursive: true, force: true })
   return '列表/读取/白名单/保存/归档删除 ✓'
+})
+
+await recorder.check('C89', '桌宠形象导入：魔数校验/base64/落盘/读取/恢复默认（4.3 P4）', async () => {
+  const {
+    sniffImageMime,
+    decodeAppearanceBase64,
+    sanitizeAppearanceName,
+    savePetAppearance,
+    loadPetAppearance,
+    removePetAppearanceFile,
+    PetAppearanceError,
+    PET_APPEARANCE_MAX_BYTES
+  } = petAppearanceMod
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  )
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+  const gif = Buffer.from('GIF89a' + '\0'.repeat(8), 'ascii')
+  const webp = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBP'), Buffer.alloc(4)])
+  assertEq(sniffImageMime(png), 'image/png', 'PNG 魔数')
+  assertEq(sniffImageMime(jpeg), 'image/jpeg', 'JPEG 魔数')
+  assertEq(sniffImageMime(gif), 'image/gif', 'GIF 魔数')
+  assertEq(sniffImageMime(webp), 'image/webp', 'WebP 魔数')
+  assertEq(sniffImageMime(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>')), null, 'SVG 拒绝')
+  assertEq(sniffImageMime(Buffer.from('not an image at all')), null, '非图片拒绝')
+
+  assertEq(decodeAppearanceBase64(png.toString('base64')).length, png.length, 'base64 解码')
+  assertEq(
+    decodeAppearanceBase64('data:image/png;base64,' + png.toString('base64')).length,
+    png.length,
+    'data URL 前缀兼容'
+  )
+  let bad = null
+  try {
+    decodeAppearanceBase64('')
+  } catch (e) {
+    bad = e
+  }
+  assert(bad instanceof PetAppearanceError && bad.code === 'CHARACTER_BAD_PAYLOAD', '空数据拒绝')
+  bad = null
+  try {
+    decodeAppearanceBase64('%%%not base64%%%')
+  } catch (e) {
+    bad = e
+  }
+  assert(bad && bad.code === 'CHARACTER_BAD_PAYLOAD', '非 base64 拒绝')
+  bad = null
+  try {
+    decodeAppearanceBase64(Buffer.alloc(PET_APPEARANCE_MAX_BYTES + 1).toString('base64'))
+  } catch (e) {
+    bad = e
+  }
+  assert(bad && bad.code === 'CHARACTER_BAD_PAYLOAD', '超过 8MB 拒绝')
+  // 解码前长度预检：超大串应快速拒绝（不能在解码/正则时先分配几倍内存）
+  bad = null
+  const hugeBase64 = 'A'.repeat(Math.ceil(PET_APPEARANCE_MAX_BYTES / 3) * 4 + 64)
+  try {
+    decodeAppearanceBase64(hugeBase64)
+  } catch (e) {
+    bad = e
+  }
+  assert(bad && bad.code === 'CHARACTER_BAD_PAYLOAD', '超大 base64 在解码前拒绝')
+
+  const root = join(repoRoot, 'test', '.tmp', 'pet-appearance-' + process.pid)
+  rmSync(root, { recursive: true, force: true })
+  const name = sanitizeAppearanceName('../../我的 图.png', 1234)
+  assert(!name.includes('/') && !name.includes('\\'), '文件名消毒不含路径')
+  assert(name.startsWith('1234-'), '文件名带时间戳前缀')
+  const meta = savePetAppearance(root, {
+    name: '../../我的 图.png',
+    dataBase64: png.toString('base64'),
+    now: 1234
+  })
+  assertEq(meta.mime, 'image/png', '落盘元数据 mime')
+  assertEq(meta.bytes, png.length, '落盘元数据 bytes')
+  assert(existsSync(join(root, 'pet-appearance', meta.file)), '文件落在 pet-appearance/')
+  const state = loadPetAppearance(root, meta)
+  assertEq(state.kind, 'image', '读取为自定义形象')
+  assert(state.dataUrl.startsWith('data:image/png;base64,'), '返回 data URL')
+  assertEq(loadPetAppearance(root, null).kind, 'builtin', '无元数据回退内置')
+  // KV 可被本地编辑：mime 非白名单时必须回退内置，不能原样拼 data URL
+  assertEq(
+    loadPetAppearance(root, { ...meta, mime: 'image/svg+xml' }).kind,
+    'builtin',
+    '非法 mime 回退内置'
+  )
+  // 重复导入只保留最新一张，避免旧图永久残留/删除全部不彻底
+  const meta2 = savePetAppearance(root, {
+    name: '第二张.png',
+    dataBase64: png.toString('base64'),
+    now: 2345
+  })
+  const dirFiles = readdirSync(join(root, 'pet-appearance'))
+  assertEq(dirFiles.length, 1, '重复导入后目录只剩最新一张')
+  assertEq(dirFiles[0], meta2.file, '保留的是最新文件')
+  removePetAppearanceFile(root, meta2)
+  assertEq(readdirSync(join(root, 'pet-appearance')).length, 0, '恢复默认清空整个形象目录')
+  assertEq(loadPetAppearance(root, meta2).kind, 'builtin', '文件丢失也回退内置')
+  // Windows 不接受的尾部点/空格
+  const safeName = sanitizeAppearanceName('a. . ', 1)
+  assert(!safeName.endsWith('.') && !safeName.endsWith(' '), '文件名去掉尾部点/空格')
+  rmSync(root, { recursive: true, force: true })
+  return '魔数/base64/消毒/落盘/读取/删除 ✓'
 })
 
 const characterResult = recorder.toJSON()

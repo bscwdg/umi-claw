@@ -1,7 +1,14 @@
 <template>
   <div class="pet-root" :class="{ clickThrough }">
     <div class="pet-drag drag-region">
-      <FishState :state="visualState" class="fish-wrap" />
+      <img
+        v-if="appearance && appearance.kind === 'image'"
+        class="fish-wrap custom-pet"
+        :src="appearance.dataUrl"
+        alt="大肥鱼"
+        draggable="false"
+      />
+      <FishState v-else :state="visualState" class="fish-wrap" />
       <transition name="bubble">
         <div v-if="bubble" class="bubble no-drag" @click="dismissBubble">{{ bubble }}</div>
       </transition>
@@ -21,6 +28,7 @@ import FishState from './art/FishState.vue'
 type FishVisualState = 'idle' | 'happy' | 'sleepy' | 'sulk' | 'eat' | 'caught'
 
 const state = ref({ mood: '', familiarity: 0, intimacy: 0 })
+const appearance = ref<{ kind: string; dataUrl?: string } | null>(null)
 const emotionState = ref<FishVisualState | ''>('')
 const clickThrough = ref(false)
 const bubble = ref('')
@@ -53,6 +61,11 @@ onMounted(async () => {
       showBubble(event.payload?.text ?? '')
       return
     }
+    if (event && event.type === 'appearance') {
+      // 形象 data URL 可能很大：只在切换形象时拉取，不跟每次状态刷新走
+      await loadAppearance()
+      return
+    }
     await refresh()
   })
   offEmotion = window.api.character.onEmotion((payload) => {
@@ -64,6 +77,7 @@ onMounted(async () => {
     }, 8000)
   })
   await refresh()
+  await loadAppearance()
 })
 
 onBeforeUnmount(() => {
@@ -82,6 +96,15 @@ async function refresh(): Promise<void> {
     state.value = await window.api.character.state()
   } catch {
     /* 窗口不因读取失败而消失 */
+  }
+}
+
+/** 只在挂载/切换形象时读取（data URL 可能达数 MB，避免每次状态事件都传一遍） */
+async function loadAppearance(): Promise<void> {
+  try {
+    appearance.value = await window.api.character.pet.appearance.get()
+  } catch {
+    appearance.value = null
   }
 }
 
@@ -144,6 +167,13 @@ function showBubble(text: string): void {
 .fish-wrap {
   width: 100%;
   height: 100%;
+}
+.custom-pet {
+  object-fit: contain;
+  padding: 4%;
+  box-sizing: border-box;
+  filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.32));
+  -webkit-user-drag: none;
 }
 .bubble {
   position: absolute;

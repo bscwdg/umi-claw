@@ -28,6 +28,9 @@ export const CHARACTER_CHANNELS = {
   memoryRead: 'character:memory:read',
   memorySave: 'character:memory:save',
   memoryDelete: 'character:memory:delete',
+  petAppearanceGet: 'character:pet:appearance:get',
+  petAppearanceImport: 'character:pet:appearance:import',
+  petAppearanceClear: 'character:pet:appearance:clear',
   voiceSend: 'character:voice:send',
   exportData: 'character:export',
   deleteData: 'character:delete',
@@ -91,6 +94,7 @@ export const FISH_KEYS = {
   unlocks: `${FISH_KEY_PREFIX}unlocks`,
   dedup: `${FISH_KEY_PREFIX}dedup`,
   pet: `${FISH_KEY_PREFIX}pet`,
+  petAppearance: `${FISH_KEY_PREFIX}petAppearance`,
   chatGen: `${FISH_KEY_PREFIX}chatgen`,
   day: (date: string) => `${FISH_KEY_PREFIX}day:${date}`,
   life: (date: string) => `${FISH_KEY_PREFIX}life:${date}`
