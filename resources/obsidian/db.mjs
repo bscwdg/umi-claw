@@ -253,7 +253,14 @@ export function searchTopK(db, queryVec, limit, tag) {
     for (const r of rows) {
       lastId = r.id
       if (wantTag) {
-        try { if (!JSON.parse(r.tags || '[]').includes(wantTag)) continue } catch { continue }
+        // 嵌套 tag 语义：want=大肥鱼 应命中 大肥鱼/日记、大肥鱼/世界书（精确 includes 会漏日记）
+        try {
+          const tags = JSON.parse(r.tags || '[]')
+          const matched = Array.isArray(tags)
+            ? tags.some((t) => t === wantTag || String(t).startsWith(wantTag + '/'))
+            : false
+          if (!matched) continue
+        } catch { continue }
       }
       const buf = r.embedding
       if (!buf || buf.byteLength / 4 !== dim) continue

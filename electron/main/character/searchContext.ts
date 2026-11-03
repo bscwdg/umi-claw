@@ -14,8 +14,13 @@ export interface KnowledgeHit {
 export const CHARACTER_KB_PREFIX = '大肥鱼'
 
 export function isCharacterKnowledgePath(path: string): boolean {
-  const rel = String(path ?? '').replace(/\\/g, '/').replace(/^\.\//, '')
-  return rel === CHARACTER_KB_PREFIX || rel.startsWith(`${CHARACTER_KB_PREFIX}/`)
+  const rel = String(path ?? '')
+    .replace(/\\/g, '/')
+    .replace(/^\.\//, '')
+  if (rel === CHARACTER_KB_PREFIX) return true
+  if (!rel.startsWith(`${CHARACTER_KB_PREFIX}/`)) return false
+  // 归档目录 = 「删除过的记忆」：不参与检索（否则用户删掉的日记还能被回忆起来）
+  return !rel.startsWith(`${CHARACTER_KB_PREFIX}/归档/`)
 }
 
 export function filterCharacterHits(hits: KnowledgeHit[]): KnowledgeHit[] {

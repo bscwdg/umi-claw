@@ -17,6 +17,7 @@ const storeMod = await import(pathToFileURL(bundleEntry('electron/main/character
 const managerMod = await import(pathToFileURL(bundleEntry('electron/main/character/manager.ts', 'character-manager.mjs')).href)
 const personaMod = await import(pathToFileURL(bundleEntry('electron/main/character/persona.ts', 'character-persona.mjs')).href)
 const knowledgeMod = await import(pathToFileURL(bundleEntry('electron/main/character/knowledgeImport.ts', 'character-knowledge-import.mjs')).href)
+const knowledgeHealthMod = await import(pathToFileURL(bundleEntry('electron/main/character/knowledgeHealth.ts', 'character-knowledge-health.mjs')).href)
 const agentConfigMod = await import(pathToFileURL(bundleEntry('electron/main/character/agentConfig.ts', 'character-agent-config.mjs')).href)
 const bootstrapMod = await import(pathToFileURL(bundleEntry('electron/main/character/bootstrap.ts', 'character-bootstrap.mjs')).href)
 const chatMod = await import(pathToFileURL(bundleEntry('electron/main/character/chat.ts', 'character-chat.mjs')).href)
@@ -2101,6 +2102,12 @@ await recorder.check('C71', '宿主预检索：问题识别 / 命中格式化 / 
   assertEq(filtered.length, 2, '只保留大肥鱼/ 下的命中')
   assertEq(isCharacterKnowledgePath('工作/隐私.md'), false, '工作笔记被隔离')
   assertEq(isCharacterKnowledgePath('大肥鱼'), true, '目录本身合法')
+  assertEq(
+    isCharacterKnowledgePath('大肥鱼/归档/2026-01-01.md'),
+    false,
+    '归档日记不参与检索（删除记忆语义）'
+  )
+  assertEq(isCharacterKnowledgePath('大肥鱼/世界书/a.md'), true, '世界书可检索')
   return '预检索 helper 正确'
 })
 
@@ -2533,7 +2540,7 @@ await recorder.check('C82', '知识导入：文件名消毒/frontmatter/同名�
   // 正文：frontmatter + 类别 tag
   const note = buildKnowledgeNote({ name: '世界观.md', text: '海里有会说话的鱼。', category: '世界书', date: '2026-11-03' })
   assert(note.startsWith('---\n'), '笔记以 frontmatter 开头')
-  assert(note.includes('tags: [大肥鱼/世界书]'), 'frontmatter 带类别 tag')
+  assert(note.includes('tags: [大肥鱼, 大肥鱼/世界书]'), 'frontmatter 带扁平+类别 tag')
   assert(note.includes('source: character-import'), 'frontmatter 标来源')
   assert(note.includes('海里有会说话的鱼。'), '正文保留')
 
@@ -2582,7 +2589,7 @@ await recorder.check('C82', '知识导入：文件名消毒/frontmatter/同名�
   assert(colonTitle.includes('title: "a: b"'), '含冒号 title 必须转义')
   // 关系/约定 是合法类别且 tag 正确
   const relationNote = buildKnowledgeNote({ name: '约定.md', text: 'x', category: '关系/约定', date: '2026-11-03' })
-  assert(relationNote.includes('tags: [大肥鱼/关系/约定]'), '关系/约定 类别 tag 正确')
+  assert(relationNote.includes('tags: [大肥鱼, 大肥鱼/关系/约定]'), '同时带扁平 tag（供 MCP tag 过滤）与类别 tag')
   // 总量 2MB 限制；恰好 20 个应通过
   const twoMb = Array.from({ length: 5 }, (_, i) => ({ name: 'f' + i + '.md', text: 'x'.repeat(500 * 1024) }))
   assert(boom({ category: '世界书', files: twoMb }), '总量 >2MB 要拒绝')
@@ -2656,16 +2663,63 @@ await recorder.check('C84', 'character 新通道三处一致：types/ipc/preload
   for (const ch of [
     'character:persona:export',
     'character:persona:import',
-    'character:knowledge:import'
+    'character:knowledge:import',
+    'character:knowledge:status'
   ]) {
     assert(typesSrc.includes(ch), ch + ' 应在 CHARACTER_CHANNELS 常量里')
     assert(preloadSrc.includes("'" + ch + "'"), ch + ' 应在 preload 暴露')
   }
-  for (const name of ['personaExport', 'personaImport', 'knowledgeImport']) {
+  for (const name of ['personaExport', 'personaImport', 'knowledgeImport', 'knowledgeStatus']) {
     assert(ipcSrc.includes('CHARACTER_CHANNELS.' + name), 'ipc 应注册 ' + name)
   }
   assert(ipcSrc.includes('deps.persona') && ipcSrc.includes('deps.knowledge'), '未接 deps 时要能报 NOT_READY')
   return '通道 types/ipc/preload 三处一致 ✓'
+})
+
+await recorder.check('C85', '知识体检：vault/MCP/索引/角色笔记数 → searchable 判定（4.3）', async () => {
+  const { countCharacterNotes, buildKnowledgeHealth } = knowledgeHealthMod
+  const vault = join(repoRoot, 'test', '.tmp', 'knowledge-health-' + process.pid)
+  rmSync(vault, { recursive: true, force: true })
+  mkdirSync(join(vault, '大肥鱼', '世界书'), { recursive: true })
+  mkdirSync(join(vault, '大肥鱼', '日记'), { recursive: true })
+  mkdirSync(join(vault, '大肥鱼', '归档'), { recursive: true })
+  mkdirSync(join(vault, '工作'), { recursive: true })
+  writeFileSync(join(vault, '大肥鱼', '世界书', 'a.md'), '# a')
+  writeFileSync(join(vault, '大肥鱼', '世界书', 'b.md'), '# b')
+  writeFileSync(join(vault, '大肥鱼', '日记', 'c.md'), '# c')
+  writeFileSync(join(vault, '大肥鱼', '归档', 'old.md'), '# old')
+  writeFileSync(join(vault, '工作', 'x.md'), '# x')
+  assertEq(countCharacterNotes(vault), 3, '只数 大肥鱼/ 下 .md，排除 归档 与其它目录')
+  assertEq(countCharacterNotes(join(vault, '不存在')), 0, 'vault 不存在返回 0')
+  assertEq(countCharacterNotes(vault, 2), 2, 'maxNotes 截断生效')
+
+  const good = buildKnowledgeHealth({
+    vaultPath: vault,
+    vaultExists: true,
+    obsidianEnabled: true,
+    index: { noteCount: 10, indexing: false, lastError: null },
+    characterNotes: 3
+  })
+  assertEq(good.searchable, true, '全部就绪时 searchable=true')
+  assertEq(good.reasons.length, 0, '全部就绪无原因')
+
+  const cases = [
+    ['no-vault', { vaultPath: '', vaultExists: false, obsidianEnabled: true, index: { noteCount: 1 }, characterNotes: 3 }],
+    ['vault-missing', { vaultPath: vault, vaultExists: false, obsidianEnabled: true, index: { noteCount: 1 }, characterNotes: 0 }],
+    ['mcp-disabled', { vaultPath: vault, vaultExists: true, obsidianEnabled: false, index: { noteCount: 1 }, characterNotes: 3 }],
+    ['no-notes', { vaultPath: vault, vaultExists: true, obsidianEnabled: true, index: { noteCount: 1 }, characterNotes: 0 }],
+    ['index-empty', { vaultPath: vault, vaultExists: true, obsidianEnabled: true, index: { noteCount: 0 }, characterNotes: 3 }],
+    ['indexing', { vaultPath: vault, vaultExists: true, obsidianEnabled: true, index: { noteCount: 5, indexing: true }, characterNotes: 3 }],
+    ['index-error', { vaultPath: vault, vaultExists: true, obsidianEnabled: true, index: { noteCount: 5, lastError: 'boom' }, characterNotes: 3 }]
+  ]
+  for (const [reason, input] of cases) {
+    const health = buildKnowledgeHealth(input)
+    assert(health.reasons.includes(reason), '应报告原因 ' + reason + '，实际 ' + health.reasons.join(','))
+    assertEq(health.searchable, false, reason + ' 时 searchable=false')
+  }
+  assertEq(buildKnowledgeHealth(cases[1][1]).reasons.includes('vault-missing'), true, '原因码稳定可映射')
+  rmSync(vault, { recursive: true, force: true })
+  return 'count/build/searchable/reasons ✓'
 })
 
 const characterResult = recorder.toJSON()

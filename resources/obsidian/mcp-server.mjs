@@ -234,7 +234,15 @@ function listNotes({ folder, tag }) {
     const fileSet = new Set(
       allTagRows
         .filter((r) => {
-          try { return JSON.parse(r.tags || '[]').includes(t) } catch { return false }
+          try {
+            const tags = JSON.parse(r.tags || '[]')
+            // 嵌套 tag 语义：tag=大肥鱼 应命中 大肥鱼/日记、大肥鱼/世界书（精确匹配会漏日记）
+            return Array.isArray(tags)
+              ? tags.some((x) => x === t || String(x).startsWith(t + '/'))
+              : false
+          } catch {
+            return false
+          }
         })
         .map((r) => r.file_path)
     )

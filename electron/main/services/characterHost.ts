@@ -17,6 +17,7 @@ import type { ObsidianManager } from '../obsidian/obsidianManager'
 import type { VoiceManager } from '../fish/voice'
 import type { CharacterWiringDeps } from '../character/wiring'
 import { filterCharacterHits } from '../character/searchContext'
+import { buildKnowledgeHealth, countCharacterNotes } from '../character/knowledgeHealth'
 import { scrubForLog } from '../character/safety'
 
 /** 宿主侧能提供的一切（都是现成对象，不是新造） */
@@ -91,6 +92,21 @@ export function buildCharacterDeps(src: CharacterHostSources): CharacterWiringDe
       } catch {
         return []
       }
+    },
+    // 知识体检（4.3）：vault/MCP/索引/大肥鱼笔记数 → UI 显示「导入的知识她到底能不能检索」
+    knowledgeStatus: () => {
+      const cfg = src.configManager.getConfig().obsidian
+      const vaultPath = String(cfg?.vaultPath ?? '').trim()
+      const vaultExists = Boolean(vaultPath) && existsSync(vaultPath)
+      const index = src.obsidianManager?.getIndexStatus() ?? null
+      const characterNotes = vaultExists ? countCharacterNotes(vaultPath) : 0
+      return buildKnowledgeHealth({
+        vaultPath,
+        vaultExists,
+        obsidianEnabled: Boolean(cfg?.enabled),
+        index,
+        characterNotes
+      })
     },
     voice: {
       speakPcm: async (text) => {

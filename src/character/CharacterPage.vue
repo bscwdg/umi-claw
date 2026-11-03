@@ -110,6 +110,30 @@
           @change="onKnowledgeFilesPicked"
         />
       </div>
+      <div class="grid health" style="margin-top: 10px">
+        <div>
+          <span class="k">vault</span>
+          <span class="v">{{ knowledgeHealth ? (knowledgeHealth.vaultExists ? '✓ 已配置' : '× 未配置/不存在') : '…' }}</span>
+        </div>
+        <div>
+          <span class="k">MCP</span>
+          <span class="v">{{ knowledgeHealth ? (knowledgeHealth.obsidianEnabled ? '✓ 已启用' : '× 未启用') : '…' }}</span>
+        </div>
+        <div>
+          <span class="k">索引</span>
+          <span class="v">{{ knowledgeIndexText }}</span>
+        </div>
+        <div>
+          <span class="k">角色笔记</span>
+          <span class="v">{{ knowledgeHealth ? knowledgeHealth.characterNotes + ' 篇' : '…' }}</span>
+        </div>
+      </div>
+      <p v-if="knowledgeHealth && !knowledgeHealth.searchable" class="hint" style="color: var(--text-secondary)">
+        她当前还检索不到这些知识：{{ knowledgeReasonText }}。按提示处理后点「重新检查」。
+      </p>
+      <div class="row">
+        <button class="btn ghost" :disabled="busy" @click="refreshKnowledgeHealth">重新检查</button>
+      </div>
       <p v-if="knowledgeHint" class="hint">{{ knowledgeHint }}</p>
     </section>
 
@@ -298,6 +322,38 @@ const personaHint = ref('')
 const knowledgeFileInput = ref<HTMLInputElement | null>(null)
 const knowledgeCategory = ref<'世界书' | '角色卡' | '关系/约定'>('世界书')
 const knowledgeHint = ref('')
+interface KnowledgeHealthView {
+  vaultPath: string
+  vaultExists: boolean
+  obsidianEnabled: boolean
+  index: { indexing?: boolean; noteCount?: number; lastIndexedAt?: number | string | null; lastError?: string | null } | null
+  characterNotes: number
+  searchable: boolean
+  reasons: string[]
+}
+const knowledgeHealth = ref<KnowledgeHealthView | null>(null)
+const KNOWLEDGE_REASON_TEXT: Record<string, string> = {
+  'no-vault': '未配置 Obsidian vault',
+  'vault-missing': 'vault 目录不存在',
+  'mcp-disabled': '「知识库」页的 Obsidian MCP 未启用',
+  'no-notes': '大肥鱼/ 下还没有笔记（先导入知识）',
+  'index-empty': '还没建索引',
+  'indexing': '正在索引',
+  'index-error': '上次索引失败'
+}
+const knowledgeIndexText = computed(() => {
+  const index = knowledgeHealth.value?.index
+  if (!index) return '—'
+  if (index.indexing) return '… 索引中'
+  const count = Number(index.noteCount ?? 0)
+  if (count <= 0) return '× 未建'
+  return `✓ ${count} 块`
+})
+const knowledgeReasonText = computed(() => {
+  const reasons = knowledgeHealth.value?.reasons ?? []
+  const labels = reasons.map((r) => KNOWLEDGE_REASON_TEXT[r] ?? r)
+  return labels.length ? labels.join('；') : '未知原因'
+})
 const bootstrapReport = ref<BootstrapReport | null>(null)
 const petVisible = ref(false)
 const lifeDoc = ref('')
@@ -433,6 +489,7 @@ onMounted(async () => {
   })
   offStream = window.api.character.chat.onStream(onStreamEvent)
   await refresh()
+  void refreshKnowledgeHealth()
 })
 
 onBeforeUnmount(() => {
@@ -680,8 +737,17 @@ async function onKnowledgeFilesPicked(event: Event): Promise<void> {
     )
     const result = await window.api.character.knowledge.import(files, knowledgeCategory.value)
     knowledgeHint.value = `已导入 ${result.written.length} 篇：${result.written.join('、')}；重建索引（或等 Obsidian 增量索引）后她才能检索`
+    void refreshKnowledgeHealth()
     showToast('知识已写入 Obsidian')
   })
+}
+
+async function refreshKnowledgeHealth(): Promise<void> {
+  try {
+    knowledgeHealth.value = (await window.api.character.knowledge.status()) as KnowledgeHealthView
+  } catch {
+    knowledgeHealth.value = null
+  }
 }
 
 async function rebuildKnowledgeIndex(): Promise<void> {
@@ -695,6 +761,7 @@ async function rebuildKnowledgeIndex(): Promise<void> {
       return
     }
     knowledgeHint.value = '索引重建完成；如果她仍检索不到，请确认「知识库」页的 Obsidian MCP 已启用'
+    void refreshKnowledgeHealth()
     showToast('索引已重建')
   })
 }

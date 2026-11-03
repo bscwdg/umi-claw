@@ -1799,3 +1799,12 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
   - P3 未采纳/接受：bidi/零宽字符与 GBK 文本（登记 4.4 可移植性）；`readKnowledgeNote` 生产零调用（保留为测试 helper，登记）；Obsidian 嵌套 tag 精确匹配/全库检索是 §13.2-9 既有缺口；打包 smoke 仍验旧包（发布项）；设置页保存途中继续编辑仍可能被 `markSaved` 回填（登记 P3）。
 - **flake 观察**：db-worker W1「spawn 后应创建 db」在 19:21 全量跑中出现一次，重跑 38/38 绿；按既有 flake 台账登记观察（未改断言）。
 - 版本口径：本轮为 4.3 功能、落在 4.2.0 分支未发版；`package.json` 仍 4.2.0，发版时统一 bump（不新建计划文件，AGENTS §11.6）。
+
+### P1 · 检索作用域 + 知识体检（4.3，2026-11-03 下午）
+
+- 新增 `knowledgeHealth.ts`（纯 Node）：`countCharacterNotes`（`大肥鱼/` 下 .md，排除 `归档/` 与隐藏目录、depth≤6、maxNotes 截断）+ `buildKnowledgeHealth`（searchable 仅在「MCP 启用 + vault 存在 + 角色笔记>0 + 索引非空且无错误」时为 true；reason 码：no-vault/vault-missing/mcp-disabled/no-notes/index-empty/indexing/index-error）。
+- 新通道 `character:knowledge:status`（types/ipc/wiring/characterHost/preload 五处）；UI 知识卡显示 vault/MCP/索引/角色笔记四行 + 不可检索原因 + 「重新检查」，导入/重建索引成功后自动刷新。
+- 检索作用域：保留 host 预检索 `filterCharacterHits`（只取 `大肥鱼/`）；导入的 frontmatter 改为 `tags: [大肥鱼, 大肥鱼/<类别>]`（扁平 tag 供 MCP 精确 tag 过滤）；AGENTS 模板新增「只查 大肥鱼/ 目录」指令（MCP 工具级全库检索仍是软约束，登记 4.4）。
+- 测试：C85（count 排除归档/其它目录、maxNotes、searchable 全就绪、7 种 reason 矩阵）；C82 tag 断言更新；C84 通道 +knowledgeStatus；ui 结构断言（四行/重新检查/原因映射/status 调用/preload 通道）。
+- 验证：character 84/84；全量 accept **33 套 / 624 断言 / 0 失败**；双 typecheck 0/0；build 通过；boundary 0/0/0。
+- 已知边界（登记 4.4）：MCP 工具级检索（agent 自行调 search_notes）仍可全库，目前靠 AGENTS 指令 + 扁平 tag 软约束；`归档/` 不计入角色笔记数（历史日记不参与检索计数）；大 vault 每次体检递归计数上限 500 篇。

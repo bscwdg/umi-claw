@@ -36,6 +36,8 @@ export interface CharacterIpcDeps {
   /** 知识导入（4.3）：把用户文件写进 Obsidian 大肥鱼/<类别>/，不新增知识库 */
   knowledge?: {
     import: (payload: unknown) => Promise<{ written: string[] }>
+    /** 知识体检：vault/MCP/索引/角色笔记数（4.3） */
+    status?: () => unknown
   }
 }
 
@@ -235,6 +237,12 @@ export function registerCharacterIpc(
       throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '人格包功能未接线')
     }
     return deps.persona.import(raw)
+  })
+  handle(CHARACTER_CHANNELS.knowledgeStatus, () => {
+    if (!deps.knowledge?.status) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '知识体检功能未接线')
+    }
+    return deps.knowledge.status()
   })
   handle(CHARACTER_CHANNELS.knowledgeImport, (payload) => {
     if (!deps.knowledge) {

@@ -1227,6 +1227,19 @@ await r.check('U21', '二次确认弹窗统一：插件管理/角色页不再用
     'preload 应暴露人格导入/导出通道'
   )
 
+  // 知识体检（4.3 P1）：vault/MCP/索引/角色笔记数可见 + 可刷新 + 原因文案
+  assert(/character\.knowledge\.status/.test(characterSrc), '知识体检要调 character.knowledge.status')
+  assert(/@click="refreshKnowledgeHealth"/.test(characterSrc), '知识体检应有「重新检查」按钮')
+  for (const label of ['vault', 'MCP', '索引', '角色笔记']) {
+    assert(characterSrc.includes(label), `知识体检应显示 ${label} 状态`)
+  }
+  assert(/KNOWLEDGE_REASON_TEXT/.test(characterSrc), '知识体检应用原因文案映射')
+  assert(/searchable/.test(characterSrc), '知识体检应展示 searchable 判定')
+  assert(
+    preloadSrc.includes("'character:knowledge:status'"),
+    'preload 应暴露 character:knowledge:status'
+  )
+
   // 全仓渲染端扫描：原生 window.confirm 与自定义弹窗样式/层级/键盘行为不一致，产品口径是统一弹窗
   const offenders = []
   const scan = (dir) => {

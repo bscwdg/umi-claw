@@ -64,7 +64,7 @@ export function buildKnowledgeNote(input: {
   return [
     '---',
     `title: ${JSON.stringify(title)}`,
-    `tags: [大肥鱼/${input.category}]`,
+    `tags: [大肥鱼, 大肥鱼/${input.category}]`,
     'source: character-import',
     `created: ${input.date}`,
     '---',

@@ -81,6 +81,8 @@ export interface CharacterWiringDeps {
   }
   /** 既有 Obsidian vault 路径（只在其下建 `大肥鱼/`，不新增知识库） */
   obsidianVaultPath?: () => string | undefined
+  /** 知识体检（4.3）：vault/MCP/索引/角色笔记数；由宿主装配，缺省则 UI 显示未接线 */
+  knowledgeStatus?: () => unknown
   gatewayReady?: () => boolean
   qqReady?: () => boolean
   ttsReady?: () => boolean
@@ -435,6 +437,7 @@ async function registerCharacterInternal(
       },
       // 4.3 知识导入：只写既有 Obsidian vault 的 `大肥鱼/<类别>/`，不新增知识库
       knowledge: {
+        status: () => deps.knowledgeStatus?.(),
         import: async (payload) => {
           const vault = deps.obsidianVaultPath?.()?.trim()
           if (!vault) {

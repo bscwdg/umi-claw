@@ -30,6 +30,7 @@ export const CHARACTER_CHANNELS = {
   personaExport: 'character:persona:export',
   personaImport: 'character:persona:import',
   knowledgeImport: 'character:knowledge:import',
+  knowledgeStatus: 'character:knowledge:status',
   streamChunk: 'character:stream:chunk',
   streamDone: 'character:stream:done',
   streamError: 'character:stream:error',

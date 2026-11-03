@@ -753,7 +753,17 @@ const api = {
     },
     knowledge: {
       import: (files: Array<{ name: string; text: string }>, category: string) =>
-        call<{ written: string[] }>('character:knowledge:import', { files, category })
+        call<{ written: string[] }>('character:knowledge:import', { files, category }),
+      status: () =>
+        call<{
+          vaultPath: string
+          vaultExists: boolean
+          obsidianEnabled: boolean
+          index: { indexing?: boolean; noteCount?: number; lastIndexedAt?: number | string | null; lastError?: string | null } | null
+          characterNotes: number
+          searchable: boolean
+          reasons: string[]
+        }>('character:knowledge:status')
     },
     safety: {
       exportData: () =>

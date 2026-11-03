@@ -233,6 +233,7 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 | `character:persona:export` | — | 导出人格包（SOUL/IDENTITY/AGENTS/USER；不含 STATE） |
 | `character:persona:import` | `{version:1, files}` | 校验+备份后写人格；AGENTS 自动补边界硬段 |
 | `character:knowledge:import` | `{category, files:[{name,text}]}` | 写入既有 Obsidian `大肥鱼/<类别>/`（不新增知识库） |
+| `character:knowledge:status` | — | 知识体检：{vaultPath,vaultExists,obsidianEnabled,index,characterNotes,searchable,reasons} |
 
 **错误码**：`CHARACTER_NOT_READY` / `CHARACTER_AGENT_MISSING` / `CHARACTER_VAULT_MISSING`（实现用 `CHARACTER_NOT_READY`：vault 未配置/不存在）/ `CHARACTER_TTS_UNAVAILABLE` / `CHARACTER_QQ_TARGET_MISSING` / `CHARACTER_QUIET_HOURS` / `CHARACTER_DAILY_CAP` / `CHARACTER_STORE_IO`。
 **推送**：`character:state`（状态变更）、`character:bubble`（气泡）、`character:stream:*`。
@@ -296,6 +297,7 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 - **人格包（4.3）**：`character:persona:export|import`；导出/导入同一上限（单文件 512KB、整包 2MB）；未知槽位丢弃；导入前备份 `.persona-backup/<ts>`（保留 3 份）；导入后从 manifest 删槽位（视为用户文件，模板同步不覆盖）；校验错误统一 `CHARACTER_BAD_PAYLOAD`，vault/未初始化用 `CHARACTER_NOT_READY`。
 - **边界硬段（4.3）**：AGENTS.md 由 `normalizeAgentsDoc` 确定性规范化：剥旧受管段/孤儿标记 → 空白归一 → 固定顺序追加 memory 段与 `fish:managed:boundary` 段（AI 明示/危机转介不可被人格包移除）；连续 sync 不增长。
 - **知识导入（4.3）**：`character:knowledge:import` 写既有 Obsidian vault 的 `大肥鱼/<世界书|角色卡|关系/约定>/`，`title` 用 YAML 双引号转义，同名 `-2/-3` 不覆盖；单文件 512KB、一次 20 个/2MB；路径做词法+realpath 双重 containment；不新增知识库（红线 9）。
+- **知识体检 / 检索作用域（4.3 P1）**：`character:knowledge:status` 返回 vault/MCP/索引/`大肥鱼/` 笔记数与 `searchable`（启用+vault 存在+有笔记+索引非空且无错误才 true），reason 码稳定；host 预检索仍只取 `大肥鱼/`（`filterCharacterHits`）；导入 frontmatter 同时带扁平 tag `大肥鱼`（供 MCP tag 精确过滤）与类别 tag；AGENTS 模板要求 agent 只查 `大肥鱼/`（MCP 工具级仍为软约束，登记 4.4）。
 - **详细设置页（4.3）**：`CharacterSettings.vue` 覆盖 §4.2 设置树中已接线的 14 个字段；`contentTypes/confirmImportant/sttEnabled/pet.*` 尚未接线，UI 显式 disabled + 文案；安全行为不提供关闭入口。
 
 ---
