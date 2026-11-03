@@ -1762,3 +1762,40 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 全量 accept **33 套 / 619 PASS / 0 FAIL**；`index.ts` **1,800**；`plugin.accept` **64/64**；
 `consent.accept` **10/10**。C1/C2：本轮 docs+fix 提交按 §12.4 写 `对抗审查:` + 三态结论；
 历史提交见上「提交审查记录补记」（不改写已推送历史）。
+
+
+## 2026-11-03 · 4.3 大肥鱼功能补齐（设置页 / 人格包 / 知识导入）
+
+背景：用户点名「人格导入、知识库导入那些都没有」。按 1→2→3 三包补功能（真机手工验收由用户自己做，不在本轮范围）。
+
+### 包 1 · 详细设置页（`src/character/CharacterSettings.vue`）
+
+- 覆盖 §4.2 设置树里**已接线**的 14 个字段：主动消息（enabled/silenceDays/dailyCap/quietFrom/quietTo/channel）、语音（enabled/requestAllowed/dailyCap）、记忆（autoEnabled）、关系（mode/userName/address/taboo）。
+- 未接线字段（contentTypes/confirmImportant/sttEnabled/pet.*）**显式 disabled + 文案**，不做假开关；安全行为（AI 明示/危机转介）不提供关闭入口。
+- `dirty` 守卫：用户改过就不被 `onEvent→refresh` 回填覆盖；保存后 `markSaved()` 复位并回填服务端值；settings 未加载时保存按钮禁用；address 空值兜底「你」；新增 `CharacterSettingsPatch` 类型（嵌套 partial），清掉本页的 `as never`。
+
+### 包 2 · 人格包导出/导入（`persona.ts` + `character:persona:*`）
+
+- 导出/导入 SOUL/IDENTITY/AGENTS/USER（STATE 归宿主、不进包）；导出/导入同一上限（单文件 512KB、整包 2MB），避免「能导出不能导入」。
+- 导入：槽位白名单、NUL 拒绝、未知槽丢弃、错误统一 `CHARACTER_BAD_PAYLOAD`；导入前备份到 `.persona-backup/<ts>`（保留 3 份；删除全部数据时一并清）；导入后从 manifest 删槽位（视为用户文件，模板同步不覆盖）。
+- AGENTS.md 改为 `normalizeAgentsDoc` 确定性规范化：剥旧受管段/孤儿标记 → 空白归一 → 固定顺序追加 memory 段 + `fish:managed:boundary` 硬段；**连续 sync 不再增长**，边界硬段不可被人格包移除（含伪造空标记对）。
+- UI：导出 JSON 下载（导出文件体积闸门 16MB，避免误拒转义后的合法包）；导入前二次确认、只列已知槽位、提示「只导入信任来源」。
+
+### 包 3 · 知识导入（`knowledgeImport.ts` + `character:knowledge:import`）
+
+- 写既有 Obsidian vault 的 `大肥鱼/<世界书|角色卡|关系/约定>/`（**不新增知识库**，红线 9）：frontmatter `title`（YAML 双引号转义）/`tags`/`source`/`created`（本地日期）。
+- 文件名消毒（路径穿越/绝对路径/控制符/Windows 保留名，含第一个点前判断）+ `safeVaultPath` 词法 & realpath 双重 containment；同名 `-2/-3` 不覆盖；限流 20 个/单文件 512KB/总 2MB；vault 未配置/不存在抛 `CHARACTER_NOT_READY`。
+- UI：选类别 + 多选 .md/.txt + 数量/体积预检 + `run()` busy；导入后提示自动增量索引/重建索引，并提示确认 MCP 已启用。
+
+### 验证与两轮检查
+
+- **事实核对**（独立子代理，只读）：character.core 83/83（C81–C84）、ui 23/23、双 typecheck 0/0、build 通过、全量 accept **33 套 / 623 断言 / 0 失败**、`check:boundary` 0/0、通道 types/ipc/preload 三处一致（C84）、无新增知识库/DB/服务。
+- **对抗复核**（三份独立子代理：设置+人格包 1c3ace、知识导入 70f65a、修复复核 d947），逐条处置：
+  - P1 边界硬段可被伪造标记对绕过 → **属实→已修**（`normalizeAgentsDoc` 无条件重写 canonical 段，C81 断言）；
+  - P1 AGENTS 每次 sync 增长 4 字节 → **属实→已修**（确定性规范化，C81 连续 3 次相等断言）；
+  - P2 address 可注入受管段 marker → **属实→已修**（`sanitizeLabel` 剥 `<!-- -->` + marker 行首锚定，C81 断言）；
+  - P2 渲染端 2MB 闸门误拒合法人格包 → **属实→已修**（16MB 文件闸门，内容上限交宿主）；
+  - P2 title YAML 未引号 / write-read 不兜底 / 渲染端无体积预检与 busy / 通道无测试 / C82 缺口 / vault 盘符根误判 → **属实→已修**；
+  - P3 未采纳/接受：bidi/零宽字符与 GBK 文本（登记 4.4 可移植性）；`readKnowledgeNote` 生产零调用（保留为测试 helper，登记）；Obsidian 嵌套 tag 精确匹配/全库检索是 §13.2-9 既有缺口；打包 smoke 仍验旧包（发布项）；设置页保存途中继续编辑仍可能被 `markSaved` 回填（登记 P3）。
+- **flake 观察**：db-worker W1「spawn 后应创建 db」在 19:21 全量跑中出现一次，重跑 38/38 绿；按既有 flake 台账登记观察（未改断言）。
+- 版本口径：本轮为 4.3 功能、落在 4.2.0 分支未发版；`package.json` 仍 4.2.0，发版时统一 bump（不新建计划文件，AGENTS §11.6）。

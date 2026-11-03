@@ -16,6 +16,7 @@ const typesMod = await import(pathToFileURL(bundleEntry('electron/main/character
 const storeMod = await import(pathToFileURL(bundleEntry('electron/main/character/store.ts', 'character-store.mjs')).href)
 const managerMod = await import(pathToFileURL(bundleEntry('electron/main/character/manager.ts', 'character-manager.mjs')).href)
 const personaMod = await import(pathToFileURL(bundleEntry('electron/main/character/persona.ts', 'character-persona.mjs')).href)
+const knowledgeMod = await import(pathToFileURL(bundleEntry('electron/main/character/knowledgeImport.ts', 'character-knowledge-import.mjs')).href)
 const agentConfigMod = await import(pathToFileURL(bundleEntry('electron/main/character/agentConfig.ts', 'character-agent-config.mjs')).href)
 const bootstrapMod = await import(pathToFileURL(bundleEntry('electron/main/character/bootstrap.ts', 'character-bootstrap.mjs')).href)
 const chatMod = await import(pathToFileURL(bundleEntry('electron/main/character/chat.ts', 'character-chat.mjs')).href)
@@ -43,7 +44,16 @@ const {
 } = typesMod
 const { CharacterStore, formatDate } = storeMod
 const { CharacterManager } = managerMod
-const { applyTemplate, buildPersonaVars, composePersonaFiles, writeManagedFiles, safeJoin } = personaMod
+const { applyTemplate, buildPersonaVars, composePersonaFiles, writeManagedFiles, safeJoin, exportPersonaPackage, importPersonaPackage, normalizeAgentsDoc } = personaMod
+const {
+  KNOWLEDGE_CATEGORIES,
+  sanitizeKnowledgeName,
+  safeVaultPath,
+  buildKnowledgeNote,
+  validateKnowledgeImport,
+  writeKnowledgeFiles,
+  readKnowledgeNote
+} = knowledgeMod
 const { buildAgentPatch, readAgentEntry } = agentConfigMod
 const { runBootstrap } = bootstrapMod
 const {
@@ -2332,6 +2342,330 @@ await recorder.check('C80', '单实例锁：拿不到锁直接退出，second-in
   const guardAt = src.indexOf('if (!singleInstanceLock) return')
   assert(guardAt > readyAt, 'whenReady 回调开头要有单实例守卫（quit 后 ready 仍可能触发）')
   return '单实例接线 ✓'
+})
+
+await recorder.check('C81', '人格包导出/导入：校验、备份、导入后不被模板覆盖（4.3）', async () => {
+  const dir = join(repoRoot, 'test', '.tmp', `persona-pkg-${process.pid}`)
+  rmSync(dir, { recursive: true, force: true })
+  mkdirSync(dir, { recursive: true })
+
+  // 先造一套「宿主生成」人格 + manifest（模拟已初始化）
+  writeManagedFiles(dir, composePersonaFiles(baseInputs()))
+  const pkg = exportPersonaPackage(dir, 1000)
+  assertEq(pkg.version, 1, '人格包版本为 1')
+  assertEq(typeof pkg.files['SOUL.md'], 'string', '导出包含 SOUL.md')
+  assertEq(pkg.files['fish/STATE.md'], undefined, 'STATE.md 是宿主状态，不进人格包')
+
+  // 导入自定义人格：旧文件备份 + 内容覆盖
+  const imported = importPersonaPackage(
+    dir,
+    { version: 1, files: { 'SOUL.md': '# 我的人鱼\n只吃小鱼干', 'AGENTS.md': '# 我自己的规则' } },
+    2000
+  )
+  assertEq(imported.written.length, 2, '导入 2 个槽位')
+  assertEq(readFileSync(join(dir, 'SOUL.md'), 'utf8'), '# 我的人鱼\n只吃小鱼干', '导入内容落盘')
+  assert(imported.backupDir && existsSync(imported.backupDir), '导入前生成备份目录')
+  assert(
+    readFileSync(join(imported.backupDir, 'SOUL.md'), 'utf8').includes('大肥鱼'),
+    '备份里是导入前的旧人格'
+  )
+
+  // manifest 必须真正删除导入槽位（否则模板 hash 对齐后会被覆盖；这条锁住删除动作本身）
+  const manifestAfter = JSON.parse(readFileSync(join(dir, '.fish-managed.json'), 'utf8'))
+  assertEq(manifestAfter.files['SOUL.md'], undefined, '导入后 manifest 不再记录 SOUL.md')
+  assertEq(manifestAfter.files['AGENTS.md'], undefined, '导入后 manifest 不再记录 AGENTS.md')
+
+  // 关键：后续模板同步不得覆盖导入内容
+  writeManagedFiles(dir, composePersonaFiles(baseInputs()))
+  assertEq(
+    readFileSync(join(dir, 'SOUL.md'), 'utf8'),
+    '# 我的人鱼\n只吃小鱼干',
+    '导入后模板同步不得覆盖用户人格'
+  )
+  // AGENTS 受管段合并必须保留所有用户内容（孤儿 start / 多 start / 孤儿+有效块）
+  const templateAgents = composePersonaFiles(baseInputs())['AGENTS.md']
+  const START = '<!-- fish:managed:memory:start -->'
+  const END = '<!-- fish:managed:memory:end -->'
+  const cases = [
+    ['孤儿 start', '用户手写的内容\n' + START + '\n中间的用户内容\n'],
+    ['孤儿 + 有效块', 'TOP\n' + START + '\nMORE-USER\n\n' + START + '\nOLD-MEM\n' + END + '\nBOTTOM'],
+    ['两个孤儿 start', 'TOP ' + START + ' MIDDLE1 ' + START + ' MIDDLE2 ' + START + ' TAIL']
+  ]
+  for (const [label, existing] of cases) {
+    const merged = personaMod.mergeAgentsMemoryBlock(existing, templateAgents)
+    for (const keep of ['TOP', 'MORE-USER', 'BOTTOM', 'MIDDLE1', 'MIDDLE2', 'TAIL', '用户手写的内容', '中间的用户内容']) {
+      if (existing.includes(keep)) {
+        assert(merged.includes(keep), label + ' 合并后用户内容 ' + keep + ' 必须保留')
+      }
+    }
+    assertEq(merged.split(START).length - 1, 1, label + ' 合并后只留一个受管段 start')
+  }
+  // 幂等：连续两次合并结果一致
+  const once = personaMod.mergeAgentsMemoryBlock(cases[1][1], templateAgents)
+  const twice = personaMod.mergeAgentsMemoryBlock(once, templateAgents)
+  assertEq(twice, once, '受管段合并幂等')
+
+  // 生产路径 normalizeAgentsDoc：同样形态必须保留用户内容、恰好各一个受管段、幂等
+  for (const [label, existing] of cases) {
+    const norm = normalizeAgentsDoc(existing, templateAgents)
+    for (const keep of ['TOP', 'MORE-USER', 'BOTTOM', 'MIDDLE1', 'MIDDLE2', 'TAIL', '用户手写的内容', '中间的用户内容']) {
+      if (existing.includes(keep)) {
+        assert(norm.includes(keep), 'normalizeAgentsDoc ' + label + ' 应保留 ' + keep)
+      }
+    }
+    assertEq(norm.split(START).length - 1, 1, 'normalizeAgentsDoc ' + label + ' 只有一个 memory START')
+    assertEq(norm.split('<!-- fish:managed:boundary:start -->').length - 1, 1, 'normalizeAgentsDoc ' + label + ' 只有一个 boundary START')
+    assertEq(normalizeAgentsDoc(norm, templateAgents), norm, 'normalizeAgentsDoc ' + label + ' 幂等')
+  }
+
+  // 校验：版本/未知键/体积/NUL
+  const boom = (payload) => {
+    try {
+      importPersonaPackage(dir, payload, 2100)
+      return null
+    } catch (e) {
+      return e
+    }
+  }
+  for (const [desc, payload] of [
+    ['版本不符', { version: 2, files: { 'SOUL.md': 'x' } }],
+    ['没有已知槽位', { version: 1, files: { 'OTHER.md': 'x' } }],
+    ['NUL 字符', { version: 1, files: { 'SOUL.md': 'a\u0000b' } }],
+    ['单文件 >512KB', { version: 1, files: { 'SOUL.md': 'x'.repeat(600 * 1024) } }]
+  ]) {
+    const error = boom(payload)
+    assert(error, desc + ' 要拒绝')
+    assertEq(error.code, 'CHARACTER_BAD_PAYLOAD', desc + ' 必须抛 CHARACTER_BAD_PAYLOAD（渲染端按 code 分支）')
+  }
+
+  // 备份只留最近 3 份
+  for (let i = 0; i < 5; i += 1) {
+    importPersonaPackage(dir, { version: 1, files: { 'USER.md': `v${i}` } }, 3000 + i)
+  }
+  const backups = readdirSync(join(dir, '.persona-backup')).filter((n) => /^\d+$/.test(n))
+  assertEq(backups.length, 3, '备份保留恰好 3 份（不是全删光也算过）')
+
+  // 边界硬段：导入的 AGENTS.md 自动补 AI 明示/危机转介，且 sync 后仍在
+  const agentsAfterImport = readFileSync(join(dir, 'AGENTS.md'), 'utf8')
+  assert(agentsAfterImport.includes('fish:managed:boundary:start'), '导入 AGENTS 后补边界硬段')
+  assert(agentsAfterImport.includes('不假装人类'), '边界段含 AI 明示')
+  writeManagedFiles(dir, composePersonaFiles(baseInputs()))
+  assert(
+    readFileSync(join(dir, 'AGENTS.md'), 'utf8').includes('不假装人类'),
+    '模板同步后边界硬段仍在（人格包不能移除安全边界）'
+  )
+
+  // 导出与导入同上限：>512KB 的人格文件拒绝导出，避免「能导出不能导入」
+  const bigDir = join(repoRoot, 'test', '.tmp', `persona-big-${process.pid}`)
+  rmSync(bigDir, { recursive: true, force: true })
+  mkdirSync(bigDir, { recursive: true })
+  writeFileSync(join(bigDir, 'SOUL.md'), 'x'.repeat(600 * 1024))
+  let exportError = null
+  try {
+    exportPersonaPackage(bigDir, 4000)
+  } catch (e) {
+    exportError = e
+  }
+  assert(exportError && exportError.code === 'CHARACTER_BAD_PAYLOAD', '超大文件导出应拒绝并抛 BAD_PAYLOAD')
+  rmSync(bigDir, { recursive: true, force: true })
+
+  // 全量删除必须连人格备份一起清（否则"删除全部数据"不彻底）
+  const wiringSrc = readFileSync(join(repoRoot, 'electron/main/character/wiring.ts'), 'utf8')
+  const allScopeAt = wiringSrc.indexOf("if (scope === 'all')")
+  assert(allScopeAt >= 0, 'wiring 应有全量删除分支')
+  assert(
+    wiringSrc.slice(allScopeAt, allScopeAt + 800).includes('.persona-backup'),
+    'scope=all 时必须清理 .persona-backup'
+  )
+
+  // address 可注入受管段 marker（40 字符足够塞下 34 字符 marker）：消毒后模板里只能有一个 START
+  const MARK_START = '<!-- fish:managed:memory:start -->'
+  const injectedAgents = composePersonaFiles(
+    baseInputs({ relationship: { address: MARK_START } })
+  )['AGENTS.md']
+  assertEq(
+    injectedAgents.split(MARK_START).length - 1,
+    1,
+    'address 注入 marker 后模板只应有一个受管段 START（sanitizeLabel 剥 <!-- -->）'
+  )
+  // 内联（非独占行）marker 不应被当成受管段：用户文本保留，规范化块另起
+  const inlineText = '前文 ' + MARK_START + ' 后文'
+  const inlineMerged = personaMod.mergeAgentsMemoryBlock(inlineText, templateAgents)
+  assert(inlineMerged.includes('前文') && inlineMerged.includes('后文'), '内联 marker 内容不应被吞')
+  assert(
+    inlineMerged.includes('\n' + MARK_START + '\n'),
+    '规范化受管段应以独占行形式追加'
+  )
+
+  // 确定性：连续 writeManagedFiles 不得让 AGENTS.md 增长（4.3 复核 P1 回归）
+  writeManagedFiles(dir, composePersonaFiles(baseInputs()))
+  const agentsOnce = readFileSync(join(dir, 'AGENTS.md'), 'utf8')
+  writeManagedFiles(dir, composePersonaFiles(baseInputs()))
+  const agentsTwice = readFileSync(join(dir, 'AGENTS.md'), 'utf8')
+  writeManagedFiles(dir, composePersonaFiles(baseInputs()))
+  const agentsThrice = readFileSync(join(dir, 'AGENTS.md'), 'utf8')
+  assertEq(agentsTwice, agentsOnce, '第二次 sync 后 AGENTS 应完全相等')
+  assertEq(agentsThrice, agentsOnce, '第三次 sync 后 AGENTS 仍应完全相等')
+  assert(
+    (agentsOnce.match(/fish:managed:memory:start/g) || []).length === 1,
+    'AGENTS 只应有一个 memory 受管段'
+  )
+  assert(
+    (agentsOnce.match(/fish:managed:boundary:start/g) || []).length === 1,
+    'AGENTS 只应有一个 boundary 受管段'
+  )
+
+  rmSync(dir, { recursive: true, force: true })
+  return '导出/校验/备份/防覆盖/marker 注入/确定性 ✓'
+})
+await recorder.check('C82', '知识导入：文件名消毒/frontmatter/同名不覆盖/写入大肥鱼目录（4.3）', async () => {
+  // 文件名消毒：路径穿越、绝对路径、控制符、补 .md、截断
+  const evil = sanitizeKnowledgeName('../../世界书/序章.md')
+  assert(!evil.includes('/') && !evil.includes('\\') && !evil.includes('..'), `路径穿越必须被消毒：${evil}`)
+  assertEq(sanitizeKnowledgeName('C:\\temp\\设定.md'), 'C temp 设定.md', '盘符/反斜杠被替换')
+  assertEq(sanitizeKnowledgeName(''), '未命名.md', '空名回落未命名')
+  assertEq(sanitizeKnowledgeName('a\u0000b'), 'a b.md', '控制符被替换')
+  assert(sanitizeKnowledgeName('x'.repeat(200)).length <= 83, '超长文件名截断')
+  assertEq(sanitizeKnowledgeName('CON.md'), '_CON.md', 'Windows 保留名 CON 加前缀')
+  assertEq(sanitizeKnowledgeName('com1'), '_com1.md', 'Windows 保留名 COM1 加前缀')
+  assertEq(sanitizeKnowledgeName('NUL.md'), '_NUL.md', 'Windows 保留名 NUL 加前缀')
+
+  // 正文：frontmatter + 类别 tag
+  const note = buildKnowledgeNote({ name: '世界观.md', text: '海里有会说话的鱼。', category: '世界书', date: '2026-11-03' })
+  assert(note.startsWith('---\n'), '笔记以 frontmatter 开头')
+  assert(note.includes('tags: [大肥鱼/世界书]'), 'frontmatter 带类别 tag')
+  assert(note.includes('source: character-import'), 'frontmatter 标来源')
+  assert(note.includes('海里有会说话的鱼。'), '正文保留')
+
+  // 校验：类别白名单/空文件/超限/NUL/总量
+  const boom = (payload) => {
+    try {
+      validateKnowledgeImport(payload)
+      return null
+    } catch (e) {
+      return e
+    }
+  }
+  const codeOf = (payload) => {
+    const err = boom(payload)
+    return err ? err.code : null
+  }
+  assert(boom({ category: '私密', files: [{ name: 'a.md', text: 'x' }] }), '未知类别要拒绝')
+  assert(boom({ category: '世界书', files: [] }), '空文件要拒绝')
+  assert(boom({ category: '世界书', files: [{ name: 'a.md', text: '' }] }), '空内容要拒绝')
+  assert(
+    boom({ category: '世界书', files: Array.from({ length: 21 }, (_, i) => ({ name: `${i}.md`, text: 'x' })) }),
+    '超过 20 个文件要拒绝'
+  )
+  assert(boom({ category: '世界书', files: [{ name: 'a.md', text: 'x'.repeat(600 * 1024) }] }), '单文件超 512KB 要拒绝')
+  assertEq(codeOf({ category: '私密', files: [{ name: 'a.md', text: 'x' }] }), 'CHARACTER_BAD_PAYLOAD', '校验错误码应为 BAD_PAYLOAD')
+  assert(boom({ category: '世界书', files: [{ name: 'a.md', text: 'a\u0000b' }] }), 'NUL 要拒绝')
+  const valid = validateKnowledgeImport({ category: '世界书', files: [{ name: '设定.md', text: '正文' }] })
+  assertEq(valid.category, '世界书', '合法类别通过')
+  assertEq(valid.files[0].name, '设定.md', '文件名保留 .md')
+  assertEq(KNOWLEDGE_CATEGORIES.length, 3, '类别 3 个（世界书/角色卡/关系/约定）')
+
+  // 写入：同名不覆盖（加序号）、目录结构正确、frontmatter 可读回
+  const vault = join(repoRoot, 'test', '.tmp', `knowledge-import-${process.pid}`)
+  rmSync(vault, { recursive: true, force: true })
+  mkdirSync(vault, { recursive: true })
+  const first = writeKnowledgeFiles(vault, '世界书', [{ name: '设定.md', text: '第一版' }], 1000)
+  const second = writeKnowledgeFiles(vault, '世界书', [{ name: '设定.md', text: '第二版' }], 2000)
+  assertEq(first.written[0], '大肥鱼/世界书/设定.md', '写入相对 vault 的路径')
+  assertEq(second.written[0], '大肥鱼/世界书/设定-2.md', '同名不覆盖，加序号')
+  // title 必须 YAML 引号（特殊字符/日期不被解析坏）
+  const tricky = buildKnowledgeNote({ name: '- 序章.md', text: 'x', category: '角色卡', date: '2026-11-03' })
+  assert(tricky.includes('title: "- 序章"'), 'title 应被 YAML 双引号包住')
+  const dateTitle = buildKnowledgeNote({ name: '2026-01-01.md', text: 'x', category: '角色卡', date: '2026-11-03' })
+  assert(dateTitle.includes('title: "2026-01-01"'), '纯日期 title 不能被解析成 Date')
+  const colonTitle = buildKnowledgeNote({ name: 'a: b.md', text: 'x', category: '角色卡', date: '2026-11-03' })
+  assert(colonTitle.includes('title: "a: b"'), '含冒号 title 必须转义')
+  // 关系/约定 是合法类别且 tag 正确
+  const relationNote = buildKnowledgeNote({ name: '约定.md', text: 'x', category: '关系/约定', date: '2026-11-03' })
+  assert(relationNote.includes('tags: [大肥鱼/关系/约定]'), '关系/约定 类别 tag 正确')
+  // 总量 2MB 限制；恰好 20 个应通过
+  const twoMb = Array.from({ length: 5 }, (_, i) => ({ name: 'f' + i + '.md', text: 'x'.repeat(500 * 1024) }))
+  assert(boom({ category: '世界书', files: twoMb }), '总量 >2MB 要拒绝')
+  const twenty = Array.from({ length: 20 }, (_, i) => ({ name: 'f' + i + '.md', text: 'x' }))
+  assertEq(validateKnowledgeImport({ category: '世界书', files: twenty }).files.length, 20, '恰好 20 个文件应通过')
+  // Windows 保留名：按第一个点前的段判断
+  assertEq(sanitizeKnowledgeName('CON.txt'), '_CON.txt.md', 'CON.txt 也要加前缀')
+  assertEq(sanitizeKnowledgeName('CON.md.md'), '_CON.md', '重复 .md 不应绕过保留名')
+  assertEq(sanitizeKnowledgeName('COM1.foo.md'), '_COM1.foo.md', 'COM1.foo.md 也要拦')
+  assertEq(sanitizeKnowledgeName('CON .md'), '_CON .md', 'CON 带空格也要拦')
+  assertEq(sanitizeKnowledgeName('CLOCK$'), '_CLOCK$.md', 'CLOCK$ 保留名也要拦')
+  // vault 为盘符根/文件系统根时是合法配置，不能误判越界
+  let rootPathOk = true
+  try {
+    safeVaultPath(process.platform === 'win32' ? 'C:\\' : '/', '大肥鱼/测试.md')
+  } catch {
+    rootPathOk = false
+  }
+  assert(rootPathOk, 'vault 为盘符根时不应误判越界')
+
+  // 写入/读取穿越兜底：绕过 validate 直接调 API 也不能写出 vault
+  const traverseOut = writeKnowledgeFiles(vault, '世界书', [{ name: '../../escape.md', text: 'x' }], 3000)
+  assert(!traverseOut.written[0].includes('..'), '写入文件名应消毒，不出现 ..')
+  assert(readKnowledgeNote(vault, '../outside.md') === null, 'readKnowledgeNote 应拒绝越权相对路径')
+
+  const read = readKnowledgeNote(vault, first.written[0])
+  assert(read && read.includes('第一版'), '第一篇内容仍在')
+  assert(readKnowledgeNote(vault, '大肥鱼/世界书/不存在.md') === null, '不存在的笔记返回 null')
+  rmSync(vault, { recursive: true, force: true })
+  return '消毒/frontmatter/限流/同名不覆盖 ✓'
+})
+await recorder.check('C83', '设置页 patch 形状：嵌套 partial 逐键生效、未传字段保留默认（4.3）', async () => {
+  const merged = mergeCharacterSettings(DEFAULT_CHARACTER_SETTINGS, {
+    proactive: {
+      enabled: true,
+      silenceDays: 5,
+      dailyCap: 4,
+      quietFrom: '22:00',
+      quietTo: '07:00',
+      channel: 'app'
+    },
+    voice: { enabled: false, requestAllowed: false, dailyCap: 3 },
+    memory: { autoEnabled: false },
+    relationship: { mode: 'sister', userName: '阿明', address: '老板', taboo: ['主人', '老公'] }
+  })
+  assertEq(merged.proactive.enabled, true, 'proactive.enabled 生效')
+  assertEq(merged.proactive.silenceDays, 5, 'silenceDays 生效')
+  assertEq(merged.proactive.dailyCap, 4, 'dailyCap 生效')
+  assertEq(merged.proactive.quietFrom, '22:00', 'quietFrom 生效')
+  assertEq(merged.proactive.channel, 'app', 'channel 生效')
+  assertEq(merged.voice.enabled, false, 'voice.enabled 生效')
+  assertEq(merged.voice.dailyCap, 3, 'voice.dailyCap 生效')
+  assertEq(merged.voice.sttEnabled, true, 'patch 未带 sttEnabled → 保留默认（不被 UI 意外重置）')
+  assertEq(merged.memory.autoEnabled, false, 'memory.autoEnabled 生效')
+  assertEq(merged.relationship.mode, 'sister', '关系模式生效')
+  assertEq(merged.relationship.userName, '阿明', 'userName 生效')
+  assertEq(merged.relationship.address, '老板', 'address 生效')
+  assertEq(merged.relationship.taboo.length, 2, '禁忌两项生效')
+  assertEq(merged.proactive.contentTypes.length, 4, 'patch 未带 contentTypes → 保留默认')
+  // merge 只在 address 非空时应用：UI 负责把空值兜底为「你」
+  const fallback = mergeCharacterSettings(DEFAULT_CHARACTER_SETTINGS, {
+    relationship: { address: '' }
+  })
+  assertEq(fallback.relationship.address, '你', '空 address 不会把默认值改坏')
+  return 'settings patch 形状与 merge 白名单一致 ✓'
+})
+await recorder.check('C84', 'character 新通道三处一致：types/ipc/preload（4.3）', async () => {
+  const typesSrc = readFileSync(join(repoRoot, 'electron/main/character/types.ts'), 'utf8')
+  const ipcSrc = readFileSync(join(repoRoot, 'electron/main/character/ipc.ts'), 'utf8')
+  const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf8')
+  for (const ch of [
+    'character:persona:export',
+    'character:persona:import',
+    'character:knowledge:import'
+  ]) {
+    assert(typesSrc.includes(ch), ch + ' 应在 CHARACTER_CHANNELS 常量里')
+    assert(preloadSrc.includes("'" + ch + "'"), ch + ' 应在 preload 暴露')
+  }
+  for (const name of ['personaExport', 'personaImport', 'knowledgeImport']) {
+    assert(ipcSrc.includes('CHARACTER_CHANNELS.' + name), 'ipc 应注册 ' + name)
+  }
+  assert(ipcSrc.includes('deps.persona') && ipcSrc.includes('deps.knowledge'), '未接 deps 时要能报 NOT_READY')
+  return '通道 types/ipc/preload 三处一致 ✓'
 })
 
 const characterResult = recorder.toJSON()

@@ -27,6 +27,7 @@ import type {
   CharacterInteractInput,
   CharacterResetOptions,
   CharacterSettings,
+  CharacterSettingsPatch,
   CharacterState,
   CharacterStatus
 } from '../main/character/types'
@@ -709,7 +710,7 @@ const api = {
     state: () => call<CharacterState>('character:state:get'),
     settings: {
       get: () => call<CharacterSettings>('character:settings:get'),
-      set: (patch: Partial<CharacterSettings>) =>
+      set: (patch: CharacterSettingsPatch) =>
         call<CharacterSettings>('character:settings:set', patch)
     },
     interact: (input: CharacterInteractInput) =>
@@ -741,6 +742,18 @@ const api = {
           'character:voice:send',
           text ? { text } : {}
         )
+    },
+    persona: {
+      export: () =>
+        call<{ version: number; herName: string; exportedAt: number; files: Record<string, string> }>(
+          'character:persona:export'
+        ),
+      import: (pkg: unknown) =>
+        call<{ written: string[]; backupDir?: string | null }>('character:persona:import', pkg)
+    },
+    knowledge: {
+      import: (files: Array<{ name: string; text: string }>, category: string) =>
+        call<{ written: string[] }>('character:knowledge:import', { files, category })
     },
     safety: {
       exportData: () =>

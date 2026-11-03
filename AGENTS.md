@@ -13,7 +13,7 @@
 cd D:\work2026\umi-claw
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 33 套验收（accept×31 + e2e + smoke，619 条断言；hot 见 §10 注）
+npm run accept         # 33 套验收（accept×31 + e2e + smoke，623 条断言；hot 见 §10 注）
 npm run build          # 构建（含 plugin:gen）
 ```
 
@@ -218,7 +218,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 | --- | --- | --- |
 | 插件数据 | `<dataDir>/plugins/<id>/data.db` | 每插件独立库 + 独立 schema + 独立 `plugin_migrations`；只能经 `ctx.db` 的参数化 CRUD，**禁止裸 SQL** |
 | 宿主数据 | `<dataDir>/work.db` | 只承载 voice / wizard 的 `app_meta`（character 已迁 `<dataDir>/character/kv.json`，见 C4.2） |
-| 知识库原件 | work：`<dataDir>/plugins/work/knowledge/<id>/`；marketing：`<dataDir>/projects/<id>/` | `source_path` 存相对 dataDir 的路径（可随 data 目录搬移）；work 旧全局 `<dataDir>/knowledge` 仅历史数据（4.0.2 起新导入不再写） |
+| 知识库原件 | work：`<dataDir>/plugins/work/knowledge/<id>/`；marketing：`<dataDir>/projects/<id>/`；character：**既有 Obsidian vault 的 `大肥鱼/<类别>/`**（世界书/角色卡/关系/约定，不新增 KB） | `source_path` 存相对 dataDir 的路径（可随 data 目录搬移）；work 旧全局 `<dataDir>/knowledge` 仅历史数据（4.0.2 起新导入不再写） |
 | 应用配置 | `<dataDir>/config/.openclaw/openclaw.json` | **单写入口**：`configManager` + `openClawConfigWriter.runSerializedOpenClawConfigWrite` |
 | 密钥 | `safeStorage` | 按 `plugin:<id>:<key>` 命名空间；永不写日志/配置/导出包 |
 | 迁移 | `migrations/*.sql` | 幂等、可重入、失败可回滚；迁移前必须 `backup()` |
@@ -334,7 +334,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 33 套（accept×31 + e2e + smoke，619 条断言）
+# ② 全量验收 33 套（accept×31 + e2e + smoke，623 条断言）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）

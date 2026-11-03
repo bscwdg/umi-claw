@@ -7,9 +7,14 @@
 // - 用户改过的文件不再覆盖（.fish-managed.json 记 hash）；STATE.md 例外（宿主持有）。
 
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, normalize, resolve } from 'node:path'
-import type { CharacterSettings, CharacterState } from './types'
+import {
+  CharacterError,
+  CHARACTER_ERROR_CODES,
+  type CharacterSettings,
+  type CharacterState
+} from './types'
 
 export const MANAGED_MANIFEST = '.fish-managed.json'
 export const HOST_OWNED_FILES = ['fish/STATE.md']
@@ -37,6 +42,8 @@ export function sanitizeLabel(value: unknown, max = 40): string {
   return value
     .replace(/[\u0000-\u001f\u007f\u2028\u2029]/g, ' ')
     .replace(/[{}#]/g, '')
+    // 受管段标记是宿主哨兵：用户输入里出现 <!-- --> 会造成模板取块错位（对抗复核 P2）
+    .replace(/<!--|-->/g, '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, max)
@@ -150,20 +157,105 @@ export const AGENTS_BLOCK_START = '<!-- fish:managed:memory:start -->'
 export const AGENTS_BLOCK_END = '<!-- fish:managed:memory:end -->'
 
 function extractAgentsBlock(text: string): string | null {
-  const start = text.indexOf(AGENTS_BLOCK_START)
+  const start = indexOfMarker(text, AGENTS_BLOCK_START)
   if (start < 0) return null
-  const end = text.indexOf(AGENTS_BLOCK_END, start)
+  const end = indexOfMarker(text, AGENTS_BLOCK_END, start + AGENTS_BLOCK_START.length)
   if (end < 0) return null
   return text.slice(start, end + AGENTS_BLOCK_END.length)
 }
 
-/** 把模板里的「记忆与日记」受管段合并进现有 AGENTS.md（无则追加）；用户其他内容不动 */
+/**
+ * 标记必须是独占一行（模板里本来就独占一行）：用行首/行尾锚定，避免用户输入里
+ * 内联出现 `<!-- ... -->` 时把模板取块错位（address 40 字符即可塞下 34 字符 marker）。
+ * 兼容历史数据：找不到独占行标记时回退 indexOf（保守，不破坏旧文件）。
+ */
+function indexOfMarker(text: string, marker: string, from = 0): number {
+  const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`^${escaped}$`, 'm')
+  const rest = text.slice(from)
+  const match = re.exec(rest)
+  if (match) return from + match.index
+  return text.indexOf(marker, from)
+}
+
+/** 剥掉某类受管段（含孤儿 start 标记与其后内容、孤儿 end 标记）；返回只含用户文本的正文 */
+function stripMarkedSegments(text: string, startMarker: string, endMarker: string): string {
+  let out = ''
+  let i = 0
+  for (;;) {
+    const start = indexOfMarker(text, startMarker, i)
+    if (start < 0) {
+      out += text.slice(i)
+      break
+    }
+    out += text.slice(i, start)
+    const afterStart = start + startMarker.length
+    const end = indexOfMarker(text, endMarker, afterStart)
+    const nextStart = indexOfMarker(text, startMarker, afterStart)
+    if (end < 0 || (nextStart >= 0 && nextStart < end)) {
+      // 孤儿 START：只丢标记、保留其后的用户内容
+      i = afterStart
+    } else {
+      // 合法受管段：整段丢弃（内容归宿主，统一追加规范化版本）
+      i = end + endMarker.length
+    }
+  }
+  return out.split(endMarker).join('')
+}
+
+/** 正文空白归一：行尾空白去掉，连续空行压成一个，首尾 trim */
+function collapseBlank(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+$/, ''))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/** 把模板里的「记忆与日记」受管段合并进现有 AGENTS.md（无则追加）；用户其他内容不动。
+ * 确定性：剥掉旧受管段/孤儿标记 → 空白归一 → 追加唯一 canonical 段；连续调用结果稳定。 */
 export function mergeAgentsMemoryBlock(existing: string, template: string): string {
   const block = extractAgentsBlock(template)
   if (!block) return existing
-  const current = extractAgentsBlock(existing)
-  if (current) return existing.replace(current, block)
-  return `${existing.trimEnd()}\n\n${block}\n`
+  const cleaned = collapseBlank(stripMarkedSegments(existing, AGENTS_BLOCK_START, AGENTS_BLOCK_END))
+  return cleaned ? `${cleaned}\n\n${block.trim()}\n` : `${block.trim()}\n`
+}
+
+/** 边界（硬）受管段：AI 明示/危机转介不能被人格导入移除（PLAN-FISH §1.3 安全验收） */
+export const AGENTS_BOUNDARY_START = '<!-- fish:managed:boundary:start -->'
+export const AGENTS_BOUNDARY_END = '<!-- fish:managed:boundary:end -->'
+export const AGENTS_BOUNDARY_TEXT = [
+  '## 边界（宿主维护，勿删）',
+  '- 不假装人类；被问「你是 AI 吗」时诚实承认。',
+  '- 遇到危机话题（自伤/伤害他人）转求助资源；不卖惨、不制造独占。'
+].join('\n')
+
+/**
+ * 规范化边界硬段：剥掉所有旧 boundary 段与伪造/孤儿标记，再追加 canonical 段。
+ * 只查 includes 会被「伪造一对空标记」绕过（对抗复核 P1），所以这里必须重写而不是缺失才补。
+ */
+export function ensureAgentsBoundary(existing: string): string {
+  const cleaned = collapseBlank(
+    stripMarkedSegments(existing, AGENTS_BOUNDARY_START, AGENTS_BOUNDARY_END)
+  ).split(AGENTS_BOUNDARY_TEXT).join('')
+  const body = collapseBlank(cleaned)
+  const block = `${AGENTS_BOUNDARY_START}\n${AGENTS_BOUNDARY_TEXT}\n${AGENTS_BOUNDARY_END}`
+  return body ? `${body}\n\n${block}\n` : `${block}\n`
+}
+
+/**
+ * AGENTS.md 的确定性规范化（4.3 复核 P1）：剥掉全部 memory/boundary 受管段与孤儿标记，
+ * 空白归一，然后固定顺序追加 memory 段、boundary 段。连续调用必须完全相等，
+ * 否则每次 settings/interaction 触发的 persona sync 会让文件无限增长。
+ */
+export function normalizeAgentsDoc(existing: string, template: string): string {
+  const memoryBlock = extractAgentsBlock(template)
+  let body = stripMarkedSegments(existing, AGENTS_BLOCK_START, AGENTS_BLOCK_END)
+  body = stripMarkedSegments(body, AGENTS_BOUNDARY_START, AGENTS_BOUNDARY_END)
+  body = collapseBlank(body.split(AGENTS_BOUNDARY_TEXT).join(''))
+  const parts = [body, memoryBlock ? memoryBlock.trim() : '', `${AGENTS_BOUNDARY_START}\n${AGENTS_BOUNDARY_TEXT}\n${AGENTS_BOUNDARY_END}`]
+  return parts.filter(Boolean).join('\n\n') + '\n'
 }
 
 /**
@@ -197,8 +289,17 @@ export function writeManagedFiles(
     const userModified = existed && (conservative || noRecord || currentHash !== previousHash)
     // AGENTS.md 例外：只合并宿主的「记忆与日记」受管段，用户手写的其他内容永远保留
     // （否则用户改过一次 AGENTS.md 就再也收不到检索指令更新）
+    if (rel === 'AGENTS.md' && !existed) {
+      // 首次写也要带边界硬段（否则要等第二次 sync 才补）
+      const withBoundary = normalizeAgentsDoc(content, content)
+      mkdirSync(dirname(abs), { recursive: true })
+      writeAtomic(abs, withBoundary)
+      written.push(rel)
+      next.files[rel] = sha256(withBoundary)
+      continue
+    }
     if (rel === 'AGENTS.md' && existed) {
-      const merged = mergeAgentsMemoryBlock(readFileSync(abs, 'utf8'), content)
+      const merged = normalizeAgentsDoc(readFileSync(abs, 'utf8'), content)
       if (merged !== readFileSync(abs, 'utf8')) {
         writeAtomic(abs, merged)
         written.push(rel)
@@ -270,4 +371,175 @@ export function safeJoin(rootDir: string, rel: string): string {
     throw new Error(`非法的人格文件路径: ${rel}`)
   }
   return normalized
+}
+
+// ── 人格包导出 / 导入（4.3：人格导入/导出）──────────────────────────────────
+//
+// 为什么只把这 4 个文件当"人格包"：STATE.md 是宿主每次状态变更重写的，不属于用户人格；
+// 其余 SOUL/IDENTITY/AGENTS/USER 才是用户想备份、换一套、或从别处导入的内容。
+// 导入后必须把 manifest 里对应条目删掉：writeManagedFiles 的保守语义会把"有 manifest 记录"
+// 的文件当成宿主可更新文件，下次设置变更就会用模板覆盖导入内容；删掉记录 = 视为用户手改，永不覆盖。
+
+export const PERSONA_PACKAGE_SLOTS = ['SOUL.md', 'IDENTITY.md', 'AGENTS.md', 'USER.md'] as const
+export type PersonaSlot = (typeof PERSONA_PACKAGE_SLOTS)[number]
+
+export interface PersonaPackage {
+  version: 1
+  herName: string
+  exportedAt: number
+  files: Partial<Record<PersonaSlot, string>>
+}
+
+const PERSONA_MAX_FILE_BYTES = 512 * 1024
+const PERSONA_MAX_TOTAL_BYTES = 2 * 1024 * 1024
+const PERSONA_BACKUP_KEEP = 3
+
+/** 读 workspace 里现存的人格文件（不存在就不放进包） */
+export function readPersonaFiles(workspaceDir: string): Partial<Record<PersonaSlot, string>> {
+  const out: Partial<Record<PersonaSlot, string>> = {}
+  for (const rel of PERSONA_PACKAGE_SLOTS) {
+    const abs = safeJoin(workspaceDir, rel)
+    if (existsSync(abs)) out[rel] = readFileSync(abs, 'utf8')
+  }
+  return out
+}
+
+export function exportPersonaPackage(workspaceDir: string, now = Date.now()): PersonaPackage {
+  const files = readPersonaFiles(workspaceDir)
+  if (Object.keys(files).length === 0) {
+    throw new CharacterError(
+      CHARACTER_ERROR_CODES.NOT_READY,
+      '还没有可导出的人格文件：先在「首启三问」点一次「一键初始化」'
+    )
+  }
+  // 导出必须和导入同一上限，否则会出现「能导出、再导入必失败」
+  let total = 0
+  for (const [key, text] of Object.entries(files)) {
+    const bytes = Buffer.byteLength(text, 'utf8')
+    if (bytes > PERSONA_MAX_FILE_BYTES) {
+      throw new CharacterError(
+        CHARACTER_ERROR_CODES.BAD_PAYLOAD,
+        `${key} 超过 512KB，无法导出为可再导入的人格包`
+      )
+    }
+    total += bytes
+  }
+  if (total > PERSONA_MAX_TOTAL_BYTES) {
+    throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '人格文件总体积超过 2MB，无法导出')
+  }
+  return { version: 1, herName: CHARACTER_HER_NAME, exportedAt: now, files }
+}
+
+/**
+ * 校验并导入人格包。
+ * - 只接受 PERSONA_PACKAGE_SLOTS 里的文件；未知键丢弃（不报错，兼容将来加槽）
+ * - NUL 字符直接拒绝（写入 md 会破坏 agent 读取）
+ * - 单文件 ≤512KB、总计 ≤2MB（与知识导入同口径，保证导出可再导入）
+ * - 导入前把旧文件与 manifest 备份到 `<workspace>/.persona-backup/<ts>/`
+ * - 写入后从 manifest 删除对应条目（视为用户文件，后续模板同步不覆盖）
+ */
+export function importPersonaPackage(
+  workspaceDir: string,
+  raw: unknown,
+  now = Date.now()
+): { written: PersonaSlot[]; backupDir: string | null } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '人格包格式不正确：应为 JSON 对象')
+  }
+  const pkg = raw as Record<string, unknown>
+  if (pkg.version !== 1) {
+    throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '人格包版本不支持：当前只接受 version=1')
+  }
+  const filesRaw = pkg.files
+  if (!filesRaw || typeof filesRaw !== 'object' || Array.isArray(filesRaw)) {
+    throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '人格包格式不正确：缺少 files')
+  }
+  const accepted: Partial<Record<PersonaSlot, string>> = {}
+  let total = 0
+  for (const [key, value] of Object.entries(filesRaw as Record<string, unknown>)) {
+    if (!(PERSONA_PACKAGE_SLOTS as readonly string[]).includes(key)) continue
+    if (typeof value !== 'string') {
+      throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, `人格包 ${key} 内容必须是字符串`)
+    }
+    if (value.includes('\u0000')) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, `人格包 ${key} 含非法 NUL 字符`)
+    }
+    const bytes = Buffer.byteLength(value, 'utf8')
+    if (bytes > PERSONA_MAX_FILE_BYTES) {
+      throw new CharacterError(
+        CHARACTER_ERROR_CODES.BAD_PAYLOAD,
+        `人格包 ${key} 超过 512KB（${bytes} 字节）`
+      )
+    }
+    total += bytes
+    accepted[key as PersonaSlot] = value
+  }
+  if (total > PERSONA_MAX_TOTAL_BYTES) {
+    throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '人格包总体积超过 2MB')
+  }
+  const slots = Object.keys(accepted) as PersonaSlot[]
+  if (slots.length === 0) {
+    throw new CharacterError(
+      CHARACTER_ERROR_CODES.BAD_PAYLOAD,
+      '人格包里没有可导入的文件（SOUL/IDENTITY/AGENTS/USER）'
+    )
+  }
+
+  // 先备份（旧文件 + manifest）；失败就整体放弃，不写半套
+  // now 来自 IPC 时不可信：非有限数字回落 Date.now，避免 String(now) 逃逸 .persona-backup
+  const stamp = Number.isFinite(now) ? Math.floor(now) : Date.now()
+  const backupDir = join(workspaceDir, '.persona-backup', String(stamp))
+  try {
+    mkdirSync(backupDir, { recursive: true })
+    for (const rel of PERSONA_PACKAGE_SLOTS) {
+      const abs = safeJoin(workspaceDir, rel)
+      if (existsSync(abs)) {
+        mkdirSync(dirname(join(backupDir, rel)), { recursive: true })
+        writeFileSync(join(backupDir, rel), readFileSync(abs, 'utf8'), 'utf8')
+      }
+    }
+    const manifestPath = join(workspaceDir, MANAGED_MANIFEST)
+    if (existsSync(manifestPath)) writeFileSync(join(backupDir, MANAGED_MANIFEST), readFileSync(manifestPath, 'utf8'), 'utf8')
+    prunePersonaBackups(workspaceDir)
+  } catch (error) {
+    throw new Error(`备份旧人格失败，已中止导入：${(error as Error)?.message ?? String(error)}`)
+  }
+
+  for (const rel of slots) {
+    const abs = safeJoin(workspaceDir, rel)
+    mkdirSync(dirname(abs), { recursive: true })
+    writeAtomic(abs, accepted[rel] as string)
+  }
+
+  // 导入的 AGENTS.md 也必须带边界硬段（AI 明示/危机转介不随人格包被移除）
+  if (slots.includes('AGENTS.md')) {
+    const agentsPath = safeJoin(workspaceDir, 'AGENTS.md')
+    const before = readFileSync(agentsPath, 'utf8')
+    const ensured = normalizeAgentsDoc(before, '')
+    if (ensured !== before) writeAtomic(agentsPath, ensured)
+  }
+
+  // 从 manifest 删除导入槽位：视为用户手改，模板同步不再覆盖
+  const manifestPath = join(workspaceDir, MANAGED_MANIFEST)
+  const manifest = readManifest(manifestPath)
+  for (const rel of slots) delete manifest.files[rel]
+  writeAtomic(manifestPath, `${JSON.stringify({ version: 1, files: manifest.files }, null, 2)}\n`)
+
+  return { written: slots, backupDir }
+}
+
+/** 备份最多留 3 份（按目录名倒序，旧的时间戳先删） */
+function prunePersonaBackups(workspaceDir: string): void {
+  const root = join(workspaceDir, '.persona-backup')
+  if (!existsSync(root)) return
+  const dirs = readdirSync(root)
+    .filter((name) => /^\d+$/.test(name))
+    .sort((a, b) => Number(b) - Number(a))
+  for (const name of dirs.slice(PERSONA_BACKUP_KEEP)) {
+    try {
+      rmSync(join(root, name), { recursive: true, force: true })
+    } catch {
+      // 清理失败不影响导入
+    }
+  }
 }

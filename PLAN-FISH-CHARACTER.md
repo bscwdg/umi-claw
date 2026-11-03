@@ -230,8 +230,11 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 | `character:memory:status` | — | 今日是否已写/失败原因 |
 | `character:voice:test` | `{text?}` | 试听/试发结果（不打扰） |
 | `character:reset` | `{keepPersona?:boolean}` | 清 `fish:v2:*`（二次确认） |
+| `character:persona:export` | — | 导出人格包（SOUL/IDENTITY/AGENTS/USER；不含 STATE） |
+| `character:persona:import` | `{version:1, files}` | 校验+备份后写人格；AGENTS 自动补边界硬段 |
+| `character:knowledge:import` | `{category, files:[{name,text}]}` | 写入既有 Obsidian `大肥鱼/<类别>/`（不新增知识库） |
 
-**错误码**：`CHARACTER_NOT_READY` / `CHARACTER_AGENT_MISSING` / `CHARACTER_VAULT_MISSING` / `CHARACTER_TTS_UNAVAILABLE` / `CHARACTER_QQ_TARGET_MISSING` / `CHARACTER_QUIET_HOURS` / `CHARACTER_DAILY_CAP` / `CHARACTER_STORE_IO`。
+**错误码**：`CHARACTER_NOT_READY` / `CHARACTER_AGENT_MISSING` / `CHARACTER_VAULT_MISSING`（实现用 `CHARACTER_NOT_READY`：vault 未配置/不存在）/ `CHARACTER_TTS_UNAVAILABLE` / `CHARACTER_QQ_TARGET_MISSING` / `CHARACTER_QUIET_HOURS` / `CHARACTER_DAILY_CAP` / `CHARACTER_STORE_IO`。
 **推送**：`character:state`（状态变更）、`character:bubble`（气泡）、`character:stream:*`。
 
 ### 4.4 文件契约
@@ -243,7 +246,8 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 | `fish/LIFE.md` | 同上 | 宿主每日 tick | 固定键值行 |
 | `memory/YYYY-MM-DD.md` | 同上 | agent（每晚） | 日记 |
 | `大肥鱼/日记/YYYY-MM-DD.md` | Obsidian vault | agent（MCP `create_note`/`update_note`） | frontmatter + 正文 |
-| `大肥鱼/{角色卡,世界书,关系/大事记,关系/约定,关于你/,成长/年表}.md` | Obsidian vault | agent/人工 | markdown |
+| `大肥鱼/<类别>/<name>.md` | Obsidian vault | agent/人工/角色页知识导入 | markdown + frontmatter（title/tags/source/created；类别=世界书/角色卡/关系/约定；同名加序号不覆盖） |
+| `.persona-backup/<ts>/` | `<dataDir>/config/.openclaw/workspace-feiyu/` | 宿主（人格导入前备份） | SOUL/IDENTITY/AGENTS/USER + manifest；保留 3 份；删除全部数据时一并清 |
 
 **日记 frontmatter 固定字段**：`date` / `tags: [大肥鱼/日记]` / `stage` / `intimacy` / `mood` / `source`。
 
@@ -289,6 +293,10 @@ test/character.*.accept.mjs         # 验收脚本（见 §8）
 - **数据键补充**：`fish:v2:chatgen`；`fish:v2:meta` 增 `lifeDays` 索引（life:* 独立 GC）；`fish:v2:pet` 增 `saved`（区分「拖到 0,0」与「从未设置」）。
 - **受管写入保守模式**：`.fish-managed.json` 缺失/损坏/形态非法时，现存人格文件一律保留（不覆盖用户改动）；manifest 与文件均 tmp+rename 原子写。
 - **人格注入**：只注入 `voice-rules.md`；`banned.v1.json`（禁用清单）与 `few-shots.v1.json` 不常驻注入，仅供验收/按场景取用。
+- **人格包（4.3）**：`character:persona:export|import`；导出/导入同一上限（单文件 512KB、整包 2MB）；未知槽位丢弃；导入前备份 `.persona-backup/<ts>`（保留 3 份）；导入后从 manifest 删槽位（视为用户文件，模板同步不覆盖）；校验错误统一 `CHARACTER_BAD_PAYLOAD`，vault/未初始化用 `CHARACTER_NOT_READY`。
+- **边界硬段（4.3）**：AGENTS.md 由 `normalizeAgentsDoc` 确定性规范化：剥旧受管段/孤儿标记 → 空白归一 → 固定顺序追加 memory 段与 `fish:managed:boundary` 段（AI 明示/危机转介不可被人格包移除）；连续 sync 不增长。
+- **知识导入（4.3）**：`character:knowledge:import` 写既有 Obsidian vault 的 `大肥鱼/<世界书|角色卡|关系/约定>/`，`title` 用 YAML 双引号转义，同名 `-2/-3` 不覆盖；单文件 512KB、一次 20 个/2MB；路径做词法+realpath 双重 containment；不新增知识库（红线 9）。
+- **详细设置页（4.3）**：`CharacterSettings.vue` 覆盖 §4.2 设置树中已接线的 14 个字段；`contentTypes/confirmImportant/sttEnabled/pet.*` 尚未接线，UI 显式 disabled + 文案；安全行为不提供关闭入口。
 
 ---
 

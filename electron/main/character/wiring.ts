@@ -16,11 +16,14 @@ import { parseLifeDeck } from './contentCards'
 import { deliverVoice, type QqBotCreds } from './qqVoice'
 import { isVoiceRequest } from './voicePolicy'
 import { formatSearchContext, looksLikeRecallQuery, withTimeout } from './searchContext'
-import { composePersonaFiles, writeManagedFiles } from './persona'
+import { composePersonaFiles, exportPersonaPackage, importPersonaPackage, writeManagedFiles } from './persona'
+import { validateKnowledgeImport, writeKnowledgeFiles } from './knowledgeImport'
 import { PetWindowController, type PetMenuAction } from './petWindow'
 import { CharacterChatService, type CharacterChatFn } from './chat'
 import {
   CHARACTER_CHANNELS,
+  CharacterError,
+  CHARACTER_ERROR_CODES,
   clampPetPosition,
   type CharacterEvent,
   type CharacterKv
@@ -239,6 +242,8 @@ async function registerCharacterInternal(
             removeSafe(join(workspaceDir, file))
           }
           removeSafe(join(workspaceDir, '.fish-managed.json'))
+          // 人格备份里也是用户数据（USER.md 等）：全量删除必须一起清，否则"删除全部"不彻底
+          removeSafe(join(workspaceDir, '.persona-backup'))
           // §13.1-4：全量删除后 openclaw.json 里不应再有 feiyu 条目
           if (removeAgentEntryFn) {
             try {
@@ -422,7 +427,32 @@ async function registerCharacterInternal(
     ipcDisposer = registerCharacterIpc(manager, {
       pet,
       chat: chatService,
-      deliverVoice: deliverVoiceFn
+      deliverVoice: deliverVoiceFn,
+      // 4.3 人格包：只读写 workspace 的 4 个用户人格文件；导入前备份、导入后不受模板覆盖
+      persona: {
+        export: async () => exportPersonaPackage(workspaceDir),
+        import: async (raw) => importPersonaPackage(workspaceDir, raw)
+      },
+      // 4.3 知识导入：只写既有 Obsidian vault 的 `大肥鱼/<类别>/`，不新增知识库
+      knowledge: {
+        import: async (payload) => {
+          const vault = deps.obsidianVaultPath?.()?.trim()
+          if (!vault) {
+            throw new CharacterError(
+              CHARACTER_ERROR_CODES.NOT_READY,
+              '未配置 Obsidian vault（先在「知识库」页选择 vault）'
+            )
+          }
+          if (!existsSync(vault)) {
+            throw new CharacterError(
+              CHARACTER_ERROR_CODES.NOT_READY,
+              'Obsidian vault 目录不存在，请先在「知识库」页重新选择'
+            )
+          }
+          const { category, files } = validateKnowledgeImport(payload)
+          return writeKnowledgeFiles(vault, category, files)
+        }
+      }
     })
 
     // 设置/互动后 ≤300ms 合并重写人格文件（STATE.md 即时；用户改过的 SOUL/AGENTS 保留）

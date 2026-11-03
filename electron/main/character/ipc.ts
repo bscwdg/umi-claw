@@ -28,6 +28,15 @@ export interface CharacterIpcDeps {
     text: string,
     requested: boolean
   ) => Promise<{ delivered: boolean; channel: 'qq' | 'text'; error?: string }>
+  /** 人格包导出/导入（4.3）：由 wiring 提供 workspace 读写 */
+  persona?: {
+    export: () => Promise<unknown>
+    import: (raw: unknown) => Promise<{ written: string[]; backupDir?: string | null }>
+  }
+  /** 知识导入（4.3）：把用户文件写进 Obsidian 大肥鱼/<类别>/，不新增知识库 */
+  knowledge?: {
+    import: (payload: unknown) => Promise<{ written: string[] }>
+  }
 }
 
 export function registerCharacterIpc(
@@ -215,6 +224,24 @@ export function registerCharacterIpc(
     return { ...result, reason: decision.reason }
   })
   handle(CHARACTER_CHANNELS.exportData, () => manager.exportData())
+  handle(CHARACTER_CHANNELS.personaExport, () => {
+    if (!deps.persona) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '人格包功能未接线')
+    }
+    return deps.persona.export()
+  })
+  handle(CHARACTER_CHANNELS.personaImport, (raw) => {
+    if (!deps.persona) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '人格包功能未接线')
+    }
+    return deps.persona.import(raw)
+  })
+  handle(CHARACTER_CHANNELS.knowledgeImport, (payload) => {
+    if (!deps.knowledge) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '知识导入功能未接线')
+    }
+    return deps.knowledge.import(payload)
+  })
   handle(CHARACTER_CHANNELS.deleteData, (payload) =>
     manager.deleteData((payload as { scope?: unknown } | undefined)?.scope)
   )

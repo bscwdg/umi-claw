@@ -1131,6 +1131,102 @@ await r.check('U21', '二次确认弹窗统一：插件管理/角色页不再用
   assert(/askConfirm\(/.test(characterSrc), '角色页停用/删除等二次确认统一走 askConfirm')
   assert(!/window\.confirm\(/.test(characterSrc), '角色页不得出现原生 window.confirm 调用')
 
+  // 角色详细设置页（4.3）：§4.2 设置树必须真的能改，不能只靠首启三问。
+  // 结构断言（不是 includes 宽匹配）：v-model 路径 + 组件标签 + save 里的 set 调用。
+  assert(/<CharacterSettings\b/.test(characterSrc), '角色页模板必须真的挂载 CharacterSettings（不能只 import）')
+  assert(/@save="saveDetailSettings"/.test(characterSrc), 'CharacterSettings 的 save 事件要接到 saveDetailSettings')
+  assert(/:settings="settingsRaw"/.test(characterSrc), '设置组件应接收 host settings')
+  const saveFnStart = characterSrc.indexOf('async function saveDetailSettings')
+  assert(saveFnStart >= 0, '角色页应有 saveDetailSettings')
+  const saveFnSlice = characterSrc.slice(saveFnStart, saveFnStart + 500)
+  assert(
+    /window\.api\.character\.settings\.set\(patch\)/.test(saveFnSlice),
+    'saveDetailSettings 必须真的调 character.settings.set(patch)'
+  )
+  const settingsSrc = readFileSync(join(repoRoot, 'src', 'character', 'CharacterSettings.vue'), 'utf-8')
+  const activeFields = [
+    ['proactive.enabled', /v-model="draft\.proactive\.enabled"/],
+    ['proactive.silenceDays', /v-model\.number="draft\.proactive\.silenceDays"/],
+    ['proactive.dailyCap', /v-model\.number="draft\.proactive\.dailyCap"/],
+    ['proactive.quietFrom', /v-model="draft\.proactive\.quietFrom"/],
+    ['proactive.quietTo', /v-model="draft\.proactive\.quietTo"/],
+    ['proactive.channel', /v-model="draft\.proactive\.channel"/],
+    ['voice.enabled', /v-model="draft\.voice\.enabled"/],
+    ['voice.requestAllowed', /v-model="draft\.voice\.requestAllowed"/],
+    ['voice.dailyCap', /v-model\.number="draft\.voice\.dailyCap"/],
+    ['memory.autoEnabled', /v-model="draft\.memory\.autoEnabled"/],
+    ['relationship.mode', /v-model="draft\.relationship\.mode"/],
+    ['relationship.userName', /v-model="draft\.relationship\.userName"/],
+    ['relationship.address', /v-model="draft\.relationship\.address"/],
+    ['relationship.taboo', /v-model="tabooText"/]
+  ]
+  for (const [field, re] of activeFields) {
+    assert(re.test(settingsSrc), `设置页应有可编辑字段 ${field}`)
+  }
+  // 未接线字段必须显式 disabled + 文案提示，不能做成假开关
+  for (const [field, re] of [
+    ['voice.sttEnabled', /v-model="draft\.voice\.sttEnabled"[^>]*disabled/],
+    ['memory.confirmImportant', /v-model="draft\.memory\.confirmImportant"[^>]*disabled/],
+    ['pet.visible', /v-model="draft\.pet\.visible"[^>]*disabled/],
+    ['pet.size', /v-model="draft\.pet\.size"[^>]*disabled/],
+    ['pet.clickThrough', /v-model="draft\.pet\.clickThrough"[^>]*disabled/],
+    ['proactive.contentTypes', /v-model="draft\.proactive\.contentTypes"[^>]*disabled/]
+  ]) {
+    assert(re.test(settingsSrc), `未接线字段 ${field} 必须 disabled`)
+  }
+  assert(settingsSrc.includes('未接线') || settingsSrc.includes('暂不生效'), '未接线字段要有文案说明')
+  assert(/emit\('save'/.test(settingsSrc), '设置页保存必须走 emit，不能直接摸 window.api')
+  assert(!/window\.api/.test(settingsSrc), '设置组件不得直接触 window.api')
+  assert(!/window\.confirm\(/.test(settingsSrc), '设置页不得出现原生 window.confirm')
+  assert(/markSaved/.test(settingsSrc) && /dirty/.test(settingsSrc), '设置页应有 dirty/markSaved 防止回填覆盖未保存编辑')
+  // save() 只发实际持久化字段：未接线字段不能偷偷写回（防止假开关）
+  const saveStart = settingsSrc.indexOf('function save()')
+  assert(saveStart >= 0, '设置页应有 save()')
+  const saveSlice = settingsSrc.slice(saveStart, saveStart + 1600)
+  for (const omitted of ['sttEnabled', 'confirmImportant', 'contentTypes', 'pet', 'safety']) {
+    assert(!saveSlice.includes(omitted), 'save() 不应提交未接线字段 ' + omitted)
+  }
+  assert(/!settings/.test(settingsSrc), '设置未加载时保存按钮应禁用')
+  assert(/address\.trim\(\) \|\| '你'/.test(settingsSrc), 'address 空值应兜底「你」')
+  assert(/if \(dirty\.value\) return/.test(settingsSrc), 'watch 回填必须真的在 dirty 时跳过（防覆盖未保存编辑）')
+
+  // 人格导入/导出（4.3）：导出人格包 + 导入前二次确认 + 走 character.persona.import
+  assert(/导出人格包/.test(characterSrc), '角色页应有人格包导出入口')
+  assert(/导入人格包/.test(characterSrc), '角色页应有人格包导入入口')
+  assert(/character\.persona\.export/.test(characterSrc), '导出要调 character.persona.export')
+  assert(/character\.persona\.import/.test(characterSrc), '导入要调 character.persona.import')
+  assert(/askConfirm\(\s*\{\s*title: '导入人格'/.test(characterSrc), '导入人格必须二次确认')
+  assert(/请只导入你信任的来源/.test(characterSrc), '导入人格必须提示只信任来源')
+  assert(/KNOWN_SLOTS/.test(characterSrc), '导入确认只列已知槽位（未知键过滤）')
+
+  // 知识导入（4.3）：写既有 Obsidian「大肥鱼/<类别>/」，导入后可触发重建索引
+  assert(/选择文件并导入/.test(characterSrc), '角色页应有知识导入入口')
+  assert(/character\.knowledge\.import/.test(characterSrc), '知识导入要调 character.knowledge.import')
+  assert(/rebuildIndex/.test(characterSrc), '知识导入后应提供重建索引入口')
+  // 结构断言：按钮真的接了 handler、有限流预检、类别三选、导入调用带 category
+  assert(/@click="pickKnowledgeFiles"/.test(characterSrc), '知识导入按钮必须接 pickKnowledgeFiles')
+  assert(/@click="rebuildKnowledgeIndex"/.test(characterSrc), '重建索引按钮必须接 rebuildKnowledgeIndex')
+  assert(/list\.length > 20/.test(characterSrc) && /file\.size/.test(characterSrc), '渲染端应有数量/体积预检')
+  for (const cat of ['世界书', '角色卡', '关系/约定']) {
+    assert(
+      new RegExp(`<option value="${cat.replace('/', '\\/')}"`).test(characterSrc),
+      `知识类别应包含 ${cat}`
+    )
+  }
+  assert(
+    /character\.knowledge\.import\(files, knowledgeCategory\.value\)/.test(characterSrc),
+    '导入调用必须显式带类别'
+  )
+  const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
+  assert(
+    preloadSrc.includes("'character:knowledge:import'"),
+    'preload 应暴露 character:knowledge:import'
+  )
+  assert(
+    preloadSrc.includes("'character:persona:import'") && preloadSrc.includes("'character:persona:export'"),
+    'preload 应暴露人格导入/导出通道'
+  )
+
   // 全仓渲染端扫描：原生 window.confirm 与自定义弹窗样式/层级/键盘行为不一致，产品口径是统一弹窗
   const offenders = []
   const scan = (dir) => {

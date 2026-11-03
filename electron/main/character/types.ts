@@ -27,6 +27,9 @@ export const CHARACTER_CHANNELS = {
   voiceSend: 'character:voice:send',
   exportData: 'character:export',
   deleteData: 'character:delete',
+  personaExport: 'character:persona:export',
+  personaImport: 'character:persona:import',
+  knowledgeImport: 'character:knowledge:import',
   streamChunk: 'character:stream:chunk',
   streamDone: 'character:stream:done',
   streamError: 'character:stream:error',
@@ -133,6 +136,13 @@ export interface CharacterSettings {
     address: string
     taboo: string[]
   }
+}
+
+/** 设置补丁：每层都是 Partial（mergeCharacterSettings 逐键校验），供 IPC/preload 精确表达嵌套 partial */
+export type CharacterSettingsPatch = {
+  [K in keyof CharacterSettings]?: CharacterSettings[K] extends object
+    ? Partial<CharacterSettings[K]>
+    : CharacterSettings[K]
 }
 
 export interface CharacterState {

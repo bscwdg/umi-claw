@@ -66,6 +66,54 @@
     </section>
 
     <section class="card">
+      <h3>人格</h3>
+      <p class="hint">
+        人格 = SOUL / IDENTITY / AGENTS / USER 四个文件。导出可备份或换到别的机器；导入会先备份旧人格，
+        导入后这些文件视为你手写的内容，不会再被模板覆盖。
+      </p>
+      <div class="row">
+        <button class="btn" :disabled="busy" @click="exportPersona">导出人格包</button>
+        <button class="btn" :disabled="busy" @click="pickPersonaFile">导入人格包</button>
+        <input
+          ref="personaFileInput"
+          type="file"
+          accept="application/json,.json"
+          style="display: none"
+          @change="onPersonaFilePicked"
+        />
+      </div>
+      <p v-if="personaHint" class="hint">{{ personaHint }}</p>
+    </section>
+
+    <section class="card">
+      <h3>知识</h3>
+      <p class="hint">
+        把世界书/角色卡/约定写进既有 Obsidian 的「大肥鱼」目录（不新增知识库）。导入内容会进她的检索
+        上下文：只导入你信任的来源。同名笔记不会覆盖（会加序号）；单文件 ≤512KB、一次 ≤20 个/2MB。
+        一般 Obsidian 会自动增量索引；检索不到时再点「重建索引」，并确认「知识库」页的 MCP 已启用。
+      </p>
+      <div class="row">
+        <label class="lab">类别</label>
+        <select v-model="knowledgeCategory">
+          <option value="世界书">世界书</option>
+          <option value="角色卡">角色卡</option>
+          <option value="关系/约定">关系 / 约定</option>
+        </select>
+        <button class="btn" :disabled="busy" @click="pickKnowledgeFiles">选择文件并导入</button>
+        <button class="btn ghost" :disabled="busy" @click="rebuildKnowledgeIndex">重建索引</button>
+        <input
+          ref="knowledgeFileInput"
+          type="file"
+          accept=".md,.txt,text/markdown,text/plain"
+          multiple
+          style="display: none"
+          @change="onKnowledgeFilesPicked"
+        />
+      </div>
+      <p v-if="knowledgeHint" class="hint">{{ knowledgeHint }}</p>
+    </section>
+
+    <section class="card">
       <h3>连接自检</h3>
       <div class="grid">
         <div>
@@ -160,6 +208,13 @@
       <p class="hint">每天 23:00 自动写；先写 workspace，再写 Obsidian 的「大肥鱼/日记」。需要先在「隐私与安全」确认年龄。</p>
     </section>
 
+    <CharacterSettings
+      ref="settingsRef"
+      :settings="settingsRaw"
+      :enabled="status.enabled"
+      @save="saveDetailSettings"
+    />
+
     <section class="card">
       <h3>隐私与安全</h3>
       <label class="check-row">
@@ -202,8 +257,10 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
+import CharacterSettings from './CharacterSettings.vue'
 import type { BootstrapReport } from '../../electron/main/character/bootstrap'
 import type { CharacterChatStreamEvent } from '../../electron/main/character/chat'
+import type { CharacterSettings as CharacterSettingsShape, CharacterSettingsPatch } from '../../electron/main/character/types'
 
 interface ChatBubble {
   role: 'user' | 'assistant'
@@ -234,6 +291,13 @@ const state = ref({
 const addressDraft = ref('')
 const modeDraft = ref<'companion' | 'sister' | 'lover'>('companion')
 const tabooDraft = ref('')
+const settingsRaw = ref<CharacterSettingsShape | null>(null)
+const settingsRef = ref<InstanceType<typeof CharacterSettings> | null>(null)
+const personaFileInput = ref<HTMLInputElement | null>(null)
+const personaHint = ref('')
+const knowledgeFileInput = ref<HTMLInputElement | null>(null)
+const knowledgeCategory = ref<'世界书' | '角色卡' | '关系/约定'>('世界书')
+const knowledgeHint = ref('')
 const bootstrapReport = ref<BootstrapReport | null>(null)
 const petVisible = ref(false)
 const lifeDoc = ref('')
@@ -384,6 +448,7 @@ async function refresh(): Promise<void> {
     activeGen.value = status.value.chatGen ?? 0
     state.value = await window.api.character.state()
     const settings = await window.api.character.settings.get()
+    settingsRaw.value = settings
     addressDraft.value = settings.relationship?.address || '你'
     modeDraft.value = settings.relationship?.mode || 'companion'
     tabooDraft.value = (settings.relationship?.taboo ?? []).join('，')
@@ -424,6 +489,18 @@ async function applyEnabled(next: boolean): Promise<void> {
     await refresh()
     showToast(next ? '已启用她；建议再点「一键初始化」' : '已停用（数据保留）')
   })
+}
+
+/** 详细设置保存：由 CharacterSettings 组件 emit patch；成功后就地刷新并反馈 */
+async function saveDetailSettings(patch: CharacterSettingsPatch): Promise<void> {
+  settingsRef.value?.setSaving(true)
+  await run(async () => {
+    await window.api.character.settings.set(patch)
+    await refresh()
+    settingsRef.value?.markSaved()
+    showToast('设置已保存')
+  })
+  settingsRef.value?.setSaving(false)
 }
 
 async function sendVoice(): Promise<void> {
@@ -498,6 +575,127 @@ async function exportData(): Promise<void> {
     a.click()
     URL.revokeObjectURL(url)
     showToast('档案已导出（不含密钥）')
+  })
+}
+
+async function exportPersona(): Promise<void> {
+  await run(async () => {
+    const pkg = await window.api.character.persona.export()
+    const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `fish-persona-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    personaHint.value = `已导出 ${Object.keys(pkg.files ?? {}).length} 个人格文件`
+    showToast('人格包已导出')
+  })
+}
+
+function pickPersonaFile(): void {
+  personaHint.value = ''
+  personaFileInput.value?.click()
+}
+
+/** 导入人格包：先在渲染端做体积/JSON 校验，真正的槽位/内容/备份校验在宿主（persona.ts） */
+async function onPersonaFilePicked(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  // 不在这里按 JSON 文件体积拦截：宿主按解析后的四个槽位校验 512KB/2MB；
+  // 导出的 JSON 会因引号/转义比原文大，按文件体积拦会把合法导出包拒收（对抗复核 P2）
+  const MAX_PACKAGE_BYTES = 16 * 1024 * 1024
+  if (file.size > MAX_PACKAGE_BYTES) {
+    error.value = '人格包文件过大（上限 16MB）'
+    return
+  }
+  let pkg: unknown
+  try {
+    pkg = JSON.parse(await file.text())
+  } catch {
+    error.value = '人格包不是合法 JSON'
+    return
+  }
+  const files = (pkg as { files?: Record<string, unknown> })?.files
+  const KNOWN_SLOTS = ['SOUL.md', 'IDENTITY.md', 'AGENTS.md', 'USER.md']
+  const slots =
+    files && typeof files === 'object'
+      ? Object.keys(files).filter((key) => KNOWN_SLOTS.includes(key))
+      : []
+  if (slots.length === 0) {
+    error.value = '人格包里没有文件（需要 SOUL/IDENTITY/AGENTS/USER）'
+    return
+  }
+  askConfirm(
+    {
+      title: '导入人格',
+      message:
+        `将导入 ${slots.join('、')}（未知文件会被忽略）。人格文件会成为她的系统提示词：` +
+        '请只导入你信任的来源；旧人格会先备份到 workspace 的 .persona-backup。确定导入？',
+      confirmText: '导入'
+    },
+    async () => {
+      await run(async () => {
+        const result = await window.api.character.persona.import(pkg)
+        personaHint.value = `已导入：${result.written.join('、')}；旧人格备份在 ${result.backupDir ?? '（无旧文件）'}`
+        await refresh()
+        showToast('人格已导入')
+      })
+    }
+  )
+}
+
+function pickKnowledgeFiles(): void {
+  knowledgeHint.value = ''
+  knowledgeFileInput.value?.click()
+}
+
+/** 知识导入：渲染端做数量/体积预检，类别/内容/落盘校验在宿主 knowledgeImport.ts */
+async function onKnowledgeFilesPicked(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const list = [...(input.files ?? [])]
+  input.value = ''
+  if (!list.length) return
+  if (list.length > 20) {
+    error.value = '一次最多导入 20 个文件'
+    return
+  }
+  const MAX_FILE = 512 * 1024
+  const MAX_TOTAL = 2 * 1024 * 1024
+  const oversize = list.find((file) => file.size > MAX_FILE)
+  if (oversize) {
+    error.value = `${oversize.name} 超过 512KB，请拆分后再导入`
+    return
+  }
+  const total = list.reduce((sum, file) => sum + file.size, 0)
+  if (total > MAX_TOTAL) {
+    error.value = '本次导入总体积超过 2MB，请分批导入'
+    return
+  }
+  await run(async () => {
+    const files = await Promise.all(
+      list.map(async (file) => ({ name: file.name, text: await file.text() }))
+    )
+    const result = await window.api.character.knowledge.import(files, knowledgeCategory.value)
+    knowledgeHint.value = `已导入 ${result.written.length} 篇：${result.written.join('、')}；重建索引（或等 Obsidian 增量索引）后她才能检索`
+    showToast('知识已写入 Obsidian')
+  })
+}
+
+async function rebuildKnowledgeIndex(): Promise<void> {
+  await run(async () => {
+    const result = (await window.api.obsidian.rebuildIndex()) as {
+      success?: boolean
+      error?: string
+    }
+    if (!result?.success) {
+      error.value = `重建索引失败：${result?.error ?? '未知原因'}`
+      return
+    }
+    knowledgeHint.value = '索引重建完成；如果她仍检索不到，请确认「知识库」页的 Obsidian MCP 已启用'
+    showToast('索引已重建')
   })
 }
 
