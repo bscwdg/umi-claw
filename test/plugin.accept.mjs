@@ -34,8 +34,47 @@ import {
   resolveNodePath,
   domainSrc
 } from './_lib.mjs'
+import { findUndeclaredServiceRefs } from '../scripts/plugin-service-scan.mjs'
 
 const r = new Recorder('Phase 0 · 插件内核（manifest / registry / lifecycle / UI registry）')
+
+// 4.2 复核补修：work/marketing 清单现在声明 abort（B3）/ consent（4.1.1 宿主单源），
+// 凡是用真实清单的测试，假宿主工厂必须提供这两个服务，否则注册阶段就会报
+// 「宿主不存在的服务」。这两个 fake 只满足契约形状，不参与这些用例的断言语义。
+function fakeAbortService() {
+  const registered = new Map()
+  return {
+    register(pluginId, abort) {
+      registered.set(pluginId, abort)
+      return () => registered.delete(pluginId)
+    }
+  }
+}
+
+function fakeConsentService() {
+  let consent = false
+  let consentAt = null
+  let revokedAt = null
+  return {
+    async status() {
+      return { consent, consentAt, revokedAt }
+    },
+    async grant() {
+      if (!consent) {
+        consent = true
+        consentAt = Date.now()
+        revokedAt = null
+      }
+      return { consent: true, consentAt }
+    },
+    async revoke() {
+      consent = false
+      consentAt = null
+      revokedAt = Date.now()
+      return { consent: false }
+    }
+  }
+}
 
 const kernelMod = await import(pathToFileURL(bundleEntry('electron/main/kernel/index.ts', 'kernel.mjs')).href)
 const {
@@ -1415,10 +1454,18 @@ await r.check('P37', 'work 插件：激活后 work:* 通道可用，停用后全
     locateOldDbs: () => [],
     readOldDb: async () => ({})
   }
+  const abortCalls = []
   const services = {
     legacyDb: () => ({ list: async () => [] }),
     db: () => fakeDb,
     openclaw: () => gateway,
+    abort: () => ({
+      register(pluginId, abort) {
+        abortCalls.push(pluginId)
+        return () => {}
+      }
+    }),
+    consent: () => fakeConsentService(),
     hostOps: () => hostOps,
     config: () => ({ get: () => undefined, set: () => undefined, all: () => ({}) })
   }
@@ -1442,6 +1489,7 @@ await r.check('P37', 'work 插件：激活后 work:* 通道可用，停用后全
   })
   const status = await host.activate('work')
   assertEq(status.state, 'activated', 'work 激活：' + JSON.stringify(status.error))
+  assert(abortCalls.includes('work'), 'work 在 activate 时把中止函数登记到 abortRegistry（B3 复核补修）')
   assert(status.channels.some((c) => c.startsWith('work:')), '注册了 work:* 通道')
   assert(status.channels.includes('work:matters:list'), 'matters.list 通道存在')
 
@@ -1465,6 +1513,8 @@ await r.check('P38', 'work 插件启停循环：停用摘通道，重新启用�
   const services = {
     legacyDb: () => ({ list: async () => [] }),
     db: () => pluginDb.forPlugin({ id: 'work', dir: join(repoRoot, 'plugins', 'work') }),
+    abort: () => fakeAbortService(),
+    consent: () => fakeConsentService(),
     openclaw: () => ({
       getStatus: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
       ensureReady: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
@@ -1771,10 +1821,18 @@ await r.check('P41', 'marketing 插件：默认开启；启用后 marketing:* �
       throw new Error('not used')
     }
   }
+  const abortCalls = []
   const services = {
     legacyDb: () => ({ list: async () => [] }),
     db: () => fakeDb,
     openclaw: () => stubGateway,
+    abort: () => ({
+      register(pluginId, abort) {
+        abortCalls.push(pluginId)
+        return () => {}
+      }
+    }),
+    consent: () => fakeConsentService(),
     legacyDb: () => ({ list: async () => [] }),
     hostOps: () => ({
       notify: () => undefined,
@@ -1818,6 +1876,10 @@ await r.check('P41', 'marketing 插件：默认开启；启用后 marketing:* �
   try {
     const status = await host.activate('marketing')
     assertEq(status.state, 'activated', 'marketing 激活：' + JSON.stringify(status.error))
+    assert(
+      abortCalls.includes('marketing'),
+      'marketing 在 activate 时把中止函数登记到 abortRegistry（B3 复核补修）'
+    )
     assert(status.channels.some((c) => c.startsWith('marketing:')), '注册了 marketing:* 通道')
     assert(status.channels.length > 20, '通道数量应覆盖 5 组 IPC：' + status.channels.length)
     assert(
@@ -2173,6 +2235,8 @@ await r.check('P43', '两个插件都在 inject 里声明 legacyDb，且激活�
   const services = {
     legacyDb: () => ({ list: async () => [] }),
     db: () => fakeDb,
+    abort: () => fakeAbortService(),
+    consent: () => fakeConsentService(),
     openclaw: () => ({
       getStatus: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
       ensureReady: async () => ({ ready: false, port: null, baseUrl: null, endpointsEnabled: false }),
@@ -2447,6 +2511,54 @@ await r.check('P47', '打包契约：resources/plugins 的清单与 migrations �
   }
   return '清单/migrations/worker/collector 都在包里'
 })
+// ── P58 服务注入闭包：ctx.services.* 必须在 plugin.json.inject 里声明 ─────────
+// 4.2 复核补修：B3 的 abort / 4.1.1 的 consent 都只在 main.ts 里取 ctx.services，
+// 但 manifest.inject 没声明 → 内核只注入 inject 列表 → 两处 `if (abort)` / `consent?.`
+// 静默回落，注册与宿主单源在生产中从未生效。这条断言把「用了但没声明」变成红。
+await r.check(
+  'P58',
+  '服务注入闭包：ctx.services.* 都在 plugin.json.inject 里；生产服务工厂覆盖 SERVICE_NAMES',
+  async () => {
+    const problems = findUndeclaredServiceRefs(join(repoRoot, 'plugins'))
+    assertEq(
+      problems.length,
+      0,
+      '服务注入闭包不完整：\n' +
+        problems.map((p) => `${p.pluginId}/${p.file}: ${p.services.join(', ')}`).join('\n')
+    )
+    // 明确钉住两处回归点：work 同时需要 abort（4.2 B3）与 consent（4.1.1 宿主单源），
+    // marketing 需要 abort（4.2 B3）。
+    for (const [id, needed] of [
+      ['work', ['abort', 'consent']],
+      ['marketing', ['abort']]
+    ]) {
+      const manifest = JSON.parse(readFileSync(join(repoRoot, 'plugins', id, 'plugin.json'), 'utf-8'))
+      for (const name of needed) {
+        assert(manifest.inject.includes(name), `${id} 插件 inject 必须声明 ${name}`)
+      }
+    }
+    // 反向：任何插件 inject 声明的服务都必须有生产工厂；否则插件激活时抛
+    // SERVICE_NOT_INJECTED（原 P0 的镜像失败模式，假宿主会掩盖）。
+    // 注意不能要求 SERVICE_NAMES 全都有工厂：voice 等是契约预留、当前无插件消费。
+    const runtimeSrc = readFileSync(
+      join(repoRoot, 'electron', 'main', 'services', 'pluginRuntime.ts'),
+      'utf-8'
+    )
+    const injected = new Set()
+    for (const id of readdirSync(join(repoRoot, 'plugins'), { withFileTypes: true })) {
+      if (!id.isDirectory()) continue
+      const manifestPath = join(repoRoot, 'plugins', id.name, 'plugin.json')
+      if (!existsSync(manifestPath)) continue
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'))
+      for (const name of manifest.inject ?? []) if (name !== 'host') injected.add(name)
+    }
+    const missingFactory = [...injected].filter(
+      (name) => !new RegExp(`\\b${name}\\s*:\\s*\\(`).test(runtimeSrc)
+    )
+    assertEq(missingFactory.length, 0, 'pluginRuntime 缺少被插件 inject 的服务工厂：' + missingFactory.join(','))
+    return 'ctx.services 使用与 inject 一致；被 inject 的服务均有工厂'
+  }
+)
 // ── P48 gateway 面按域拆分：marketing:gateway 归插件 ────────────────────────
 await r.check('P48', 'gateway 通道归属：宿主只注册 work 面，marketing 面由插件注册', async () => {
   const hostSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
@@ -2542,6 +2654,8 @@ await r.check('P52', '通道注册器只在激活阶段存在：营销插件就�
   )
 
   const services = {
+    abort: () => fakeAbortService(),
+    consent: () => fakeConsentService(),
     db: () => ({
       path: ':memory:',
       async migrate() {},

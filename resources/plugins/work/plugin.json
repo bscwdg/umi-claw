@@ -11,7 +11,7 @@
     "host.openclaw.v1",
     "host.notifications.v1"
   ],
-  "inject": ["host", "db", "config", "openclaw", "hostOps", "legacyDb"],
+  "inject": ["host", "db", "config", "openclaw", "hostOps", "legacyDb", "consent", "abort"],
   "channels": ["work"],
   "activation": ["onStartup"],
   "contributes": {

@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { findUndeclaredServiceRefs } from './plugin-service-scan.mjs'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pluginsDir = join(repoRoot, 'plugins')
@@ -16,6 +17,17 @@ const UI_OUT = join(repoRoot, 'src', 'renderer', 'plugins.renderer.generated.ts'
 
 function listPlugins() {
   if (!existsSync(pluginsDir)) return []
+  // 服务注入闭包校验：ctx.services.X 必须在 plugin.json.inject 里声明（否则静默 undefined）
+  const undeclared = findUndeclaredServiceRefs(pluginsDir)
+  if (undeclared.length) {
+    throw new Error(
+      '插件 inject 未声明 main.ts 使用的服务：\n' +
+        undeclared
+          .map((p) => `  plugins/${p.pluginId}/${p.file}: ${p.services.join(', ')}`)
+          .join('\n') +
+        '\n（内核只注入 inject 列表，漏声明会静默回落；见 4.2 复核补修）'
+    )
+  }
   const out = []
   for (const name of readdirSync(pluginsDir)) {
     const manifestPath = join(pluginsDir, name, 'plugin.json')
