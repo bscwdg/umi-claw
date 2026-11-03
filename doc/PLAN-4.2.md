@@ -195,7 +195,27 @@ WP7-P5 的 GUI 部分延后至此。核心（检测 + 日志告警）已在 4.0.
 
 | 包 | 状态 | 实测 | 发布点 |
 | --- | --- | --- | --- |
-| B4 | 待开工 | type-only 14 | 4.2.0 |
-| B3 | 待开工 | `ipc/index.ts` 3 处生产依赖 | 4.2.0 |
-| B1 | 待开工 | 宿主 28,918 | 4.2.1 |
-| B2 | 待开工 | GUI 缺口 | 4.2.2 |
+| B4 | ✅ 完成（`b7c5166`） | type-only **14 → 0**；门禁新增 `pluginHostTypeOnly` 分级计数；boundary.accept 9/9 | 4.2.0 |
+| B3 | ✅ 完成（`1d0728d`） | 生产 barrel 依赖 **3 → 0**；宿主直调插件 abort **4 → 0**；abort 注册表 + 两插件自注册；barrel 标 @test-only | 4.2.0 |
+| B1 | ⚠️ **审计完成，等拍板**（`ef31f52`） | 见 §B1-audit：**26,000 不可达**，只剩 145 行真死代码 | 待定 |
+| B2 | 待开工 | GUI 缺口（检测+日志已在 4.0.1 完成，缺横幅+引导） | 4.2.2 |
+
+### 4.2 已完成部分的验收基线
+
+```
+双 typecheck         0 错
+build                通过
+边界门禁             pluginHostBoundary=0 / pluginHostTypeOnly=0 / managerElectron=0
+全量 accept          615 PASS / 2 FAIL
+                       └ 2 条 FAIL 均为 packaged.smoke S6/S7（A3 半成品产物，
+                         已在干净基线 54e7484 复现同样结果，与 4.2 改动无关）
+```
+
+### B2 的剩余范围（据此可直接开工）
+
+| 已有（4.0.1 `aa6277d`） | 缺（4.2 B2） |
+| --- | --- |
+| 便携 Node 完整性检测 + 写 `dataDir/logs/runtime-probe.log` | ① 首启/启动时把检测结果推到渲染端；② 权限异常时显示横幅；③ 一键引导「重装运行环境」 |
+
+判据：人为把 `data/runtime/node.exe` 标成 Low IL → 启动后横幅可见、可点重装、日志有记录。
+（本机历史上真出现过这个场景，见 `local-env-gotchas`。）
