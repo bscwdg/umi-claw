@@ -633,10 +633,10 @@ source: openclaw-memory/2026-11-01
 ### A.6 4.3 增量（2026-11-04）
 
 - **多渠道聊天（P5）**：角色页「聊天渠道」把已配置的单账号外部渠道（QQ/飞书/企微/微信…）中、被渠道策略
-  放行的会话（含群聊）路由到 `feiyu` agent。实现走官方 CLI `openclaw agents bind/unbind --all`（不直接改
-  openclaw.json），先预检其它 agent 的默认账号/peer 占用，保存后回读校验；停用/删除全部自动清绑定。
-  多账号渠道暂不支持自动接管（需 OpenClaw 原生逐账号绑定）；需重启网关生效。真实 QQ/企微入站需用户配置
-  渠道后手动验收（已用临时配置 + 真实 CLI 验证 bind/unbind）。
+  放行的会话（含群聊）路由到 `feiyu` agent。实现走官方 CLI `openclaw agents bind/unbind`（不直接改
+  openclaw.json），只增删应用创建的 channel 级绑定（手工 account/peer 绑定保留），失败回滚；删除全部才
+  `unbind --all`。多账号渠道暂不支持自动接管（需 OpenClaw 原生逐账号绑定）；需重启网关生效。真实
+  QQ/企微入站需用户配置渠道后手动验收（已用临时配置 + 真实 CLI 验证 bind/unbind）。
 - **批量删除归档（P6）**：`archiveWorkspaceMemory()` 把 workspace `memory/` 移入
   `memory-archive/<ts>/memory/`；「删除日记与关系」不再硬删本机唯一副本；归档失败保留原目录。
 - 测试：C90（批量归档）、C91（绑定解析/差集/CLI/回读/清理）；全量 33 套 / 630 断言。

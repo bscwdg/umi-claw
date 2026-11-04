@@ -1851,12 +1851,15 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 - 实现（对抗复核后收紧）：
   - 新增 `channelBindings.ts`（纯 Node）：`parseChannelList/parseBindings/collectChannelOwners/planChannelChanges/normalizeDesiredChannels/listChatChannels/setChatChannels/clearChatChannels`；只写官方 CLI，不直接碰 openclaw.json。
   - **占用预检**：`listChatChannels` 返回 `blockedReason`——多账号（`accounts.length>1`）或其它 agent 已有默认账号/peer 级绑定 → 不可勾选；其它 agent 仅 wildcard（`accountId:"*"`）才允许接管默认账号。`set` 前再校验一次，不发起半写。
-  - **写后回读**：先 `unbind --agent feiyu --all`（只清 feiyu，不碰其它 agent），逐个 `bind`；任一失败回滚并抛可读错误；最后回读确认目标渠道都归 feiyu。
+  - **差量写 + 回滚**：只对「新增/移除」的 channel 级绑定 `bind/unbind`，不碰用户手工 account/peer 绑定；保存失败时先撤新增、再把移除的 bind 回来，并回读确认。只有「删除全部」才 `unbind --all`（agent 都要删了）。
   - 新通道 `character:channels:list|set|clear`（types/ipc/wiring/preload 四处）；`set` 要求角色已启用；未接线抛 NOT_READY；CLI 失败解析 `error.message/issues/conflicts` 给可执行提示。
   - 角色页「聊天渠道」卡：列出渠道/账号/占用原因/多账号提示；保存后回读；停用后仍可「断开聊天渠道」并显示失败（不再静默）；删除全部时**先**清绑定、删 agent，再动文件。
   - 测试 C90/C91（C91：解析、blocked 预检、`unbind --all` 参数、逐渠道 bind、回读、失败回滚、clear 读失败；C90：归档 helper + wiring 接线锁定 + 同 ts 序号）；C84 通道 +chatChannels。
   - 验证：character 90/90；全量 accept **33 套 / 630 断言 / 0 失败**；双 typecheck 0/0；build 通过；boundary 0/0/0；真实 CLI e2e（telegram）通过。
-- 对抗复核（2026-11-04，子代理 8ee40e8b/a624abcd，只读 + 临时 HOME 探针）：
+- 对抗复核（2026-11-04，三轮只读子代理：8ee40e8b/a624abcd/034ab27e，只读 + 临时 HOME 探针）：
+  - **第三轮（034ab27e，提交后复核）新发现并已修**：① bind 失败先清旧绑定、不回滚 → 改差量写 + 回滚恢复旧渠道；② 正常保存/停用 `unbind --all` 会清掉用户手工 account/peer 绑定 → 改为只清 channel 级，删除全部才 `--all`；③ peer+`accountId:"*"` 未 blocked → 有 peer/guild/team 的规则一律阻塞；④ 列表读取失败/空列表时保存仍可点、空选择会清空绑定 → 加 `chatChannelsLoaded/error` 护栏，失败禁用保存；⑤ 删除文件失败被 `removeSafe` 静默吞 → 收集失败并回传 warning；⑥ C90/C91 假绿 → 加 wiring 硬删负向断言、回滚/手工绑定保留/回读失败用例；⑦ 错误 toast 参数被忽略 → 修正；⑧ 注释高估「CLI 失败不破坏」→ 注明 manager 已先 reset。
+  - **第二轮（8ee40e8b/a624abcd）已修项**：默认账号 conflict 预检、多账号 blocked、删除全部 CLI 前置、停用失败可见、C90 wiring 断言、C91 参数/回滚断言、私聊文案修正。
+  - **未采纳/保留**：manager 仍先 store.reset 再调 deleteWorkspaceFiles，CLI 失败只能回 warning（登记 4.4）；多账号逐账号绑定不在本轮。
   - **属实已修**：① main 默认账号/peer 绑定会让 bind conflict，原「勾选即接管」文案与实现不符 → 增加 blockedReason 预检 + 逐渠道 bind + 失败回滚；② 按渠道 `unbind --bind <channel>` 会漏 account/peer 级绑定 → 改 `unbind --all` + 回读；③ 删除全部里 CLI 在破坏性文件操作之后 → 把清绑定/删 agent 前置到删文件之前（CLI 失败则文件不删；manager 仍会先重置 KV，这是既有架构，UI 会显示 warning）；④ 停用静默失败、无法就地清理 → 改为停用成功后 clear，失败 toast 可见，停用态保留「断开聊天渠道」；⑤ 多账号渠道 boundTo 误报 → 多账号直接 blocked，不做「默认账号接管」承诺；⑥ C90 抓不到 wiring 回退 → 增加 wiring 源码断言 + 同 ts 序号；⑦ C91 fake 漏 unbind 参数/冲突/回滚 → 补断言与 blocked/回滚用例；⑧ 「只接管私聊」不成立 → 文案改为「渠道策略放行的会话（含群聊）」；⑨ list 未接线返回 [] → 统一 NOT_READY；⑩ 停用双清 → 去掉 IPC settingsSet 自动 clear，只保留 UI 显式操作。
   - **未采纳/保留**：删除全部时 manager 仍会先 `store.reset` 再调 `deleteWorkspaceFiles`，CLI 失败只能保证「agent/文件/绑定不继续被破坏」并回 warning，做不到事务级回滚（登记 4.4）；多账号逐账号绑定不在本轮做。
 - 已知边界（登记 4.4）：真实 QQ/企微/微信入站需用户配好渠道 + 重启网关后手工验收（本轮未用真实凭据发包）；只自动接管单账号渠道，多账号需 OpenClaw 原生逐账号绑定；渠道级绑定无法只接管私聊（群聊是否触发由渠道策略决定）；绑定后不同渠道会话历史独立，但日记/记忆共享；`channels list` 依赖 openclaw 配置合法，配置坏时 UI 显示错误。
@@ -1865,5 +1868,6 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 
 - 背景（复核发现）：单条删除会归档，但「删除日记与关系」批量路径直接 `rmSync(workspace/memory)`；无 Obsidian vault 时 workspace 是唯一副本，删后不可恢复。
 - 修复：新增 `memoryAdmin.archiveWorkspaceMemory(workspaceDir, now)`：`memory/` 整体移到 `memory-archive/<ts>/memory/`（幂等、无目录返回 null、重名加序号）；`wiring.deleteWorkspaceFiles` 用它替换硬删，归档失败只记日志并保留原目录（绝不回退硬删）；`deps.now` 参与时间戳便于测试。
-- 测试 C90：归档路径/内容/源目录消失/幂等（空目录返回 null 且不建空归档）、同一时间戳重复批量删除加 `memory-2` 序号、wiring 源码必须调用 `archiveWorkspaceMemory(workspaceDir`（防止只测 helper 的假绿）；角色页「删除日记与关系」文案/指南已同步为「workspace 归档 + Obsidian 归档」。
+- 测试 C90：归档路径/内容/源目录消失/幂等（空目录返回 null 且不建空归档）、同一时间戳重复批量删除加 `memory-2` 序号、wiring 源码必须调用 `archiveWorkspaceMemory(workspaceDir`（防止只测 helper 的假绿）、不得出现 `removeSafe(join(workspaceDir,'memory'))` 或直接 `rmSync(join(workspaceDir,'memory')`、必须把文件删除失败回传为 `部分文件清理失败`；角色页「删除日记与关系」文案/指南已同步为「workspace 归档 + Obsidian 归档」。
+- 第三轮复核修复：`removeSafe` 不再吞异常，收集 SOUL/IDENTITY/AGENTS/USER/.persona-backup/STATE/LIFE 失败，末尾抛 `部分文件清理失败` → manager 转 warning；archive 失败也追加 warning。`manager` 仍先 `store.reset` 再调 cleanup，属于既有架构，注释已如实说明。
 - 验证：character 90/90；全量 accept **33 套 / 630 断言 / 0 失败**。
