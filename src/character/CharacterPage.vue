@@ -217,14 +217,23 @@
       <div class="row" style="margin-top: 10px">
         <button
           class="btn primary"
-          :disabled="chatChannelsBusy || !status.enabled"
+          :disabled="
+            chatChannelsBusy ||
+            !status.enabled ||
+            !chatChannelsLoaded ||
+            Boolean(chatChannelsError) ||
+            !chatChannels.length
+          "
           @click="saveChatChannels"
         >
           {{ chatChannelsBusy ? '保存中…' : '保存聊天渠道' }}
         </button>
         <button
           class="btn ghost"
-          :disabled="chatChannelsBusy || !chatChannels.some((c) => c.boundTo === 'feiyu')"
+          :disabled="
+            chatChannelsBusy ||
+            !chatChannels.some((c) => c.boundTo === 'feiyu')
+          "
           @click="clearChatChannelsNow"
         >
           断开聊天渠道
@@ -527,6 +536,7 @@ interface ChatChannelView {
 const chatChannels = ref<ChatChannelView[]>([])
 const chatChannelSelection = ref<string[]>([])
 const chatChannelsBusy = ref(false)
+const chatChannelsLoaded = ref(false)
 const chatChannelsHint = ref('')
 const chatChannelsError = ref('')
 const petVisible = ref(false)
@@ -732,7 +742,7 @@ async function applyEnabled(next: boolean): Promise<void> {
       } catch (e) {
         const message = (e as Error)?.message || '断开外部聊天渠道失败'
         chatChannelsError.value = message
-        showToast(message, 'error')
+        showToast(message)
       }
     } else {
       void refreshChatChannels()
@@ -747,11 +757,13 @@ async function refreshChatChannels(): Promise<void> {
     const list = await window.api.character.chatChannels.list()
     chatChannels.value = list
     chatChannelsError.value = ''
+    chatChannelsLoaded.value = true
     chatChannelSelection.value = list
       .filter((c) => c.boundTo === 'feiyu' && !c.blockedReason)
       .map((c) => c.id)
   } catch (e) {
     chatChannels.value = []
+    chatChannelsLoaded.value = false
     chatChannelsError.value = (e as Error)?.message || '读取聊天渠道失败'
   }
 }

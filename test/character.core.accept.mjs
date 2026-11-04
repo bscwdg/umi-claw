@@ -3120,11 +3120,19 @@ await recorder.check('C90', '批量删除归档 workspace 日记：memory → me
     !wiringSrc.includes("removeSafe(join(workspaceDir, 'memory'))"),
     'wiring 不得回退硬删 workspace/memory'
   )
+  assert(
+    !wiringSrc.includes("rmSync(join(workspaceDir, 'memory')"),
+    'wiring 不得直接 rmSync(workspace/memory)'
+  )
+  assert(
+    wiringSrc.includes('部分文件清理失败'),
+    '文件删除失败必须回传 warning（不能静默报成功）'
+  )
   rmSync(root, { recursive: true, force: true })
   return 'workspace 日记批量删除归档/同 ts 序号/接线锁定 ✓'
 })
 
-await recorder.check('C91', '多渠道聊天绑定：解析/占用预检/bind+unbind --all/回读/回滚（4.3）', async () => {
+await recorder.check('C91', '多渠道聊天绑定：占用预检/差量写/回滚/手工绑定保留/清理（4.3）', async () => {
   const {
     parseChannelList,
     parseBindings,
@@ -3133,7 +3141,8 @@ await recorder.check('C91', '多渠道聊天绑定：解析/占用预检/bind+un
     normalizeDesiredChannels,
     listChatChannels,
     setChatChannels,
-    clearChatChannels
+    clearChatChannels,
+    clearAllChatChannels
   } = channelBindingsMod
 
   // 1) 解析：已配置渠道 + 未安装渠道过滤 + bindings 数组/单对象兼容
@@ -3176,13 +3185,18 @@ await recorder.check('C91', '多渠道聊天绑定：解析/占用预检/bind+un
       qqbot: { label: 'QQ', accounts: ['default'], installed: true },
       feishu: { label: '飞书', accounts: ['default'], installed: true },
       dingtalk: { label: '钉钉', accounts: ['default'], installed: true },
-      wecom: { label: '企微', accounts: ['default', 'second'], installed: true }
+      wecom: { label: '企微', accounts: ['default', 'second'], installed: true },
+      telegram: { label: 'TG', accounts: ['default'], installed: true }
     }
   })
   let bindings = [
     { agentId: 'main', match: { channel: 'qqbot', accountId: '*' } },
     { agentId: 'main', match: { channel: 'dingtalk' } },
-    { agentId: 'main', match: { channel: 'wecom', accountId: '*' } }
+    { agentId: 'main', match: { channel: 'wecom', accountId: '*' } },
+    // peer 规则即使 accountId:"*" 也优先，必须 blocked
+    { agentId: 'main', match: { channel: 'telegram', accountId: '*', peer: { kind: 'group', id: 'g1' } } },
+    // 用户手工给 feiyu 配的 account 级绑定：应用保存/停用不能清掉
+    { agentId: 'feiyu', match: { channel: 'wecom', accountId: 'second' } }
   ]
   const calls = []
   const runner = {
@@ -3193,7 +3207,13 @@ await recorder.check('C91', '多渠道聊天绑定：解析/占用预检/bind+un
         return { code: 0, stdout: JSON.stringify(bindings), stderr: '' }
       }
       if (args[0] === 'agents' && args[1] === 'unbind') {
-        bindings = bindings.filter((b) => b.agentId !== 'feiyu')
+        if (args.includes('--all')) bindings = bindings.filter((b) => b.agentId !== 'feiyu')
+        else {
+          const ch = args[args.indexOf('--bind') + 1]
+          bindings = bindings.filter(
+            (b) => !(b.agentId === 'feiyu' && b.match.channel === ch && !b.match.accountId)
+          )
+        }
         return { code: 0, stdout: '{"agentId":"feiyu","removed":[]}', stderr: '' }
       }
       if (args[0] === 'agents' && args[1] === 'bind') {
@@ -3205,33 +3225,41 @@ await recorder.check('C91', '多渠道聊天绑定：解析/占用预检/bind+un
     }
   }
   const list = await listChatChannels(runner)
-  assertEq(list.find((c) => c.id === 'qqbot').blockedReason, null, '其它 agent wildcard 不阻塞（可接管默认账号）')
+  assertEq(list.find((c) => c.id === 'qqbot').blockedReason, null, '其它 agent wildcard 不阻塞')
   assertEq(list.find((c) => c.id === 'dingtalk').blockedReason, 'other-agent', '其它 agent 默认账号绑定 → 阻塞')
-  assertEq(list.find((c) => c.id === 'dingtalk').blockedBy, 'main', '阻塞者 agent id')
+  assertEq(list.find((c) => c.id === 'telegram').blockedReason, 'other-agent', 'peer + wildcard → 阻塞')
   assertEq(list.find((c) => c.id === 'wecom').blockedReason, 'multi-account', '多账号渠道 → 阻塞')
 
-  // 4) 成功路径：逐个 bind；再次保存时先 unbind --all 清 feiyu 旧绑定
+  // 4) 差量写：只 bind 新增渠道，不动 feiyu 手工 account 级绑定
   const res = await setChatChannels(runner, ['qqbot', 'feishu'])
   assertEq(res.added.sort().join(','), 'feishu,qqbot', '新增两个渠道')
+  assertEq(res.removed.length, 0, '无移除')
   const bindCalls = calls.filter((a) => a[1] === 'bind')
-  assertEq(bindCalls.length, 2, '逐渠道 bind（避免半成功）')
+  assertEq(bindCalls.length, 2, '逐渠道 bind')
   for (const call of bindCalls) {
     assertEq(call[call.indexOf('--agent') + 1], 'feiyu', 'bind 带 --agent feiyu')
     assertEq(call.filter((a) => a === '--bind').length, 1, '每次 bind 一个渠道')
   }
-  assertEq(res.channels.filter((c) => c.boundTo === 'feiyu').length, 2, '回读：两个渠道都归属 feiyu')
+  assertEq(
+    bindings.some((b) => b.agentId === 'feiyu' && b.match.accountId === 'second'),
+    true,
+    'feiyu 手工 account 绑定保留'
+  )
 
+  // 5) 取消一个渠道：只 unbind 该 channel 级绑定（不是 --all），手工绑定和其余渠道保留
   const res2 = await setChatChannels(runner, ['feishu'])
-  assertEq(res2.removed.sort().join(','), 'feishu,qqbot', '旧 feiyu 绑定全部移除')
+  assertEq(res2.removed.join(','), 'qqbot', '只移除 qqbot')
+  assertEq(res2.added.length, 0, '无新增')
   const unbindCalls = calls.filter((a) => a[1] === 'unbind')
-  assertEq(unbindCalls[0].join(' '), 'agents unbind --agent feiyu --all --json', 'unbind 只清 feiyu 全部绑定')
-  assertEq(bindings.filter((b) => b.agentId === 'feiyu').map((b) => b.match.channel).join(','), 'feishu', 'feiyu 只剩 feishu')
-  assertEq(bindings.filter((b) => b.agentId === 'main').length, 3, '其它 agent 的绑定保留（qqbot/dingtalk/wecom wildcard）')
+  assertEq(unbindCalls[0].join(' '), 'agents unbind --agent feiyu --bind qqbot --json', '逐渠道 unbind，不用 --all')
+  assertEq(bindings.some((b) => b.agentId === 'feiyu' && b.match.channel === 'feishu' && !b.match.accountId), true, 'feishu 保留')
+  assertEq(bindings.some((b) => b.agentId === 'feiyu' && b.match.accountId === 'second'), true, '手工绑定仍保留')
 
-  // 5) 阻塞渠道预检：不应发起任何 bind
+  // 6) 阻塞渠道预检：不应发起任何 bind
   const before = calls.filter((a) => a[1] === 'bind').length
   for (const [channels, keyword] of [
     [['dingtalk'], '占用'],
+    [['telegram'], '占用'],
     [['wecom'], '多账号']
   ]) {
     let blocked = false
@@ -3244,18 +3272,31 @@ await recorder.check('C91', '多渠道聊天绑定：解析/占用预检/bind+un
   }
   assertEq(calls.filter((a) => a[1] === 'bind').length, before, '预检失败不发起 bind')
 
-  // 6) bind 失败必须回滚 feiyu 绑定并抛错（不能半成功）
-  const failingChat = JSON.stringify({ chat: { feishu: { label: '飞书', accounts: ['default'], installed: true } } })
-  let failCalls = []
+  // 7) bind 失败必须回滚到操作前：旧 qqbot 被 unbind 后要重新 bind 回来
+  let rollbackBindings = [
+    { agentId: 'main', match: { channel: 'qqbot', accountId: '*' } },
+    { agentId: 'feiyu', match: { channel: 'qqbot' } }
+  ]
   const failing = {
     async run(args) {
-      failCalls.push([...args])
-      if (args[0] === 'channels') return { code: 0, stdout: failingChat, stderr: '' }
-      if (args[0] === 'agents' && args[1] === 'bindings') return { code: 0, stdout: '[]', stderr: '' }
+      if (args[0] === 'channels') return { code: 0, stdout: chatJson, stderr: '' }
+      if (args[0] === 'agents' && args[1] === 'bindings') {
+        return { code: 0, stdout: JSON.stringify(rollbackBindings), stderr: '' }
+      }
       if (args[0] === 'agents' && args[1] === 'unbind') {
+        const ch = args[args.indexOf('--bind') + 1]
+        rollbackBindings = rollbackBindings.filter(
+          (b) => !(b.agentId === 'feiyu' && b.match.channel === ch && !b.match.accountId)
+        )
         return { code: 0, stdout: '{"agentId":"feiyu","removed":[]}', stderr: '' }
       }
-      return { code: 1, stdout: '{"conflicts":["feishu"]}', stderr: '' }
+      if (args[0] === 'agents' && args[1] === 'bind') {
+        const ch = args[args.indexOf('--bind') + 1]
+        if (ch === 'feishu') return { code: 1, stdout: '{"conflicts":["feishu"]}', stderr: '' }
+        rollbackBindings.push({ agentId: 'feiyu', match: { channel: ch } })
+        return { code: 0, stdout: '{"agentId":"feiyu","added":[],"conflicts":[]}', stderr: '' }
+      }
+      return { code: 1, stdout: '', stderr: '' }
     }
   }
   let bindFailed = false
@@ -3265,21 +3306,56 @@ await recorder.check('C91', '多渠道聊天绑定：解析/占用预检/bind+un
     bindFailed = error.message.includes('占用') || error.message.includes('绑定')
   }
   assertEq(bindFailed, true, 'bind 冲突 → 抛可读错误')
-  assertEq(failCalls.filter((a) => a[1] === 'unbind').length >= 1, true, '失败后回滚 feiyu 绑定')
+  assertEq(
+    rollbackBindings.some((b) => b.agentId === 'feiyu' && b.match.channel === 'qqbot' && !b.match.accountId),
+    true,
+    '失败后旧 qqbot 绑定被恢复（不是清空）'
+  )
 
-  // 7) clear：读当前 → unbind --all → 回读；读失败必须抛错
+  // 8) bind 返回 0 但回读不到 → 视为失败并回滚
+  let noopBindings = []
+  const noop = {
+    async run(args) {
+      if (args[0] === 'channels') return { code: 0, stdout: chatJson, stderr: '' }
+      if (args[0] === 'agents' && args[1] === 'bindings') return { code: 0, stdout: JSON.stringify(noopBindings), stderr: '' }
+      if (args[0] === 'agents' && args[1] === 'bind') return { code: 0, stdout: '{"agentId":"feiyu","added":[]}', stderr: '' }
+      if (args[0] === 'agents' && args[1] === 'unbind') {
+        noopBindings = []
+        return { code: 0, stdout: '{"agentId":"feiyu","removed":[]}', stderr: '' }
+      }
+      return { code: 1, stdout: '', stderr: '' }
+    }
+  }
+  let notBoundRejected = false
+  try {
+    await setChatChannels(noop, ['qqbot'])
+  } catch (error) {
+    notBoundRejected = error.message.includes('未生效')
+  }
+  assertEq(notBoundRejected, true, 'bind 成功但回读不到 → 抛「未生效」并回滚')
+
+  // 9) 停用清理只清本功能 channel 级绑定，手工 account 绑定保留
   const cleared = await clearChatChannels(runner)
-  assertEq(cleared.removed.join(','), 'feishu', 'clear 移除 feiyu 全部绑定')
-  assertEq(bindings.some((b) => b.agentId === 'feiyu'), false, 'feiyu 绑定清空')
+  assertEq(cleared.removed.join(','), 'feishu', 'clear 只移除受管渠道')
+  assertEq(
+    bindings.some((b) => b.agentId === 'feiyu' && b.match.accountId === 'second'),
+    true,
+    'clear 保留 feiyu 手工 account 绑定'
+  )
   assertEq(bindings.some((b) => b.agentId === 'main'), true, 'clear 保留其它 agent 绑定')
+
+  // 10) 删除全部用 --all 清 feiyu 所有绑定（含手工）
+  const allCleared = await clearAllChatChannels(runner)
+  assertEq(allCleared.removed.length >= 1, true, 'clearAll 返回移除渠道')
+  assertEq(bindings.some((b) => b.agentId === 'feiyu'), false, 'clearAll 清空 feiyu 全部绑定')
   let clearReadFailed = false
   try {
     await clearChatChannels({ run: async () => ({ code: 1, stdout: '', stderr: '' }) })
   } catch {
     clearReadFailed = true
   }
-  assertEq(clearReadFailed, true, '读绑定失败 → clear 抛错（删除全部可中止）')
-  return '渠道解析/占用预检/bind + unbind --all/回读/回滚/清理 ✓'
+  assertEq(clearReadFailed, true, '读绑定失败 → clear 抛错')
+  return '解析/预检/差量写/回滚/手工绑定保留/清理 ✓'
 })
 
 const characterResult = recorder.toJSON()

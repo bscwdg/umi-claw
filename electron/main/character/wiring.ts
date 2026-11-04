@@ -21,6 +21,7 @@ import { composePersonaFiles, exportPersonaPackage, importPersonaPackage, writeM
 import { validateKnowledgeImport, writeKnowledgeFiles } from './knowledgeImport'
 import { archiveWorkspaceMemory, deleteMemory, listMemories, readMemory, saveMemoryDiary } from './memoryAdmin'
 import {
+  clearAllChatChannels,
   clearChatChannels,
   listChatChannels,
   setChatChannels
@@ -289,18 +290,21 @@ async function registerCharacterInternal(
           }
         }
         // workspace：STATE/LIFE/memory 一定清；全量删除才动人格文件
+        // 删除失败不能静默：Windows 文件占用/权限不足时 rmSync 会抛，否则 UI 会误报「全部删除成功」
+        const failedRemovals: string[] = []
         const removeSafe = (path: string): void => {
           try {
             rmSync(path, { force: true, recursive: true })
-          } catch {
-            /* ignore */
+          } catch (error) {
+            failedRemovals.push(`${basename(path)}：${(error as Error)?.message ?? String(error)}`)
           }
         }
         // §13.1-4：全量删除时先把 openclaw.json 的 feiyu 条目和渠道绑定摘掉。
-        // 顺序要求：CLI 失败必须发生在任何文件破坏之前（否则会留下半完成且难以重试的状态）。
+        // CLI 失败发生在任何文件删除之前；但 manager 已先 store.reset（既有顺序），
+        // 因此失败时 KV 可能已重置、文件/agent 保留，由 manager 回 warning 给 UI。
         if (scope === 'all') {
           try {
-            await clearChatChannels(runner)
+            await clearAllChatChannels(runner)
           } catch (error) {
             const message = (error as Error)?.message ?? String(error)
             logger(`[character] 清理渠道绑定失败，已中止删除全部: ${message}`)
@@ -328,6 +332,7 @@ async function registerCharacterInternal(
           logger(
             `[character] workspace 日记归档失败（保留原目录，不硬删）: ${(error as Error)?.message ?? String(error)}`
           )
+          failedRemovals.push(`workspace 日记归档：${(error as Error)?.message ?? String(error)}`)
         }
         removeSafe(join(workspaceDir, 'fish', 'STATE.md'))
         removeSafe(join(workspaceDir, 'fish', 'LIFE.md'))
@@ -348,6 +353,9 @@ async function registerCharacterInternal(
               /* KV 失败不阻断删除流程 */
             }
           }
+        }
+        if (failedRemovals.length) {
+          throw new Error(`部分文件清理失败：${failedRemovals.join('；')}`)
         }
       }
     })

@@ -6,13 +6,13 @@
 //   - 读：`openclaw channels list --json`（已配置渠道）+ `openclaw agents bindings --json`
 //   - 写：`openclaw agents bind/unbind --agent feiyu --bind <channel>`（不直接写 openclaw.json）
 //
-// 边界（对抗复核后收紧）：
+// 边界（第二轮对抗复核后收紧）：
 // - 只自动接管「单账号、且未被其它 agent 以默认账号/peer 规则占用」的渠道；
-//   多账号、或其它 agent 已有非 wildcard 绑定的渠道不允许在这里抢，避免 CLI conflict
-//   或「显示成功但默认账号仍归别人」。
-// - 写操作先 `unbind --all` 清掉 feiyu 自己的旧绑定，再逐个 bind；任一失败回滚并报错，
-//   避免半成功。`--all` 只影响 feiyu，不会碰其它 agent 的绑定。
-// - 渠道级绑定无法只接管私聊：该渠道内被渠道策略放行的会话（含群聊）都会路由给 feiyu。
+//   多账号、或其它 agent 已有非 wildcard/peer 绑定的渠道不允许在这里抢。
+// - 正常保存/停用只增删本功能创建的 **channel 级**（无 accountId）绑定；用户手工配的
+//   account/peer 级绑定保留。只有「删除全部」才 `unbind --all`（agent 都要删了）。
+// - 保存失败回滚到操作前的 channel 级绑定（逐渠道 unbind/bind），并回读校验；
+//   不再用 `unbind --all` 做正常保存，避免一失败就把旧渠道全清掉。
 
 import { CHARACTER_AGENT_ID } from './agentConfig'
 import type { CliRunner } from './agentPatchRunner'
@@ -37,7 +37,13 @@ export interface ChatChannelsSetResult {
 
 interface RawBinding {
   agentId?: string
-  match?: { channel?: string; accountId?: string }
+  match?: {
+    channel?: string
+    accountId?: string
+    peer?: { kind?: string; id?: string }
+    guildId?: string
+    teamId?: string
+  }
 }
 
 interface RawChannelEntry {
@@ -64,11 +70,15 @@ function cliFailureMessage(result: { code: number; stdout: string }, action: str
       error?: { message?: unknown }
       issues?: Array<{ message?: unknown }>
       conflicts?: unknown[]
+      missing?: unknown[]
     }
     const issue = parsed?.issues?.[0]?.message
     const message = parsed?.error?.message ?? issue
     if (Array.isArray(parsed?.conflicts) && parsed.conflicts.length > 0) {
       return '渠道已被其它 agent 占用，请先在 OpenClaw 侧解绑该渠道'
+    }
+    if (Array.isArray(parsed?.missing) && parsed.missing.length > 0) {
+      return `${action}未生效：OpenClaw 没有找到对应绑定，请刷新后重试`
     }
     if (typeof message === 'string' && message.trim()) {
       const text = message.trim()
@@ -119,8 +129,9 @@ export function collectChannelOwners(bindings: RawBinding[]): Map<string, Set<st
 
 /**
  * 其它 agent 是否占着这个渠道、让 feiyu 无法安全接管。
- * wildcard（accountId:"*"）是 channel 级兜底，feiyu 的 account 级绑定能盖过它；
- * 默认账号/具体账号/peer 规则都会优先，硬抢会 conflict 或静默不生效，直接标记不可选。
+ * - 其它 agent 的默认账号/具体账号绑定会优先，硬抢冲突 → 阻塞；
+ * - 带 peer/guild/team 的规则优先级更高，即使 accountId:"*" 也阻塞；
+ * - 纯 channel wildcard（accountId:"*"、无 peer 等）才允许 feiyu 的默认账号绑定接管。
  */
 function findBlockingOwner(
   bindings: RawBinding[],
@@ -131,7 +142,9 @@ function findBlockingOwner(
     if (binding.match?.channel !== channel) continue
     const owner = typeof binding.agentId === 'string' ? binding.agentId : ''
     if (!owner || owner === agentId) continue
-    const accountId = typeof binding.match?.accountId === 'string' ? binding.match.accountId.trim() : ''
+    const match = binding.match ?? {}
+    if (match.peer || match.guildId || match.teamId) return { agentId: owner }
+    const accountId = typeof match.accountId === 'string' ? match.accountId.trim() : ''
     if (accountId === '*') continue
     return { agentId: owner }
   }
@@ -171,10 +184,18 @@ async function readRawBindings(runner: CliRunner): Promise<RawBinding[]> {
   return parseBindings(result.stdout)
 }
 
-function ownedChannels(bindings: RawBinding[], agentId: string): string[] {
-  return [...collectChannelOwners(bindings)]
-    .filter(([, owners]) => owners.has(agentId))
-    .map(([channel]) => channel)
+/** 本功能创建的 channel 级绑定（无 accountId；不碰用户手工 account/peer 绑定） */
+function managedChannels(bindings: RawBinding[], agentId: string): string[] {
+  const out: string[] = []
+  for (const binding of bindings) {
+    if (binding.agentId !== agentId) continue
+    const channel = typeof binding.match?.channel === 'string' ? binding.match.channel : ''
+    if (!channel) continue
+    const accountId = typeof binding.match?.accountId === 'string' ? binding.match.accountId.trim() : ''
+    if (accountId) continue
+    if (!out.includes(channel)) out.push(channel)
+  }
+  return out
 }
 
 /** 已配置渠道 + 当前绑定归属 + 是否可接管（供角色页「聊天渠道」卡片） */
@@ -190,10 +211,15 @@ export async function listChatChannels(
     throw new Error(cliFailureMessage(channelsResult, '读取渠道列表'))
   }
   const channels = parseChannelList(channelsResult.stdout)
+  const owners = collectChannelOwners(bindings)
   return channels.map((channel) => {
-    const owners = collectChannelOwners(bindings).get(channel.id)
+    const channelOwners = owners.get(channel.id)
     const boundTo: ChatChannel['boundTo'] =
-      owners && owners.has(agentId) ? 'feiyu' : owners && owners.size > 0 ? 'other' : null
+      channelOwners && channelOwners.has(agentId)
+        ? 'feiyu'
+        : channelOwners && channelOwners.size > 0
+          ? 'other'
+          : null
     const multiAccount = channel.accounts.length > 1
     const blocker = multiAccount ? null : findBlockingOwner(bindings, channel.id, agentId)
     const blockedReason: ChatChannel['blockedReason'] = multiAccount
@@ -210,25 +236,21 @@ export async function listChatChannels(
   })
 }
 
-async function unbindAll(runner: CliRunner, agentId: string): Promise<void> {
-  const result = await runner.run(['agents', 'unbind', '--agent', agentId, '--all', '--json'])
-  if (result.code !== 0) {
-    throw new Error(cliFailureMessage(result, '断开聊天渠道'))
-  }
-}
-
 async function bindOne(runner: CliRunner, agentId: string, channel: string): Promise<void> {
   const result = await runner.run(['agents', 'bind', '--agent', agentId, '--bind', channel, '--json'])
-  if (result.code !== 0) {
-    throw new Error(cliFailureMessage(result, `绑定「${channel}」`))
-  }
+  if (result.code !== 0) throw new Error(cliFailureMessage(result, `绑定「${channel}」`))
+}
+
+async function unbindOne(runner: CliRunner, agentId: string, channel: string): Promise<void> {
+  const result = await runner.run(['agents', 'unbind', '--agent', agentId, '--bind', channel, '--json'])
+  if (result.code !== 0) throw new Error(cliFailureMessage(result, `断开「${channel}」`))
 }
 
 /**
  * 设置「大肥鱼可聊天的渠道」：
- * 1) 先校验目标渠道都已配置、单账号、未被其它 agent 以默认账号/peer 规则占用；
- * 2) 用 `unbind --agent feiyu --all` 清掉 feiyu 旧绑定（只动 feiyu）；
- * 3) 逐个 bind；任一失败回滚 feiyu 全部绑定并报错，避免半成功；
+ * 1) 校验目标渠道都已配置、单账号、未被其它 agent 以默认账号/peer 规则占用；
+ * 2) 只对差集操作：移除的 channel 级绑定 unbind，新增的 bind；
+ * 3) 失败时回滚本次改动（恢复移除的绑定、撤掉新增的绑定），再抛出可读错误；
  * 4) 回读校验。
  */
 export async function setChatChannels(
@@ -252,36 +274,80 @@ export async function setChatChannels(
   }
 
   const bindings = await readRawBindings(runner)
-  const removed = ownedChannels(bindings, agentId)
-  if (removed.length) await unbindAll(runner, agentId)
+  const current = managedChannels(bindings, agentId)
+  const plan = planChannelChanges(current, nextIds)
+  if (!plan.add.length && !plan.remove.length) {
+    return { channels, added: [], removed: [] }
+  }
+
+  const rollback = async (): Promise<string[]> => {
+    const problems: string[] = []
+    for (const id of plan.add) {
+      try {
+        await unbindOne(runner, agentId, id)
+      } catch (error) {
+        problems.push(`撤回 ${id} 失败：${(error as Error)?.message ?? String(error)}`)
+      }
+    }
+    for (const id of plan.remove) {
+      try {
+        await bindOne(runner, agentId, id)
+      } catch (error) {
+        problems.push(`恢复 ${id} 失败：${(error as Error)?.message ?? String(error)}`)
+      }
+    }
+    return problems
+  }
+
   try {
-    for (const id of nextIds) await bindOne(runner, agentId, id)
+    for (const id of plan.remove) await unbindOne(runner, agentId, id)
+    for (const id of plan.add) await bindOne(runner, agentId, id)
   } catch (error) {
-    // 回滚本次写入（只影响 feiyu），避免「一半渠道绑上了」的假成功
-    await unbindAll(runner, agentId).catch(() => undefined)
-    throw error
+    const problems = await rollback()
+    const suffix = problems.length ? `；回滚未完全成功：${problems.join('；')}` : ''
+    throw new Error(`${(error as Error)?.message ?? String(error)}${suffix}`)
   }
 
   const after = await listChatChannels(runner, agentId)
   const notBound = nextIds.filter((id) => !after.some((c) => c.id === id && c.boundTo === 'feiyu'))
   if (notBound.length) {
-    await unbindAll(runner, agentId).catch(() => undefined)
-    throw new Error(`渠道绑定未生效：${notBound.join(', ')}`)
+    const problems = await rollback()
+    const suffix = problems.length ? `；回滚未完全成功：${problems.join('；')}` : ''
+    throw new Error(`渠道绑定未生效：${notBound.join(', ')}${suffix}`)
   }
-  return { channels: after, added: nextIds, removed }
+  return { channels: after, added: plan.add, removed: plan.remove }
 }
 
-/** 清空 feiyu 的全部渠道绑定（停用/删除全部时调用；失败由调用方决定是否阻断） */
+/** 清空本功能创建的 channel 级绑定（停用时用；保留用户手工 account/peer 绑定） */
 export async function clearChatChannels(
   runner: CliRunner,
   agentId: string = CHARACTER_AGENT_ID
 ): Promise<{ removed: string[] }> {
   const bindings = await readRawBindings(runner)
-  const removed = ownedChannels(bindings, agentId)
-  if (!removed.length) return { removed: [] }
-  await unbindAll(runner, agentId)
+  const current = managedChannels(bindings, agentId)
+  if (!current.length) return { removed: [] }
+  for (const id of current) await unbindOne(runner, agentId, id)
   const after = await readRawBindings(runner)
-  const remaining = ownedChannels(after, agentId)
+  const remaining = managedChannels(after, agentId)
   if (remaining.length) throw new Error(`仍有渠道绑定未清理：${remaining.join(', ')}`)
+  return { removed: current }
+}
+
+/** 删除全部：清掉 feiyu 的所有 route binding（含手工 account/peer），再删 agent */
+export async function clearAllChatChannels(
+  runner: CliRunner,
+  agentId: string = CHARACTER_AGENT_ID
+): Promise<{ removed: string[] }> {
+  const bindings = await readRawBindings(runner)
+  const removed = [...collectChannelOwners(bindings)]
+    .filter(([, owners]) => owners.has(agentId))
+    .map(([channel]) => channel)
+  if (!removed.length) return { removed: [] }
+  const result = await runner.run(['agents', 'unbind', '--agent', agentId, '--all', '--json'])
+  if (result.code !== 0) throw new Error(cliFailureMessage(result, '清理全部渠道绑定'))
+  const after = await readRawBindings(runner)
+  if ([...collectChannelOwners(after)].some(([, owners]) => owners.has(agentId))) {
+    throw new Error('仍有 feiyu 渠道绑定未清理')
+  }
   return { removed }
 }
