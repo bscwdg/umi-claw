@@ -19,7 +19,12 @@ import { formatSearchContext, looksLikeRecallQuery, withTimeout } from './search
 import { buildMemoryContext, recallDates } from './memoryRecall'
 import { composePersonaFiles, exportPersonaPackage, importPersonaPackage, writeManagedFiles } from './persona'
 import { validateKnowledgeImport, writeKnowledgeFiles } from './knowledgeImport'
-import { deleteMemory, listMemories, readMemory, saveMemoryDiary } from './memoryAdmin'
+import { archiveWorkspaceMemory, deleteMemory, listMemories, readMemory, saveMemoryDiary } from './memoryAdmin'
+import {
+  clearChatChannels,
+  listChatChannels,
+  setChatChannels
+} from './channelBindings'
 import {
   loadPetAppearance,
   removePetAppearanceFile,
@@ -291,9 +296,41 @@ async function registerCharacterInternal(
             /* ignore */
           }
         }
+        // §13.1-4：全量删除时先把 openclaw.json 的 feiyu 条目和渠道绑定摘掉。
+        // 顺序要求：CLI 失败必须发生在任何文件破坏之前（否则会留下半完成且难以重试的状态）。
+        if (scope === 'all') {
+          try {
+            await clearChatChannels(runner)
+          } catch (error) {
+            const message = (error as Error)?.message ?? String(error)
+            logger(`[character] 清理渠道绑定失败，已中止删除全部: ${message}`)
+            throw new Error(`清理渠道绑定失败，未完成删除全部：${message}`)
+          }
+          if (removeAgentEntryFn) {
+            try {
+              const result = (await removeAgentEntryFn()) as { ok?: boolean; error?: string } | undefined
+              if (result && result.ok === false) {
+                // 不能静默：删除 all 后 agent 条目必须消失（§13.1-4）
+                throw new Error(result.error ?? 'agent 条目删除失败')
+              }
+            } catch (error) {
+              logger(`[character] 删除 agent 条目失败: ${(error as Error)?.message ?? String(error)}`)
+              throw error
+            }
+          }
+        }
+        // 4.3 数据安全修复：批量删除不再硬删 workspace 日记，而是归档到 memory-archive/<ts>/memory
+        // （无 Obsidian vault 时 workspace 是唯一副本；归档失败也不回退硬删）
+        try {
+          const archived = archiveWorkspaceMemory(workspaceDir, deps.now ? deps.now() : Date.now())
+          if (archived) logger(`[character] workspace 日记已归档: ${archived}`)
+        } catch (error) {
+          logger(
+            `[character] workspace 日记归档失败（保留原目录，不硬删）: ${(error as Error)?.message ?? String(error)}`
+          )
+        }
         removeSafe(join(workspaceDir, 'fish', 'STATE.md'))
         removeSafe(join(workspaceDir, 'fish', 'LIFE.md'))
-        removeSafe(join(workspaceDir, 'memory'))
         if (scope === 'all') {
           for (const file of ['SOUL.md', 'IDENTITY.md', 'AGENTS.md', 'USER.md']) {
             removeSafe(join(workspaceDir, file))
@@ -309,19 +346,6 @@ async function registerCharacterInternal(
               await deps.kv.set(FISH_KEYS.petAppearance, null)
             } catch {
               /* KV 失败不阻断删除流程 */
-            }
-          }
-          // §13.1-4：全量删除后 openclaw.json 里不应再有 feiyu 条目
-          if (removeAgentEntryFn) {
-            try {
-              const result = (await removeAgentEntryFn()) as { ok?: boolean; error?: string } | undefined
-              if (result && result.ok === false) {
-                // 不能静默：删除 all 后 agent 条目必须消失（§13.1-4）
-                throw new Error(result.error ?? 'agent 条目删除失败')
-              }
-            } catch (error) {
-              logger(`[character] 删除 agent 条目失败: ${(error as Error)?.message ?? String(error)}`)
-              throw error
             }
           }
         }
@@ -518,10 +542,19 @@ async function registerCharacterInternal(
       updateShortcut(manager.isEnabled() && initialPet.clickThrough)
     }
 
+    const tmpDir = join(deps.dataDir, 'cache')
+    const runner = createOpenClawCliRunner(deps.cli)
+
     ipcDisposer = registerCharacterIpc(manager, {
       pet,
       chat: chatService,
       deliverVoice: deliverVoiceFn,
+      // 4.3：外部渠道聊天（OpenClaw bindings）；渠道配置只经官方 CLI，不直接写 openclaw.json
+      chatChannels: {
+        list: () => listChatChannels(runner),
+        set: (channels) => setChatChannels(runner, channels),
+        clear: () => clearChatChannels(runner)
+      },
       // 4.3 P4 桌宠形象：用户直接导入栅格图（PNG/JPEG/WebP/GIF），不提供 SVG
       petAppearance: {
         get: async () => loadPetAppearance(petAppearanceBase, await readPetAppearanceMeta()),
@@ -618,8 +651,6 @@ async function registerCharacterInternal(
     })
 
     // 引导接线：官方 CLI 写 agent 条目；人格文件走受管写入
-    const tmpDir = join(deps.dataDir, 'cache')
-    const runner = createOpenClawCliRunner(deps.cli)
     removeAgentEntryFn = () => removeAgentEntry({ runner, tmpDir, agentId: CHARACTER_AGENT_ID })
     manager.setBootstrapRunner(() =>
       runBootstrap({

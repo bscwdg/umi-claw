@@ -175,6 +175,68 @@
     </section>
 
     <section class="card">
+      <h3>聊天渠道</h3>
+      <p class="hint">
+        勾选后，这些渠道内被渠道策略放行的会话（含群聊）会路由给大肥鱼（文本）；保存后需重启
+        OpenClaw 网关生效。语音条仍需 TTS 与 QQ 凭据，和这里独立。
+      </p>
+      <p v-if="!status.enabled" class="hint">
+        当前已停用：可以先「断开聊天渠道」，或重新启用后再勾选保存。
+      </p>
+      <p v-if="chatChannelsError" class="err">{{ chatChannelsError }}</p>
+      <p v-else-if="!chatChannels.length" class="hint">
+        还没有已配置的聊天渠道。
+        <button class="link" @click="go('/channelsPage')">去渠道接入</button>
+      </p>
+      <div v-else class="row" style="flex-direction: column; align-items: flex-start; gap: 6px">
+        <label v-for="ch in chatChannels" :key="ch.id" class="check-row">
+          <input
+            v-model="chatChannelSelection"
+            type="checkbox"
+            :value="ch.id"
+            :disabled="chatChannelsBusy || !status.enabled || Boolean(ch.blockedReason)"
+          />
+          <span>
+            {{ ch.label }}
+            <span class="hint">
+              （{{ ch.id }}{{ ch.accounts.length ? ' · ' + ch.accounts.join(' / ') : '' }}{{
+                ch.blockedReason === 'multi-account'
+                  ? ' · 多账号渠道暂不支持自动接管，请用 OpenClaw 逐账号绑定'
+                  : ch.blockedReason === 'other-agent'
+                    ? ` · 已被 ${ch.blockedBy || '其它 agent'} 的默认账号/peer 规则占用，请先在 OpenClaw 解绑`
+                    : ch.boundTo === 'feiyu'
+                      ? ' · 已绑定大肥鱼'
+                      : ch.boundTo === 'other'
+                        ? ' · 其它 agent 仅 wildcard 绑定；保存后默认账号改由大肥鱼接管'
+                        : ''
+              }}）
+            </span>
+          </span>
+        </label>
+      </div>
+      <div class="row" style="margin-top: 10px">
+        <button
+          class="btn primary"
+          :disabled="chatChannelsBusy || !status.enabled"
+          @click="saveChatChannels"
+        >
+          {{ chatChannelsBusy ? '保存中…' : '保存聊天渠道' }}
+        </button>
+        <button
+          class="btn ghost"
+          :disabled="chatChannelsBusy || !chatChannels.some((c) => c.boundTo === 'feiyu')"
+          @click="clearChatChannelsNow"
+        >
+          断开聊天渠道
+        </button>
+        <button class="btn ghost" :disabled="chatChannelsBusy" @click="refreshChatChannels">
+          重新检查
+        </button>
+      </div>
+      <p v-if="chatChannelsHint" class="hint">{{ chatChannelsHint }}</p>
+    </section>
+
+    <section class="card">
       <h3>聊两句</h3>
       <div class="chat-log">
         <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
@@ -330,7 +392,7 @@
         <button class="btn ghost" :disabled="busy" @click="deleteMemory">删除日记与关系</button>
         <button class="btn ghost" :disabled="busy" @click="deleteAll">删除全部</button>
       </div>
-      <p class="hint">导出不含密钥；日记会归档到 Obsidian 的「大肥鱼/归档」，不会直接删除你的笔记。</p>
+      <p class="hint">导出不含密钥；日记会归档到本机 `memory-archive/` 与 Obsidian 的「大肥鱼/归档」，不会直接删除你的笔记。</p>
     </section>
 
     <section class="card">
@@ -453,6 +515,20 @@ const knowledgeReasonText = computed(() => {
   return labels.length ? labels.join('；') : '未知原因'
 })
 const bootstrapReport = ref<BootstrapReport | null>(null)
+// 4.3：外部渠道聊天绑定（渠道消息 → 大肥鱼 agent）
+interface ChatChannelView {
+  id: string
+  label: string
+  accounts: string[]
+  boundTo: 'feiyu' | 'other' | null
+  blockedReason: 'multi-account' | 'other-agent' | null
+  blockedBy?: string
+}
+const chatChannels = ref<ChatChannelView[]>([])
+const chatChannelSelection = ref<string[]>([])
+const chatChannelsBusy = ref(false)
+const chatChannelsHint = ref('')
+const chatChannelsError = ref('')
 const petVisible = ref(false)
 const lifeDoc = ref('')
 const proactiveEnabled = ref(false)
@@ -590,6 +666,7 @@ onMounted(async () => {
   void refreshKnowledgeHealth()
   void refreshMemories()
   void refreshPetAppearance()
+  void refreshChatChannels()
 })
 
 onBeforeUnmount(() => {
@@ -644,8 +721,78 @@ async function applyEnabled(next: boolean): Promise<void> {
   await run(async () => {
     await window.api.character.settings.set({ enabled: next } as never)
     await refresh()
-    showToast(next ? '已启用她；建议再点「一键初始化」' : '已停用（数据保留）')
+    // 先成功停用、再断开外部渠道：set 失败时不会出现「绑定已断但仍启用」的反序状态。
+    // 断开失败要可见（不能静默让外部渠道继续回复），失败后仍可在卡片里重试。
+    if (!next) {
+      try {
+        await window.api.character.chatChannels.clear()
+        chatChannelsHint.value = '已断开外部聊天渠道。'
+        void refreshChatChannels()
+        showToast('已停用（数据保留），外部聊天渠道已断开')
+      } catch (e) {
+        const message = (e as Error)?.message || '断开外部聊天渠道失败'
+        chatChannelsError.value = message
+        showToast(message, 'error')
+      }
+    } else {
+      void refreshChatChannels()
+      showToast('已启用她；建议再点「一键初始化」')
+    }
   })
+}
+
+/** 读取已配置渠道 + 当前绑定归属（渠道级；群聊白名单仍由渠道自身控制） */
+async function refreshChatChannels(): Promise<void> {
+  try {
+    const list = await window.api.character.chatChannels.list()
+    chatChannels.value = list
+    chatChannelsError.value = ''
+    chatChannelSelection.value = list
+      .filter((c) => c.boundTo === 'feiyu' && !c.blockedReason)
+      .map((c) => c.id)
+  } catch (e) {
+    chatChannels.value = []
+    chatChannelsError.value = (e as Error)?.message || '读取聊天渠道失败'
+  }
+}
+
+async function saveChatChannels(): Promise<void> {
+  if (chatChannelsBusy.value) return
+  chatChannelsBusy.value = true
+  chatChannelsHint.value = ''
+  chatChannelsError.value = ''
+  try {
+    const result = await window.api.character.chatChannels.set(chatChannelSelection.value)
+    chatChannels.value = result.channels
+    chatChannelSelection.value = result.channels
+      .filter((c) => c.boundTo === 'feiyu' && !c.blockedReason)
+      .map((c) => c.id)
+    chatChannelsHint.value = `已保存（新增 ${result.added.length}、移除 ${result.removed.length}）。重启 OpenClaw 网关后生效。`
+    showToast('聊天渠道已保存')
+  } catch (e) {
+    const message = (e as Error)?.message || '保存聊天渠道失败'
+    // 回读真实状态（后端可能已回滚），但保留错误信息（refresh 成功会清空，所以回读后再写回）
+    await refreshChatChannels()
+    chatChannelsError.value = message
+  } finally {
+    chatChannelsBusy.value = false
+  }
+}
+
+async function clearChatChannelsNow(): Promise<void> {
+  if (chatChannelsBusy.value) return
+  chatChannelsBusy.value = true
+  chatChannelsError.value = ''
+  try {
+    const result = await window.api.character.chatChannels.clear()
+    chatChannelsHint.value = `已断开 ${result.removed.length} 个外部渠道。`
+    await refreshChatChannels()
+    showToast('已断开外部聊天渠道')
+  } catch (e) {
+    chatChannelsError.value = (e as Error)?.message || '断开聊天渠道失败'
+  } finally {
+    chatChannelsBusy.value = false
+  }
 }
 
 /** 详细设置保存：由 CharacterSettings 组件 emit patch；成功后就地刷新并反馈 */
@@ -1023,7 +1170,7 @@ async function deleteMemory(): Promise<void> {
   askConfirm(
     {
       title: '删除日记与关系记忆',
-      message: '删除日记与关系记忆？日记会归档到 Obsidian「大肥鱼/归档」，可手动找回。',
+      message: '删除日记与关系记忆？日记会归档到本机 memory-archive/ 与 Obsidian「大肥鱼/归档」，可手动找回。',
       confirmText: '删除'
     },
     () => deleteCharacterData('memory')

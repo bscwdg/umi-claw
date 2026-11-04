@@ -795,6 +795,34 @@ const api = {
           reasons: string[]
         }>('character:knowledge:status')
     },
+    // 4.3：外部渠道聊天绑定（渠道消息路由到 feiyu；写操作要求角色已启用）
+    chatChannels: {
+      list: () =>
+        call<
+          Array<{
+            id: string
+            label: string
+            accounts: string[]
+            boundTo: 'feiyu' | 'other' | null
+            blockedReason: 'multi-account' | 'other-agent' | null
+            blockedBy?: string
+          }>
+        >('character:channels:list'),
+      set: (channels: string[]) =>
+        call<{
+          channels: Array<{
+            id: string
+            label: string
+            accounts: string[]
+            boundTo: 'feiyu' | 'other' | null
+            blockedReason: 'multi-account' | 'other-agent' | null
+            blockedBy?: string
+          }>
+          added: string[]
+          removed: string[]
+        }>('character:channels:set', channels),
+      clear: () => call<{ removed: string[] }>('character:channels:clear')
+    },
     safety: {
       exportData: () =>
         call<{

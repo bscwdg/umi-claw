@@ -232,7 +232,7 @@ export function saveMemoryDiary(
 
 /**
  * 删除单条（归档，不物理删除）：
- * - 日记：workspace → memory-archive/<ts>-<date>.md；Obsidian 日记 → 大肥鱼/归档/<ts>/日记-<date>.md
+ * - 日记：workspace → memory-archive/<ts>/<date>.md；Obsidian 日记 → 大肥鱼/归档/<ts>/日记-<date>.md
  * - 关系笔记：整体移到 大肥鱼/归档/<ts>/<kind>-<name>
  */
 export function deleteMemory(
@@ -286,4 +286,27 @@ export function deleteMemory(
   }
   renameSync(src, finalDest)
   return { archivedTo: finalDest }
+}
+
+/**
+ * 批量删除前归档 workspace 日记（4.3 数据安全修复）。
+ *
+ * 语义：把 `<workspace>/memory/` 整体移到 `<workspace>/memory-archive/<ts>/memory/`，
+ * 返回归档目录；没有 memory 目录返回 null（幂等、无副作用）。
+ * 单条删除走 deleteMemory()，这里只服务「删除日记与关系」的批量路径，
+ * 避免出现「单条归档、批量硬删」的不一致（复核发现的无 vault 用户数据丢失风险）。
+ */
+export function archiveWorkspaceMemory(
+  workspaceDir: string,
+  now: number = Date.now()
+): string | null {
+  const src = join(workspaceDir, MEMORY_DIARY_DIR)
+  if (!existsSync(src)) return null
+  const archiveRoot = join(workspaceDir, 'memory-archive')
+  const archiveDir = join(archiveRoot, String(now))
+  let target = join(archiveDir, MEMORY_DIARY_DIR)
+  for (let i = 2; existsSync(target); i += 1) target = join(archiveDir, `${MEMORY_DIARY_DIR}-${i}`)
+  mkdirSync(archiveDir, { recursive: true })
+  renameSync(src, target)
+  return target
 }

@@ -52,6 +52,12 @@ export interface CharacterIpcDeps {
     save: (payload: unknown) => unknown
     delete: (target: unknown) => unknown
   }
+  /** 多端聊天渠道（4.3）：用官方 CLI 管理 OpenClaw bindings，把渠道消息路由到 feiyu */
+  chatChannels?: {
+    list: () => Promise<unknown>
+    set: (channels: unknown) => Promise<unknown>
+    clear: () => Promise<unknown>
+  }
 }
 
 export function registerCharacterIpc(
@@ -77,6 +83,28 @@ export function registerCharacterIpc(
   handle(CHARACTER_CHANNELS.stateGet, () => manager.getState())
   handle(CHARACTER_CHANNELS.settingsGet, () => manager.getSettings())
   handle(CHARACTER_CHANNELS.settingsSet, (patch) => manager.updateSettings(patch))
+  // 4.3：外部渠道聊天绑定（渠道消息 → feiyu agent）；写操作只允许在启用态
+  handle(CHARACTER_CHANNELS.chatChannelsList, () => {
+    if (!deps.chatChannels) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '聊天渠道功能未接线')
+    }
+    return deps.chatChannels.list()
+  })
+  handle(CHARACTER_CHANNELS.chatChannelsSet, (channels) => {
+    if (!manager.isEnabled()) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.DISABLED, '大肥鱼未启用')
+    }
+    if (!deps.chatChannels) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '聊天渠道功能未接线')
+    }
+    return deps.chatChannels.set(channels)
+  })
+  handle(CHARACTER_CHANNELS.chatChannelsClear, () => {
+    if (!deps.chatChannels) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '聊天渠道功能未接线')
+    }
+    return deps.chatChannels.clear()
+  })
   handle(CHARACTER_CHANNELS.interact, (input) =>
     manager.interact((input ?? {}) as CharacterInteractInput)
   )

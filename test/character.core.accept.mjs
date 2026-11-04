@@ -20,6 +20,7 @@ const knowledgeMod = await import(pathToFileURL(bundleEntry('electron/main/chara
 const knowledgeHealthMod = await import(pathToFileURL(bundleEntry('electron/main/character/knowledgeHealth.ts', 'character-knowledge-health.mjs')).href)
 const memoryRecallMod = await import(pathToFileURL(bundleEntry('electron/main/character/memoryRecall.ts', 'character-memory-recall.mjs')).href)
 const memoryAdminMod = await import(pathToFileURL(bundleEntry('electron/main/character/memoryAdmin.ts', 'character-memory-admin.mjs')).href)
+const channelBindingsMod = await import(pathToFileURL(bundleEntry('electron/main/character/channelBindings.ts', 'character-channel-bindings.mjs')).href)
 const petAppearanceMod = await import(pathToFileURL(bundleEntry('electron/main/character/petAppearance.ts', 'character-pet-appearance.mjs')).href)
 const agentConfigMod = await import(pathToFileURL(bundleEntry('electron/main/character/agentConfig.ts', 'character-agent-config.mjs')).href)
 const bootstrapMod = await import(pathToFileURL(bundleEntry('electron/main/character/bootstrap.ts', 'character-bootstrap.mjs')).href)
@@ -2483,11 +2484,10 @@ await recorder.check('C81', '人格包导出/导入：校验、备份、导入�
   rmSync(bigDir, { recursive: true, force: true })
 
   // 全量删除必须连人格备份一起清（否则"删除全部数据"不彻底）
-  const wiringSrc = readFileSync(join(repoRoot, 'electron/main/character/wiring.ts'), 'utf8')
-  const allScopeAt = wiringSrc.indexOf("if (scope === 'all')")
-  assert(allScopeAt >= 0, 'wiring 应有全量删除分支')
+  const wiringSrcForAll = readFileSync(join(repoRoot, 'electron/main/character/wiring.ts'), 'utf8')
+  assert(wiringSrcForAll.includes("if (scope === 'all')"), 'wiring 应有全量删除分支')
   assert(
-    wiringSrc.slice(allScopeAt, allScopeAt + 800).includes('.persona-backup'),
+    wiringSrcForAll.includes("removeSafe(join(workspaceDir, '.persona-backup'))"),
     'scope=all 时必须清理 .persona-backup'
   )
 
@@ -2677,17 +2677,21 @@ await recorder.check('C84', 'character 新通道三处一致：types/ipc/preload
     'character:memory:delete',
     'character:pet:appearance:get',
     'character:pet:appearance:import',
-    'character:pet:appearance:clear'
+    'character:pet:appearance:clear',
+    'character:channels:list',
+    'character:channels:set',
+    'character:channels:clear'
   ]) {
     assert(typesSrc.includes(ch), ch + ' 应在 CHARACTER_CHANNELS 常量里')
     assert(preloadSrc.includes("'" + ch + "'"), ch + ' 应在 preload 暴露')
   }
-  for (const name of ['personaExport', 'personaImport', 'knowledgeImport', 'knowledgeStatus', 'memoryList', 'memoryRead', 'memorySave', 'memoryDelete', 'petAppearanceGet', 'petAppearanceImport', 'petAppearanceClear']) {
+  for (const name of ['personaExport', 'personaImport', 'knowledgeImport', 'knowledgeStatus', 'memoryList', 'memoryRead', 'memorySave', 'memoryDelete', 'petAppearanceGet', 'petAppearanceImport', 'petAppearanceClear', 'chatChannelsList', 'chatChannelsSet', 'chatChannelsClear']) {
     assert(ipcSrc.includes('CHARACTER_CHANNELS.' + name), 'ipc 应注册 ' + name)
   }
   assert(ipcSrc.includes('deps.persona') && ipcSrc.includes('deps.knowledge'), '未接 deps 时要能报 NOT_READY')
   assert(ipcSrc.includes('deps.memoryAdmin'), '记忆管理未接 deps 时要能报 NOT_READY')
   assert(ipcSrc.includes('deps.petAppearance'), '桌宠形象未接 deps 时要能报 NOT_READY')
+  assert(ipcSrc.includes('deps.chatChannels'), '聊天渠道未接 deps 时要能报 NOT_READY')
   return '通道 types/ipc/preload 三处一致 ✓'
 })
 
@@ -3086,6 +3090,196 @@ await recorder.check('C89', '桌宠形象导入：魔数校验/base64/落盘/读
   assert(!safeName.endsWith('.') && !safeName.endsWith(' '), '文件名去掉尾部点/空格')
   rmSync(root, { recursive: true, force: true })
   return '魔数/base64/消毒/落盘/读取/删除 ✓'
+})
+
+await recorder.check('C90', '批量删除归档 workspace 日记：memory → memory-archive/<ts>/memory（4.3 数据安全）', async () => {
+  const root = join(tmpDir, `archive-${Date.now()}`)
+  const memoryDir = join(root, 'memory')
+  mkdirSync(memoryDir, { recursive: true })
+  writeFileSync(join(memoryDir, '2026-11-01.md'), '日记一', 'utf8')
+  writeFileSync(join(memoryDir, '2026-11-02.md'), '日记二', 'utf8')
+
+  const archived = memoryAdminMod.archiveWorkspaceMemory(root, 123456)
+  assertEq(archived, join(root, 'memory-archive', '123456', 'memory'), '归档路径带时间戳')
+  assertEq(existsSync(memoryDir), false, '原 memory 目录不再残留（移动而非复制）')
+  assertEq(readFileSync(join(archived, '2026-11-01.md'), 'utf8'), '日记一', '归档内容完整一')
+  assertEq(readFileSync(join(archived, '2026-11-02.md'), 'utf8'), '日记二', '归档内容完整二')
+  // 幂等：没有 memory 目录时返回 null，不报错、不建空目录
+  assertEq(memoryAdminMod.archiveWorkspaceMemory(root, 999), null, '无 memory 目录 → null')
+  assertEq(existsSync(join(root, 'memory-archive', '999')), false, '不建空归档目录')
+  // 同一时间戳重复批量删除：不能覆盖旧归档
+  mkdirSync(memoryDir, { recursive: true })
+  writeFileSync(join(memoryDir, '2026-11-03.md'), '日记三', 'utf8')
+  const archived2 = memoryAdminMod.archiveWorkspaceMemory(root, 123456)
+  assertEq(archived2, join(root, 'memory-archive', '123456', 'memory-2'), '同 ts 归档加序号')
+  assertEq(readFileSync(join(archived, '2026-11-01.md'), 'utf8'), '日记一', '旧归档不被覆盖')
+  // 接线锁定：wiring 必须调用 archiveWorkspaceMemory，不能回退硬删（否则只测 helper 会假绿）
+  const wiringSrc = readFileSync(join(repoRoot, 'electron/main/character/wiring.ts'), 'utf8')
+  assert(wiringSrc.includes('archiveWorkspaceMemory(workspaceDir'), 'wiring 必须调用归档 helper')
+  assert(
+    !wiringSrc.includes("removeSafe(join(workspaceDir, 'memory'))"),
+    'wiring 不得回退硬删 workspace/memory'
+  )
+  rmSync(root, { recursive: true, force: true })
+  return 'workspace 日记批量删除归档/同 ts 序号/接线锁定 ✓'
+})
+
+await recorder.check('C91', '多渠道聊天绑定：解析/占用预检/bind+unbind --all/回读/回滚（4.3）', async () => {
+  const {
+    parseChannelList,
+    parseBindings,
+    collectChannelOwners,
+    planChannelChanges,
+    normalizeDesiredChannels,
+    listChatChannels,
+    setChatChannels,
+    clearChatChannels
+  } = channelBindingsMod
+
+  // 1) 解析：已配置渠道 + 未安装渠道过滤 + bindings 数组/单对象兼容
+  const parsedList = parseChannelList(
+    JSON.stringify({
+      chat: {
+        qqbot: { label: 'QQ', accounts: ['default', 'second'], installed: true },
+        ghost: { label: 'Ghost', installed: false }
+      }
+    })
+  )
+  assertEq(parsedList.length, 1, '只保留已安装/已配置渠道')
+  assertEq(parsedList[0].id, 'qqbot', '渠道 id')
+  assertEq(parsedList[0].accounts.join(','), 'default,second', '账号列表')
+  assertEq(parseBindings(JSON.stringify({ agentId: 'main', match: { channel: 'wecom' } })).length, 1, '单对象兼容')
+  const owners = collectChannelOwners([
+    { agentId: 'main', match: { channel: 'qqbot', accountId: '*' } },
+    { agentId: 'feiyu', match: { channel: 'feishu' } }
+  ])
+  assertEq(owners.get('qqbot').has('main'), true, 'qqbot 归属 main')
+  assertEq(owners.get('feishu').has('feiyu'), true, 'feishu 归属 feiyu')
+
+  // 2) 差集与入参校验
+  const plan = planChannelChanges(['qqbot'], ['qqbot', 'feishu'])
+  assertEq(plan.add.join(','), 'feishu', '新增 feishu')
+  assertEq(plan.remove.length, 0, '不移除 qqbot')
+  assertEq(planChannelChanges(['a', 'b'], ['b']).remove.join(','), 'a', '移除 a')
+  assertEq(normalizeDesiredChannels([' qqbot ', 'qqbot', 'feishu']).join(','), 'qqbot,feishu', '去重/trim')
+  let badRejected = false
+  try {
+    normalizeDesiredChannels(['../escape'])
+  } catch {
+    badRejected = true
+  }
+  assertEq(badRejected, true, '非法渠道 id 拒绝')
+
+  // 3) 多渠道状态：其它 agent wildcard 可接管；默认账号/peer 占用与多账号必须 blocked
+  const chatJson = JSON.stringify({
+    chat: {
+      qqbot: { label: 'QQ', accounts: ['default'], installed: true },
+      feishu: { label: '飞书', accounts: ['default'], installed: true },
+      dingtalk: { label: '钉钉', accounts: ['default'], installed: true },
+      wecom: { label: '企微', accounts: ['default', 'second'], installed: true }
+    }
+  })
+  let bindings = [
+    { agentId: 'main', match: { channel: 'qqbot', accountId: '*' } },
+    { agentId: 'main', match: { channel: 'dingtalk' } },
+    { agentId: 'main', match: { channel: 'wecom', accountId: '*' } }
+  ]
+  const calls = []
+  const runner = {
+    async run(args) {
+      calls.push([...args])
+      if (args[0] === 'channels') return { code: 0, stdout: chatJson, stderr: '' }
+      if (args[0] === 'agents' && args[1] === 'bindings') {
+        return { code: 0, stdout: JSON.stringify(bindings), stderr: '' }
+      }
+      if (args[0] === 'agents' && args[1] === 'unbind') {
+        bindings = bindings.filter((b) => b.agentId !== 'feiyu')
+        return { code: 0, stdout: '{"agentId":"feiyu","removed":[]}', stderr: '' }
+      }
+      if (args[0] === 'agents' && args[1] === 'bind') {
+        const ch = args[args.indexOf('--bind') + 1]
+        bindings.push({ agentId: 'feiyu', match: { channel: ch } })
+        return { code: 0, stdout: '{"agentId":"feiyu","added":[],"conflicts":[]}', stderr: '' }
+      }
+      return { code: 1, stdout: '', stderr: 'unexpected' }
+    }
+  }
+  const list = await listChatChannels(runner)
+  assertEq(list.find((c) => c.id === 'qqbot').blockedReason, null, '其它 agent wildcard 不阻塞（可接管默认账号）')
+  assertEq(list.find((c) => c.id === 'dingtalk').blockedReason, 'other-agent', '其它 agent 默认账号绑定 → 阻塞')
+  assertEq(list.find((c) => c.id === 'dingtalk').blockedBy, 'main', '阻塞者 agent id')
+  assertEq(list.find((c) => c.id === 'wecom').blockedReason, 'multi-account', '多账号渠道 → 阻塞')
+
+  // 4) 成功路径：逐个 bind；再次保存时先 unbind --all 清 feiyu 旧绑定
+  const res = await setChatChannels(runner, ['qqbot', 'feishu'])
+  assertEq(res.added.sort().join(','), 'feishu,qqbot', '新增两个渠道')
+  const bindCalls = calls.filter((a) => a[1] === 'bind')
+  assertEq(bindCalls.length, 2, '逐渠道 bind（避免半成功）')
+  for (const call of bindCalls) {
+    assertEq(call[call.indexOf('--agent') + 1], 'feiyu', 'bind 带 --agent feiyu')
+    assertEq(call.filter((a) => a === '--bind').length, 1, '每次 bind 一个渠道')
+  }
+  assertEq(res.channels.filter((c) => c.boundTo === 'feiyu').length, 2, '回读：两个渠道都归属 feiyu')
+
+  const res2 = await setChatChannels(runner, ['feishu'])
+  assertEq(res2.removed.sort().join(','), 'feishu,qqbot', '旧 feiyu 绑定全部移除')
+  const unbindCalls = calls.filter((a) => a[1] === 'unbind')
+  assertEq(unbindCalls[0].join(' '), 'agents unbind --agent feiyu --all --json', 'unbind 只清 feiyu 全部绑定')
+  assertEq(bindings.filter((b) => b.agentId === 'feiyu').map((b) => b.match.channel).join(','), 'feishu', 'feiyu 只剩 feishu')
+  assertEq(bindings.filter((b) => b.agentId === 'main').length, 3, '其它 agent 的绑定保留（qqbot/dingtalk/wecom wildcard）')
+
+  // 5) 阻塞渠道预检：不应发起任何 bind
+  const before = calls.filter((a) => a[1] === 'bind').length
+  for (const [channels, keyword] of [
+    [['dingtalk'], '占用'],
+    [['wecom'], '多账号']
+  ]) {
+    let blocked = false
+    try {
+      await setChatChannels(runner, channels)
+    } catch (error) {
+      blocked = error.message.includes(keyword)
+    }
+    assertEq(blocked, true, `阻塞渠道 ${channels[0]} 预检报错（${keyword}）`)
+  }
+  assertEq(calls.filter((a) => a[1] === 'bind').length, before, '预检失败不发起 bind')
+
+  // 6) bind 失败必须回滚 feiyu 绑定并抛错（不能半成功）
+  const failingChat = JSON.stringify({ chat: { feishu: { label: '飞书', accounts: ['default'], installed: true } } })
+  let failCalls = []
+  const failing = {
+    async run(args) {
+      failCalls.push([...args])
+      if (args[0] === 'channels') return { code: 0, stdout: failingChat, stderr: '' }
+      if (args[0] === 'agents' && args[1] === 'bindings') return { code: 0, stdout: '[]', stderr: '' }
+      if (args[0] === 'agents' && args[1] === 'unbind') {
+        return { code: 0, stdout: '{"agentId":"feiyu","removed":[]}', stderr: '' }
+      }
+      return { code: 1, stdout: '{"conflicts":["feishu"]}', stderr: '' }
+    }
+  }
+  let bindFailed = false
+  try {
+    await setChatChannels(failing, ['feishu'])
+  } catch (error) {
+    bindFailed = error.message.includes('占用') || error.message.includes('绑定')
+  }
+  assertEq(bindFailed, true, 'bind 冲突 → 抛可读错误')
+  assertEq(failCalls.filter((a) => a[1] === 'unbind').length >= 1, true, '失败后回滚 feiyu 绑定')
+
+  // 7) clear：读当前 → unbind --all → 回读；读失败必须抛错
+  const cleared = await clearChatChannels(runner)
+  assertEq(cleared.removed.join(','), 'feishu', 'clear 移除 feiyu 全部绑定')
+  assertEq(bindings.some((b) => b.agentId === 'feiyu'), false, 'feiyu 绑定清空')
+  assertEq(bindings.some((b) => b.agentId === 'main'), true, 'clear 保留其它 agent 绑定')
+  let clearReadFailed = false
+  try {
+    await clearChatChannels({ run: async () => ({ code: 1, stdout: '', stderr: '' }) })
+  } catch {
+    clearReadFailed = true
+  }
+  assertEq(clearReadFailed, true, '读绑定失败 → clear 抛错（删除全部可中止）')
+  return '渠道解析/占用预检/bind + unbind --all/回读/回滚/清理 ✓'
 })
 
 const characterResult = recorder.toJSON()
