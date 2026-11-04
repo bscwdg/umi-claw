@@ -1839,3 +1839,31 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 - 验证：character 88/88；全量 accept **33 套 / 628 断言 / 0 失败**；双 typecheck 0/0；build 通过；boundary 0/0/0。
 - 复核修复：base64 长度预检放到解码前（超大串快速拒绝，防主进程内存 DoS）；重复导入只保留最新一张、clear/删除全部清空 `pet-appearance/` 目录（不残留历史图片）；`loadPetAppearance` 校验 mime 白名单并在读前 stat 大小；文件名去掉 Windows 不接受的尾部点/空格；UI 文案改为「角色页立即预览，桌宠窗口接线恢复后自动使用」；`store.reset("all")` 同步清 KV。
 - 已知边界（登记 4.4）：桌宠窗口「恢复接线」尚未做（用户要求后续再做），所以导入后要等恢复后才能在日常桌宠上看到；当前可在角色页预览；不支持 SVG（安全取舍）；不支持九宫格精灵表/Live2D（后续 M3）；只做整图缩放，无逐帧控制；图片像素尺寸无上限（8MB 压缩图可解码很大，后续可加宽高限制）；自定义形象不随导出迁移。
+
+### P5 · 多渠道聊天：外部渠道路由到大肥鱼（4.3，2026-11-04）
+
+- 背景：应用内聊天显式走 `openclaw/feiyu`，但外部渠道（QQ/飞书/企微/微信…）的入站消息由 OpenClaw `bindings` 决定归属 agent。应用此前只写渠道凭据、不写 bindings，导致外部渠道永远到不了大肥鱼（README/PLAN 里 M1 目标写的「应用内 + QQ」并未闭环）。
+- 调研/验证（只读 + 临时配置，不碰真实数据）：
+  1. `openclaw agents bind/unbind/bindings` 官方 CLI 存在；`agents bind --agent feiyu --bind <channel>` 会追加 `{type:"route",agentId:"feiyu",match:{channel}}`，`agents bindings --json` 可回读；`agents unbind` 只删指定 agent 的绑定。
+  2. 渠道 id 从 `openclaw channels list --json` 的 `chat` 键取（安装版实测 wecom → `wecom`、accounts `["default"]`；未配置渠道不出现）。
+  3. 路由优先级按官方文档：peer > account match（绑定带 accountId）> channel wildcard（`accountId:"*"`）。给 feiyu 加「默认账号」绑定能接管 main 的 **wildcard**；但若 main 已是默认账号/peer 级绑定，CLI 会报 conflict（exit 1）——**不能**把它当「随便勾选就能接管」。
+  4. 用临时 HOME 配置 + 真实 CLI 跑通 `listChatChannels → setChatChannels(['telegram']) → clearChatChannels`：bind 后 raw bindings 出现 feiyu route、clear 后只剩原 main wildcard（real-CLI e2e，非 mock）。
+- 实现（对抗复核后收紧）：
+  - 新增 `channelBindings.ts`（纯 Node）：`parseChannelList/parseBindings/collectChannelOwners/planChannelChanges/normalizeDesiredChannels/listChatChannels/setChatChannels/clearChatChannels`；只写官方 CLI，不直接碰 openclaw.json。
+  - **占用预检**：`listChatChannels` 返回 `blockedReason`——多账号（`accounts.length>1`）或其它 agent 已有默认账号/peer 级绑定 → 不可勾选；其它 agent 仅 wildcard（`accountId:"*"`）才允许接管默认账号。`set` 前再校验一次，不发起半写。
+  - **写后回读**：先 `unbind --agent feiyu --all`（只清 feiyu，不碰其它 agent），逐个 `bind`；任一失败回滚并抛可读错误；最后回读确认目标渠道都归 feiyu。
+  - 新通道 `character:channels:list|set|clear`（types/ipc/wiring/preload 四处）；`set` 要求角色已启用；未接线抛 NOT_READY；CLI 失败解析 `error.message/issues/conflicts` 给可执行提示。
+  - 角色页「聊天渠道」卡：列出渠道/账号/占用原因/多账号提示；保存后回读；停用后仍可「断开聊天渠道」并显示失败（不再静默）；删除全部时**先**清绑定、删 agent，再动文件。
+  - 测试 C90/C91（C91：解析、blocked 预检、`unbind --all` 参数、逐渠道 bind、回读、失败回滚、clear 读失败；C90：归档 helper + wiring 接线锁定 + 同 ts 序号）；C84 通道 +chatChannels。
+  - 验证：character 90/90；全量 accept **33 套 / 630 断言 / 0 失败**；双 typecheck 0/0；build 通过；boundary 0/0/0；真实 CLI e2e（telegram）通过。
+- 对抗复核（2026-11-04，子代理 8ee40e8b/a624abcd，只读 + 临时 HOME 探针）：
+  - **属实已修**：① main 默认账号/peer 绑定会让 bind conflict，原「勾选即接管」文案与实现不符 → 增加 blockedReason 预检 + 逐渠道 bind + 失败回滚；② 按渠道 `unbind --bind <channel>` 会漏 account/peer 级绑定 → 改 `unbind --all` + 回读；③ 删除全部里 CLI 在破坏性文件操作之后 → 把清绑定/删 agent 前置到删文件之前（CLI 失败则文件不删；manager 仍会先重置 KV，这是既有架构，UI 会显示 warning）；④ 停用静默失败、无法就地清理 → 改为停用成功后 clear，失败 toast 可见，停用态保留「断开聊天渠道」；⑤ 多账号渠道 boundTo 误报 → 多账号直接 blocked，不做「默认账号接管」承诺；⑥ C90 抓不到 wiring 回退 → 增加 wiring 源码断言 + 同 ts 序号；⑦ C91 fake 漏 unbind 参数/冲突/回滚 → 补断言与 blocked/回滚用例；⑧ 「只接管私聊」不成立 → 文案改为「渠道策略放行的会话（含群聊）」；⑨ list 未接线返回 [] → 统一 NOT_READY；⑩ 停用双清 → 去掉 IPC settingsSet 自动 clear，只保留 UI 显式操作。
+  - **未采纳/保留**：删除全部时 manager 仍会先 `store.reset` 再调 `deleteWorkspaceFiles`，CLI 失败只能保证「agent/文件/绑定不继续被破坏」并回 warning，做不到事务级回滚（登记 4.4）；多账号逐账号绑定不在本轮做。
+- 已知边界（登记 4.4）：真实 QQ/企微/微信入站需用户配好渠道 + 重启网关后手工验收（本轮未用真实凭据发包）；只自动接管单账号渠道，多账号需 OpenClaw 原生逐账号绑定；渠道级绑定无法只接管私聊（群聊是否触发由渠道策略决定）；绑定后不同渠道会话历史独立，但日记/记忆共享；`channels list` 依赖 openclaw 配置合法，配置坏时 UI 显示错误。
+
+### P6 · 数据安全修复：批量删除归档 workspace 日记（4.3，2026-11-04）
+
+- 背景（复核发现）：单条删除会归档，但「删除日记与关系」批量路径直接 `rmSync(workspace/memory)`；无 Obsidian vault 时 workspace 是唯一副本，删后不可恢复。
+- 修复：新增 `memoryAdmin.archiveWorkspaceMemory(workspaceDir, now)`：`memory/` 整体移到 `memory-archive/<ts>/memory/`（幂等、无目录返回 null、重名加序号）；`wiring.deleteWorkspaceFiles` 用它替换硬删，归档失败只记日志并保留原目录（绝不回退硬删）；`deps.now` 参与时间戳便于测试。
+- 测试 C90：归档路径/内容/源目录消失/幂等（空目录返回 null 且不建空归档）、同一时间戳重复批量删除加 `memory-2` 序号、wiring 源码必须调用 `archiveWorkspaceMemory(workspaceDir`（防止只测 helper 的假绿）；角色页「删除日记与关系」文案/指南已同步为「workspace 归档 + Obsidian 归档」。
+- 验证：character 90/90；全量 accept **33 套 / 630 断言 / 0 失败**。
