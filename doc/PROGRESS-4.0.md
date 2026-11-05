@@ -1902,3 +1902,19 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 - 最终验证：双 typecheck 0/0；`voice.accept` 21/21；`external-tts` 9/9；
   `check:boundary` 0/0/0；`build` 通过；`electron-builder --win --dir` 通过；
   全量 accept **34 套（accept×32 + e2e + smoke）/ 0 失败**。
+
+### P8 · 更新检查 npm 缓存 EPERM 修复（2026-11-06）
+
+- 现象：检查 OpenClaw 更新时报 npm `EPERM`，路径落在用户级
+  `%LOCALAPPDATA%\npm-cache`。`checkLatestVersion` 只继承 `process.env`，没有像 npx 那样
+  指定应用内 npm cache。
+- 修复：新增 `buildNpmRuntimeEnv`，大小写无关地清理旧 `npm_config_cache`/`NPM_CONFIG_CACHE`
+  与 `PATH`/`Path`，统一注入 `<dataDir>/config/.npm-cache` 和便携 Node PATH；
+  `checkLatestVersion` 与 `_installOpenClaw` 共用。
+- 验收：node-runtime N9 覆盖 cache 覆盖、大小写变体清理、系统 PATH 保留与两处调用接线；
+  node-runtime 9/9；真实 `checkLatestVersion()` 在故意设置不可写大写 cache 后仍返回
+  `latestVersion=2026.11.1`。
+- 对抗复核（只读子代理 `01a1ac6a-2360-7420-a75e-faabe974bba9`）发现大写
+  `NPM_CONFIG_CACHE` 可绕过首版修复、Windows `Path` 可能丢失，均属实→已修并补断言。
+- 验证：双 typecheck 0/0；boundary 0/0/0；build 通过；全量 accept
+  **34 套（accept×32 + e2e + smoke）/ 0 失败**。

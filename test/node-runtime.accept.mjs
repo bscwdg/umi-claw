@@ -28,7 +28,14 @@ const downloadPath = bundleEntry('electron/main/downloadManager.ts', 'node-runti
   externals: ['adm-zip']
 })
 const dl = await import(pathToFileURL(downloadPath).href)
-const { OPENCLAW_NODE_RANGE, NODE_VERSION, satisfiesNodeRange, satisfiesOpenClawNodeRange, parseRequiredNodeRange } = dl
+const {
+  OPENCLAW_NODE_RANGE,
+  NODE_VERSION,
+  satisfiesNodeRange,
+  satisfiesOpenClawNodeRange,
+  parseRequiredNodeRange,
+  buildNpmRuntimeEnv
+} = dl
 
 const r = new Recorder('node-runtime')
 
@@ -120,6 +127,66 @@ try {
     )
     assert(updateBody.includes('_installOpenClawWithNodeRecovery('), '更新安装必须走引擎错误自愈包装')
     return '预检 → 快照 → 安装（带引擎自愈）的顺序固定在源码里'
+  })
+
+  await r.check('N9', 'npm 子进程必须使用应用内缓存（防用户级 npm-cache EPERM）', () => {
+    const env = buildNpmRuntimeEnv({
+      dataDir: join('D:', 'umi-claw-data'),
+      nodeBinDir: join('D:', 'umi-claw-data', 'runtime', 'node-win32-x64'),
+      baseEnv: {
+        Path: 'C:\\Windows\\System32',
+        PATH: 'C:\\Windows\\System32',
+        NPM_CONFIG_CACHE: 'C:\\Windows\\System32\\bad-upper-cache',
+        npm_config_cache: 'C:\\Users\\someone\\AppData\\Local\\npm-cache',
+        KEEP_ME: '1'
+      }
+    })
+    assertEq(
+      env.npm_config_cache,
+      join('D:', 'umi-claw-data', 'config', '.npm-cache'),
+      '必须覆盖用户级 npm cache'
+    )
+    assert(
+      env.PATH.startsWith(join('D:', 'umi-claw-data', 'runtime', 'node-win32-x64')),
+      'PATH 必须先指向便携 Node'
+    )
+    assert(
+      env.PATH.includes('C:\\Windows\\System32'),
+      '必须保留原系统 PATH（兼容 Windows Path 大小写变体）'
+    )
+    assertEq(
+      Object.keys(env).filter((key) => key.toLowerCase() === 'npm_config_cache').length,
+      1,
+      '旧 cache 的大写/小写变体都必须清掉'
+    )
+    assertEq(
+      Object.keys(env).filter((key) => key.toLowerCase() === 'path').length,
+      1,
+      'PATH/Path 只能保留一个规范化键'
+    )
+    assertEq(env.KEEP_ME, '1', '其它环境变量应保留')
+
+    const src = readFileSync(
+      join(__dirname, '..', 'electron', 'main', 'downloadManager.ts'),
+      'utf-8'
+    )
+    const checkBody = src.slice(
+      src.indexOf('async checkLatestVersion('),
+      src.indexOf('async getNodeVersions(')
+    )
+    const installBody = src.slice(
+      src.indexOf('private async _installOpenClaw('),
+      src.indexOf('\n  private ', src.indexOf('private async _installOpenClaw(') + 1)
+    )
+    assert(
+      checkBody.includes('buildNpmRuntimeEnv({ dataDir, nodeBinDir })'),
+      'checkLatestVersion 必须使用统一 npm env'
+    )
+    assert(
+      installBody.includes('buildNpmRuntimeEnv({ dataDir, nodeBinDir })'),
+      '_installOpenClaw 必须使用统一 npm env'
+    )
+    return 'npm cache 强制落到应用内，检查更新与安装共用同一构造器'
   })
 
   await r.check('N8', '便携 Node 写入探针：真写文件判定/超时区分/失败可读告警（4.0.1 P5）', async () => {

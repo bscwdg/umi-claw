@@ -15,6 +15,36 @@ import { subprocessRegistry } from './subprocessRegistry'
 const execAsync = promisify(exec)
 const execFileAsync = promisify(execFile)
 
+/**
+ * npm 子进程统一使用应用自己的缓存目录。
+ *
+ * 不能只继承 process.env：从低权限/沙箱环境启动时，用户级
+ * %LOCALAPPDATA%\npm-cache 可能只读，npm 查版本会以 EPERM 失败。
+ */
+export function buildNpmRuntimeEnv(input: {
+  dataDir: string
+  nodeBinDir: string
+  baseEnv?: NodeJS.ProcessEnv
+}): NodeJS.ProcessEnv {
+  const baseEnv = input.baseEnv ?? process.env
+  const out: NodeJS.ProcessEnv = {}
+  let inheritedPath = ''
+  for (const [key, value] of Object.entries(baseEnv)) {
+    const lower = key.toLowerCase()
+    if (lower === 'path') {
+      if (!inheritedPath && value) inheritedPath = value
+      continue
+    }
+    // Windows 环境变量大小写不敏感；必须清掉旧 cache 的所有大小写变体，
+    // 否则 npm 可能优先采用用户级 NPM_CONFIG_CACHE。
+    if (lower === 'npm_config_cache') continue
+    out[key] = value
+  }
+  out.PATH = `${input.nodeBinDir}${pathDelimiter}${inheritedPath}`
+  out.npm_config_cache = join(input.dataDir, 'config', '.npm-cache')
+  return out
+}
+
 export interface DownloadProgress {
   stage: string
   step: string
@@ -1137,12 +1167,11 @@ export class DownloadManager extends EventEmitter {
         : join(nodeBinDir, 'npm')
       const registry = useMirror ? DOMESTIC_MIRRORS[0].url : OFFICIAL_REGISTRY.url
       const cmd = `"${npmPath}" view openclaw version --registry ${registry}`
+      const dataDir = this.configManager.getDataDir()
+      mkdirSync(join(dataDir, 'config', '.npm-cache'), { recursive: true })
 
       const { stdout } = await execAsync(cmd, {
-        env: {
-          ...process.env,
-          PATH: `${nodeBinDir}${pathDelimiter}${process.env.PATH || ''}`
-        }
+        env: buildNpmRuntimeEnv({ dataDir, nodeBinDir })
       })
       const latestVersion = stdout.trim()
       if (!latestVersion) {
@@ -1794,10 +1823,7 @@ export class DownloadManager extends EventEmitter {
       // 1. 注入环境变量，解决找不到 node 命令的根本问题
       const proc = exec(cmd, {
         cwd: openClawDir,
-        env: {
-          ...process.env,
-          PATH: `${nodeBinDir}${pathDelimiter}${process.env.PATH || ''}`
-        }
+        env: buildNpmRuntimeEnv({ dataDir, nodeBinDir })
       });
 
       let lastLine = '';
