@@ -23,6 +23,12 @@ import type {
   VoiceOpenClawTestResult
 } from '../main/fish/voice/core/types'
 import type {
+  ExternalTtsProbeResult,
+  ExternalTtsServiceInput,
+  ExternalTtsServiceView,
+  ExternalTtsTestResult
+} from '../main/fish/voice/external/types'
+import type {
   CharacterEvent,
   CharacterInteractInput,
   CharacterResetOptions,
@@ -693,6 +699,17 @@ const api = {
         demoAudio: (speakerId: string, modelType: number) =>
           call<VoiceAudioPayload>('fish:voice:clone:demoAudio', speakerId, modelType),
         reconcile: () => call<VoiceReconcileItem[]>('fish:voice:clone:reconcile')
+      },
+      external: {
+        list: () => call<ExternalTtsServiceView[]>('fish:voice:external:list'),
+        save: (input: ExternalTtsServiceInput) =>
+          call<ExternalTtsServiceView>('fish:voice:external:save', input),
+        remove: (id: string) =>
+          call<{ removed: true }>('fish:voice:external:remove', id),
+        probe: (id: string) =>
+          call<ExternalTtsProbeResult>('fish:voice:external:probe', id),
+        test: (id: string) =>
+          call<ExternalTtsTestResult>('fish:voice:external:test', id)
       },
       autoSpeak: {
         on: (cb: (event: { audioId: string; mime: string }) => void) => {

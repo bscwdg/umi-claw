@@ -64,6 +64,8 @@ import {
   VoiceCloneManager,
   type VoiceManager,
   createDatabaseVoiceStorage,
+  createExternalServiceStore,
+  createExternalVoiceSecretStore,
   createVoiceManager,
   registerVoiceIpc
 } from './fish/voice'
@@ -1503,9 +1505,18 @@ app.whenReady().then(async () => {
       safeStorage
     )
     const voiceStorage = createDatabaseVoiceStorage(workDatabase)
+    const externalServices = createExternalServiceStore(
+      join(configManager.getDataDir(), 'voice', 'external-services.json')
+    )
+    const externalSecrets = createExternalVoiceSecretStore(
+      join(configManager.getDataDir(), 'voice', 'external-secrets.bin'),
+      safeStorage
+    )
     voiceManager = createVoiceManager({
       storage: voiceStorage,
       secrets: voiceSecretStore,
+      externalServices,
+      externalSecrets,
       cacheDir: join(configManager.getDataDir(), 'fish', 'audio'),
       bridgeScriptPath: app.isPackaged
         ? join(process.resourcesPath, 'resources', 'voice', 'volc-tts.mjs')

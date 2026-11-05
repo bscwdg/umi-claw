@@ -5,7 +5,8 @@ import type {
   VoiceKeyKind,
   VoiceSettings,
   VoiceSettingsView,
-  OpenClawTtsAuto
+  OpenClawTtsAuto,
+  VoiceSpeakRoute
 } from './types'
 
 export const VOICE_ENDPOINTS = {
@@ -28,6 +29,7 @@ export const VOICE_RESOURCES = {
 export const VOICE_ENDPOINT_HOST = 'https://openspeech.bytedance.com'
 const VOICE_ENDPOINT_PATH_PREFIX = '/api/v3/'
 const RESOURCE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+const EXTERNAL_PROVIDER_ID_RE = /^ext:[a-f0-9-]{36}$/
 
 /** UI 下拉建议值；不在此列表内的合法 resource id 仍可直接填写。 */
 export const VOICE_RESOURCE_SUGGESTIONS = {
@@ -49,6 +51,8 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   format: 'mp3',
   sampleRate: 24000,
   autoSpeak: 'off',
+  speakRoute: 'cloud',
+  externalProviderId: '',
   conversationTts: 'off',
   conversationChannel: 'auto',
   dailyCharLimit: 0,
@@ -100,6 +104,30 @@ function sanitizeResourceId(value: unknown, fallback: string): string {
 /** 对话内语音开关：只接受 OpenClaw `tts.auto` 的四个官方取值，其余回落 off。 */
 function normalizeOpenClawTtsAuto(value: unknown): OpenClawTtsAuto {
   return value === 'always' || value === 'inbound' || value === 'tagged' ? value : 'off'
+}
+
+function normalizeSpeakRoute(value: unknown): VoiceSpeakRoute {
+  return value === 'external' || value === 'auto' ? value : 'cloud'
+}
+
+function normalizeExternalProviderId(value: unknown): string {
+  const id = typeof value === 'string' ? value.trim() : ''
+  return EXTERNAL_PROVIDER_ID_RE.test(id) ? id : ''
+}
+
+function strictSpeakRoute(value: unknown): VoiceSpeakRoute {
+  if (value === 'cloud' || value === 'external' || value === 'auto') return value
+  throw new VoiceError(
+    VOICE_ERROR_CODES.INVALID_INPUT,
+    '朗读路由只支持 cloud、external 或 auto'
+  )
+}
+
+function strictExternalProviderId(value: unknown): string {
+  if (value === '' || value === undefined || value === null) return ''
+  const id = typeof value === 'string' ? value.trim() : ''
+  if (EXTERNAL_PROVIDER_ID_RE.test(id)) return id
+  throw new VoiceError(VOICE_ERROR_CODES.INVALID_INPUT, '外部 TTS 实例 ID 不合法')
 }
 
 /**
@@ -169,6 +197,8 @@ export function normalizeVoiceSettings(
     sampleRate: 24000,
     autoSpeak:
       src.autoSpeak === 'tagged' || src.autoSpeak === 'always' ? src.autoSpeak : 'off',
+    speakRoute: normalizeSpeakRoute(src.speakRoute),
+    externalProviderId: normalizeExternalProviderId(src.externalProviderId),
     conversationTts: normalizeOpenClawTtsAuto(src.conversationTts),
     conversationChannel:
       src.conversationChannel === 'bridge' || src.conversationChannel === 'volcengine'
@@ -235,6 +265,12 @@ export function applyVoiceSettingsPatch(
         : src.autoSpeak === 'tagged' || src.autoSpeak === 'always'
           ? src.autoSpeak
           : 'off',
+    speakRoute:
+      src.speakRoute === undefined ? current.speakRoute : strictSpeakRoute(src.speakRoute),
+    externalProviderId:
+      src.externalProviderId === undefined
+        ? current.externalProviderId
+        : strictExternalProviderId(src.externalProviderId),
     conversationTts:
       src.conversationTts === undefined
         ? current.conversationTts

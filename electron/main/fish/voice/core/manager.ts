@@ -17,7 +17,6 @@ import type {
   VoiceAudioPayload,
   VoiceCatalogFile,
   VoiceKeyKind,
-  VoiceRoute,
   VoiceSettings,
   VoiceSettingsView,
   VoiceSpeakInput,
@@ -34,6 +33,22 @@ import { getVoiceCatalog, isPresetVoice } from '../providers/volcengineCatalog'
 import { VolcengineTtsProvider } from '../providers/volcengineTts'
 import { VOICE_RESOURCES } from './settings'
 import { buildOpenClawTtsBlock, buildOpenClawTtsEnv } from './openclawTts'
+import { resolveSpeakEngine } from './route'
+import type { ExternalServiceStore } from '../external/externalServiceStore'
+import { isExternalServiceId } from '../external/externalServiceStore'
+import type { ExternalVoiceSecretStore } from '../external/localSecretStore'
+import {
+  ExternalAvailabilityTracker,
+  createExternalAvailabilityTracker
+} from '../external/availability'
+import { createOpenAISpeechProvider } from '../external/openaiSpeech'
+import type {
+  ExternalTtsProbeResult,
+  ExternalTtsService,
+  ExternalTtsServiceInput,
+  ExternalTtsServiceView,
+  ExternalTtsTestResult
+} from '../external/types'
 
 const SETTINGS_KEY = 'voice:v1:settings'
 const BYTES_PER_MB = 1024 * 1024
@@ -55,6 +70,10 @@ export interface VoiceManagerOptions {
   bridgeScriptPath?: string
   /** bridge 模式的热更设置文件（音色/资源 ID 写这里，bridge 每次合成时读）。 */
   bridgeSettingsPath?: string
+  /** 外部 TTS 实例与独立密钥；缺省时仅保留火山云能力。 */
+  externalServices?: ExternalServiceStore
+  externalSecrets?: ExternalVoiceSecretStore
+  externalAvailability?: ExternalAvailabilityTracker
 }
 
 function mergeUsage(
@@ -78,6 +97,18 @@ function clampSpeed(value: unknown, fallback: number): number {
   return Math.min(3, Math.max(0.2, n))
 }
 
+function isExternalServiceFailure(error: unknown): error is VoiceError {
+  if (!(error instanceof VoiceError)) return false
+  return (
+    error.code === VOICE_ERROR_CODES.PROVIDER_ERROR ||
+    error.code === VOICE_ERROR_CODES.AUTH_ERROR ||
+    error.code === VOICE_ERROR_CODES.RATE_LIMITED ||
+    error.code === VOICE_ERROR_CODES.TIMEOUT ||
+    error.code === VOICE_ERROR_CODES.EXTERNAL_UNREACHABLE ||
+    error.code === VOICE_ERROR_CODES.EXTERNAL_BAD_RESPONSE
+  )
+}
+
 export class VoiceManager {
   private readonly storage: VoiceStorage
   private readonly secrets: VoiceSecretStore
@@ -91,6 +122,9 @@ export class VoiceManager {
   private readonly onProgress: (event: import('./types').VoiceProgressEvent) => void
   private readonly bridgeScriptPath: string | undefined
   private readonly bridgeSettingsPath: string | undefined
+  private readonly externalServices: ExternalServiceStore | undefined
+  private readonly externalSecrets: ExternalVoiceSecretStore | undefined
+  private readonly externalAvailability: ExternalAvailabilityTracker
   private readonly fetchImpl: FetchLike
   private settingsCache: VoiceSettings | null = null
   /**
@@ -126,10 +160,161 @@ export class VoiceManager {
     this.onSettingsChanged = options.onSettingsChanged ?? (() => undefined)
     this.bridgeScriptPath = options.bridgeScriptPath
     this.bridgeSettingsPath = options.bridgeSettingsPath
+    this.externalServices = options.externalServices
+    this.externalSecrets = options.externalSecrets
+    this.externalAvailability =
+      options.externalAvailability ?? createExternalAvailabilityTracker(this.now)
   }
 
   getCatalog(): VoiceCatalogFile {
     return JSON.parse(JSON.stringify(this.catalog)) as VoiceCatalogFile
+  }
+
+  private async externalServiceView(
+    service: ExternalTtsService
+  ): Promise<ExternalTtsServiceView> {
+    const key = this.externalSecrets ? await this.externalSecrets.status(service.id) : {
+      hasKey: false,
+      tail: null
+    }
+    const availability = this.externalAvailability.snapshot(service.id)
+    return {
+      ...service,
+      hasKey: key.hasKey,
+      keyTail: key.tail,
+      available: availability.available,
+      cooldownUntil: availability.cooldownUntil
+    }
+  }
+
+  private async requireExternalService(id: string): Promise<ExternalTtsService> {
+    if (!this.externalServices) {
+      throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用外部 TTS')
+    }
+    const service = await this.externalServices.get(id)
+    if (!service) {
+      throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '外部 TTS 实例不存在')
+    }
+    return service
+  }
+
+  private externalProvider(service: ExternalTtsService, key: string | null) {
+    return createOpenAISpeechProvider(service, key, this.fetchImpl)
+  }
+
+  async listExternalServices(): Promise<ExternalTtsServiceView[]> {
+    if (!this.externalServices) return []
+    const services = await this.externalServices.list()
+    return Promise.all(services.map((service) => this.externalServiceView(service)))
+  }
+
+  async saveExternalService(input: ExternalTtsServiceInput): Promise<ExternalTtsServiceView> {
+    if (!this.externalServices) {
+      throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用外部 TTS')
+    }
+    const previous = input?.id ? await this.externalServices.get(input.id) : null
+    const newKey = typeof input?.apiKey === 'string' && input.apiKey.trim()
+    if (newKey && !this.externalSecrets) {
+      throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用外部 TTS 密钥存储')
+    }
+    if (newKey && !this.externalSecrets?.canPersist()) {
+      throw new VoiceError(
+        VOICE_ERROR_CODES.ENCRYPTION_UNAVAILABLE,
+        '系统安全存储不可用，外部 TTS Key 无法持久化'
+      )
+    }
+    const service = await this.externalServices.save(input ?? {})
+    try {
+      const addressChanged = !!previous && previous.baseUrl !== service.baseUrl
+      if (input?.clearKey === true || (addressChanged && !newKey)) {
+        // 地址变了还沿用旧 Key，会把旧凭据发往新主机；宁可让用户重新填写。
+        await this.externalSecrets?.delete(service.id)
+      } else if (newKey) {
+        await this.externalSecrets?.set(service.id, input.apiKey)
+      }
+      // 改地址或改 Key 后通常是“修好服务再来试”，不能继续被旧冷却挡住。
+      this.externalAvailability.recordSuccess(service.id)
+    } catch (error) {
+      let rollbackError: unknown = null
+      if (previous) {
+        rollbackError = await this.externalServices
+          .save(previous)
+          .then(() => null)
+          .catch((e) => e)
+      } else {
+        rollbackError = await this.externalServices
+          .remove(service.id)
+          .then(() => null)
+          .catch((e) => e)
+      }
+      if (rollbackError) {
+        this.logger(
+          `[voice] 外部 TTS 实例回滚失败（可能需要重开页面核对）: ${
+            rollbackError instanceof Error ? rollbackError.message : rollbackError
+          }`
+        )
+      }
+      throw error
+    }
+    return this.externalServiceView(service)
+  }
+
+  async removeExternalService(id: string): Promise<{ removed: true }> {
+    if (!this.externalServices) {
+      throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用外部 TTS')
+    }
+    const service = await this.externalServices.get(id)
+    if (!service) {
+      throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '外部 TTS 实例不存在')
+    }
+    // 先删 Key 再删实例：Key 删除失败时保留实例，避免用户看到“删除失败”但实例已消失。
+    const oldKey = this.externalSecrets ? await this.externalSecrets.get(id) : null
+    if (this.externalSecrets) await this.externalSecrets.delete(id)
+    const removed = await this.externalServices.remove(id).catch(async (error) => {
+      if (this.externalSecrets && oldKey) {
+        await this.externalSecrets.set(id, oldKey).catch(() => undefined)
+      }
+      throw error
+    })
+    if (!removed) {
+      if (this.externalSecrets && oldKey) {
+        await this.externalSecrets.set(id, oldKey).catch(() => undefined)
+      }
+      throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '外部 TTS 实例不存在')
+    }
+    this.externalAvailability.recordSuccess(id)
+    const settings = await this.loadSettings()
+    if (settings.externalProviderId === id) {
+      const next = applyVoiceSettingsPatch(
+        settings,
+        { speakRoute: 'cloud', externalProviderId: '' },
+        this.catalog
+      )
+      this.settingsCache = next
+      await this.storage.set(SETTINGS_KEY, JSON.stringify(next))
+      await this.refreshOpenClawTtsSnapshot(next)
+    }
+    return { removed: true }
+  }
+
+  async probeExternalService(id: string): Promise<ExternalTtsProbeResult> {
+    const service = await this.requireExternalService(id)
+    const key = this.externalSecrets ? await this.externalSecrets.get(id) : null
+    return this.externalProvider(service, key).probe()
+  }
+
+  async testExternalService(id: string): Promise<ExternalTtsTestResult> {
+    // 试听必须真实打一次外部服务；命中旧缓存无法判断当前服务是否可用。
+    this.externalAvailability.recordSuccess(id)
+    const audio = await this.speakInternal(
+      {
+        text: '你好，我是大肥鱼。',
+        options: { engine: 'external', providerId: id }
+      },
+      false,
+      true
+    )
+    return { ok: true, message: '外部 TTS 合成正常', audio }
   }
 
   setCloneGate(
@@ -382,7 +567,7 @@ export class VoiceManager {
       try {
         const audio = await this.speak({
           text: '你好，我是大肥鱼。',
-          options: { speaker: settings.defaultSpeaker }
+          options: { speaker: settings.defaultSpeaker, engine: 'cloud' }
         })
         return {
           ok: true,
@@ -447,9 +632,28 @@ export class VoiceManager {
     return withVoiceKeyStatus(settings, status)
   }
 
+  private async validateExternalSettings(settings: VoiceSettings): Promise<void> {
+    if (settings.speakRoute === 'external' && !settings.externalProviderId) {
+      throw new VoiceError(
+        VOICE_ERROR_CODES.INVALID_INPUT,
+        '外部 TTS 路由必须先选择一个外部实例'
+      )
+    }
+    if (settings.externalProviderId) {
+      if (!this.externalServices) {
+        throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用外部 TTS')
+      }
+      const service = await this.externalServices.get(settings.externalProviderId)
+      if (!service) {
+        throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '选中的外部 TTS 实例不存在')
+      }
+    }
+  }
+
   async updateSettings(patch: unknown): Promise<VoiceSettingsView> {
     const current = await this.loadSettings()
     const next = applyVoiceSettingsPatch(current, patch, this.catalog)
+    await this.validateExternalSettings(next)
     this.settingsCache = next
     await this.storage.set(SETTINGS_KEY, JSON.stringify(next))
     await this.refreshOpenClawTtsSnapshot(next, true)
@@ -496,7 +700,7 @@ export class VoiceManager {
       settings.defaultSpeaker
     const audio = await this.speak({
       text: '你好，我是大肥鱼。',
-      options: { speaker: presetSpeaker }
+      options: { speaker: presetSpeaker, engine: 'cloud' }
     })
     return { kind, ok: true, message: 'TTS 鉴权与合成正常', audio }
   }
@@ -511,21 +715,90 @@ export class VoiceManager {
    */
   async speakForCloneActivation(input: VoiceSpeakInput): Promise<VoiceSpeakResult> {
     // 激活必须真实请求供应商（不能命中缓存），否则可能未转正就标记已启用。
-    return this.speakInternal(input, true, true)
+    return this.speakInternal(input, true, true, true)
   }
 
   private async speakInternal(
     input: VoiceSpeakInput,
     bypassCloneGate: boolean,
-    bypassCache = false
+    bypassCache = false,
+    forceCloud = false
   ): Promise<VoiceSpeakResult> {
     const settings = await this.loadSettings()
     const split = splitVoiceText(input?.text)
+    const rawRequestedEngine = forceCloud ? 'cloud' : input?.options?.engine
+    if (
+      rawRequestedEngine !== undefined &&
+      rawRequestedEngine !== 'cloud' &&
+      rawRequestedEngine !== 'external' &&
+      rawRequestedEngine !== 'auto'
+    ) {
+      throw new VoiceError(
+        VOICE_ERROR_CODES.INVALID_INPUT,
+        '单次朗读路由只支持 cloud、external 或 auto'
+      )
+    }
+    const requestedEngine = rawRequestedEngine
+    const providerId =
+      typeof input?.options?.providerId === 'string' && input.options.providerId.trim()
+        ? input.options.providerId.trim()
+        : settings.externalProviderId
+    if (
+      input?.options?.providerId !== undefined &&
+      input.options.providerId !== '' &&
+      !isExternalServiceId(input.options.providerId)
+    ) {
+      throw new VoiceError(VOICE_ERROR_CODES.INVALID_INPUT, '外部 TTS 实例 ID 不合法')
+    }
+    const speedRatio = clampSpeed(input?.options?.speedRatio, settings.speedRatio)
+    const format =
+      input?.options?.format === 'pcm' || input?.options?.format === 'mp3'
+        ? input.options.format
+        : split.segments.length > 1
+          ? 'pcm'
+          : 'mp3'
+    const sampleRate =
+      typeof input?.options?.sampleRate === 'number' && Number.isFinite(input.options.sampleRate)
+        ? Math.max(8000, Math.min(48000, Math.round(input.options.sampleRate)))
+        : settings.sampleRate
+    const externalConfigured = providerId
+      ? !!(this.externalServices && (await this.externalServices.get(providerId)))
+      : false
+    const externalAvailable = providerId
+      ? this.externalAvailability.isAvailable(providerId)
+      : false
+    const engineResolution = resolveSpeakEngine({
+      requested: requestedEngine,
+      configured: settings.speakRoute,
+      providerId,
+      externalConfigured,
+      externalAvailable
+    })
+    let fallbackReason = engineResolution.fallbackReason
+    if (engineResolution.engine === 'external') {
+      try {
+        return await this.speakExternal({
+          input,
+          settings,
+          text: split.text,
+          chars: split.chars,
+          providerId: engineResolution.providerId ?? providerId,
+          speedRatio,
+          format,
+          sampleRate,
+          bypassCache
+        })
+      } catch (error) {
+        const mode = requestedEngine ?? settings.speakRoute
+        if (mode !== 'auto' || !isExternalServiceFailure(error)) throw error
+        fallbackReason = error.message
+      }
+    }
     const requestedSpeaker =
       typeof input?.options?.speaker === 'string' && input.options.speaker.trim()
         ? input.options.speaker.trim()
         : settings.defaultSpeaker
-    const route: VoiceRoute = isPresetVoice(requestedSpeaker) ? 'preset' : 'cloned'
+    const route: 'preset' | 'cloned' = isPresetVoice(requestedSpeaker) ? 'preset' : 'cloned'
     if (route === 'cloned' && !bypassCloneGate && this.cloneGate) {
       const gate = await this.cloneGate(requestedSpeaker)
       if (!gate.ok) {
@@ -545,21 +818,10 @@ export class VoiceManager {
           : '克隆音色需要语音服务 Key'
       )
     }
-    const speedRatio = clampSpeed(input?.options?.speedRatio, settings.speedRatio)
     const emotion =
       typeof input?.options?.emotion === 'string'
         ? input.options.emotion.trim().slice(0, 64)
         : settings.emotion
-    const format =
-      input?.options?.format === 'pcm' || input?.options?.format === 'mp3'
-        ? input.options.format
-        : split.segments.length > 1
-          ? 'pcm'
-          : 'mp3'
-    const sampleRate =
-      typeof input?.options?.sampleRate === 'number' && Number.isFinite(input.options.sampleRate)
-        ? Math.max(8000, Math.min(48000, Math.round(input.options.sampleRate)))
-        : settings.sampleRate
     const endpoint = route === 'preset' ? settings.ttsEndpoint : settings.cloneEndpoint
     const resourceId =
       route === 'preset' ? settings.ttsResourceId : settings.cloneResourceId
@@ -583,6 +845,10 @@ export class VoiceManager {
         chars: split.chars,
         cached: true,
         route,
+        engine: 'cloud',
+        fallback: fallbackReason
+          ? { reason: fallbackReason }
+          : undefined,
         mime: cached.mime,
         usage: null
       }
@@ -607,6 +873,7 @@ export class VoiceManager {
       format,
       sampleRate,
       route,
+      fallbackReason,
       hash,
       jobId: input.jobId,
       signal: controller?.signal,
@@ -615,6 +882,106 @@ export class VoiceManager {
     }).finally(() => {
       this.inflight.delete(hash)
       if (input.jobId) this.controllers.delete(input.jobId)
+    })
+    this.inflight.set(hash, task)
+    return task
+  }
+
+  private async speakExternal(input: {
+    input: VoiceSpeakInput
+    settings: VoiceSettings
+    text: string
+    chars: number
+    providerId: string
+    speedRatio: number
+    format: 'mp3' | 'pcm'
+    sampleRate: number
+    bypassCache: boolean
+  }): Promise<VoiceSpeakResult> {
+    const service = await this.requireExternalService(input.providerId)
+    const key = this.externalSecrets
+      ? await this.externalSecrets.get(input.providerId)
+      : null
+    const requestedExtension = input.format === 'pcm' ? 'wav' : null
+    const hash = voiceCacheKey([
+      'external-v1',
+      input.providerId,
+      service.baseUrl,
+      service.model,
+      service.voice,
+      input.text,
+      input.speedRatio,
+      input.format,
+      input.sampleRate,
+      requestedExtension ?? service.responseFormat
+    ])
+    if (!input.bypassCache) {
+      const extensions = requestedExtension
+        ? ([requestedExtension] as const)
+        : (['mp3', 'wav'] as const)
+      for (const extension of extensions) {
+        const cached = await this.cache.get(voiceAudioId(hash, extension))
+        if (cached) {
+          return {
+            audioId: cached.audioId,
+            chars: input.chars,
+            cached: true,
+            route: 'external',
+            engine: 'external',
+            providerId: input.providerId,
+            mime: cached.mime,
+            usage: null
+          }
+        }
+      }
+    }
+
+    const existing = input.bypassCache ? undefined : this.inflight.get(hash)
+    if (existing) return existing
+
+    const controller = input.input.jobId ? new AbortController() : null
+    if (controller && input.input.jobId) {
+      this.controllers.set(input.input.jobId, controller)
+    }
+    const provider = this.externalProvider(service, key)
+    const task = (async (): Promise<VoiceSpeakResult> => {
+      this.onProgress({
+        jobId: input.input.jobId ?? '',
+        index: 1,
+        total: 1
+      })
+      try {
+        const result = await provider.synthesize({
+          text: input.text,
+          voice: service.voice,
+          speedRatio: input.speedRatio,
+          responseFormat: requestedExtension ?? undefined,
+          signal: controller?.signal
+        })
+        this.externalAvailability.recordSuccess(input.providerId)
+        const saved = await this.cache.put(hash, result.extension, result.audio)
+        void this.cache
+          .cleanup(input.settings.cacheLimitMB * BYTES_PER_MB)
+          .catch(() => undefined)
+        return {
+          audioId: saved.audioId,
+          chars: input.chars,
+          cached: false,
+          route: 'external',
+          engine: 'external',
+          providerId: input.providerId,
+          mime: saved.mime,
+          usage: result.usage ?? null
+        }
+      } catch (error) {
+        if (isExternalServiceFailure(error)) {
+          this.externalAvailability.recordFailure(input.providerId)
+        }
+        throw error
+      }
+    })().finally(() => {
+      this.inflight.delete(hash)
+      if (input.input.jobId) this.controllers.delete(input.input.jobId)
     })
     this.inflight.set(hash, task)
     return task
@@ -632,7 +999,8 @@ export class VoiceManager {
     emotion: string
     format: 'mp3' | 'pcm'
     sampleRate: number
-    route: VoiceRoute
+    route: 'preset' | 'cloned'
+    fallbackReason?: string
     hash: string
     jobId?: string
     signal?: AbortSignal
@@ -681,6 +1049,8 @@ export class VoiceManager {
         chars: input.chars,
         cached: false,
         route: input.route,
+        engine: 'cloud',
+        fallback: input.fallbackReason ? { reason: input.fallbackReason } : undefined,
         mime: saved.mime,
         usage
       }

@@ -14,6 +14,7 @@ import type {
 } from './core/types'
 import type { VoiceManager } from './core/manager'
 import type { VoiceCloneManager } from './core/cloneManager'
+import type { ExternalTtsServiceInput } from './external/types'
 
 export const VOICE_CHANNELS = {
   settingsGet: 'fish:voice:settings:get',
@@ -38,7 +39,12 @@ export const VOICE_CHANNELS = {
   cloneRemove: 'fish:voice:clone:remove',
   cloneActivate: 'fish:voice:clone:activate',
   cloneDemoAudio: 'fish:voice:clone:demoAudio',
-  cloneReconcile: 'fish:voice:clone:reconcile'
+  cloneReconcile: 'fish:voice:clone:reconcile',
+  externalList: 'fish:voice:external:list',
+  externalSave: 'fish:voice:external:save',
+  externalRemove: 'fish:voice:external:remove',
+  externalProbe: 'fish:voice:external:probe',
+  externalTest: 'fish:voice:external:test'
 } as const
 
 async function wrap<T>(fn: () => Promise<T>): Promise<VoiceIpcResult<T>> {
@@ -136,4 +142,17 @@ export function registerVoiceIpc(manager: VoiceManager, clone: VoiceCloneManager
     wrap(() => clone.readDemo(speakerId, modelType))
   )
   handle(VOICE_CHANNELS.cloneReconcile, () => wrap(() => clone.reconcile()))
+  handle(VOICE_CHANNELS.externalList, () => wrap(() => manager.listExternalServices()))
+  handle(VOICE_CHANNELS.externalSave, (input: ExternalTtsServiceInput) =>
+    wrap(() => manager.saveExternalService(input))
+  )
+  handle(VOICE_CHANNELS.externalRemove, (id: string) =>
+    wrap(() => manager.removeExternalService(String(id ?? '')))
+  )
+  handle(VOICE_CHANNELS.externalProbe, (id: string) =>
+    wrap(() => manager.probeExternalService(String(id ?? '')))
+  )
+  handle(VOICE_CHANNELS.externalTest, (id: string) =>
+    wrap(() => manager.testExternalService(String(id ?? '')))
+  )
 }

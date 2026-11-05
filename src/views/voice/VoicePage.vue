@@ -302,6 +302,37 @@
             </div>
           </div>
           <div class="form-group">
+            <label class="form-label">应用内朗读路由</label>
+            <select v-model="voiceForm.speakRoute" class="form-input">
+              <option value="cloud">火山云</option>
+              <option value="external">外部 TTS</option>
+              <option value="auto">自动（外部不可用回落云端）</option>
+            </select>
+            <p class="field-hint">
+              {{
+                voiceForm.speakRoute === 'cloud'
+                  ? '应用内提醒、试听和角色短句都使用火山云。'
+                  : voiceForm.speakRoute === 'external'
+                    ? '只使用选中的外部实例；失败直接报错，不偷偷回落。'
+                    : '优先使用外部实例；缺失或冷却时自动回落火山云。'
+              }}
+            </p>
+          </div>
+          <div class="form-group" v-if="voiceForm.speakRoute !== 'cloud'">
+            <label class="form-label">外部 TTS 实例</label>
+            <select v-model="voiceForm.externalProviderId" class="form-input">
+              <option value="">未选择</option>
+              <option v-for="item in externalServices" :key="item.id" :value="item.id">
+                {{ item.label }}{{ item.available ? '' : '（冷却中）' }}
+              </option>
+            </select>
+            <p class="field-hint" v-if="selectedExternalService">
+              {{ selectedExternalService.baseUrl }} · {{ selectedExternalService.model }} ·
+              音色 {{ selectedExternalService.voice }}
+            </p>
+            <p class="field-hint" v-else>请先在下方「外部 TTS 服务」中添加并选择实例。</p>
+          </div>
+          <div class="form-group">
             <label class="form-label">复刻模型（仅克隆音色）</label>
             <select
               v-model="voiceForm.cloneModel"
@@ -321,6 +352,128 @@
 
         <div class="actions">
           <button class="btn btn-primary" :disabled="busy" @click="saveVoiceSettings">保存语音设置</button>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="section-head">
+          <div>
+            <h2>外部 TTS 服务</h2>
+            <p>
+              接入用户自己部署的 OpenAI Audio Speech 兼容服务。应用只保存连接信息，
+              不安装、不启动、不更新远端或本机 TTS。
+            </p>
+          </div>
+          <div class="head-actions">
+            <button class="btn btn-sm" :disabled="busy" @click="openExternalForm()">
+              添加外部服务
+            </button>
+          </div>
+        </div>
+
+        <div v-if="externalFormOpen" class="external-form">
+          <div class="form-group">
+            <label class="form-label">实例名称</label>
+            <input v-model="externalForm.label" class="form-input" maxlength="80" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">服务地址</label>
+            <input
+              v-model="externalForm.baseUrl"
+              class="form-input"
+              placeholder="http://192.168.1.20:8091/v1"
+            />
+            <p class="field-hint">
+              填不带 /v1 的地址也会自动补全；只支持 http/https。
+              <span v-if="externalEditingId">修改服务地址会自动清除原 Key。</span>
+            </p>
+          </div>
+          <div class="form-group">
+            <label class="form-label">模型名</label>
+            <input v-model="externalForm.model" class="form-input" maxlength="256" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">音色</label>
+            <input v-model="externalForm.voice" class="form-input" maxlength="256" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">响应格式</label>
+            <select v-model="externalForm.responseFormat" class="form-input">
+              <option value="mp3">mp3</option>
+              <option value="wav">wav</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">API Key（可空）</label>
+            <input
+              v-model="externalForm.apiKey"
+              class="form-input"
+              type="password"
+              :disabled="externalForm.clearKey"
+              :placeholder="externalEditingId ? '留空则保持原 Key' : '本地服务通常可留空'"
+            />
+            <p class="field-hint">Key 单独加密保存，不会写入实例 JSON，也不会复用火山云 Key。</p>
+            <label v-if="externalEditingId" class="field-hint">
+              <input v-model="externalForm.clearKey" type="checkbox" />
+              清除该实例已保存的 Key
+            </label>
+            <p class="field-hint">
+              合成文本会发送到上面填写的服务地址；请只接入你信任的本机、局域网或远端服务。
+            </p>
+            <p v-if="externalHttpKeyRisk" class="field-hint warning">
+              HTTP 不加密，当前配置的 API Key 会以明文传输。请改用 HTTPS，或只在不敏感的局域网环境中使用。
+            </p>
+          </div>
+          <div class="form-group external-form-actions">
+            <button class="btn" :disabled="busy" @click="closeExternalForm">取消</button>
+            <button class="btn btn-primary" :disabled="busy" @click="saveExternalService">
+              保存实例
+            </button>
+          </div>
+        </div>
+
+        <div v-if="!externalServices.length" class="empty-clone">
+          暂无外部 TTS 实例。用户可填写本机、局域网或远端兼容服务地址接入。
+        </div>
+        <div v-else class="external-list">
+          <div v-for="item in externalServices" :key="item.id" class="external-row">
+            <div class="clone-main">
+              <div class="clone-title">
+                <strong>{{ item.label }}</strong>
+                <span class="clone-status" :class="item.available ? 'active' : 'failed'">
+                  {{ item.available ? '可用' : '冷却中' }}
+                </span>
+                <span class="clone-status" :class="item.hasKey ? 'success' : ''">
+                  {{ item.hasKey ? `Key ${item.keyTail}` : '无 Key' }}
+                </span>
+              </div>
+              <div class="clone-meta">
+                {{ item.baseUrl }} · {{ item.model }} · 音色 {{ item.voice }} · {{ item.responseFormat }}
+              </div>
+            </div>
+            <div class="clone-actions">
+              <button class="btn btn-sm" :disabled="busy" @click="probeExternalService(item)">
+                测试连接
+              </button>
+              <button
+                class="btn btn-sm"
+                :disabled="busy"
+                @click="testExternalService(item)"
+              >
+                {{ externalTestingId === item.id ? '合成中…' : '试听' }}
+              </button>
+              <button class="btn btn-sm" :disabled="busy" @click="openExternalForm(item)">
+                编辑
+              </button>
+              <button
+                class="btn btn-sm btn-danger"
+                :disabled="busy"
+                @click="deleteExternalService(item)"
+              >
+                删除
+              </button>
+            </div>
+          </div>
         </div>
       </article>
 
@@ -593,6 +746,10 @@ import type {
   VoiceUsageDay,
   VoiceOpenClawStatus
 } from '../../../electron/main/fish/voice/core/types'
+import type {
+  ExternalTtsServiceInput,
+  ExternalTtsServiceView
+} from '../../../electron/main/fish/voice/external/types'
 import {
   VOICE_ENDPOINTS,
   VOICE_RESOURCES,
@@ -630,6 +787,19 @@ const settings = ref<VoiceSettingsView | null>(null)
 const catalog = ref<VoiceCatalogFile | null>(null)
 const budget = ref<VoiceUsageDay | null>(null)
 const openclawStatus = ref<VoiceOpenClawStatus | null>(null)
+const externalServices = ref<ExternalTtsServiceView[]>([])
+const externalFormOpen = ref(false)
+const externalEditingId = ref('')
+const externalTestingId = ref('')
+const externalForm = reactive({
+  label: '',
+  baseUrl: '',
+  model: '',
+  voice: '',
+  responseFormat: 'mp3' as 'mp3' | 'wav',
+  apiKey: '',
+  clearKey: false
+})
 const cloneRecords = ref<VoiceCloneRecord[]>([])
 /** 最近一次远端对账结果，按 speakerId 索引。 */
 const reconcileItems = ref<VoiceReconcileItem[]>([])
@@ -674,6 +844,8 @@ const voiceForm = reactive({
   speedRatio: 1,
   emotion: '',
   autoSpeak: 'off' as 'off' | 'tagged' | 'always',
+  speakRoute: 'cloud' as 'cloud' | 'external' | 'auto',
+  externalProviderId: '',
   conversationTts: 'off' as 'off' | 'always' | 'inbound' | 'tagged',
   conversationChannel: 'auto' as 'auto' | 'bridge' | 'volcengine',
   cloneModel: 'seed-tts-2.0-standard' as 'seed-tts-2.0-standard' | 'seed-tts-2.0-expressive'
@@ -714,6 +886,20 @@ const isPresetSelected = computed(() => {
   const id = voiceForm.defaultSpeaker || settings.value?.defaultSpeaker
   return (catalog.value?.voices ?? []).some((voice) => voice.voiceType === id)
 })
+
+const selectedExternalService = computed(() =>
+  externalServices.value.find((item) => item.id === voiceForm.externalProviderId) ?? null
+)
+const editingExternalHasKey = computed(
+  () =>
+    !!externalEditingId.value &&
+    !!externalServices.value.find((item) => item.id === externalEditingId.value)?.hasKey
+)
+const externalHttpKeyRisk = computed(
+  () =>
+    externalForm.baseUrl.trim().toLowerCase().startsWith('http://') &&
+    (!!externalForm.apiKey.trim() || editingExternalHasKey.value)
+)
 
 const selectableSpeakers = computed(() => [
   ...(catalog.value?.voices ?? []).map((voice) => voice.voiceType),
@@ -804,6 +990,8 @@ async function refreshSettings(): Promise<void> {
   voiceForm.speedRatio = next.speedRatio
   voiceForm.emotion = next.emotion
   voiceForm.autoSpeak = next.autoSpeak
+  voiceForm.speakRoute = next.speakRoute
+  voiceForm.externalProviderId = next.externalProviderId
   voiceForm.conversationTts = next.conversationTts
   voiceForm.cloneModel = next.cloneModel
   budgetLimit.value = next.dailyCharLimit
@@ -874,6 +1062,116 @@ async function refreshBudget(): Promise<void> {
   budget.value = await api.budget.get()
 }
 
+async function refreshExternalServices(): Promise<void> {
+  externalServices.value = await api.external.list()
+  if (
+    voiceForm.externalProviderId &&
+    !externalServices.value.some((item) => item.id === voiceForm.externalProviderId)
+  ) {
+    voiceForm.externalProviderId = ''
+  }
+}
+
+function openExternalForm(service?: ExternalTtsServiceView): void {
+  error.value = ''
+  externalEditingId.value = service?.id ?? ''
+  externalForm.label = service?.label ?? ''
+  externalForm.baseUrl = service?.baseUrl ?? 'http://192.168.1.20:8091/v1'
+  externalForm.model = service?.model ?? ''
+  externalForm.voice = service?.voice ?? ''
+  externalForm.responseFormat = service?.responseFormat ?? 'mp3'
+  externalForm.apiKey = ''
+  externalForm.clearKey = false
+  externalFormOpen.value = true
+}
+
+function closeExternalForm(): void {
+  externalFormOpen.value = false
+  externalEditingId.value = ''
+}
+
+async function saveExternalService(): Promise<void> {
+  busy.value = true
+  error.value = ''
+  try {
+    const input: ExternalTtsServiceInput = {
+      id: externalEditingId.value || undefined,
+      label: externalForm.label,
+      baseUrl: externalForm.baseUrl,
+      model: externalForm.model,
+      voice: externalForm.voice,
+      responseFormat: externalForm.responseFormat
+    }
+    if (externalForm.clearKey) input.clearKey = true
+    else if (externalForm.apiKey.trim()) input.apiKey = externalForm.apiKey
+    const saved = await api.external.save(input)
+    await refreshExternalServices()
+    if (!voiceForm.externalProviderId) voiceForm.externalProviderId = saved.id
+    closeExternalForm()
+    showNotice('外部 TTS 实例已保存')
+  } catch (e) {
+    showError(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function probeExternalService(service: ExternalTtsServiceView): Promise<void> {
+  busy.value = true
+  try {
+    const result = await api.external.probe(service.id)
+    showNotice(`${service.label}：${result.detail}（${result.latencyMs}ms）`)
+  } catch (e) {
+    showError(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function testExternalService(service: ExternalTtsServiceView): Promise<void> {
+  busy.value = true
+  externalTestingId.value = service.id
+  try {
+    const result = await api.external.test(service.id)
+    if (result.audio) await playAudio(result.audio.audioId, result.audio.mime)
+    showNotice(`${service.label}：${result.message}`)
+  } catch (e) {
+    showError(e)
+  } finally {
+    await refreshExternalServices().catch(() => undefined)
+    externalTestingId.value = ''
+    busy.value = false
+  }
+}
+
+function deleteExternalService(service: ExternalTtsServiceView): void {
+  askConfirm(
+    {
+      title: '删除外部 TTS 实例',
+      message: `删除「${service.label}」及其本地保存的 API Key？\n\n不会影响远端服务本身；已缓存音频保留到缓存清理。`,
+      confirmText: '删除'
+    },
+    () => doDeleteExternalService(service)
+  )
+}
+
+async function doDeleteExternalService(service: ExternalTtsServiceView): Promise<void> {
+  busy.value = true
+  try {
+    await api.external.remove(service.id)
+    await refreshExternalServices()
+    if (settings.value?.externalProviderId === service.id) {
+      settings.value = await api.settings.get()
+      voiceForm.externalProviderId = settings.value.externalProviderId
+    }
+    showNotice('外部 TTS 实例已删除')
+  } catch (e) {
+    showError(e)
+  } finally {
+    busy.value = false
+  }
+}
+
 /** 逐条核对本地记录与远端实际状态（只调 get_voice，不需要 AK/SK）。 */
 async function reconcileClones(): Promise<void> {
   reconcileBusy.value = true
@@ -914,20 +1212,24 @@ async function load(): Promise<void> {
   busy.value = true
   error.value = ''
   try {
-    const [nextSettings, nextCatalog, nextBudget, nextClones] = await Promise.all([
+    const [nextSettings, nextCatalog, nextBudget, nextClones, nextExternal] = await Promise.all([
       api.settings.get(),
       api.catalog.get(),
       api.budget.get(),
-      api.clone.list()
+      api.clone.list(),
+      api.external.list()
     ])
     settings.value = nextSettings
     catalog.value = nextCatalog
     budget.value = nextBudget
     cloneRecords.value = nextClones
+    externalServices.value = nextExternal
     voiceForm.defaultSpeaker = nextSettings.defaultSpeaker
     voiceForm.speedRatio = nextSettings.speedRatio
     voiceForm.emotion = nextSettings.emotion
     voiceForm.autoSpeak = nextSettings.autoSpeak
+    voiceForm.speakRoute = nextSettings.speakRoute
+    voiceForm.externalProviderId = nextSettings.externalProviderId
     voiceForm.conversationTts = nextSettings.conversationTts
     voiceForm.conversationChannel = nextSettings.conversationChannel
     voiceForm.cloneModel = nextSettings.cloneModel
@@ -1042,6 +1344,8 @@ async function saveVoiceSettings(): Promise<void> {
       speedRatio: voiceForm.speedRatio,
       emotion: voiceForm.emotion,
       autoSpeak: voiceForm.autoSpeak,
+      speakRoute: voiceForm.speakRoute,
+      externalProviderId: voiceForm.externalProviderId,
       conversationTts: voiceForm.conversationTts,
       conversationChannel: voiceForm.conversationChannel,
       cloneModel: voiceForm.cloneModel
@@ -1408,6 +1712,10 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
+.field-hint.warning {
+  color: #ffb86b;
+}
+
 .state-pill,
 .key-state {
   padding: 6px 10px;
@@ -1579,6 +1887,42 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 16px;
   margin-top: 16px;
+}
+
+.external-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.external-form-actions {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.external-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.external-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .range {

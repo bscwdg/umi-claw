@@ -1871,3 +1871,34 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 - 测试 C90：归档路径/内容/源目录消失/幂等（空目录返回 null 且不建空归档）、同一时间戳重复批量删除加 `memory-2` 序号、wiring 源码必须调用 `archiveWorkspaceMemory(workspaceDir`（防止只测 helper 的假绿）、不得出现 `removeSafe(join(workspaceDir,'memory'))` 或直接 `rmSync(join(workspaceDir,'memory')`、必须把文件删除失败回传为 `部分文件清理失败`；角色页「删除日记与关系」文案/指南已同步为「workspace 归档 + Obsidian 归档」。
 - 第三轮复核修复：`removeSafe` 不再吞异常，收集 SOUL/IDENTITY/AGENTS/USER/.persona-backup/STATE/LIFE 失败，末尾抛 `部分文件清理失败` → manager 转 warning；archive 失败也追加 warning。`manager` 仍先 `store.reset` 再调 cleanup，属于既有架构，注释已如实说明。
 - 验证：character 90/90；全量 accept **33 套 / 630 断言 / 0 失败**。
+
+### P7 · 外部 TTS（OpenAI Audio Speech）+ cloud/external/auto 路由（2026-11-05）
+
+- 方案变更：L0 spike 在 i7-7700HQ 实测 CPU RTF **1.12–1.52**、私有内存峰值 **5.2 GB**，
+  未达到 `PLAN-LOCAL-TTS §11` 门槛；因此**不做 MOSS 一键本机部署**，只实现用户自部署
+  OpenAI 兼容 TTS 的接入与路由。
+- 新增 `electron/main/fish/voice/external/`：实例 JSON、独立 safeStorage Key、
+  `POST /v1/audio/speech` 适配器、失败冷却。实例 JSON 不保存 Key；改 baseUrl 时强制清旧 Key，
+  Key 加密不可用时在落实例前拒绝，实例/Key 删除按「先 Key、后实例」并在实例删除失败时恢复 Key。
+- Manager：新增 `cloud/external/auto`；`external` 失败直接报错，`auto` 首次服务失败立即回落云端；
+  冷却只由真实 synth 服务错误驱动，probe 不参与。外部缓存键包含 provider/baseUrl/model/voice/
+  text/speed/format/sampleRate。角色语音条请求 PCM/16k 时强制外部返回 `response_format=wav`。
+- IPC/Preload：新增 `fish:voice:external:list|save|remove|probe|test`；实例 Key 不在 IPC 查询结果中回传，
+  只返回 `hasKey/keyTail`。语音页新增外部服务卡片、增删改、测试连接、试听、HTTP + Key 明文警告。
+- 验收：`test/external-tts.accept.mjs` 9/9，覆盖 URL 归一化、Bearer、429/5xx、内容魔数、
+  probe 204/坏 JSON、并发 store/secret、auto 回落、冷却后复测、PCM WAV、地址变更清 Key、
+  删除失败保留实例、safeStorage 不可用回滚。
+- 事实核对（子代理 `01a1a778-81b5-7f01-b748-ffc9629c01a9`）：早期 E4 失败与 UI 无证据属实时状态；
+  修后 external 9/9、UI 装配断言加入；完整构建、boundary、全量 accept 已补跑。
+- 对抗复核（子代理 `01a1a778-8494-7471-ad86-4e31d564396e` + `01a1a915-09c0-7b22-aaaa-d9b125687b51`）：
+  - **属实→已修**：PCM/mp3 破坏语音条、改 baseUrl 复用旧 Key、HTTP Key 警告、store/secret 并发与写失败、
+    删当前实例未回 cloud、external 无实例可保存、auto 首次失败不回落、冷却中无法试听、
+    长文本误入冷却、非法 engine/providerId、伪音频、probe 假阳性、UI 不刷新冷却、
+    Key 删除失败半删、MP3 魔数过宽、测试偏 happy path、文档命名未更新、manager CRLF。
+  - **前提不成立**：E6 `repoRoot` 缺失为修复前快照；应用只有一个外部实例 store 单例，
+    不引入跨实例文件锁。
+  - **保留边界**：Key 与实例跨两个文件，无法做真正事务；已改为预检 + 顺序 + 回滚 + 失败日志，
+    极端回滚失败仍只能提示用户重开核对。
+- 最终验证：双 typecheck 0/0；`voice.accept` 21/21；`external-tts` 9/9；
+  `check:boundary` 0/0/0；`build` 通过；`electron-builder --win --dir` 通过；
+  全量 accept **34 套（accept×32 + e2e + smoke）/ 0 失败**。

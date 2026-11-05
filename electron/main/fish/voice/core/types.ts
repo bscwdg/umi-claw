@@ -1,5 +1,7 @@
 export type VoiceKeyKind = 'tts' | 'clone'
-export type VoiceRoute = 'preset' | 'cloned'
+export type VoiceRoute = 'preset' | 'cloned' | 'external'
+export type VoiceSpeakRoute = 'cloud' | 'external' | 'auto'
+export type VoiceEngine = 'cloud' | 'external'
 export type VoiceAutoSpeak = 'off' | 'tagged' | 'always'
 /**
  * OpenClaw `tts.auto` 的取值。与应用内 autoSpeak 三态不同：多一个 `inbound`
@@ -52,6 +54,10 @@ export interface VoiceSettings {
   format: 'mp3'
   sampleRate: 24000
   autoSpeak: VoiceAutoSpeak
+  /** 应用内朗读路由：现有火山云 / 用户外部实例 / 自动回落。 */
+  speakRoute: VoiceSpeakRoute
+  /** speakRoute=external/auto 时选中的外部实例；为空表示没有配置。 */
+  externalProviderId: string
   /**
    * 对话内语音（走 OpenClaw 的 tts 配置块与 /tts 命令族）。
    * 与 autoSpeak 相互独立：这个管「在对话里回语音」，那个管「弹提醒时读一句」。
@@ -89,6 +95,10 @@ export interface VoiceSpeakOptions {
   speaker?: string
   speedRatio?: number
   emotion?: string
+  /** 单次覆盖朗读路由；设置页测试/预览和内部自检用。 */
+  engine?: VoiceSpeakRoute
+  /** 单次覆盖外部实例 ID。 */
+  providerId?: string
   /** 输出格式覆盖（角色语音条需要 pcm/16k）；缺省按单段 mp3、多段 pcm */
   format?: 'mp3' | 'pcm'
   sampleRate?: number
@@ -112,6 +122,9 @@ export interface VoiceSpeakResult {
   chars: number
   cached: boolean
   route: VoiceRoute
+  engine: VoiceEngine
+  providerId?: string
+  fallback?: { reason: string }
   mime: string
   usage?: Record<string, unknown> | null
 }

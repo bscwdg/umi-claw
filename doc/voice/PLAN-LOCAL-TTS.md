@@ -3,6 +3,12 @@
 > 状态：**设计草案，待评审**（2026-11-04）
 > 性质：语音设置页新增「本地 TTS」能力的施工设计。评审通过后按本文件拆 WP，每个 WP 仍走 `AGENTS.md §12` 对抗审查。
 > 关联：`PLAN-4.0.md §4.2`（插件不给窗口/进程控制）、`AGENTS.md §1`（四层能力表，语音属宿主）与 §2（目录归属 `electron/main/fish/voice/`）、`doc/voice/OPENCLAW-VOICE-GUIDE.md`
+>
+> **实施变更（2026-11-05）**：L0 spike 实测 CPU RTF 1.12–1.52、私有内存峰值 5.2 GB，
+> 未达到 §11 门槛。因此当前实现**不做受管 MOSS 一键本机部署**，只落地「外部 TTS 实例 +
+> `cloud/external/auto` 路由」。实现字段使用 `externalProviderId`，不是下文草案里的
+> `localProviderId`；受管安装、权重下载与 supervisor 均为未实施范围。**下文正文保留
+> 2026-11-04 原始草案，仅作历史设计参考，不再作为当前代码契约。**
 
 ---
 

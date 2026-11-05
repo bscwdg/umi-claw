@@ -45,6 +45,7 @@ const ACCEPT = [
   ['platform', 'test/platform.accept.mjs'],
   ['wizard', 'test/wizard.accept.mjs'],
   ['voice', 'test/voice.accept.mjs'],
+  ['external-tts', 'test/external-tts.accept.mjs'],
   ['character', 'test/character.core.accept.mjs'],
   ['plugin', 'test/plugin.accept.mjs'],
   ['consent', 'test/consent.accept.mjs'],
