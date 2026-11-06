@@ -774,7 +774,9 @@ async function saveChatChannels(): Promise<void> {
   chatChannelsHint.value = ''
   chatChannelsError.value = ''
   try {
-    const result = await window.api.character.chatChannels.set(chatChannelSelection.value)
+    // ref 数组的 .value 是 Vue 的 reactive Proxy，structuredClone 无法克隆（Electron 会抛
+    // DataCloneError: An object could not be cloned），跨 IPC 前必须解包成普通数组。
+    const result = await window.api.character.chatChannels.set([...chatChannelSelection.value])
     chatChannels.value = result.channels
     chatChannelSelection.value = result.channels
       .filter((c) => c.boundTo === 'feiyu' && !c.blockedReason)

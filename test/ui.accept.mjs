@@ -1354,6 +1354,25 @@ await r.check('U23', '控制台按钮文案按动作区分：启动中不再把�
   return '按钮文案与真实动作一致（启动中显示「停止」，只有停止中才显示「停止中…」）'
 })
 
+// ref 数组的 .value 是 Vue reactive Proxy，Electron IPC 的结构化克隆不能克隆 Proxy，
+// 直接传会抛 DataCloneError: An object could not be cloned（用户只看到一句英文报错）。
+// 这里锁住「保存聊天渠道」的调用形状：必须 [...chatChannelSelection.value] 解包。
+await r.check('U24', '角色页保存聊天渠道：IPC 前解包响应式数组（防 DataCloneError）', async () => {
+  const characterPath = join(repoRoot, 'src', 'character', 'CharacterPage.vue')
+  const characterSrc = readFileSync(characterPath, 'utf-8')
+
+  assert(
+    /chatChannels\.set\(\s*\[\s*\.\.\.chatChannelSelection\.value\s*\]\s*\)/.test(characterSrc),
+    'chatChannels.set 必须传 [...chatChannelSelection.value]（解包 Vue Proxy 后才能跨 IPC）'
+  )
+  assert(
+    !/chatChannels\.set\(\s*chatChannelSelection\.value\s*\)/.test(characterSrc),
+    '不得把 chatChannelSelection.value 直接传给 IPC（Vue Proxy 无法结构化克隆）'
+  )
+
+  return '保存前解包成普通数组 ✓'
+})
+
 const result = r.toJSON({})
 
 const ok = printResult(result)
