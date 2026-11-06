@@ -69,8 +69,8 @@ export interface CharacterManagerOptions {
   loadLifeDeck?: () => Promise<LifeDeck>
   /** 把「她的一天」写进 workspace（fish/LIFE.md） */
   writeLifeDoc?: (text: string) => Promise<void>
-  /** 主动消息外发（C08 接 QQ；不提供则只做应用内气泡） */
-  sendProactive?: (message: { text: string; channel: 'qq' | 'app' }) => Promise<boolean>
+  /** 主动消息外发（外部渠道由 wiring 注入；不提供则只做应用内气泡） */
+  sendProactive?: (message: { text: string; channel: 'external' | 'app' }) => Promise<boolean>
   /** 每日记忆（C07）：生成日记 + 双写（workspace / Obsidian） */
   generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
   readWorkspaceMemory?: (date: string) => Promise<string | null>
@@ -97,7 +97,7 @@ export class CharacterManager {
   private readonly writeLifeDoc?: (text: string) => Promise<void>
   private readonly sendProactive?: (message: {
     text: string
-    channel: 'qq' | 'app'
+    channel: 'external' | 'app'
   }) => Promise<boolean>
   private readonly generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
   private readonly readWorkspaceMemory?: (date: string) => Promise<string | null>
@@ -437,7 +437,7 @@ export class CharacterManager {
   }
 
   /** 记一次主动发送（含降级通道）；用于日上限与状态展示 */
-  async markProactiveSent(channel: 'qq' | 'app', now = this.now()): Promise<number> {
+  async markProactiveSent(channel: 'external' | 'app', now = this.now()): Promise<number> {
     this.assertInitialized()
     const date = toDateKey(now)
     const time = new Date(now).toTimeString().slice(0, 5)

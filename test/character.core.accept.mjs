@@ -29,6 +29,8 @@ const relationshipMod = await import(pathToFileURL(bundleEntry('electron/main/ch
 const cardsMod = await import(pathToFileURL(bundleEntry('electron/main/character/contentCards.ts', 'character-cards.mjs')).href)
 const lifeMod = await import(pathToFileURL(bundleEntry('electron/main/character/life.ts', 'character-life.mjs')).href)
 const proactiveMod = await import(pathToFileURL(bundleEntry('electron/main/character/proactive.ts', 'character-proactive.mjs')).href)
+const proactiveTargetMod = await import(pathToFileURL(bundleEntry('electron/main/character/proactiveTarget.ts', 'character-proactive-target.mjs')).href)
+const proactiveSenderMod = await import(pathToFileURL(bundleEntry('electron/main/character/proactiveSender.ts', 'character-proactive-sender.mjs')).href)
 const memoryMod = await import(pathToFileURL(bundleEntry('electron/main/character/memoryJob.ts', 'character-memory.mjs')).href)
 const voicePolicyMod = await import(pathToFileURL(bundleEntry('electron/main/character/voicePolicy.ts', 'character-voice-policy.mjs')).href)
 const qqVoiceMod = await import(pathToFileURL(bundleEntry('electron/main/character/qqVoice.ts', 'character-qq-voice.mjs')).href)
@@ -1177,7 +1179,7 @@ await recorder.check('C42', 'manager：主动性 tick 外发失败降级 + 日�
     loadLifeDeck: async () => lifeDeck,
     sendProactive: async (msg) => {
       sentTo.push(msg.channel)
-      return false // 模拟 QQ 不可用
+      return false // 模拟外部渠道不可用
     },
     onEvent: (event) => {
       if (event.type === 'bubble') bubbles.push(event.payload.text)
@@ -1198,7 +1200,7 @@ await recorder.check('C42', 'manager：主动性 tick 外发失败降级 + 日�
   const tick1 = await manager.runProactiveTick()
   assertEq(tick1.decision.send, true, '首次 tick 可发')
   assertEq(tick1.delivered, false, '外发失败')
-  assertEq(sentTo[0], 'qq', '按设置首选 QQ')
+  assertEq(sentTo[0], 'external', '默认按「外部渠道」外发')
   assertEq(bubbles.length >= 1, true, '应用内气泡兜底')
   assertEq((await manager.evaluateProactive()).decision.reason, 'daily-cap', '达到日上限')
 
@@ -3356,6 +3358,346 @@ await recorder.check('C91', '多渠道聊天绑定：占用预检/差量写/回�
   }
   assertEq(clearReadFailed, true, '读绑定失败 → clear 抛错')
   return '解析/预检/差量写/回滚/手工绑定保留/清理 ✓'
+})
+
+await recorder.check('C92', '主动消息目标选择：只发已绑定渠道、最近聊天优先、同渠道私聊优先', async () => {
+  const { pickProactiveTarget } = proactiveTargetMod
+  // 1) 未绑定渠道即使最新也不发（否则等于绕过「聊天渠道」设置）
+  const picked = pickProactiveTarget(
+    [
+      { channel: 'qqbot', target: 'qqbot:c2c:A', kind: 'direct', updatedAt: 500 },
+      { channel: 'feishu', target: 'feishu:oc_B', kind: 'direct', updatedAt: 100 }
+    ],
+    ['feishu']
+  )
+  assertEq(picked?.channel, 'feishu', '只考虑已绑定渠道')
+  assertEq(picked?.target, 'feishu:oc_B', '选中该渠道最近会话')
+
+  // 2) 渠道之间按最近活跃排序
+  const newest = pickProactiveTarget(
+    [
+      { channel: 'feishu', target: 'feishu:oc_B', kind: 'direct', updatedAt: 100 },
+      { channel: 'wecom', target: 'wecom:u_C', kind: 'group', updatedAt: 300 }
+    ],
+    ['feishu', 'wecom']
+  )
+  assertEq(newest?.channel, 'wecom', '最近聊天过的渠道优先（不按绑定顺序）')
+
+  // 3) 同一渠道内私聊优先于更新的群聊
+  const directFirst = pickProactiveTarget(
+    [
+      { channel: 'qqbot', target: 'qqbot:group:G', kind: 'group', updatedAt: 900 },
+      { channel: 'qqbot', target: 'qqbot:c2c:U', kind: 'direct', updatedAt: 100 }
+    ],
+    ['qqbot']
+  )
+  assertEq(directFirst?.target, 'qqbot:c2c:U', '同渠道私聊优先（群里有别人）')
+
+  // 3b) 公开频道（kind='channel'，Slack 等）不能冒充私聊：它比群聊更公开，排最后
+  const channelFirst = pickProactiveTarget(
+    [
+      { channel: 'slack', target: 'channel:general', kind: 'channel', updatedAt: 900 },
+      { channel: 'slack', target: 'user:U1', kind: 'direct', updatedAt: 100 }
+    ],
+    ['slack']
+  )
+  assertEq(channelFirst?.target, 'user:U1', '公开频道不抢私聊位置')
+  const onlyChannel = pickProactiveTarget(
+    [{ channel: 'slack', target: 'channel:general', kind: 'channel', updatedAt: 900 }],
+    ['slack']
+  )
+  assertEq(onlyChannel?.kind, 'channel', '只有公开频道时仍保留 kind，不伪装成 direct')
+
+  // 4) 无绑定 / 无会话 / 空目标 → null（调用方降级气泡，不猜目标）
+  assertEq(pickProactiveTarget([], ['qqbot']), null, '没有会话 → null')
+  assertEq(
+    pickProactiveTarget([{ channel: 'qqbot', target: 'qqbot:c2c:U', kind: 'direct', updatedAt: 1 }], []),
+    null,
+    '没有绑定渠道 → null'
+  )
+  assertEq(
+    pickProactiveTarget([{ channel: 'qqbot', target: '  ', kind: 'direct', updatedAt: 9 }], ['qqbot']),
+    null,
+    '空目标 → null'
+  )
+
+  // 5) 时间相同按渠道 id 排序，结果与输入顺序无关（防 tick 抖动）
+  const a = pickProactiveTarget(
+    [
+      { channel: 'wecom', target: 't1', kind: 'direct', updatedAt: 10 },
+      { channel: 'feishu', target: 't2', kind: 'direct', updatedAt: 10 }
+    ],
+    ['wecom', 'feishu']
+  )
+  const b = pickProactiveTarget(
+    [
+      { channel: 'feishu', target: 't2', kind: 'direct', updatedAt: 10 },
+      { channel: 'wecom', target: 't1', kind: 'direct', updatedAt: 10 }
+    ],
+    ['feishu', 'wecom']
+  )
+  assertEq(a?.channel, b?.channel, '相同时间 → 结果确定')
+  assertEq(a?.channel, 'feishu', '相同时间按渠道 id 取小')
+  return '绑定过滤/最近渠道/私聊优先/空值/确定性 ✓'
+})
+
+await recorder.check('C93', '主动消息外发：走已绑定渠道的最近会话，失败/无目标不硬发', async () => {
+  const { createProactiveSender } = proactiveSenderMod
+  const calls = []
+  const runner = {
+    run: async (args) => {
+      calls.push(args)
+      return { code: calls.length === 3 ? 1 : 0, stdout: '', stderr: '' }
+    }
+  }
+  let bindingReads = 0
+  const sender = createProactiveSender({
+    dataDir: 'D:/tmp/umi-claw-proactive',
+    nodePath: 'node',
+    runner,
+    readBoundChannels: async () => {
+      bindingReads += 1
+      return ['qqbot', 'feishu']
+    },
+    readConversations: async () => [
+      { channel: 'qqbot', target: 'qqbot:c2c:U', kind: 'direct', updatedAt: 200 },
+      { channel: 'feishu', target: 'feishu:oc_F', kind: 'direct', updatedAt: 100 }
+    ]
+  })
+
+  // 1) 成功：最近渠道 + 目标 + 正文，一个不落
+  assertEq(await sender.send('  想你了  '), true, '发送成功返回 true')
+  assertEq(calls[0].join(' '), 'message send --channel qqbot --target qqbot:c2c:U --message 想你了', '参数形状正确')
+  assertEq(bindingReads, 1, '首次读绑定')
+
+  // 2) 绑定每次现读：用户刚取消的渠道不能因为缓存继续被发到
+  assertEq(await sender.send('在吗'), true, '第二次发送成功')
+  assertEq(bindingReads, 2, '每次发送都重新读绑定')
+
+  // 3) CLI 失败 → false（manager 会降级气泡）
+  assertEq(await sender.send('第三次'), false, 'CLI 非 0 → false')
+
+  // 4) 用户没绑定任何渠道 → 不发送、不起 CLI
+  const noBindCalls = []
+  const noBind = createProactiveSender({
+    dataDir: 'D:/tmp/umi-claw-proactive',
+    nodePath: 'node',
+    runner: { run: async (args) => (noBindCalls.push(args), { code: 0, stdout: '', stderr: '' }) },
+    readBoundChannels: async () => [],
+    readConversations: async () => []
+  })
+  assertEq(await noBind.send('不该发出去'), false, '无绑定 → false')
+  assertEq(noBindCalls.length, 0, '无绑定不调用 message send')
+
+  // 5) 有绑定但没有任何会话（用户还没在大肥鱼之外说过话）→ 不硬发
+  const noConvCalls = []
+  const noConv = createProactiveSender({
+    dataDir: 'D:/tmp/umi-claw-proactive',
+    nodePath: 'node',
+    runner: { run: async (args) => (noConvCalls.push(args), { code: 0, stdout: '', stderr: '' }) },
+    readBoundChannels: async () => ['qqbot'],
+    readConversations: async () => []
+  })
+  assertEq(await noConv.send('不该发出去'), false, '无会话 → false')
+  assertEq(noConvCalls.length, 0, '无会话不调用 message send')
+
+  // 6) 读绑定失败 → 不发（不能擅自发到用户没勾选的渠道）
+  const readFail = createProactiveSender({
+    dataDir: 'D:/tmp/umi-claw-proactive',
+    nodePath: 'node',
+    runner: { run: async () => ({ code: 0, stdout: '', stderr: '' }) },
+    readBoundChannels: async () => {
+      throw new Error('CLI 挂了')
+    },
+    readConversations: async () => []
+  })
+  assertEq(await readFail.send('不该发出去'), false, '读绑定失败 → false')
+
+  // 7) 真实 readBoundChannels：与角色页同口径，blockedReason 的渠道不能发
+  const cliCalls = []
+  const cliSender = createProactiveSender({
+    dataDir: 'D:/tmp/umi-claw-proactive',
+    nodePath: 'node',
+    runner: {
+      run: async (args) => {
+        cliCalls.push(args)
+        if (args[0] === 'channels') {
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              chat: { qqbot: { label: 'QQ' }, wecom: { label: '企微' } }
+            }),
+            stderr: ''
+          }
+        }
+        if (args[0] === 'agents') {
+          return {
+            code: 0,
+            stdout: JSON.stringify([
+              { agentId: 'feiyu', match: { channel: 'qqbot' } },
+              { agentId: 'feiyu', match: { channel: 'wecom', accountId: '*' } },
+              { agentId: 'main', match: { channel: 'wecom', accountId: 'default' } }
+            ]),
+            stderr: ''
+          }
+        }
+        return { code: 0, stdout: '', stderr: '' }
+      }
+    },
+    readConversations: async () => [
+      { channel: 'wecom', target: 'wecom:u', kind: 'direct', updatedAt: 900 },
+      { channel: 'qqbot', target: 'qqbot:c2c:U', kind: 'direct', updatedAt: 100 }
+    ]
+  })
+  assertEq(await cliSender.send('发到合规渠道'), true, '可发送渠道存在时成功')
+  const sentCall = cliCalls.find((args) => args[0] === 'message')
+  assertEq(sentCall?.[3], 'qqbot', '被其它 agent 默认账号占用的渠道（blockedReason）被排除')
+
+  // 8) 多账号 / 线程会话：会话记录里的 account/thread 原样带回 CLI
+  const acctCalls = []
+  const acctSender = createProactiveSender({
+    dataDir: 'D:/tmp/umi-claw-proactive',
+    nodePath: 'node',
+    runner: {
+      run: async (args) => {
+        acctCalls.push(args)
+        return { code: 0, stdout: '', stderr: '' }
+      }
+    },
+    readBoundChannels: async () => ['qqbot'],
+    readConversations: async () => [
+      {
+        channel: 'qqbot',
+        target: 'qqbot:c2c:U',
+        kind: 'direct',
+        updatedAt: 1,
+        accountId: 'acct-1',
+        threadId: 'thread-9'
+      }
+    ]
+  })
+  assertEq(await acctSender.send('带账号发送'), true, '带账号/线程也能发')
+  assertEq(
+    acctCalls[0].join(' '),
+    'message send --channel qqbot --target qqbot:c2c:U --message 带账号发送 --account acct-1 --thread-id thread-9',
+    'account/thread 参数顺序稳定'
+  )
+  return '最近渠道/目标/正文、blockedReason 排除、account/thread、失败与空值不硬发 ✓'
+})
+
+await recorder.check('C94', 'channel 改名兼容：旧数据 qq → external，非法值不写入', async () => {
+  const legacy = mergeCharacterSettings(DEFAULT_CHARACTER_SETTINGS, { proactive: { channel: 'qq' } })
+  assertEq(legacy.proactive.channel, 'external', "旧值 'qq' 归一为 'external'")
+  const app = mergeCharacterSettings(DEFAULT_CHARACTER_SETTINGS, { proactive: { channel: 'app' } })
+  assertEq(app.proactive.channel, 'app', 'app 保留')
+  const bogus = mergeCharacterSettings(DEFAULT_CHARACTER_SETTINGS, { proactive: { channel: 'telegram' } })
+  assertEq(bogus.proactive.channel, DEFAULT_CHARACTER_SETTINGS.proactive.channel, '非法值保持默认')
+  assertEq(DEFAULT_CHARACTER_SETTINGS.proactive.channel, 'external', '默认走外部渠道')
+
+  // 真实读取路径（store.readSettings → merge）也要归一，否则升级后老用户仍是 'qq'
+  const legacyKv = memoryKv()
+  legacyKv.map.set(FISH_KEYS.settings, JSON.stringify({ proactive: { channel: 'qq' } }))
+  const legacyStore = new storeMod.CharacterStore({ kv: legacyKv, now: () => 1 })
+  const readBack = await legacyStore.readSettings()
+  assertEq(readBack.proactive.channel, 'external', '老库 fish:v2:settings 里的 qq 读取后归一')
+  return 'qq→external（merge + 真实读取）/app 保留/非法值忽略 ✓'
+})
+
+await recorder.check('C95', '真实会话库：路径/表/列只读读取 → 选最近渠道的私聊，账号/线程原样带回', async () => {
+  const { createProactiveSender } = proactiveSenderMod
+  const { DatabaseSync } = await import('node:sqlite')
+  const dataDir = join(tmpDir, 'character-proactive-real')
+  rmSync(dataDir, { recursive: true, force: true })
+  const agentDir = join(dataDir, 'config', '.openclaw', 'agents', 'feiyu', 'agent')
+  mkdirSync(agentDir, { recursive: true })
+  const dbPath = join(agentDir, 'openclaw-agent.sqlite')
+  const db = new DatabaseSync(dbPath)
+  db.exec(
+    'CREATE TABLE conversations (channel TEXT NOT NULL, account_id TEXT, delivery_target TEXT NOT NULL, kind TEXT NOT NULL, thread_id TEXT, updated_at INTEGER NOT NULL)'
+  )
+  const insert = db.prepare(
+    'INSERT INTO conversations (channel, account_id, delivery_target, kind, thread_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+  )
+  insert.run('slack', 'A-slack', 'channel:general', 'channel', null, 900)
+  insert.run('slack', 'A-slack', 'user:U1', 'direct', 'T1', 800)
+  insert.run('qqbot', null, 'qqbot:c2c:U', 'direct', null, 500)
+  // 60 条更新的其它渠道会话：按渠道查询后不应把绑定渠道挤掉
+  for (let i = 0; i < 60; i += 1) {
+    insert.run('other', null, `other:${i}`, 'direct', null, 10_000 + i)
+  }
+  db.close()
+
+  const calls = []
+  const sender = createProactiveSender({
+    dataDir,
+    nodePath: process.execPath,
+    runner: {
+      run: async (args) => {
+        calls.push(args)
+        return { code: 0, stdout: '', stderr: '' }
+      }
+    },
+    readBoundChannels: async () => ['slack', 'qqbot']
+  })
+  assertEq(await sender.send('真实库测试'), true, '默认读取器能从真实 agent 库取到会话')
+  const call = calls[0].join(' ')
+  assertEq(
+    call,
+    'message send --channel slack --target user:U1 --message 真实库测试 --account A-slack --thread-id T1',
+    '选最近渠道的私聊（公开频道让位），并带账号/线程'
+  )
+  assertEq(call.includes('channel:general'), false, '公开频道即使在同渠道更新也不抢私聊')
+  return '真实 SQLite 路径/表/列/只读/每渠道查询 ✓'
+})
+
+await recorder.check('C96', '外发成功不发应用内气泡（避免双通知）；失败仍降级', async () => {
+  const kv = memoryKv()
+  let now = new Date(2026, 10, 1, 12, 0, 0).getTime()
+  const bubbles = []
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    loadLifeDeck: async () => lifeDeck,
+    sendProactive: async () => true,
+    onEvent: (event) => {
+      if (event.type === 'bubble') bubbles.push(event.payload.text)
+    }
+  })
+  await manager.init()
+  await manager.updateSettings({
+    enabled: true,
+    safety: { ageConfirmed: true },
+    proactive: { enabled: true, silenceDays: 0, dailyCap: 1, quietFrom: '00:00', quietTo: '00:00' }
+  })
+  const kvState = JSON.parse(kv.map.get(FISH_KEYS.state))
+  kvState.bornAt = now - 10 * 86_400_000
+  kv.map.set(FISH_KEYS.state, JSON.stringify(kvState))
+
+  const tick = await manager.runProactiveTick()
+  assertEq(tick.decision.send, true, '可发')
+  assertEq(tick.delivered, true, '外发成功')
+  assertEq(bubbles.length, 0, '外发成功不得再发气泡')
+  assertEq((await storeDayRecord(kv)).activeSent, 1, '成功同样记账，不重复计数')
+  return '成功不气泡/失败降级/记账 ✓'
+})
+
+await recorder.check('C97', '生产接线：wiring 默认注入 proactiveSender（防再次「从未接线」）', async () => {
+  const wiringSrc = readFileSync(join(repoRoot, 'electron', 'main', 'character', 'wiring.ts'), 'utf-8')
+  assert(
+    wiringSrc.indexOf('createProactiveSender(') > -1 &&
+      wiringSrc.indexOf('createProactiveSender(') < wiringSrc.indexOf('new CharacterManager('),
+    'sender 必须在 manager 之前创建（闭包要用）'
+  )
+  assert(/deps\.sendProactive\s*\?\?/.test(wiringSrc), '生产缺省必须回落到默认 sender')
+  assert(
+    /proactiveSender\.send\(message\.text\)/.test(wiringSrc),
+    'external 分支必须调用 sender.send；不接线就会退化成只发气泡'
+  )
+  assert(
+    /if\s*\(message\.channel\s*===\s*'app'\)\s*return false/.test(wiringSrc),
+    "'app' 分支不得外发"
+  )
+  return 'wiring 默认注入 + app 分支锁定 ✓'
 })
 
 const characterResult = recorder.toJSON()

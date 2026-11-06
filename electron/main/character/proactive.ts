@@ -44,7 +44,8 @@ export interface ProactiveContext {
 export interface ProactiveDecision {
   send: boolean
   reason: ProactiveReason
-  channel: 'qq' | 'app'
+  /** external = 外部渠道（发送时再选最近互动的已绑定渠道）；app = 应用内气泡 */
+  channel: 'external' | 'app'
 }
 
 /** 免打扰时间段（支持跨午夜，如 23:30 → 08:00） */
@@ -68,7 +69,7 @@ function parseHhMm(value: string): number | null {
 
 export function decideProactive(ctx: ProactiveContext): ProactiveDecision {
   const { settings, state, day, now } = ctx
-  const channel: 'qq' | 'app' = settings.proactive.channel === 'app' ? 'app' : 'qq'
+  const channel: 'external' | 'app' = settings.proactive.channel === 'app' ? 'app' : 'external'
   const deny = (reason: ProactiveReason): ProactiveDecision => ({ send: false, reason, channel })
 
   if (!settings.enabled) return deny('disabled')

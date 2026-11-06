@@ -28,10 +28,11 @@
         <div class="row">
           <label class="lab">渠道</label>
           <select v-model="draft.proactive.channel">
-            <option value="qq">QQ</option>
+            <option value="external">外部渠道（优先最近聊天）</option>
             <option value="app">应用内</option>
           </select>
         </div>
+        <p class="hint">外部渠道 = 角色页「聊天渠道」里勾选并保存的渠道；优先发到最近跟她聊过的那个。没绑定或发送失败时只在本页提示。</p>
         <div class="row wrap">
           <span class="lab">消息类型</span>
           <label v-for="item in CONTENT_TYPES" :key="item.value" class="check-row inline disabled">
@@ -39,7 +40,7 @@
             <span>{{ item.label }}</span>
           </label>
         </div>
-        <p class="hint">消息类型暂时固定（待主动消息接线后开放）。</p>
+        <p class="hint">消息类型暂时固定：每次从「她的一天」里挑一条。</p>
       </div>
 
       <div class="group">
@@ -154,7 +155,7 @@ interface DraftSettings {
     quietFrom: string
     quietTo: string
     contentTypes: string[]
-    channel: 'qq' | 'app'
+    channel: 'external' | 'app'
   }
   voice: { enabled: boolean; requestAllowed: boolean; dailyCap: number; sttEnabled: boolean }
   memory: { autoEnabled: boolean; confirmImportant: boolean }
@@ -178,7 +179,7 @@ function emptyDraft(): DraftSettings {
       quietFrom: '23:30',
       quietTo: '08:00',
       contentTypes: CONTENT_TYPES.map((x) => x.value),
-      channel: 'qq'
+      channel: 'external'
     },
     voice: { enabled: true, requestAllowed: true, dailyCap: 10, sttEnabled: true },
     memory: { autoEnabled: true, confirmImportant: true },

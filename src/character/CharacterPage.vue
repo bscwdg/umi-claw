@@ -668,7 +668,9 @@ let offEvent: (() => void) | null = null
 let offStream: (() => void) | null = null
 
 onMounted(async () => {
-  offEvent = window.api.character.onEvent(() => {
+  offEvent = window.api.character.onEvent((event) => {
+    // 主动消息外发失败时会降级成 bubble；桌宠窗口下线期间，这层提示是用户唯一能看到它的地方
+    if (event.type === 'bubble') showToast(event.payload.text)
     void refresh()
   })
   offStream = window.api.character.chat.onStream(onStreamEvent)
@@ -860,7 +862,7 @@ async function runMemory(): Promise<void> {
     await refresh()
     if (result.errors?.length) error.value = result.errors.join('；')
     else if (!result.ran) error.value = `这次没写：${MEMORY_REASON_TEXT[result.reason] ?? result.reason}`
-    else showToast('日记写好了')
+    // 成功提示由 manager 的 bubble 事件统一弹出（「日记写好了（日期）」），这里不再重复 toast
   })
 }
 

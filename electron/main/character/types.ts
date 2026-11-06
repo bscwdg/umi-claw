@@ -130,7 +130,8 @@ export interface CharacterSettings {
     quietFrom: string
     quietTo: string
     contentTypes: string[]
-    channel: 'qq' | 'app'
+    /** external = 发到「聊天渠道」里已绑定的渠道（自动选最近互动的那个）；app = 只发应用内 */
+    channel: 'external' | 'app'
     silentUntil: number
   }
   voice: {
@@ -267,7 +268,7 @@ export const DEFAULT_CHARACTER_SETTINGS: CharacterSettings = {
     quietFrom: '23:30',
     quietTo: '08:00',
     contentTypes: ['morning', 'thinkingOfYou', 'herDay', 'anniversary'],
-    channel: 'qq',
+    channel: 'external',
     silentUntil: 0
   },
   voice: { enabled: true, requestAllowed: true, dailyCap: 10, sttEnabled: true },
@@ -312,7 +313,9 @@ export function mergeCharacterSettings(
     if (Array.isArray(proactive.contentTypes)) {
       p.contentTypes = proactive.contentTypes.filter((x): x is string => typeof x === 'string').slice(0, 20)
     }
-    if (proactive.channel === 'qq' || proactive.channel === 'app') p.channel = proactive.channel
+    if (proactive.channel === 'external' || proactive.channel === 'app') p.channel = proactive.channel
+    // 4.4 改名兼容：旧数据存 'qq'（当时只支持 QQ），语义就是「外部渠道」
+    else if (proactive.channel === 'qq') p.channel = 'external'
     if (typeof proactive.silentUntil === 'number') {
       // 上界 14 天：防止一个超大值把主动性永久锁死
       const max = Date.now() + 14 * 86_400_000

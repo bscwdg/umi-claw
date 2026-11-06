@@ -10,6 +10,7 @@ import { CharacterManager } from './manager'
 import { registerCharacterIpc, type CharacterIpcDisposer } from './ipc'
 import { CharacterStore } from './store'
 import { applyAgentPatch, createOpenClawCliRunner, removeAgentEntry } from './agentPatchRunner'
+import { createProactiveSender } from './proactiveSender'
 import { CHARACTER_AGENT_ID, CHARACTER_AGENT_MODEL, readAgentEntry } from './agentConfig'
 import { loadPersonaTemplates, runBootstrap } from './bootstrap'
 import { parseLifeDeck } from './contentCards'
@@ -80,8 +81,8 @@ export interface CharacterWiringDeps {
   petWindow?: CharacterPetWindowConfig
   /** 桌宠菜单里的「聊两句 / 设置」回调（由 index.ts 聚焦主窗） */
   onPetAction?: (action: PetMenuAction) => void
-  /** 主动消息外发（C08 注入 QQ；缺省只发应用内气泡） */
-  sendProactive?: (message: { text: string; channel: 'qq' | 'app' }) => Promise<boolean>
+  /** 主动消息外发（缺省走 proactiveSender：发到最近聊天的已绑定渠道；不做则只发应用内气泡） */
+  sendProactive?: (message: { text: string; channel: 'external' | 'app' }) => Promise<boolean>
   /** 日记生成（index.ts 用 gateway 非流式 chat + openclaw/feiyu） */
   generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
   /** 预检索（性能）：像在问过去/笔记时由宿主直接查 Obsidian，命中片段注入本轮上下文 */
@@ -201,7 +202,15 @@ async function registerCharacterInternal(
         /* 桌宠窗口可能还没创建 */
       }
     }
-    // 删除全量时再摘 agent 条目（runner 在下方创建，先留可调用位）
+    // 官方 CLI 子进程（渠道绑定 / 引导 / 主动外发共用；先于 manager 创建，供外发闭包使用）
+    const runner = createOpenClawCliRunner(deps.cli)
+    const proactiveSender = createProactiveSender({
+      dataDir: deps.dataDir,
+      nodePath: deps.cli.nodePath,
+      runner,
+      logger
+    })
+    // 删除全量时再摘 agent 条目（bootstrap 接线在下方，先留可调用位）
     let removeAgentEntryFn: (() => Promise<unknown>) | null = null
     const manager = new CharacterManager({
       store,
@@ -237,7 +246,14 @@ async function registerCharacterInternal(
       writeLifeDoc: async (text) => {
         writeFileSync(join(workspaceDir, 'fish', 'LIFE.md'), text, 'utf8')
       },
-      sendProactive: deps.sendProactive,
+      // 外发：发到「聊天渠道」里绑定的渠道，选最近聊天的那个；失败由 manager 降级气泡。
+      // deps.sendProactive 仍可注入（测试/宿主自定义），生产走下面的默认实现。
+      sendProactive:
+        deps.sendProactive ??
+        (async (message) => {
+          if (message.channel === 'app') return false
+          return proactiveSender.send(message.text)
+        }),
       generateDiary: deps.generateDiary,
       readWorkspaceMemory: async (date) => {
         try {
@@ -551,7 +567,6 @@ async function registerCharacterInternal(
     }
 
     const tmpDir = join(deps.dataDir, 'cache')
-    const runner = createOpenClawCliRunner(deps.cli)
 
     ipcDisposer = registerCharacterIpc(manager, {
       pet,

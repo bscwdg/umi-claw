@@ -1373,6 +1373,29 @@ await r.check('U24', '角色页保存聊天渠道：IPC 前解包响应式数组
   return '保存前解包成普通数组 ✓'
 })
 
+await r.check('U25', '主动消息接线可见：设置页选「外部渠道」、角色页收到 bubble 会提示', async () => {
+  const settingsSrc = readFileSync(join(repoRoot, 'src', 'character', 'CharacterSettings.vue'), 'utf-8')
+  const pageSrc = readFileSync(join(repoRoot, 'src', 'character', 'CharacterPage.vue'), 'utf-8')
+
+  assert(
+    /<option\s+value="external">/.test(settingsSrc),
+    '设置页「渠道」必须有 external 选项（外部渠道）'
+  )
+  assert(
+    !/<option\s+value="qq">/.test(settingsSrc),
+    "设置页不得再有 value=\"qq\"（4.4 起为 external，旧值只在主进程归一）"
+  )
+  assert(
+    /channel:\s*'external'/.test(settingsSrc),
+    "草稿默认渠道必须是 'external'"
+  )
+  assert(
+    /event\.type\s*===\s*'bubble'[\s\S]{0,80}showToast\(/.test(pageSrc),
+    '角色页 onEvent 收到 bubble 必须 showToast（桌宠下线时用户唯一能看到主动消息的地方）'
+  )
+  return 'external 选项 + bubble 提示 ✓'
+})
+
 const result = r.toJSON({})
 
 const ok = printResult(result)

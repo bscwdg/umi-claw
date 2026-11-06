@@ -13,7 +13,7 @@
 cd D:\work2026\umi-claw
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 34 套验收（accept×32 + e2e + smoke，641 条断言；hot 见 §10 注）
+npm run accept         # 34 套验收（accept×32 + e2e + smoke，648 条断言；hot 见 §10 注）
 npm run build          # 构建（含 plugin:gen）
 ```
 
@@ -85,7 +85,7 @@ doc/                 # 计划、施工日志、运维手册、调研
 | 缩进 | **2 空格**；续行用 4 空格对齐 | 全仓无 tab |
 | 换行 | **LF**（`.gitattributes` 已强制 `text=auto eol=lf`，`*.bat`/`*.cmd` 除外） | 抽查 3 个文件 CRLF=0 |
 | 编码 | **UTF-8 无 BOM** | 抽查 3 个文件 BOM=False |
-| 文件头 | 首行 `// <相对路径> —— <一句话职责>`，随后用空注释行写**为什么** | `electron/main` 99/126 个 `.ts` 有头 |
+| 文件头 | 首行 `// <相对路径> —— <一句话职责>`，随后用空注释行写**为什么** | `electron/main` 101/128 个 `.ts` 有头 |
 | 注释语言 | **中文**，写「为什么」和「踩过的坑」，不写「这行在赋值」 | 全仓一致 |
 | 类型 | `strict`（由 `@electron-toolkit/tsconfig` 提供）；公共导出显式类型 | 双 typecheck 0 错 |
 
@@ -334,7 +334,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 34 套（accept×32 + e2e + smoke，641 条断言）
+# ② 全量验收 34 套（accept×32 + e2e + smoke，648 条断言）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）
