@@ -1,6 +1,6 @@
-// electron/main/fish/voice/external/localSecretStore.ts —— 外部实例独立密钥存储
+// electron/main/fish/voice/external/localSecretStore.ts —— 本地实例独立密钥存储
 //
-// 外部实例可能连着用户自己的服务，Key 与火山云 Key 必须物理隔离。
+// 本地实例可能连着用户自己的服务，Key 与火山云 Key 必须物理隔离。
 // 这里复用 safeStorage 加密，但单独落 secrets.bin，绝不写进实例 JSON。
 
 import { promises as fs } from 'fs'
@@ -60,7 +60,7 @@ export class ExternalVoiceSecretStore {
     if (!this.available) {
       throw new VoiceError(
         VOICE_ERROR_CODES.ENCRYPTION_UNAVAILABLE,
-        '系统安全存储不可用，外部 TTS Key 无法持久化'
+        '系统安全存储不可用，本地 TTS Key 无法持久化'
       )
     }
     await fs.mkdir(dirname(this.filePath), { recursive: true })
@@ -92,7 +92,7 @@ export class ExternalVoiceSecretStore {
   async set(id: unknown, value: unknown): Promise<{ hasKey: true; tail: string }> {
     return this.enqueue(async () => {
       if (!isExternalServiceId(id)) {
-        throw new VoiceError(VOICE_ERROR_CODES.INVALID_INPUT, '外部 TTS 实例 ID 不合法')
+        throw new VoiceError(VOICE_ERROR_CODES.INVALID_INPUT, '本地 TTS 实例 ID 不合法')
       }
       if (typeof value !== 'string') {
         throw new VoiceError(VOICE_ERROR_CODES.INVALID_INPUT, 'API Key 必须是字符串')

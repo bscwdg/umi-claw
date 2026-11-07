@@ -94,18 +94,18 @@ async function responseDetail(response: Response): Promise<string> {
 
 function mapHttpError(status: number, detail: string): VoiceError {
   if (status === 401 || status === 403) {
-    return new VoiceError(VOICE_ERROR_CODES.AUTH_ERROR, `外部 TTS 鉴权失败：HTTP ${status}`, {
+    return new VoiceError(VOICE_ERROR_CODES.AUTH_ERROR, `本地 TTS 鉴权失败：HTTP ${status}`, {
       status,
       detail
     })
   }
   if (status === 429) {
-    return new VoiceError(VOICE_ERROR_CODES.RATE_LIMITED, '外部 TTS 请求过于频繁', {
+    return new VoiceError(VOICE_ERROR_CODES.RATE_LIMITED, '本地 TTS 请求过于频繁', {
       status,
       detail
     })
   }
-  return new VoiceError(VOICE_ERROR_CODES.PROVIDER_ERROR, `外部 TTS 返回 HTTP ${status}`, {
+  return new VoiceError(VOICE_ERROR_CODES.PROVIDER_ERROR, `本地 TTS 返回 HTTP ${status}`, {
     status,
     detail
   })
@@ -117,20 +117,20 @@ function mapFetchError(
   signal: AbortSignal | undefined
 ): VoiceError {
   if (timedOut()) {
-    return new VoiceError(VOICE_ERROR_CODES.TIMEOUT, '外部 TTS 请求超时')
+    return new VoiceError(VOICE_ERROR_CODES.TIMEOUT, '本地 TTS 请求超时')
   }
   if (signal?.aborted) {
-    return new VoiceError(VOICE_ERROR_CODES.CANCELLED, '外部 TTS 请求已取消')
+    return new VoiceError(VOICE_ERROR_CODES.CANCELLED, '本地 TTS 请求已取消')
   }
   if (error instanceof TypeError) {
     return new VoiceError(
       VOICE_ERROR_CODES.EXTERNAL_UNREACHABLE,
-      '无法连接外部 TTS 服务，请检查地址、网络和服务状态'
+      '无法连接本地 TTS 服务，请检查地址、网络和服务状态'
     )
   }
   return new VoiceError(
     VOICE_ERROR_CODES.PROVIDER_ERROR,
-    error instanceof Error ? error.message : '外部 TTS 请求失败'
+    error instanceof Error ? error.message : '本地 TTS 请求失败'
   )
 }
 
@@ -151,14 +151,14 @@ function parseAudioResponse(response: Response, expected?: 'mp3' | 'wav'): {
   } else {
     throw new VoiceError(
       VOICE_ERROR_CODES.EXTERNAL_BAD_RESPONSE,
-      `外部 TTS 返回的不是受支持的音频（Content-Type=${contentType || '缺失'}）`,
+      `本地 TTS 返回的不是受支持的音频（Content-Type=${contentType || '缺失'}）`,
       { contentType }
     )
   }
   if (expected && parsed.extension !== expected) {
     throw new VoiceError(
       VOICE_ERROR_CODES.EXTERNAL_BAD_RESPONSE,
-      `外部 TTS 请求 ${expected} 但返回 ${parsed.extension}`,
+      `本地 TTS 请求 ${expected} 但返回 ${parsed.extension}`,
       { expected, actual: parsed.extension, contentType }
     )
   }
@@ -302,13 +302,13 @@ export class OpenAISpeechProvider {
       if (audio.length === 0) {
         throw new VoiceError(
           VOICE_ERROR_CODES.EXTERNAL_BAD_RESPONSE,
-          '外部 TTS 返回了空音频'
+          '本地 TTS 返回了空音频'
         )
       }
       if (!isPlausibleAudio(audio, parsed.extension)) {
         throw new VoiceError(
           VOICE_ERROR_CODES.EXTERNAL_BAD_RESPONSE,
-          `外部 TTS 返回的 ${parsed.extension} 内容不是可识别音频`
+          `本地 TTS 返回的 ${parsed.extension} 内容不是可识别音频`
         )
       }
       return { audio, mime: parsed.mime, extension: parsed.extension }

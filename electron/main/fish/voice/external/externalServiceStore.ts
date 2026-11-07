@@ -1,4 +1,4 @@
-// electron/main/fish/voice/external/externalServiceStore.ts —— 外部 TTS 实例 JSON 存储
+// electron/main/fish/voice/external/externalServiceStore.ts —— 本地 TTS 实例 JSON 存储
 //
 // 实例文件只保存连接参数，不保存 Key。坏文件按历史 jsonStore 的做法备份后重建，
 // 避免一个损坏实例让整张语音页打不开。
@@ -47,8 +47,8 @@ export function isExternalServiceId(value: unknown): value is string {
 
 function validateService(value: unknown): ExternalTtsService {
   const src = value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
-  if (!isExternalServiceId(src.id)) throw invalid('外部 TTS 实例 ID 不合法')
-  if (src.kind !== 'openai-speech') throw invalid('外部 TTS 协议不合法')
+  if (!isExternalServiceId(src.id)) throw invalid('本地 TTS 实例 ID 不合法')
+  if (src.kind !== 'openai-speech') throw invalid('本地 TTS 协议不合法')
   return {
     id: src.id,
     kind: 'openai-speech',
@@ -142,10 +142,10 @@ export class ExternalServiceStore {
     return this.enqueue(async () => {
       const services = [...(await this.read())]
       const id = input.id === undefined ? `ext:${randomUUID()}` : input.id
-      if (!isExternalServiceId(id)) throw invalid('外部 TTS 实例 ID 不合法')
+      if (!isExternalServiceId(id)) throw invalid('本地 TTS 实例 ID 不合法')
       const index = services.findIndex((item) => item.id === id)
       const current = index >= 0 ? services[index] : null
-      if (input.id !== undefined && !current) throw invalid('外部 TTS 实例不存在')
+      if (input.id !== undefined && !current) throw invalid('本地 TTS 实例不存在')
       const timestamp = this.now()
       const next: ExternalTtsService = {
         id,

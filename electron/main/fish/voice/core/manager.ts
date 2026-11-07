@@ -70,7 +70,7 @@ export interface VoiceManagerOptions {
   bridgeScriptPath?: string
   /** bridge 模式的热更设置文件（音色/资源 ID 写这里，bridge 每次合成时读）。 */
   bridgeSettingsPath?: string
-  /** 外部 TTS 实例与独立密钥；缺省时仅保留火山云能力。 */
+  /** 本地 TTS 实例与独立密钥；缺省时仅保留火山云能力。 */
   externalServices?: ExternalServiceStore
   externalSecrets?: ExternalVoiceSecretStore
   externalAvailability?: ExternalAvailabilityTracker
@@ -189,11 +189,11 @@ export class VoiceManager {
 
   private async requireExternalService(id: string): Promise<ExternalTtsService> {
     if (!this.externalServices) {
-      throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用外部 TTS')
+      throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用本地 TTS')
     }
     const service = await this.externalServices.get(id)
     if (!service) {
-      throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '外部 TTS 实例不存在')
+      throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '本地 TTS 实例不存在')
     }
     return service
   }
@@ -210,17 +210,17 @@ export class VoiceManager {
 
   async saveExternalService(input: ExternalTtsServiceInput): Promise<ExternalTtsServiceView> {
     if (!this.externalServices) {
-      throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用外部 TTS')
+      throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用本地 TTS')
     }
     const previous = input?.id ? await this.externalServices.get(input.id) : null
     const newKey = typeof input?.apiKey === 'string' && input.apiKey.trim()
     if (newKey && !this.externalSecrets) {
-      throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用外部 TTS 密钥存储')
+      throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用本地 TTS 密钥存储')
     }
     if (newKey && !this.externalSecrets?.canPersist()) {
       throw new VoiceError(
         VOICE_ERROR_CODES.ENCRYPTION_UNAVAILABLE,
-        '系统安全存储不可用，外部 TTS Key 无法持久化'
+        '系统安全存储不可用，本地 TTS Key 无法持久化'
       )
     }
     const service = await this.externalServices.save(input ?? {})
@@ -249,7 +249,7 @@ export class VoiceManager {
       }
       if (rollbackError) {
         this.logger(
-          `[voice] 外部 TTS 实例回滚失败（可能需要重开页面核对）: ${
+          `[voice] 本地 TTS 实例回滚失败（可能需要重开页面核对）: ${
             rollbackError instanceof Error ? rollbackError.message : rollbackError
           }`
         )
@@ -261,11 +261,11 @@ export class VoiceManager {
 
   async removeExternalService(id: string): Promise<{ removed: true }> {
     if (!this.externalServices) {
-      throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用外部 TTS')
+      throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用本地 TTS')
     }
     const service = await this.externalServices.get(id)
     if (!service) {
-      throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '外部 TTS 实例不存在')
+      throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '本地 TTS 实例不存在')
     }
     // 先删 Key 再删实例：Key 删除失败时保留实例，避免用户看到“删除失败”但实例已消失。
     const oldKey = this.externalSecrets ? await this.externalSecrets.get(id) : null
@@ -280,7 +280,7 @@ export class VoiceManager {
       if (this.externalSecrets && oldKey) {
         await this.externalSecrets.set(id, oldKey).catch(() => undefined)
       }
-      throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '外部 TTS 实例不存在')
+      throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '本地 TTS 实例不存在')
     }
     this.externalAvailability.recordSuccess(id)
     const settings = await this.loadSettings()
@@ -304,7 +304,7 @@ export class VoiceManager {
   }
 
   async testExternalService(id: string): Promise<ExternalTtsTestResult> {
-    // 试听必须真实打一次外部服务；命中旧缓存无法判断当前服务是否可用。
+    // 试听必须真实打一次本地服务；命中旧缓存无法判断当前服务是否可用。
     this.externalAvailability.recordSuccess(id)
     const audio = await this.speakInternal(
       {
@@ -314,7 +314,7 @@ export class VoiceManager {
       false,
       true
     )
-    return { ok: true, message: '外部 TTS 合成正常', audio }
+    return { ok: true, message: '本地 TTS 合成正常', audio }
   }
 
   setCloneGate(
@@ -636,16 +636,16 @@ export class VoiceManager {
     if (settings.speakRoute === 'external' && !settings.externalProviderId) {
       throw new VoiceError(
         VOICE_ERROR_CODES.INVALID_INPUT,
-        '外部 TTS 路由必须先选择一个外部实例'
+        '本地 TTS 路由必须先选择一个本地实例'
       )
     }
     if (settings.externalProviderId) {
       if (!this.externalServices) {
-        throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用外部 TTS')
+        throw new VoiceError(VOICE_ERROR_CODES.UNSUPPORTED, '当前构建未启用本地 TTS')
       }
       const service = await this.externalServices.get(settings.externalProviderId)
       if (!service) {
-        throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '选中的外部 TTS 实例不存在')
+        throw new VoiceError(VOICE_ERROR_CODES.NOT_FOUND, '选中的本地 TTS 实例不存在')
       }
     }
   }
@@ -748,7 +748,7 @@ export class VoiceManager {
       input.options.providerId !== '' &&
       !isExternalServiceId(input.options.providerId)
     ) {
-      throw new VoiceError(VOICE_ERROR_CODES.INVALID_INPUT, '外部 TTS 实例 ID 不合法')
+      throw new VoiceError(VOICE_ERROR_CODES.INVALID_INPUT, '本地 TTS 实例 ID 不合法')
     }
     const speedRatio = clampSpeed(input?.options?.speedRatio, settings.speedRatio)
     const format =

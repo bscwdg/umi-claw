@@ -305,21 +305,21 @@
             <label class="form-label">应用内朗读路由</label>
             <select v-model="voiceForm.speakRoute" class="form-input">
               <option value="cloud">火山云</option>
-              <option value="external">外部 TTS</option>
-              <option value="auto">自动（外部不可用回落云端）</option>
+              <option value="external">本地 TTS</option>
+              <option value="auto">自动（本地不可用回落云端）</option>
             </select>
             <p class="field-hint">
               {{
                 voiceForm.speakRoute === 'cloud'
                   ? '应用内提醒、试听和角色短句都使用火山云。'
                   : voiceForm.speakRoute === 'external'
-                    ? '只使用选中的外部实例；失败直接报错，不偷偷回落。'
-                    : '优先使用外部实例；缺失或冷却时自动回落火山云。'
+                    ? '只使用选中的本地实例；失败直接报错，不偷偷回落。'
+                    : '优先使用本地实例；缺失或冷却时自动回落火山云。'
               }}
             </p>
           </div>
           <div class="form-group" v-if="voiceForm.speakRoute !== 'cloud'">
-            <label class="form-label">外部 TTS 实例</label>
+            <label class="form-label">本地 TTS 实例</label>
             <select v-model="voiceForm.externalProviderId" class="form-input">
               <option value="">未选择</option>
               <option v-for="item in externalServices" :key="item.id" :value="item.id">
@@ -330,7 +330,7 @@
               {{ selectedExternalService.baseUrl }} · {{ selectedExternalService.model }} ·
               音色 {{ selectedExternalService.voice }}
             </p>
-            <p class="field-hint" v-else>请先在下方「外部 TTS 服务」中添加并选择实例。</p>
+            <p class="field-hint" v-else>请先在下方「本地 TTS 服务」中添加并选择实例。</p>
           </div>
           <div class="form-group">
             <label class="form-label">复刻模型（仅克隆音色）</label>
@@ -358,7 +358,7 @@
       <article class="card">
         <div class="section-head">
           <div>
-            <h2>外部 TTS 服务</h2>
+            <h2>本地 TTS 服务</h2>
             <p>
               接入用户自己部署的 OpenAI Audio Speech 兼容服务。应用只保存连接信息，
               不安装、不启动、不更新远端或本机 TTS。
@@ -366,7 +366,7 @@
           </div>
           <div class="head-actions">
             <button class="btn btn-sm" :disabled="busy" @click="openExternalForm()">
-              添加外部服务
+              添加本地服务
             </button>
           </div>
         </div>
@@ -433,7 +433,7 @@
         </div>
 
         <div v-if="!externalServices.length" class="empty-clone">
-          暂无外部 TTS 实例。用户可填写本机、局域网或远端兼容服务地址接入。
+          暂无本地 TTS 实例。用户可填写本机、局域网或远端兼容服务地址接入。
         </div>
         <div v-else class="external-list">
           <div v-for="item in externalServices" :key="item.id" class="external-row">
@@ -1108,7 +1108,7 @@ async function saveExternalService(): Promise<void> {
     await refreshExternalServices()
     if (!voiceForm.externalProviderId) voiceForm.externalProviderId = saved.id
     closeExternalForm()
-    showNotice('外部 TTS 实例已保存')
+    showNotice('本地 TTS 实例已保存')
   } catch (e) {
     showError(e)
   } finally {
@@ -1147,7 +1147,7 @@ async function testExternalService(service: ExternalTtsServiceView): Promise<voi
 function deleteExternalService(service: ExternalTtsServiceView): void {
   askConfirm(
     {
-      title: '删除外部 TTS 实例',
+      title: '删除本地 TTS 实例',
       message: `删除「${service.label}」及其本地保存的 API Key？\n\n不会影响远端服务本身；已缓存音频保留到缓存清理。`,
       confirmText: '删除'
     },
@@ -1164,7 +1164,7 @@ async function doDeleteExternalService(service: ExternalTtsServiceView): Promise
       settings.value = await api.settings.get()
       voiceForm.externalProviderId = settings.value.externalProviderId
     }
-    showNotice('外部 TTS 实例已删除')
+    showNotice('本地 TTS 实例已删除')
   } catch (e) {
     showError(e)
   } finally {

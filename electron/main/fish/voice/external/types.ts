@@ -1,6 +1,6 @@
-// electron/main/fish/voice/external/types.ts —— 外部 TTS 实例与协议类型
+// electron/main/fish/voice/external/types.ts —— 本地 TTS 实例与协议类型
 //
-// 外部实例是用户自己部署或托管的兼容服务；本应用只保存连接信息和调用协议，
+// 本地实例是用户自己部署或托管的兼容服务；本应用只保存连接信息和调用协议，
 // 不安装、不启动、不守护对方进程。API Key 也不进这里的持久化结构。
 
 import type { VoiceSpeakResult } from '../core/types'

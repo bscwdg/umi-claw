@@ -300,7 +300,7 @@ const api = {
       } | { ok: false; error: { code: string; message: string; details?: unknown } }> =>
         ipcRenderer.invoke('marketing:knowledge:recognize', projectId, input),
       // 停止识别；幂等（任务已结束时返回 aborted:false，不报错）。
-      // 两路定位（05b 外部复审）：有 taskId 按 taskId；栅格化窗口里还没有 taskId 时按 projectId
+      // 两路定位（05b 本地复审）：有 taskId 按 taskId；栅格化窗口里还没有 taskId 时按 projectId
       // 中止该商家在途任务（主进程 recognizer 的注册表覆盖整个生命周期）。
       abortRecognize: (taskId?: string | null, projectId?: string | null) =>
         ipcRenderer.invoke('marketing:knowledge:recognize:abort', taskId ?? null, projectId ?? null),
@@ -819,7 +819,7 @@ const api = {
           reasons: string[]
         }>('character:knowledge:status')
     },
-    // 4.3：外部渠道聊天绑定（渠道消息路由到 feiyu；写操作要求角色已启用）
+    // 4.3：本地渠道聊天绑定（渠道消息路由到 feiyu；写操作要求角色已启用）
     chatChannels: {
       list: () =>
         call<

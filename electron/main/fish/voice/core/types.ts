@@ -54,9 +54,9 @@ export interface VoiceSettings {
   format: 'mp3'
   sampleRate: 24000
   autoSpeak: VoiceAutoSpeak
-  /** 应用内朗读路由：现有火山云 / 用户外部实例 / 自动回落。 */
+  /** 应用内朗读路由：现有火山云 / 用户本地实例 / 自动回落。 */
   speakRoute: VoiceSpeakRoute
-  /** speakRoute=external/auto 时选中的外部实例；为空表示没有配置。 */
+  /** speakRoute=external/auto 时选中的本地实例；为空表示没有配置。 */
   externalProviderId: string
   /**
    * 对话内语音（走 OpenClaw 的 tts 配置块与 /tts 命令族）。
@@ -97,7 +97,7 @@ export interface VoiceSpeakOptions {
   emotion?: string
   /** 单次覆盖朗读路由；设置页测试/预览和内部自检用。 */
   engine?: VoiceSpeakRoute
-  /** 单次覆盖外部实例 ID。 */
+  /** 单次覆盖本地实例 ID。 */
   providerId?: string
   /** 输出格式覆盖（角色语音条需要 pcm/16k）；缺省按单段 mp3、多段 pcm */
   format?: 'mp3' | 'pcm'

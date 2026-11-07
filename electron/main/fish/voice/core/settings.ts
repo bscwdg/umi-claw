@@ -127,7 +127,7 @@ function strictExternalProviderId(value: unknown): string {
   if (value === '' || value === undefined || value === null) return ''
   const id = typeof value === 'string' ? value.trim() : ''
   if (EXTERNAL_PROVIDER_ID_RE.test(id)) return id
-  throw new VoiceError(VOICE_ERROR_CODES.INVALID_INPUT, '外部 TTS 实例 ID 不合法')
+  throw new VoiceError(VOICE_ERROR_CODES.INVALID_INPUT, '本地 TTS 实例 ID 不合法')
 }
 
 /**

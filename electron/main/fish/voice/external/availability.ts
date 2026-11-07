@@ -1,4 +1,4 @@
-// electron/main/fish/voice/external/availability.ts —— 外部实例失败冷却（纯内存）
+// electron/main/fish/voice/external/availability.ts —— 本地实例失败冷却（纯内存）
 //
 // 只由真实 synth 结果驱动：probe 只用于设置页展示，不参与路由。
 // 进程重启后清空，宁可多试一次，也不持久化可能已恢复的“不可用”状态。

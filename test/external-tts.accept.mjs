@@ -1,7 +1,7 @@
-// test/external-tts.accept.mjs —— 外部 OpenAI Audio Speech 接入与云端回落
+// test/external-tts.accept.mjs —— 本地 OpenAI Audio Speech 接入与云端回落
 //
 // 纯 Node 验收，不连真实 TTS：
-//   - 外部实例 JSON 与独立加密 Key
+//   - 本地实例 JSON 与独立加密 Key
 //   - URL 归一化 / 请求体 / Bearer / 音频响应 / 错误码
 //   - external 路由、缓存、失败冷却、auto 回落火山云
 
@@ -188,10 +188,10 @@ const catalog = {
 
 const recorder = new Recorder('external-tts')
 
-await recorder.check('E1', '设置默认 cloud；外部实例 ID 白名单清洗', async () => {
+await recorder.check('E1', '设置默认 cloud；本地实例 ID 白名单清洗', async () => {
   const normalized = normalizeVoiceSettings({}, catalog)
   assertEq(normalized.speakRoute, 'cloud', '默认朗读路由')
-  assertEq(normalized.externalProviderId, '', '默认不选外部实例')
+  assertEq(normalized.externalProviderId, '', '默认不选本地实例')
   assertEq(DEFAULT_VOICE_SETTINGS.speakRoute, 'cloud', '默认值常量')
   const bad = normalizeVoiceSettings(
     { speakRoute: 'bogus', externalProviderId: 'not-an-id' },
@@ -446,7 +446,7 @@ await recorder.check('E4', 'Manager external 路由、缓存、失败冷却与 a
   const store = createExternalServiceStore(servicesPath)
   const externalSecrets = createExternalVoiceSecretStore(secretsPath, fakeEncryption())
   const service = await store.save({
-    label: '外部实例',
+    label: '本地实例',
     baseUrl: 'http://127.0.0.1:8091/v1',
     model: 'qwen3-tts',
     voice: 'Chelsie',
@@ -461,7 +461,7 @@ await recorder.check('E4', 'Manager external 路由、缓存、失败冷却与 a
     const u = String(url)
     if (u.endsWith('/audio/speech')) {
       externalCalls += 1
-      assertEq(init.headers.Authorization, 'Bearer external-key-12345678', '外部 Key')
+      assertEq(init.headers.Authorization, 'Bearer external-key-12345678', '本地 Key')
       if (failExternal) return new Response('boom', { status: 500 })
       return externalAudio()
     }
@@ -481,14 +481,14 @@ await recorder.check('E4', 'Manager external 路由、缓存、失败冷却与 a
     speakRoute: 'external',
     externalProviderId: service.id
   })
-  const first = await manager.speak({ text: '外部测试。' })
-  const second = await manager.speak({ text: '外部测试。' })
+  const first = await manager.speak({ text: '本地测试。' })
+  const second = await manager.speak({ text: '本地测试。' })
   assertEq(first.engine, 'external', 'external engine')
   assertEq(first.route, 'external', 'external route')
   assertEq(first.providerId, service.id, 'provider id')
-  assertEq(second.cached, true, '外部音频缓存命中')
-  assertEq(externalCalls, 1, '第二次不请求外部')
-  assertEq(cloudCalls, 0, '外部模式不请求云端')
+  assertEq(second.cached, true, '本地音频缓存命中')
+  assertEq(externalCalls, 1, '第二次不请求本地')
+  assertEq(cloudCalls, 0, '本地模式不请求云端')
 
   await manager.updateSettings({ speakRoute: 'auto' })
   failExternal = true
@@ -500,8 +500,8 @@ await recorder.check('E4', 'Manager external 路由、缓存、失败冷却与 a
   const fallback = await manager.speak({ text: '冷却后自动回落。' })
   assertEq(fallback.engine, 'cloud', 'auto 回落云端')
   assertEq(fallback.route, 'preset', '云端预设路由')
-  assertEq(fallback.fallback.reason, '外部 TTS 正在失败冷却', '回落原因可见')
-  assertEq(externalCalls, 3, '两次失败后第三次不再打外部')
+  assertEq(fallback.fallback.reason, '本地 TTS 正在失败冷却', '回落原因可见')
+  assertEq(externalCalls, 3, '两次失败后第三次不再打本地')
   assertEq(cloudCalls, 3, '两次失败各自回落，冷却期仍回落')
 
   await manager.updateSettings({ speakRoute: 'external' })
@@ -516,17 +516,17 @@ await recorder.check('E4', 'Manager external 路由、缓存、失败冷却与 a
     VOICE_ERROR_CODES.EXTERNAL_COOLDOWN,
     '显式 external 冷却期直接报错'
   )
-  assertEq(externalCalls, 3, '显式 external 冷却期不再打外部')
+  assertEq(externalCalls, 3, '显式 external 冷却期不再打本地')
   assertEq(cloudCalls, 3, '显式 external 不偷偷回落云端')
 
   failExternal = false
   const retry = await manager.testExternalService(service.id)
   assertEq(retry.audio.engine, 'external', '冷却后试听可真实恢复')
-  assertEq(externalCalls, 4, '冷却后试听绕过冷却并真实请求外部')
+  assertEq(externalCalls, 4, '冷却后试听绕过冷却并真实请求本地')
   return 'external / auto 路由、缓存与冷却正确'
 })
 
-await recorder.check('E5', '外部实例 CRUD 通过 Manager，删除时清理 Key', async () => {
+await recorder.check('E5', '本地实例 CRUD 通过 Manager，删除时清理 Key', async () => {
   const servicesPath = join(runDir, 'manager-crud-services.json')
   const secretsPath = join(runDir, 'manager-crud-secrets.bin')
   const store = createExternalServiceStore(servicesPath)
@@ -557,18 +557,18 @@ await recorder.check('E5', '外部实例 CRUD 通过 Manager，删除时清理 K
   return 'CRUD 与 Key 生命周期正确'
 })
 
-await recorder.check('E6', '语音页已接入外部实例管理、测试连接与试听入口', async () => {
+await recorder.check('E6', '语音页已接入本地实例管理、测试连接与试听入口', async () => {
   const vue = readFileSync(
     join(repoRoot, 'src/views/voice/VoicePage.vue'),
     'utf8'
   )
   assert(vue.includes('应用内朗读路由'), '路由控件')
-  assert(vue.includes('外部 TTS 服务'), '外部服务卡片')
+  assert(vue.includes('本地 TTS 服务'), '本地服务卡片')
   assert(vue.includes('api.external.save'), '保存调用')
   assert(vue.includes('api.external.probe'), '测试连接调用')
   assert(vue.includes('api.external.test'), '试听调用')
   assert(vue.includes('api.external.remove'), '删除调用')
-  return 'VoicePage 外部实例操作入口已装配'
+  return 'VoicePage 本地实例操作入口已装配'
 })
 
 await recorder.check('E7', '地址变更清 Key；非法参数；PCM 请求强制 WAV 且不串缓存', async () => {
@@ -649,7 +649,7 @@ await recorder.check('E7', '地址变更清 Key；非法参数；PCM 请求强�
     options: { format: 'pcm', sampleRate: 16000 }
   })
   assertEq(pcm.mime, 'audio/wav', 'PCM 请求得到 WAV')
-  assertEq(pcm.engine, 'external', 'PCM 仍走外部实例')
+  assertEq(pcm.engine, 'external', 'PCM 仍走本地实例')
   const speechCalls = requests.filter((r) => r.url.endsWith('/audio/speech'))
   assertEq(speechCalls.at(-1).body.response_format, 'wav', 'PCM 请求强制 response_format=wav')
   assertEq(speechCalls.length, 2, '不同输出格式不串缓存')
