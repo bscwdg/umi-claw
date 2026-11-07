@@ -877,7 +877,7 @@ await rec.check('eta-wiring', 'ETA 接线：状态里有估算值、store/Dashbo
 
 // ── QQ 机器人渠道（2026-11-01）────────────────────────────────────────────────
 await rec.check('qqbot-channel', 'QQ 机器人：渠道状态识别 + 应用侧接线（安装/扫码/配置）', async () => {
-  const { mkdtempSync, rmSync, mkdirSync } = await import('node:fs')
+  const { mkdtempSync, rmSync, mkdirSync, writeFileSync } = await import('node:fs')
   const os = await import('node:os')
   const sandbox = mkdtempSync(join(os.tmpdir(), 'umi-qqbot-'))
   const cmPath = bundleEntry('electron/main/channelManager.ts', 'claw-channel-manager.mjs')
@@ -938,6 +938,102 @@ await rec.check('qqbot-channel', 'QQ 机器人：渠道状态识别 + 应用侧�
   assert(!/delete existingConfig\.channels\.qqbot/.test(cfg), '表单为空时不能删除扫码写入的 qqbot 配置')
   assert(/channels login --channel qqbot/.test(page), '渠道页扫码按钮跳转终端执行 channels login --channel qqbot')
   assert(/QQ 机器人（官方插件）/.test(page), '渠道页有 QQ 卡片')
+
+  // 5.1) 扫码前置：只「装了」不够，还必须启用 openclaw.json 里的插件条目
+  //      （否则 OpenClaw 把 qqbot 当未安装 → 现场 npm 安装 → does not support login）
+  const cmSrc = readFileSync(join(process.cwd(), 'electron', 'main', 'channelManager.ts'), 'utf-8')
+  const chanIpc = readFileSync(
+    join(process.cwd(), 'electron', 'main', 'ipc', 'host', 'channels.ts'),
+    'utf-8'
+  )
+  const preloadSrc = readFileSync(join(process.cwd(), 'electron', 'preload', 'index.ts'), 'utf-8')
+  assert(/prepareQQBotLogin/.test(cmSrc), 'channelManager 暴露 prepareQQBotLogin')
+  assert(/ensureOpenClawPluginEnabled/.test(cmSrc), 'prepareQQBotLogin 必须补启用插件')
+  assert(/ensureOpenClawPluginEnabled/.test(cfg), 'configManager 提供 ensureOpenClawPluginEnabled')
+  assert(/channels:prepareQQBotLogin/.test(chanIpc), 'IPC 暴露 channels:prepareQQBotLogin')
+  assert(/prepareQQBotLogin/.test(preloadSrc), 'preload 暴露 prepareQQBotLogin')
+  assert(/prepareQQBotLogin/.test(page), '渠道页扫码按钮先调 prepareQQBotLogin')
+
+  // 5.2) 行为：已装（包实体存在）+ 启用成功 → success；启用动作必须命中 openclaw-qqbot
+  const qqPkgDir = join(
+    projectsDir,
+    'tencent-connect-openclaw-qqbot-a7ec020d86',
+    'node_modules',
+    '@tencent-connect',
+    'openclaw-qqbot'
+  )
+  mkdirSync(qqPkgDir, { recursive: true })
+  writeFileSync(
+    join(qqPkgDir, 'package.json'),
+    JSON.stringify({ name: '@tencent-connect/openclaw-qqbot', version: '2.0.4' }),
+    'utf-8'
+  )
+  const ensureCalls = []
+  const cm4 = new ChannelManager({
+    getDataDir: () => sandbox,
+    getNodePath: () => process.execPath,
+    getOpenClawChannels: () => ({}),
+    ensureOpenClawPluginEnabled: async (pluginId) => {
+      ensureCalls.push(pluginId)
+      return { ok: true, alreadyEnabled: false }
+    }
+  })
+  const prepared = await cm4.prepareQQBotLogin()
+  assertEq(prepared.success, true, '插件已装且启用成功 → success=true')
+  assertEq(prepared.enabled, true, '返回 enabled=true')
+  assertEq(ensureCalls[0], 'openclaw-qqbot', '必须启用 openclaw-qqbot 插件条目')
+
+  // 5.2b) 单飞：并发扫码只跑一次启用（安装会长时间占 npm/受管目录）
+  let ensureCount = 0
+  const cm7 = new ChannelManager({
+    getDataDir: () => sandbox,
+    getNodePath: () => process.execPath,
+    getOpenClawChannels: () => ({}),
+    ensureOpenClawPluginEnabled: async () => {
+      ensureCount += 1
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return { ok: true, alreadyEnabled: false }
+    }
+  })
+  const [p1, p2] = await Promise.all([cm7.prepareQQBotLogin(), cm7.prepareQQBotLogin()])
+  assertEq(ensureCount, 1, '并发 prepare 只执行一次')
+  assertEq(p1.success && p2.success, true, '两个调用方拿到同一结果')
+
+  // 5.3) 运行时缺失时安装必然失败：必须降级成可读结果而不是抛异常（前端要展示原因）
+  const cm5 = new ChannelManager({
+    getDataDir: () => join(sandbox, 'no-runtime'),
+    getNodePath: () => join(sandbox, 'no-runtime', 'node.exe'),
+    getOpenClawChannels: () => ({}),
+    ensureOpenClawPluginEnabled: async () => ({ ok: true, alreadyEnabled: false })
+  })
+  const failed = await cm5.prepareQQBotLogin()
+  assertEq(failed.success, false, '运行时缺失 → success=false 而非抛异常')
+  assert(String(failed.error || '').length > 0, '失败必须带 error 文案')
+  assertEq(failed.installed, false, '安装未完成时 installed=false')
+
+  // 5.4) 受管目录存在但插件包实体缺失（装坏/回滚残留）→ 必须重装，不能假成功
+  const brokenSandbox = mkdtempSync(join(os.tmpdir(), 'umi-qqbot-broken-'))
+  mkdirSync(
+    join(
+      brokenSandbox,
+      'config',
+      '.openclaw',
+      'npm',
+      'projects',
+      'tencent-connect-openclaw-qqbot-deadbeef'
+    ),
+    { recursive: true }
+  )
+  const cm6 = new ChannelManager({
+    getDataDir: () => brokenSandbox,
+    getNodePath: () => process.execPath,
+    getOpenClawChannels: () => ({}),
+    ensureOpenClawPluginEnabled: async () => ({ ok: true, alreadyEnabled: false })
+  })
+  const broken = await cm6.prepareQQBotLogin()
+  assertEq(broken.success, false, '只有目录没有插件包 → 不能报 success（否则终端仍加载不到）')
+  assertEq(broken.installed, false, '包实体缺失时 installed=false')
+  rmSync(brokenSandbox, { recursive: true, force: true })
 
   rmSync(sandbox, { recursive: true, force: true })
   return '状态识别/多账号/安装与配置接线 均正确'

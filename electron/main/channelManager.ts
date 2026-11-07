@@ -6,7 +6,18 @@ import type { ConfigManager } from './configManager'
 import { openClawPaths, buildOpenClawEnv } from './openClawPaths'
 import type { ChannelStatus } from '../../src/types/channels'
 
+/** QQ 扫码登录前置结果：失败不抛异常，由渲染端按 success/error 展示。 */
+export interface QQBotPrepareResult {
+  success: boolean
+  installed: boolean
+  enabled: boolean
+  error?: string
+}
+
 export class ChannelManager extends EventEmitter {
+  /** prepareQQBotLogin 单飞：安装会长时间占 npm 与受管目录，多入口不能并发跑。 */
+  private qqbotPrepareTask: Promise<QQBotPrepareResult> | null = null
+
   constructor(private configManager: ConfigManager) {
     super()
   }
@@ -32,6 +43,10 @@ export class ChannelManager extends EventEmitter {
     '@tencent-connect/openclaw-qqbot': 'qqbot',
     '@tencent-weixin/openclaw-weixin': 'weixin'
   }
+
+  /** QQ 机器人官方插件的包名与 openclaw.json 里的插件 id（扫码登录前置用）。 */
+  private static readonly QQBOT_PLUGIN_PACKAGE = '@tencent-connect/openclaw-qqbot'
+  private static readonly QQBOT_PLUGIN_ID = 'openclaw-qqbot'
 
   isPluginInstalled(pluginId: string): boolean {
     const projectsDir = path.join(openClawPaths.configDir(this.dataDir), 'npm', 'projects')
@@ -128,6 +143,93 @@ export class ChannelManager extends EventEmitter {
       }
     }
     throw lastError instanceof Error ? lastError : new Error(`install plugin ${pluginPkg} failed`)
+  }
+
+  /**
+   * QQ 扫码登录前置：确保官方插件已安装**且已在 openclaw.json 中启用**。
+   *
+   * 为什么不能只装不启用：OpenClaw 的 `channels login --channel qqbot` 只认已加载的
+   * 渠道插件。插件受管目录存在、但 `plugins.entries['openclaw-qqbot'].enabled=false` 时，
+   * OpenClaw 会把 qqbot 当成未安装 → 现场从 npm 重装（用户级 npm-cache 只读时必失败）
+   * → 最后报「Channel "qqbot" does not support login」。本应用此前只在表单里填了
+   * AppID/Secret 后才启用该插件，而扫码登录正是拿到凭据的手段，形成死锁。
+   *
+   * 失败不抛异常：返回 {success:false,error} 交给渲染端；渲染端失败时留在渠道页显示
+   * 原因、不跳终端（否则终端只会再跑一遍必然失败的 channels login）。
+   */
+  async prepareQQBotLogin(): Promise<QQBotPrepareResult> {
+    // 单飞：多窗口/连点同时触发时只跑一次受管安装（会长时间占 npm 与受管目录）。
+    if (this.qqbotPrepareTask) return this.qqbotPrepareTask
+    const task = this._prepareQQBotLogin().finally(() => {
+      if (this.qqbotPrepareTask === task) this.qqbotPrepareTask = null
+    })
+    this.qqbotPrepareTask = task
+    return task
+  }
+
+  private async _prepareQQBotLogin(): Promise<QQBotPrepareResult> {
+    let installed = this.isPluginPackagePresent('qqbot')
+    if (!installed) {
+      try {
+        this.emit('log', '[channels] QQ 机器人插件未安装或受管目录不完整，开始受管安装…', 'system')
+        await this.installPlugin(ChannelManager.QQBOT_PLUGIN_PACKAGE)
+      } catch (err) {
+        return {
+          success: false,
+          installed: false,
+          enabled: false,
+          error: (err as Error)?.message ?? String(err)
+        }
+      }
+      installed = this.isPluginPackagePresent('qqbot')
+    }
+    if (!installed) {
+      return {
+        success: false,
+        installed: false,
+        enabled: false,
+        error: '插件安装命令已执行，但受管目录里仍找不到插件包'
+      }
+    }
+
+    const enable = await this.configManager.ensureOpenClawPluginEnabled(ChannelManager.QQBOT_PLUGIN_ID)
+    if (!enable.ok) {
+      return {
+        success: false,
+        installed: true,
+        enabled: false,
+        error: enable.error || '启用 openclaw-qqbot 插件失败'
+      }
+    }
+    this.emit('log', '[channels] QQ 机器人插件已就绪，可以扫码登录', 'system')
+    return { success: true, installed: true, enabled: true }
+  }
+
+  /**
+   * 插件包实体是否存在（比只看受管项目目录名严格）。
+   *
+   * 受管安装回滚 / 手动组装中断会留下空项目目录；只看目录名会误判为「已安装」，
+   * 于是跳过安装、写 enabled=true，但 `channels login` 仍加载不到插件，症状不变。
+   * 至少要求 package.json 可解析且 name 与目标包一致（挡掉空文件/半拷贝的残缺包）。
+   */
+  private isPluginPackagePresent(pluginId: string): boolean {
+    const packageName = Object.keys(ChannelManager.PLUGIN_ID_BY_PACKAGE).find(
+      (pkg) => ChannelManager.PLUGIN_ID_BY_PACKAGE[pkg] === pluginId
+    )
+    if (!packageName) return false
+    const projectsDir = path.join(openClawPaths.configDir(this.dataDir), 'npm', 'projects')
+    if (!fs.existsSync(projectsDir)) return false
+    const prefix = ChannelManager.PLUGIN_PROJECT_PREFIX[pluginId] ?? `openclaw-${pluginId}`
+    return fs.readdirSync(projectsDir).some((name) => {
+      if (!(name === prefix || name.startsWith(`${prefix}-`))) return false
+      const pkgPath = path.join(projectsDir, name, 'node_modules', ...packageName.split('/'), 'package.json')
+      try {
+        const parsed = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
+        return parsed && parsed.name === packageName
+      } catch {
+        return false
+      }
+    })
   }
 
   /**

@@ -423,6 +423,81 @@ export class ConfigManager {
   }
 
   /**
+   * 按需在 openclaw.json 里启用一个「已安装」插件（走官方 config patch 通道）。
+   *
+   * 为什么需要它（QQ 扫码登录死锁）：OpenClaw 的 `channels login --channel <id>`
+   * 只认**已加载**的渠道插件；`plugins.entries.<id>.enabled = false` 时它把该渠道
+   * 当成未安装，转而现场从 npm 装（用户级 npm-cache 不可写时必然 EPERM），最后报
+   * 「Channel "xxx" does not support login」。而本应用原逻辑只在拿到凭据后才写
+   * enabled=true —— 扫码拿凭据又必须先启用插件，形成死锁。
+   *
+   * 只写 enabled 一个键：已启用时读文件直接返回（零 spawn），未启用才走官方
+   * config patch（schema 校验 + 原子写 + meta 由官方盖戳）。
+   */
+  async ensureOpenClawPluginEnabled(
+    pluginId: string
+  ): Promise<{ ok: boolean; alreadyEnabled: boolean; error?: string }> {
+    const cfg = this._readOpenClawConfig(null, (e) =>
+      console.warn('[ConfigManager] 读取 openclaw.json 失败，无法判断插件启用态:', e)
+    )
+    if (!cfg || typeof cfg !== 'object') {
+      return { ok: false, alreadyEnabled: false, error: 'openclaw.json 不存在或无法解析' }
+    }
+    const plugins = (cfg as Record<string, any>).plugins
+    if (plugins && typeof plugins === 'object' && plugins.enabled === false) {
+      return {
+        ok: false,
+        alreadyEnabled: false,
+        error: 'OpenClaw 插件系统已被全局关闭（plugins.enabled=false），请先恢复插件系统后再试'
+      }
+    }
+    // allow/deny 是加载闸门（OpenClaw enablePluginInConfig 同口径）：只写 entry.enabled
+    // 会被它们拦住，导致「patch 成功但插件仍不加载」的假成功。
+    // OpenClaw 会把 plugin id 归一化成小写后再比对，这里同口径，避免大小写差异漏判。
+    const normalizedId = pluginId.trim().toLowerCase()
+    const allow = Array.isArray(plugins?.allow)
+      ? plugins.allow.map((id: unknown) => String(id).trim().toLowerCase())
+      : []
+    const deny = Array.isArray(plugins?.deny)
+      ? plugins.deny.map((id: unknown) => String(id).trim().toLowerCase())
+      : []
+    if (deny.includes(normalizedId)) {
+      return {
+        ok: false,
+        alreadyEnabled: false,
+        error: `插件 ${pluginId} 在 plugins.deny 黑名单里，需先从黑名单移除`
+      }
+    }
+    if (allow.length > 0 && !allow.includes(normalizedId)) {
+      return {
+        ok: false,
+        alreadyEnabled: false,
+        error: `插件 ${pluginId} 不在 plugins.allow 白名单里，需先加入白名单`
+      }
+    }
+    const entries =
+      plugins && typeof plugins === 'object' && plugins.entries && typeof plugins.entries === 'object'
+        ? plugins.entries
+        : undefined
+    const existing = entries ? entries[pluginId] : undefined
+    if (existing && typeof existing === 'object' && existing.enabled === true) {
+      return { ok: true, alreadyEnabled: true }
+    }
+
+    const result = await applyOpenClawConfigPatch(this.dataDir, {
+      plugins: { entries: { [pluginId]: { enabled: true } } }
+    })
+    if (!result.ok) {
+      return {
+        ok: false,
+        alreadyEnabled: false,
+        error: result.error || 'openclaw config patch 启用插件失败'
+      }
+    }
+    return { ok: true, alreadyEnabled: false }
+  }
+
+  /**
    * 只读返回 openclaw.json 的 channels 节点（网关真实运行时配置）。
    *
    * 与 getConfig().channels 不同：后者是 app.json 里 UI 表单的副本，只有 feishu 会被

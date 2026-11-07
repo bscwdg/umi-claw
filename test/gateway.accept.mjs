@@ -1236,6 +1236,103 @@ try {
     }
   })
 
+  // ── G30 插件启用（QQ 扫码登录前置；2026-11-07） ──
+  await r.check('G30', 'ensureOpenClawPluginEnabled：按需启用已装插件；已启用零 spawn；全局关闭可读拒绝', async () => {
+    const dir = join(runDir, 'cfg-plugin-enable')
+    mkdirSync(dir, { recursive: true })
+    const p = join(dir, 'config', '.openclaw', 'openclaw.json')
+    mkdirSync(dirname(p), { recursive: true })
+    // 复刻用户现场：受管插件已装（install record 在 state 里），但配置条目 enabled=false
+    writeFileSync(
+      p,
+      JSON.stringify({ plugins: { entries: { 'openclaw-qqbot': { enabled: false } } } }, null, 2),
+      'utf-8'
+    )
+    const { patchLogPath } = installFakeOpenClawCli(dir)
+    const prev = process.env.CLAW_DATA_DIR
+    process.env.CLAW_DATA_DIR = dir
+    try {
+      const manager = new ConfigManager()
+      const first = await manager.ensureOpenClawPluginEnabled('openclaw-qqbot')
+      assertEq(first.ok, true, '未启用 → 启用成功')
+      assertEq(first.alreadyEnabled, false, '首次不是 alreadyEnabled')
+      const json = JSON.parse(readFileSync(p, 'utf-8'))
+      assertEq(
+        json.plugins.entries['openclaw-qqbot'].enabled,
+        true,
+        'openclaw.json 里插件条目必须已启用（否则 channels login 当未安装）'
+      )
+      const patch = JSON.parse(readFileSync(patchLogPath, 'utf-8'))
+      assertEq(
+        patch.plugins.entries['openclaw-qqbot'].enabled,
+        true,
+        '补丁只带 enabled:true（不能顺手改别的插件配置）'
+      )
+
+      // 已启用：读文件直接返回，不得再 spawn（清掉补丁日志，若又写出来说明回归）
+      rmSync(patchLogPath, { force: true })
+      const second = await manager.ensureOpenClawPluginEnabled('openclaw-qqbot')
+      assertEq(second.ok, true, '已启用时 ok')
+      assertEq(second.alreadyEnabled, true, '已启用时 alreadyEnabled=true')
+      assertEq(existsSync(patchLogPath), false, '已启用时不应再 spawn config patch')
+
+      // 全局插件关闭：拒绝启用并给出可读原因（不能假装成功）
+      const dir2 = join(runDir, 'cfg-plugin-disabled')
+      mkdirSync(dir2, { recursive: true })
+      const p2 = join(dir2, 'config', '.openclaw', 'openclaw.json')
+      mkdirSync(dirname(p2), { recursive: true })
+      writeFileSync(p2, JSON.stringify({ plugins: { enabled: false, entries: {} } }, null, 2), 'utf-8')
+      process.env.CLAW_DATA_DIR = dir2
+      const manager2 = new ConfigManager()
+      const blocked = await manager2.ensureOpenClawPluginEnabled('openclaw-qqbot')
+      assertEq(blocked.ok, false, 'plugins.enabled=false 时必须拒绝')
+      assert(/全局关闭/.test(blocked.error || ''), '错误文案要说明插件系统全局关闭')
+
+      // allow/deny 是真实加载闸门：只写 enabled 会被拦住，必须提前拒绝而不是假成功
+      const dir3 = join(runDir, 'cfg-plugin-allow')
+      mkdirSync(dir3, { recursive: true })
+      const p3 = join(dir3, 'config', '.openclaw', 'openclaw.json')
+      mkdirSync(dirname(p3), { recursive: true })
+      writeFileSync(
+        p3,
+        JSON.stringify(
+          { plugins: { allow: ['openclaw-weixin'], entries: { 'openclaw-qqbot': { enabled: false } } } },
+          null,
+          2
+        ),
+        'utf-8'
+      )
+      process.env.CLAW_DATA_DIR = dir3
+      const manager3 = new ConfigManager()
+      const notAllowed = await manager3.ensureOpenClawPluginEnabled('openclaw-qqbot')
+      assertEq(notAllowed.ok, false, '不在 allow 白名单时必须拒绝')
+      assert(/白名单/.test(notAllowed.error || ''), '错误文案要点明白名单')
+
+      const dir4 = join(runDir, 'cfg-plugin-deny')
+      mkdirSync(dir4, { recursive: true })
+      const p4 = join(dir4, 'config', '.openclaw', 'openclaw.json')
+      mkdirSync(dirname(p4), { recursive: true })
+      writeFileSync(
+        p4,
+        JSON.stringify(
+          { plugins: { deny: ['openclaw-qqbot'], entries: { 'openclaw-qqbot': { enabled: false } } } },
+          null,
+          2
+        ),
+        'utf-8'
+      )
+      process.env.CLAW_DATA_DIR = dir4
+      const manager4 = new ConfigManager()
+      const denied = await manager4.ensureOpenClawPluginEnabled('openclaw-qqbot')
+      assertEq(denied.ok, false, '在 deny 黑名单时必须拒绝')
+      assert(/黑名单/.test(denied.error || ''), '错误文案要点明黑名单')
+      return '未启用 → 官方 patch 只写 enabled；已启用零 spawn；全局关闭/allow/deny 均给可读错误'
+    } finally {
+      if (prev === undefined) delete process.env.CLAW_DATA_DIR
+      else process.env.CLAW_DATA_DIR = prev
+    }
+  })
+
   // ── G20 wiring 与硬规则 13 静态核对 ──
   await r.check('G20', 'wiring：两条只读通道 + preload 面 + 主进程复用 clawManager + token 不出主进程', async () => {
     const ipcSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'gateway.ts'), 'utf-8')

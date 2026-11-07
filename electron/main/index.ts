@@ -1147,6 +1147,7 @@ function registerIpcHandlers(): void {
   registerChannelsIpc(ipcMain, {
     isPluginInstalled: (pluginId) => channelManager.isPluginInstalled(pluginId),
     installPlugin: (pluginPkg) => channelManager.installPlugin(pluginPkg),
+    prepareQQBotLogin: () => channelManager.prepareQQBotLogin(),
     getChannelStatuses: () => channelManager.getChannelStatuses()
   })
   // 应用配置（4.1 WP5-a 第三批拆到 ipc/host/config.ts）

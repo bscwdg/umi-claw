@@ -887,7 +887,7 @@ try {
   })
 
   // ── U20 渠道页 QQ 机器人卡片（扫码登录 + 手动配置保存）──
-  await r.check('U20', '渠道页 QQ 卡片：渲染/扫码跳终端/保存 channels.qqbot', async () => {
+  await r.check('U20', '渠道页 QQ 卡片：渲染/扫码前准备/失败留页可见/保存 channels.qqbot', async () => {
     globalThis.__routerPushes = []
     setIpc({
       'config:get': {
@@ -895,7 +895,9 @@ try {
       },
       'config:save': { appConfigSavedOk: true, openClawSyncOk: true },
       'channels:getStatuses': [{ key: 'qqbot', configured: true, detail: 'AppID 102030405' }],
-      'channels:isPluginInstalled': true
+      'channels:isPluginInstalled': true,
+      // 扫码前置：主进程装缺失插件 + 启用 openclaw-qqbot（只装不启用会把 qqbot 当未安装）
+      'channels:prepareQQBotLogin': { success: true, installed: true, enabled: true }
     })
     // preload 的 config/channels 桥返回裸值，而测试桩统一包了 {ok,data}；这里解包后再挂载
     const unwrap = (fn) => async (...args) => {
@@ -909,7 +911,8 @@ try {
         ...api.channels,
         getStatuses: unwrap(api.channels.getStatuses),
         isPluginInstalled: unwrap(api.channels.isPluginInstalled),
-        installPlugin: unwrap(api.channels.installPlugin)
+        installPlugin: unwrap(api.channels.installPlugin),
+        prepareQQBotLogin: unwrap(api.channels.prepareQQBotLogin)
       }
     }
     const bundle = compileVuePage('src/views/ChannelsPage.vue', 'ui-channels', {
@@ -927,9 +930,55 @@ try {
     qrBtn.props.onClick()
     await new Promise((resolve) => setTimeout(resolve, 0))
     await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const qqCalls = calls().map((c) => c.channel)
+    assert(
+      qqCalls.includes('channels:prepareQQBotLogin'),
+      `扫码前必须调 prepareQQBotLogin（实际 ${qqCalls.join(',')}）`
+    )
     const pushed = (globalThis.__routerPushes || []).at(-1)
     assertEq(pushed?.path, '/terminal', '扫码登录跳终端页')
     assertEq(pushed?.query?.autoRun, 'channels login --channel qqbot', '终端自动执行 QQ 扫码登录')
+
+    // prepare 失败：必须留在本页显示具体原因，且不得跳终端跑一次必然失败的 login
+    const pushesBeforeFail = (globalThis.__routerPushes || []).length
+    setIpc({
+      'config:save': { appConfigSavedOk: true, openClawSyncOk: true },
+      'channels:prepareQQBotLogin': { success: false, installed: true, enabled: false, error: '模拟启用失败' }
+    })
+    qrBtn.props.onClick()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assertEq(
+      (globalThis.__routerPushes || []).length,
+      pushesBeforeFail,
+      'prepare 失败时不得自动跳终端（否则只会再跑一遍必然失败的 login）'
+    )
+    const failHtml = serialize(res.root)
+    assert(failHtml.includes('插件准备失败'), '失败原因要留在页面上可见（页面不跳走）')
+    assert(failHtml.includes('模拟启用失败'), '页面要展示主进程返回的具体错误')
+
+    // prepare 直接抛异常：同样留页 + 展示原因（不能把异常冒到 Vue 事件层）
+    setIpc({
+      'config:save': { appConfigSavedOk: true, openClawSyncOk: true },
+      'channels:prepareQQBotLogin': () => {
+        throw new Error('模拟 prepare 抛异常')
+      }
+    })
+    const pushesBeforeThrow = (globalThis.__routerPushes || []).length
+    qrBtn.props.onClick()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assertEq(
+      (globalThis.__routerPushes || []).length,
+      pushesBeforeThrow,
+      'prepare 抛异常时同样不得跳终端'
+    )
+    const throwHtml = serialize(res.root)
+    assert(throwHtml.includes('插件准备失败'), '抛异常也要留页显示失败')
+    assert(throwHtml.includes('模拟 prepare 抛异常'), '异常信息要展示给用户')
 
     // 手动填写 AppID/AppSecret 后保存 → 写入 app.json channels.qqbot（主进程再同步 openclaw.json）
     const saveBtn = findButton(res.root, '保存渠道配置')
@@ -941,7 +990,7 @@ try {
     assert(saved, '保存应调用 config:save')
     assertEq(saved.args[0]?.channels?.qqbot?.appId, '102030405', '保存包含 channels.qqbot.appId')
     assertEq(saved.args[0]?.channels?.qqbot?.clientSecret, 's3cret', '保存包含 channels.qqbot.clientSecret')
-    return 'QQ 卡片渲染/扫码跳转/保存接线 ✓'
+    return 'QQ 卡片渲染/扫码前准备/失败留页/保存接线 ✓'
   })} catch (e) {
   console.error('UI 验收脚本自身异常:', e)
 }

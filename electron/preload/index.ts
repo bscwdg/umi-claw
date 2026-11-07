@@ -191,6 +191,13 @@ const api = {
       ipcRenderer.invoke('channels:isPluginInstalled', pluginId),
     installPlugin: (pluginPkg: string) =>
       ipcRenderer.invoke('channels:installPlugin', pluginPkg),
+    // QQ 扫码登录前置：装缺失插件 + 启用 openclaw-qqbot（否则 channels login 会当成未安装）
+    prepareQQBotLogin: (): Promise<{
+      success: boolean
+      installed: boolean
+      enabled: boolean
+      error?: string
+    }> => ipcRenderer.invoke('channels:prepareQQBotLogin'),
     getStatuses: (): Promise<ChannelStatus[]> => ipcRenderer.invoke('channels:getStatuses')
   },
 

@@ -288,29 +288,40 @@ function goToWecomLogin() {
   });
 }
 
-// ── 2.2 QQ 机器人扫码登录（先确保官方插件已安装，再跳终端扫码）─────────────
+// ── 2.2 QQ 机器人扫码登录（先确保官方插件已安装且已启用，再跳终端扫码）─────────
 async function goToQQBotLogin() {
   if (qqbotBusy.value) return;
   qqbotBusy.value = true;
+  qqbotMsg.value = "";
+  // 准备失败时留在本页显示原因（页面不跳转，qqbotMsg 才看得见）；
+  // 只有插件确实就绪才进终端，否则会立刻触发一次必然失败的 channels login。
+  let ready = true;
   try {
-    if (window.api?.channels?.installPlugin && window.api?.channels?.isPluginInstalled) {
-      const installed = (await window.api.channels.isPluginInstalled("qqbot")) ?? false;
-      if (!installed) {
-        qqbotMsg.value = "⏳ 正在安装 QQ 机器人插件（首次约 1-2 分钟）...";
-        const res = await window.api.channels.installPlugin("@tencent-connect/openclaw-qqbot");
-        if (!res?.success) {
-          // 安装失败不阻断扫码页：终端里仍可手动安装/重试
-          qqbotMsg.value = `插件安装失败：${res?.error || "未知错误"}。已打开终端，可执行 plugins install @tencent-connect/openclaw-qqbot@latest 后重试扫码。`;
-        } else {
-          qqbotMsg.value = "✅ 插件已安装，正在打开扫码登录…";
-        }
+    if (window.api?.channels?.prepareQQBotLogin) {
+      // 主进程统一处理「装缺失插件 + 在 openclaw.json 启用插件」：
+      // OpenClaw 的 channels login 只认已加载的渠道插件；插件装了但 enabled=false 时
+      // 它会把 qqbot 当成未安装、现场走 npm 重装，最后报 does not support login。
+      qqbotMsg.value = "⏳ 正在准备 QQ 机器人插件（安装 / 启用，首次约 1-2 分钟）...";
+      const res = await window.api.channels.prepareQQBotLogin();
+      if (!res?.success) {
+        ready = false;
+        qqbotMsg.value = `插件准备失败：${res?.error || "未知错误"}。可稍后重试；若持续失败，请到终端手动处理。`;
+      } else {
+        qqbotMsg.value = "✅ QQ 机器人插件已就绪，正在打开扫码登录…";
       }
+    } else {
+      // 渲染端与 preload 同版本发布，正常不会缺接口；缺了说明装歪了，直接报错而不是
+      // 回退到「只装不启用」的旧逻辑（那正是本次要修的 bug）。
+      ready = false;
+      qqbotMsg.value = "当前版本缺少 QQ 插件准备接口，请重启应用或重新安装。";
     }
   } catch (e) {
-    qqbotMsg.value = `插件安装失败：${e}。已打开终端，可手动安装后重试。`;
+    ready = false;
+    qqbotMsg.value = `插件准备失败：${e}。可稍后重试或到终端手动处理。`;
   } finally {
     qqbotBusy.value = false;
   }
+  if (!ready) return;
   router.push({
     path: "/terminal",
     // qr=1：终端页切到二维码等比渲染（行高/字号），否则二维码会被拉长

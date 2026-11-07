@@ -8,6 +8,8 @@ import type { HostIpcRegistrar } from './types'
 export interface ChannelsIpcDeps {
   isPluginInstalled: (pluginId: string) => unknown
   installPlugin: (pluginPkg: string) => Promise<unknown>
+  /** QQ 扫码登录前置：安装缺失插件并确保 openclaw.json 里已启用 */
+  prepareQQBotLogin: () => Promise<unknown>
   getChannelStatuses: () => unknown
 }
 
@@ -24,6 +26,15 @@ export function registerChannelsIpc(
       return { success: true }
     } catch (err) {
       return { success: false, error: (err as Error)?.message ?? String(err) }
+    }
+  })
+  // QQ 扫码登录前置：插件「装了但没启用」时 channels login 会当成未安装，
+  // 现场走 npm 安装且最后报 does not support login。这里先把启用态补齐再跳终端。
+  ipc.handle('channels:prepareQQBotLogin', async () => {
+    try {
+      return await deps.prepareQQBotLogin()
+    } catch (err) {
+      return { success: false, installed: false, enabled: false, error: (err as Error)?.message ?? String(err) }
     }
   })
   // 渠道已接入状态（只读，依据 openclaw.json 与插件登录态）
