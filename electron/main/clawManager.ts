@@ -335,12 +335,17 @@ export class ClawManager extends EventEmitter {
    *     `start()` 又不走维护互斥锁——维护任务在途（退出码 78 自愈、更新链路）时
    *     用户完全可能点「启动」。所以这里必须自己看维护闸：维护在途直接跳过。
    *  2. 只处理 UUID 形态（或本方法上一轮改名残留的 `.stale-` 前缀）的直接子目录。
-   *  3. **先 rename 再 rm**（与官方回收实现同口径）：UUID 目录被 OpenClaw 视为
-   *     带 owner token 的活跃副本，原地 rm 半途失败会留下一个「看起来合法、实际残缺」
-   *     的副本；改成 `.stale-` 前缀后，即使删除失败，下次启动也只会被本方法继续清理，
-   *     不会当成有效副本加载。
+   *  3. **先摘链接、再 rename、最后 rm**：OpenClaw 的隔离副本内部用绝对路径 junction
+   *     指向同一 UUID 目录下的兄弟包（如 @larksuiteoapi/node-sdk → <uuid>/package-1/…）。
+   *     旧实现直接先 rename 再 rm，rename 后这些 junction 全部悬空；2026-11-07 实测
+   *     在这种树上 Electron(Node 20) 的 fs.rm(recursive) 会永久 pending（无报错、无 CPU），
+   *     把启动链卡死在 preparing 阶段 20+ 分钟。先按 lstat 只摘链接本身，再改名/删目录。
+   *  4. 整个删除带超时（见 `_removeTreeWithTimeout`）：清理是启动前优化，best-effort，
+   *     绝不允许一个删不掉的目录把启动挂死；超时/占用只记日志，下次启动再试。
    *
-   * best-effort：删除失败（占用/权限）只记日志，绝不阻断启动。
+   * 仍保留 rename：UUID 目录被 OpenClaw 视为带 owner token 的活跃副本，原地 rm 半途失败
+   * 会留下「看起来合法、实际残缺」的副本；摘掉链接后改成 `.stale-` 前缀，即使删除失败
+   * 下次也只会被本方法继续清理，不会当成有效副本加载。
    */
   private async _cleanStalePluginCaptures(dataDir: string): Promise<void> {
     // 维护任务在途时跳过：doctor / config patch / 更新链路都在用同一个 captures 目录，
@@ -369,18 +374,47 @@ export class ClawManager extends EventEmitter {
 
       let removed = 0
       let skipped = 0
+      let tooFresh = 0
+      // 活跃保护：OpenClaw 的 install/login 等短命 CLI 也会往 captures 里写副本。
+      // 清理若与它们并发，先摘链接会破坏活副本（旧实现靠 rename 占用失败侥幸安全）。
+      // 用 mtime 做粗护栏：10 分钟内动过的目录视为可能在用，本轮不动。
+      const FRESH_GUARD_MS = 10 * 60 * 1000
       // 串行处理：Windows 上数万小文件的递归删除本身就慢，并发只会加剧磁盘争用。
       // 全部走异步 fs：同步 rmSync 会冻结事件循环，期间所有 IPC 与「启动中」UI 全部卡死。
       for (const name of staleNames) {
         const original = join(capturesDir, name)
-        // 已是上一轮改名残留的目录直接删；UUID 目录先改名。
+        // 已是上一轮改名残留的目录直接删；UUID 目录先摘链接、再改名。
         const target = name.startsWith(STALE_PREFIX) ? original : join(capturesDir, STALE_PREFIX + name)
         try {
+          let mtimeMs = 0
+          try {
+            mtimeMs = (await fs.stat(original)).mtimeMs
+          } catch {
+            continue
+          }
+          if (Date.now() - mtimeMs < FRESH_GUARD_MS) {
+            tooFresh++
+            continue
+          }
+
+          const unlinked = await this._unlinkJunctionsInTree(original)
+          if (unlinked.failed > 0) {
+            skipped++
+            this._addLog(
+              `插件隔离副本 ${name} 内有 ${unlinked.failed} 个链接无法摘除，保留原状（下次启动再试）`,
+              'stderr'
+            )
+            continue
+          }
           if (target !== original) await fs.rename(original, target)
-          await fs.rm(target, { recursive: true, force: true, maxRetries: 2, retryDelay: 200 })
+          const removal = await this._removeTreeWithTimeout(target, 10_000)
+          if (!removal.ok) {
+            skipped++
+            continue
+          }
           removed++
         } catch (e: any) {
-          // 占用 / 权限：保留原状（UUID 目录名字不变，下次启动仍会被识别为待清理候选）
+          // 占用 / 权限 / 超时：保留原状（UUID 目录名字不变，下次启动仍会被识别为待清理候选）
           skipped++
           console.warn(`[ClawManager] 清理插件隔离副本失败（跳过）: ${name}`, e?.message || e)
         }
@@ -388,14 +422,156 @@ export class ClawManager extends EventEmitter {
       if (removed > 0) {
         this._addLog(`已清理 ${removed} 个插件隔离副本残留（tmp/plugin-captures）`, 'system')
       }
+      if (tooFresh > 0) {
+        this._addLog(
+          `有 ${tooFresh} 个插件隔离副本在 10 分钟内仍有改动（可能在用），本轮跳过`,
+          'system'
+        )
+      }
       if (skipped > 0) {
         this._addLog(
-          `${skipped} 个插件隔离副本仍被占用，已跳过（不影响本次启动，下次启动会重试）`,
+          `${skipped} 个插件隔离副本仍被占用/删除超时，已跳过（不影响本次启动，下次启动会重试）`,
           'system'
         )
       }
     } catch (e: any) {
       this._addLog(`插件隔离副本清理失败（可忽略）：${e?.message || e}`, 'stderr')
+    }
+  }
+
+  /**
+   * 递归摘除目录树里的 junction / symlink（只删链接本身，不跟随目标）。
+   *
+   * 为什么必须先摘：见 `_cleanStalePluginCaptures` 注释第 3 条。这里有个 Windows 坑：
+   * OpenClaw 生成的 junction 替身名是 `\??\Global\<abs>`（不是普通 `\??\<abs>`），
+   * 对这种链接：
+   *  - `fs.rm(force)` 在目标存在时抛 ERR_FS_EISDIR，在目标已悬空时**返回成功但链接仍在**
+   *    （readdir 仍能看到；existsSync 会因悬空而误判为不存在）；
+   *  - 目录型链接必须用 `fs.rmdir` 摘除（只删重解析点，不跟随目标）。
+   * 因此每次删除后用 readdir 复核，仍在则回退 rmdir，仍在本轮计入 failed。
+   */
+  private async _unlinkJunctionsInTree(root: string): Promise<{ links: number; failed: number }> {
+    let links = 0
+    let failed = 0
+    const removeLink = async (parentDir: string, name: string): Promise<boolean> => {
+      const full = join(parentDir, name)
+      const stillPresent = async (): Promise<boolean> => {
+        try {
+          return (await fs.readdir(parentDir)).includes(name)
+        } catch {
+          return false
+        }
+      }
+      try {
+        await fs.rm(full, { force: true })
+      } catch {
+        /* 目录型链接（Global junction）会 EISDIR，交给 rmdir */
+      }
+      if (!(await stillPresent())) return true
+      try {
+        await fs.rmdir(full)
+      } catch {
+        /* fall through to verification */
+      }
+      return !(await stillPresent())
+    }
+    const walk = async (dir: string, depth: number): Promise<void> => {
+      // 防御异常深的目录结构（正常 captures 层级 < 8；到 16 层就放弃并记失败，
+      // 否则深树里的链接可能被留下，随后的 rm 又回到「悬空 junction 永久 pending」）
+      if (depth > 16) {
+        failed++
+        return
+      }
+      let entries
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const entry of entries) {
+        if (entry.isSymbolicLink()) {
+          links++
+          if (!(await removeLink(dir, entry.name))) failed++
+          continue
+        }
+        if (entry.isDirectory()) await walk(join(dir, entry.name), depth + 1)
+      }
+    }
+    await walk(root, 0)
+    return { links, failed }
+  }
+
+  /** 递归删除 + 超时兜底：删不掉/卡住时只记日志，绝不让启动链永久 pending。 */
+  private async _removeTreeWithTimeout(
+    target: string,
+    timeoutMs: number
+  ): Promise<{ ok: boolean; error?: string }> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        fs.rm(target, { recursive: true, force: true, maxRetries: 2, retryDelay: 200 }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`删除超时（${Math.round(timeoutMs / 1000)}s）`)),
+            timeoutMs
+          )
+        })
+      ])
+      return { ok: true }
+    } catch (e: any) {
+      const error = e?.message || String(e)
+      this._addLog(`删除插件隔离副本失败（已跳过，下次再试）：${error}`, 'stderr')
+      return { ok: false, error }
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  /**
+   * 给启动前的 best-effort 步骤加超时：超时视为「本次跳过」而不是失败。
+   * 底层 promise 可能继续在后台跑（无法真正取消），但启动链不再等它。
+   * @returns true=任务在预算内结束（成功或失败都算）；false=超时
+   */
+  private async _withTimeout<T>(task: Promise<T>, timeoutMs: number, label: string): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        task.then(
+          () => true,
+          () => true
+        ),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => {
+            this._addLog(`${label} 超时（${Math.round(timeoutMs / 1000)}s），已跳过（不影响启动）`, 'stderr')
+            resolve(false)
+          }, timeoutMs)
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  /** 带返回值的超时版本（用于必须拿到结果的启动前步骤）。 */
+  private async _withTimeoutValue<T>(
+    task: Promise<T>,
+    timeoutMs: number,
+    label: string,
+    fallback: T
+  ): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        task,
+        new Promise<T>((resolve) => {
+          timer = setTimeout(() => {
+            this._addLog(`${label} 超时（${Math.round(timeoutMs / 1000)}s），已跳过（不影响启动）`, 'stderr')
+            resolve(fallback)
+          }, timeoutMs)
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
     }
   }
 
@@ -438,12 +614,19 @@ export class ClawManager extends EventEmitter {
 
     let stdout: string
     try {
-      const res = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', script])
+      // 加超时：PowerShell CIM 查询在慢机器/安全软件环境下可能挂住，不能让它卡死启动链。
+      const res = await execFileAsync('powershell.exe', ['-NoProfile', '-Command', script], {
+        timeout: 30_000,
+        windowsHide: true
+      })
       stdout = res.stdout
     } catch (e: any) {
       // 清理是 best-effort：查不到（无 node 进程时 Get-CimInstance 无输出、
-      // 或 PowerShell 不可用）都不该阻断启动。
-      console.warn('清理残留网关进程时发生非预期错误:', e?.message)
+      // 或 PowerShell 不可用/超时）都不该阻断启动；但必须让用户看到原因——
+      // 否则慢机器上可能带着旧网关继续启动，最终只看到「启动失败」。
+      const reason = e?.message || String(e)
+      console.warn('清理残留网关进程时发生非预期错误:', reason)
+      this._addLog(`残留网关清理查询失败/超时，已跳过（可能残留旧实例）：${reason}`, 'stderr')
       return
     }
 
@@ -457,10 +640,15 @@ export class ClawManager extends EventEmitter {
     await Promise.all(
       pids.map(async (pid) => {
         try {
-          await execFileAsync('taskkill', ['/f', '/t', '/pid', pid])
+          await execFileAsync('taskkill', ['/f', '/t', '/pid', pid], {
+            timeout: 15_000,
+            windowsHide: true
+          })
           console.log(`🧹 已清理残留网关进程 pid=${pid}`)
         } catch (e: any) {
-          console.warn(`清理残留网关进程 pid=${pid} 失败:`, e?.message)
+          const reason = e?.message || String(e)
+          console.warn(`清理残留网关进程 pid=${pid} 失败:`, reason)
+          this._addLog(`清理残留网关进程失败（pid ${pid}，可能占用端口/状态库）：${reason}`, 'stderr')
         }
       })
     )
@@ -472,7 +660,7 @@ export class ClawManager extends EventEmitter {
    */
   private async _killByImageName(imageName: string): Promise<void> {
     try {
-      await execAsync(`taskkill /f /im ${imageName}`)
+      await execAsync(`taskkill /f /im ${imageName}`, { timeout: 15_000, windowsHide: true })
     } catch (e: any) {
       // 退出码 128 = 未找到进程，属于正常情况直接忽略
       if (e?.code === 128) return
@@ -533,9 +721,20 @@ export class ClawManager extends EventEmitter {
 
     // 清理要在确认运行时/核心库存在之后：两者都缺时启动本来就发不出去，
     // 没必要为此去扫进程、更没必要误伤别的实例。
+    const prepareStartedAt = Date.now()
     await this._killGhostProcesses(dataDir)
-    // 已无 openclaw 进程：顺手回收插件隔离副本残留（实测能堆到 1GB+，还会拖慢启动巡检）
-    await this._cleanStalePluginCaptures(dataDir)
+    // 已无 openclaw 进程：顺手回收插件隔离副本残留（实测能堆到 1GB+，还会拖慢启动巡检）。
+    // 这是启动前优化，任何删除卡住都不能阻塞启动（2026-11-07 实测带 junction 的旧副本
+    // 上 fs.rm 会永久 pending，把启动卡在 preparing 20+ 分钟）。
+    await this._withTimeout(
+      this._cleanStalePluginCaptures(dataDir),
+      30_000,
+      '插件隔离副本清理'
+    )
+    this._addLog(
+      `[gateway] 启动前清理完成（${((Date.now() - prepareStartedAt) / 1000).toFixed(1)}s）`,
+      'system'
+    )
 
     const targetConfigDir = toPosix(openClawPaths.configDir(dataDir))
 
@@ -550,20 +749,40 @@ export class ClawManager extends EventEmitter {
     // 原因：checkpoint 的唯一作用是让 OpenClaw 跳过在 exFAT/FAT32/UNC/U 盘上会失败的 peer-link 审计，
     // 而 doctor --fix 自身也做同样的插件收敛——若「不支持 junction 的卷 + 配置恰好非法」叠加，
     // doctor 会在没有 checkpoint、链接也没补的情况下失败，把原本靠 checkpoint 能启动的场景拦下。
-    const peerLinkWarning = await this._repairManagedPluginPeerLinks(dataDir)
+    const peerLinkWarning = await this._withTimeoutValue(
+      this._repairManagedPluginPeerLinks(dataDir),
+      30_000,
+      '受管插件 peer 链接检查',
+      null
+    )
     if (peerLinkWarning) {
       // 链接补建失败（多为 U 盘/exFAT 等不支持 junction 的卷）：
-      // 写进日志面板，并作为 warning 带回前端提示用户（不阻断启动）。
+      // 写进日志面板，并作为 warning 带回前端提示（不阻断启动）。
       this._addLog(peerLinkWarning, 'stderr')
     }
     // 关键根治：直接写入启动迁移 checkpoint，让 OpenClaw 跳过会因 peer-link 失败而
     // 拒绝启动的审计。这对任何磁盘/任何文件系统（含 U 盘 exFAT/FAT32/UNC）都有效。
-    await this._markStartupMigrationsComplete(dataDir)
+    const peerCheckStartedAt = Date.now()
+    await this._withTimeoutValue(
+      this._markStartupMigrationsComplete(dataDir),
+      20_000,
+      '启动迁移 checkpoint 写入',
+      undefined
+    )
+    this._addLog(
+      `[gateway] 插件链接/迁移检查完成（${((Date.now() - peerCheckStartedAt) / 1000).toFixed(1)}s）`,
+      'system'
+    )
 
     // 启动前同步 openclaw.json：凭证、激活模型、渠道等以 configManager 为唯一真相源，
     // 避免此前在本类内重复实现（且曾用 p.id 取 OFFICIAL_MODEL_PRESETS 导致死分支）。
     // 写入一律走官方 config patch：被 schema 拒绝时绝不 spawn 网关（否则必 exit 78）。
+    const syncStartedAt = Date.now()
     let syncResult = await this.configManager.syncOpenClawConfig()
+    this._addLog(
+      `[gateway] 配置同步${syncResult.ok ? '完成' : '未完成'}（${((Date.now() - syncStartedAt) / 1000).toFixed(1)}s）`,
+      syncResult.ok ? 'system' : 'stderr'
+    )
     // patch 超时/进程错误（非 schema 拒绝）时不跑 doctor，仅作为启动 warning 透给前端
     let syncTransientWarning: string | undefined
     if (!syncResult.ok) {
@@ -2184,9 +2403,10 @@ export class ClawManager extends EventEmitter {
 
       try {
         // execFile 默认捕获 stderr（失败时挂在 error.stderr 上），无需 stdio 配置；
-        // windowsHide 避免闪现控制台窗口。
+        // windowsHide 避免闪现控制台窗口；timeout 防止被残留进程锁住状态库时无限等待。
         await execFileAsync(nodePath, ['-e', script, stateDbPath, version, String(now)], {
-          windowsHide: true
+          windowsHide: true,
+          timeout: 20_000
         })
         this._addLog(`已写入启动迁移 checkpoint (v${version})，跳过插件链接审计`, 'system')
       } catch (e: any) {

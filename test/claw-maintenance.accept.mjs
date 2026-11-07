@@ -539,7 +539,17 @@ await rec.check(
   async () => {
     // 清理按设计只在 Windows 执行（幽灵进程清理在其它平台是空操作，无法保证「无 openclaw 进程」）
     if (process.platform !== 'win32') return '非 Windows：清理按设计跳过'
-    const { existsSync, mkdirSync, mkdtempSync, rmSync } = await import('node:fs')
+    const {
+      existsSync,
+      mkdirSync,
+      mkdtempSync,
+      rmSync,
+      readFileSync,
+      readdirSync,
+      renameSync,
+      utimesSync
+    } = await import('node:fs')
+    const { execFileSync } = await import('node:child_process')
     const os = await import('node:os')
 
     const sandbox = mkdtempSync(join(os.tmpdir(), 'umi-captures-'))
@@ -548,27 +558,137 @@ await rec.check(
     const uuidA = '11111111-1111-1111-1111-111111111111'
     const uuidB = '22222222-2222-2222-2222-222222222222'
     const uuidC = '33333333-3333-3333-3333-333333333333'
+    /** 清理有 10 分钟活跃护栏：测试目录必须把 mtime 改老，才代表「历史残留」。 */
+    const makeOld = (p) => {
+      const old = new Date(Date.now() - 60 * 60 * 1000)
+      utimesSync(p, old, old)
+    }
+    /** 目录是否仍存在：用 readdir 判断父目录成员（悬空 junction 会让 existsSync 误判）。 */
+    const existsInDir = (dir, name) => {
+      try {
+        return readdirSync(dir).includes(name)
+      } catch {
+        return false
+      }
+    }
+    /**
+     * 生产格式 junction：OpenClaw 生成的替身名是 `\??\Global\<abs>`，不是普通 junction。
+     * 这种链接 fs.rm 会 EISDIR（目标在）或假成功（目标悬空），必须 rmdir 才能摘。
+     */
+    const makeGlobalJunction = (linkPath, targetAbs) => {
+      execFileSync('cmd.exe', ['/c', 'mklink', '/J', linkPath, '\\\\?\\Global\\' + targetAbs], {
+        stdio: 'ignore'
+      })
+    }
+    /** 造一棵含生产格式 junction 的捕获目录树；target 必须已存在才建链。 */
+    const buildGlobalJunctionTree = (root, targetRoot = root) => {
+      const target = join(
+        targetRoot,
+        'captures',
+        'openclaw-plugin-build-CTaHQf',
+        'package-1',
+        'node_modules',
+        '@larksuiteoapi',
+        'node-sdk'
+      )
+      const linkDir = join(
+        root,
+        'captures',
+        'openclaw-plugin-build-CTaHQf',
+        'package-0',
+        'node_modules',
+        '@openclaw',
+        'feishu',
+        'node_modules',
+        '@larksuiteoapi'
+      )
+      mkdirSync(target, { recursive: true })
+      mkdirSync(linkDir, { recursive: true })
+      makeGlobalJunction(join(linkDir, 'node-sdk'), target)
+      return { target, link: join(linkDir, 'node-sdk') }
+    }
+
     mkdirSync(join(capturesDir, uuidA))
     mkdirSync(join(capturesDir, `.stale-${uuidB}`))
     mkdirSync(join(capturesDir, 'keep-me'))
+    makeOld(join(capturesDir, uuidA))
+    makeOld(join(capturesDir, `.stale-${uuidB}`))
 
     const cm = new ClawManager({ getDataDir: () => sandbox, getNodePath: () => process.execPath })
     await cm._cleanStalePluginCaptures(sandbox)
-    assert(!existsSync(join(capturesDir, uuidA)), 'UUID 形态的残留副本应被清理')
-    assert(!existsSync(join(capturesDir, `.stale-${uuidB}`)), '上一轮改名残留应被清理')
-    assert(existsSync(join(capturesDir, 'keep-me')), '非 UUID 目录一律不碰')
+    assert(!existsInDir(capturesDir, uuidA), 'UUID 形态的残留副本应被清理')
+    assert(!existsInDir(capturesDir, `.stale-${uuidB}`), '上一轮改名残留应被清理')
+    assert(existsInDir(capturesDir, 'keep-me'), '非 UUID 目录一律不碰')
+
+    // ── 生产格式 junction（目标存在）：先 rm(EISDIR) → rmdir 回退 → rename → rm ──
+    let junctionSupported = true
+    const uuidD = '44444444-4444-4444-4444-444444444444'
+    try {
+      buildGlobalJunctionTree(join(capturesDir, uuidD))
+      makeOld(join(capturesDir, uuidD))
+    } catch {
+      junctionSupported = false
+    }
+    if (junctionSupported) {
+      const startedAt = Date.now()
+      await cm._cleanStalePluginCaptures(sandbox)
+      const elapsed = Date.now() - startedAt
+      assert(!existsInDir(capturesDir, uuidD), '含生产 junction 的 UUID 副本应被清理')
+      assert(elapsed < 8000, `含生产 junction 的副本清理不得卡死（实测 ${elapsed}ms）`)
+
+      // ── 旧代码卡死时留下的 `.stale-`：内部是**悬空**的 `\??\Global\` junction ──
+      // 这正是用户现场最可能的残留形态（旧实现先 rename，rename 后目标路径失效）。
+      const uuidE = '55555555-5555-5555-5555-555555555555'
+      const treeE = join(capturesDir, uuidE)
+      const built = buildGlobalJunctionTree(treeE)
+      renameSync(treeE, join(capturesDir, `.stale-${uuidE}`))
+      const staleTarget = built.target.replace(treeE, join(capturesDir, `.stale-${uuidE}`))
+      const staleLink = built.link.replace(treeE, join(capturesDir, `.stale-${uuidE}`))
+      assert(!existsSync(staleTarget), '测试前提：rename 后 junction 目标应悬空')
+      assert(
+        existsInDir(join(staleLink, '..'), 'node-sdk'),
+        '测试前提：悬空 junction 本体仍在（existsSync 会误判）'
+      )
+      makeOld(join(capturesDir, `.stale-${uuidE}`))
+      const startedAt2 = Date.now()
+      await cm._cleanStalePluginCaptures(sandbox)
+      const elapsed2 = Date.now() - startedAt2
+      assert(
+        !existsInDir(capturesDir, `.stale-${uuidE}`),
+        '悬空生产 junction 的 .stale- 副本必须能清掉（否则每次启动白等超时）'
+      )
+      assert(elapsed2 < 8000, `.stale- 悬空 junction 清理不得卡死（实测 ${elapsed2}ms）`)
+    }
+
+    // 活跃保护：10 分钟内动过的副本不能被清（避免摘掉正在 install 的 capture 链接）
+    const uuidFresh = '66666666-6666-6666-6666-666666666666'
+    mkdirSync(join(capturesDir, uuidFresh))
+    await cm._cleanStalePluginCaptures(sandbox)
+    assert(existsInDir(capturesDir, uuidFresh), '10 分钟内仍有改动的副本应视为可能在用，跳过')
 
     // 维护任务在途（doctor / config patch / 更新）：一个都不删
     mkdirSync(join(capturesDir, uuidC))
+    makeOld(join(capturesDir, uuidC))
     cm.maintenanceActive = true
     await cm._cleanStalePluginCaptures(sandbox)
-    assert(existsSync(join(capturesDir, uuidC)), '维护在途必须跳过清理')
+    assert(existsInDir(capturesDir, uuidC), '维护在途必须跳过清理')
     cm.maintenanceActive = false
     await cm._cleanStalePluginCaptures(sandbox)
-    assert(!existsSync(join(capturesDir, uuidC)), '维护结束后恢复清理')
+    assert(!existsInDir(capturesDir, uuidC), '维护结束后恢复清理')
+
+    // 启动链必须有超时兜底：清理再卡也不能把 preparing 阶段挂死
+    const clawSrc = readFileSync(join(process.cwd(), 'electron', 'main', 'clawManager.ts'), 'utf-8')
+    assert(
+      /_withTimeout\(\s*\r?\n?\s*this\._cleanStalePluginCaptures/.test(clawSrc),
+      '启动链必须给 _cleanStalePluginCaptures 加超时（防 fs.rm 永久 pending 挂死启动）'
+    )
+    assert(
+      /this\._withTimeoutValue\(\s*\r?\n?\s*this\._markStartupMigrationsComplete/.test(clawSrc),
+      '启动迁移 checkpoint 也必须带超时（状态库被锁时同样会卡 preparing）'
+    )
 
     rmSync(sandbox, { recursive: true, force: true })
-    return 'UUID/.stale- 清理、非 UUID 保留、维护中跳过'
+    return '生产格式/悬空 junction 均能清掉、活跃副本跳过、维护中跳过、启动链超时兜底'
   }
 )
 
