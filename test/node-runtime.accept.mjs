@@ -10,6 +10,7 @@
 // 用法：node test/node-runtime.accept.mjs    （npm run accept:node-runtime）
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { join } from 'node:path'
@@ -256,6 +257,133 @@ try {
     assert(idx.includes('runtime-probe.log'), '告警落 dataDir/logs（GUI 里 console 看不到）')
     rmSync(dir, { recursive: true, force: true })
     return '探针 + 告警接线 ✓'
+  })
+  await r.check('N10', 'OpenClaw 子进程也必须用应用内 npm 缓存（channels login 兜底装插件防 EPERM）', async () => {
+    const p = bundleEntry('electron/main/openClawPaths.ts', 'node-runtime-openclaw-paths.mjs')
+    const { buildOpenClawEnv } = await import(pathToFileURL(p).href)
+    const dataDir = join('D:', 'umi-claw-data')
+    const nodePath = join('D:', 'umi-claw-data', 'runtime', 'node-win32-x64', 'node.exe')
+    const expectedCache = join('D:', 'umi-claw-data', 'config', '.npm-cache').replace(/\\/g, '/')
+    // 模拟宿主环境里继承来的用户级 cache（大小写两种变体都要清掉）
+    const prevUpper = process.env.NPM_CONFIG_CACHE
+    const prevLower = process.env.npm_config_cache
+    process.env.NPM_CONFIG_CACHE = 'C:\\Windows\\System32\\bad-upper-cache'
+    process.env.npm_config_cache = 'C:\\Users\\someone\\AppData\\Local\\npm-cache'
+    try {
+      const env = buildOpenClawEnv(dataDir, nodePath)
+      assertEq(env.npm_config_cache, expectedCache, 'OpenClaw 子进程 npm cache 必须落到应用内')
+      assertEq(
+        Object.keys(env).filter((key) => key.toLowerCase() === 'npm_config_cache').length,
+        1,
+        '旧 cache 的大小写变体都必须清掉'
+      )
+      assert(
+        String(env.PATH).startsWith(join('D:', 'umi-claw-data', 'runtime', 'node-win32-x64')),
+        'PATH 必须先指向便携 Node'
+      )
+      assertEq(
+        env.OPENCLAW_CONFIG_DIR,
+        join('D:', 'umi-claw-data', 'config', '.openclaw').replace(/\\/g, '/'),
+        '配置目录仍指向便携 config'
+      )
+      assertEq(
+        env.HOME,
+        join('D:', 'umi-claw-data', 'config').replace(/\\/g, '/'),
+        'HOME 仍指向便携 config（不能因 cache 改造丢隔离）'
+      )
+    } finally {
+      if (prevUpper === undefined) delete process.env.NPM_CONFIG_CACHE
+      else process.env.NPM_CONFIG_CACHE = prevUpper
+      if (prevLower === undefined) delete process.env.npm_config_cache
+      else process.env.npm_config_cache = prevLower
+    }
+
+    // 受管安装微信/QQ 插件同样必须走统一 npm env（2026-11-07 实测两条链都因用户级 cache EPERM）
+    const dmSrc = readFileSync(join(__dirname, '..', 'electron', 'main', 'downloadManager.ts'), 'utf-8')
+    const wxBody = dmSrc.slice(
+      dmSrc.indexOf('private async _installWeixinChannelPlugin('),
+      dmSrc.indexOf('private async _installQQBotChannelPlugin(')
+    )
+    assert(wxBody.includes('buildNpmRuntimeEnv({'), '微信受管安装必须使用统一 npm env')
+    const qqBody = dmSrc.slice(
+      dmSrc.indexOf('private async _installQQBotChannelPlugin('),
+      dmSrc.indexOf('private _assembleWeixinPluginManually(')
+    )
+    assert(qqBody.includes('buildNpmRuntimeEnv({'), 'QQ 受管安装必须使用统一 npm env')
+    return 'OpenClaw env cache 覆盖 + 两处受管安装接线 ✓'
+  })
+  await r.check('N11', '便携 .npmrc 兜住 OpenClaw 的 npm install（env 被 reset 时也生效）', async () => {
+    const p = bundleEntry('electron/main/portableNpmConfig.ts', 'node-runtime-portable-npmrc.mjs')
+    const { ensurePortableNpmrc } = await import(pathToFileURL(p).href)
+    const dir = mkdtempSync(join(tmpdir(), 'umi-npmrc-'))
+    const npmrc = join(dir, 'config', '.npmrc')
+    try {
+      const first = ensurePortableNpmrc(dir, { useChineseMirror: true })
+      assertEq(first.ok, true, '写入成功')
+      assertEq(first.changed, true, '首次写盘 changed=true')
+      const text = readFileSync(npmrc, 'utf-8')
+      assert(
+        text.includes('cache=' + join(dir, 'config', '.npm-cache').replace(/\\/g, '/')),
+        'cache 必须指向应用内目录（OpenClaw 的 npm install 会删掉 env 里的 npm_config_cache）'
+      )
+      assert(text.includes('registry=https://registry.npmmirror.com'), '镜像开关 → npmmirror registry')
+
+      // 真跑 npm 验证 userconfig 生效（只断言文件内容会漏掉「npm 根本没读它」的风险；
+      // 这里模拟 OpenClaw 的做法：清掉 env 里的 cache，只靠 HOME/.npmrc）
+      const npmCli = process.env.npm_execpath
+      if (npmCli && existsSync(npmCli)) {
+        try {
+          const env = { ...process.env, HOME: dir, USERPROFILE: dir }
+          delete env.npm_config_cache
+          delete env.NPM_CONFIG_CACHE
+          const runNpm = (...args) =>
+            execFileSync(process.execPath, [npmCli, ...args], {
+              env,
+              encoding: 'utf-8',
+              stdio: ['ignore', 'pipe', 'ignore']
+            }).trim()
+          assertEq(
+            runNpm('config', 'get', 'cache').replace(/\\/g, '/'),
+            join(dir, 'config', '.npm-cache').replace(/\\/g, '/'),
+            'npm 实际读到的 cache 必须是 .npmrc 里的应用内路径'
+          )
+          assert(
+            runNpm('config', 'get', 'registry').includes('registry.npmmirror.com'),
+            'npm 实际读到的 registry 必须来自 .npmrc'
+          )
+        } catch (e) {
+          console.log('[N11] 真实 npm 验证跳过（环境不可用）: ' + ((e && e.message) || e))
+        }
+      } else {
+        console.log('[N11] 真实 npm 验证跳过：npm_execpath 不可用')
+      }
+
+      // 保留用户其它 npm 设置；重复 cache 行必须收敛为一条并改写
+      writeFileSync(npmrc, '//corp.example/:_authToken=secret\ncache=C:\\bad\nfoo=bar\ncache=D:/dup\n', 'utf-8')
+      const second = ensurePortableNpmrc(dir, { useChineseMirror: true })
+      assertEq(second.changed, true, '需要修正时 changed=true')
+      const fixed = readFileSync(npmrc, 'utf-8')
+      assert(fixed.includes('//corp.example/:_authToken=secret'), '保留其它配置/注释')
+      assert(fixed.includes('foo=bar'), '保留其它键')
+      assertEq(
+        fixed.split(/\r?\n/).filter((line) => /^cache=/.test(line)).length,
+        1,
+        '重复 cache 只保留一条'
+      )
+      assert(!/cache=C:\\bad|cache=D:\/dup/.test(fixed), '旧的用户级 cache 值被替换')
+
+      const third = ensurePortableNpmrc(dir, { useChineseMirror: true })
+      assertEq(third.changed, false, '内容一致时幂等（changed=false）')
+      const off = ensurePortableNpmrc(dir, { useChineseMirror: false })
+      assertEq(off.changed, true, '关闭镜像需要改写 registry')
+      assert(
+        readFileSync(npmrc, 'utf-8').includes('registry=https://registry.npmjs.org'),
+        '关闭镜像 → 官方 registry'
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+    return 'cache/registry 写入 + 保留其它配置 + 幂等 ✓'
   })
 } catch (e) {
   console.error('验收脚本自身异常:', e)

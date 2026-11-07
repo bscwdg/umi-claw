@@ -466,16 +466,22 @@ export class DownloadManager extends EventEmitter {
     this._progress('装配渠道', '正在将微信渠道插件安装到 OpenClaw 受管目录...', 88)
 
     for (const registry of registries) {
-      const env = {
-        ...process.env,
-        PATH: `${nodeBinDir}${pathDelimiter}${process.env.PATH || ''}`,
-        HOME: configDir,
-        USERPROFILE: configDir,
-        OPENCLAW_CONFIG_DIR: join(configDir, '.openclaw'),
-        OPENCLAW_DATA_DIR: join(dataDir, 'data'),
-        npm_config_registry: registry,
-        NODE_ENV: 'production'
-      }
+      // 受管安装会拉起 npm：必须与 checkLatestVersion / _installOpenClaw 走同一套
+      // npm env（应用内 cache + 便携 Node 顶 PATH），否则用户级 npm-cache 只读时
+      // 会以 EPERM 失败（实测 2026-11-07 微信/QQ 受管安装均因此失败）。
+      const env = buildNpmRuntimeEnv({
+        dataDir,
+        nodeBinDir,
+        baseEnv: {
+          ...process.env,
+          HOME: configDir,
+          USERPROFILE: configDir,
+          OPENCLAW_CONFIG_DIR: join(configDir, '.openclaw'),
+          OPENCLAW_DATA_DIR: join(dataDir, 'data'),
+          npm_config_registry: registry,
+          NODE_ENV: 'production'
+        }
+      })
 
       const cmd = `"${nodePath}" "${clawJsPath}" plugins install "${WEIXIN_PLUGIN_PACKAGE}@latest"`
       this._writeDebugLog(`[InstallWeixinPlugin] 执行受管插件安装 (registry=${registry}): ${cmd}`)
@@ -554,16 +560,20 @@ export class DownloadManager extends EventEmitter {
     this._progress('装配渠道', '正在将 QQ 机器人插件安装到 OpenClaw 受管目录...', 89)
 
     for (const registry of registries) {
-      const env = {
-        ...process.env,
-        PATH: `${nodeBinDir}${pathDelimiter}${process.env.PATH || ''}`,
-        HOME: configDir,
-        USERPROFILE: configDir,
-        OPENCLAW_CONFIG_DIR: join(configDir, '.openclaw'),
-        OPENCLAW_DATA_DIR: join(dataDir, 'data'),
-        npm_config_registry: registry,
-        NODE_ENV: 'production'
-      }
+      // 同微信受管安装：npm 缓存必须落应用内，否则用户级 npm-cache 只读时 EPERM。
+      const env = buildNpmRuntimeEnv({
+        dataDir,
+        nodeBinDir,
+        baseEnv: {
+          ...process.env,
+          HOME: configDir,
+          USERPROFILE: configDir,
+          OPENCLAW_CONFIG_DIR: join(configDir, '.openclaw'),
+          OPENCLAW_DATA_DIR: join(dataDir, 'data'),
+          npm_config_registry: registry,
+          NODE_ENV: 'production'
+        }
+      })
 
       const cmd = `"${nodePath}" "${clawJsPath}" plugins install "${QQBOT_PLUGIN_PACKAGE}@latest"`
       this._writeDebugLog(`[InstallQQBotPlugin] 执行受管插件安装 (registry=${registry}): ${cmd}`)
@@ -1101,16 +1111,21 @@ export class DownloadManager extends EventEmitter {
       : [OFFICIAL_REGISTRY.url]
 
     for (const registry of registries) {
-      const env = {
-        ...process.env,
-        PATH: `${nodeBinDir}${pathDelimiter}${process.env.PATH || ''}`,
-        HOME: configDir,
-        USERPROFILE: configDir,
-        OPENCLAW_CONFIG_DIR: join(configDir, '.openclaw'),
-        OPENCLAW_DATA_DIR: join(dataDir, 'data'),
-        npm_config_registry: registry,
-        NODE_ENV: 'production'
-      }
+      // update repair 会做插件收敛（内部拉 npm）：与受管安装同一套 npm env，
+      // 否则用户级 npm-cache 只读时更新链路仍会 EPERM。
+      const env = buildNpmRuntimeEnv({
+        dataDir,
+        nodeBinDir,
+        baseEnv: {
+          ...process.env,
+          HOME: configDir,
+          USERPROFILE: configDir,
+          OPENCLAW_CONFIG_DIR: join(configDir, '.openclaw'),
+          OPENCLAW_DATA_DIR: join(dataDir, 'data'),
+          npm_config_registry: registry,
+          NODE_ENV: 'production'
+        }
+      })
       this._writeDebugLog(`[UpdateRepair] 执行 openclaw update repair (registry=${registry})`)
       try {
         const { stdout, stderr } = await execFileAsync(

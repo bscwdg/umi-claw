@@ -5,6 +5,7 @@ import AdmZip from 'adm-zip'
 import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawProviderRefs, isReservedOpenClawProviderKey } from './modelConfig'
 import { ModelPresetService, type PresetInfo, type RefreshResult } from './modelPresets'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
+import { ensurePortableNpmrc } from './portableNpmConfig'
 import { applyOpenClawConfigPatch, buildJsonMergePatch, collectLossyIdArrayReplacePaths, runSerializedOpenClawConfigWrite, type OpenClawPatchResult } from './openClawConfigWriter'
 import {
   applyWebhookMigrationMarker,
@@ -287,6 +288,10 @@ export class ConfigManager {
     // 加载配置
     this.config = this._load()
 
+    // 便携 npm userconfig：OpenClaw 的插件安装会删掉 env 里的 npm_config_cache，
+    // 只有 HOME/.npmrc 能覆盖到真正的 `npm install`（详见 portableNpmConfig.ts）。
+    this._refreshPortableNpmrc()
+
     // 初始同步 OpenClaw 配置（走官方 config patch，需运行时已安装；未安装则跳过，
     // env 初始化完成后由首次网关启动前的同步兜底）。构造函数不能 await，失败仅告警。
     if (existsSync(openClawPaths.nodeBinary(this.dataDir)) && existsSync(openClawPaths.clawJs(this.dataDir))) {
@@ -352,11 +357,23 @@ export class ConfigManager {
   private _persistAppConfig(): { ok: boolean; error?: string } {
     try {
       writeFileSync(this.configPath, JSON.stringify(this.config, null, 2), 'utf-8')
+      // 「国内镜像」开关可能刚被保存：同步刷新 .npmrc 的 registry/cache。
+      this._refreshPortableNpmrc()
       return { ok: true }
     } catch (err) {
       const error = (err as Error)?.message || String(err)
       console.error('[ConfigManager] 保存 app.json 失败:', err)
       return { ok: false, error }
+    }
+  }
+
+  /** 幂等刷新便携 npm userconfig（失败只告警：它只影响 npm 拉包，不影响应用启动）。 */
+  private _refreshPortableNpmrc(): void {
+    const result = ensurePortableNpmrc(this.dataDir, {
+      useChineseMirror: this.config.useChineseMirror !== false
+    })
+    if (!result.ok) {
+      console.warn('[ConfigManager] 写便携 .npmrc 失败（npm 可能仍写用户级缓存）:', result.error)
     }
   }
 

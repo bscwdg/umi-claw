@@ -796,6 +796,64 @@ await rec.check('keep-gateway', '保留网关：复用健康的后台网关 + �
   return '复用/清理/设置关闭不复用/退出保留与停止'
 })
 
+await rec.check(
+  'npm-cache-wiring',
+  'npm 缓存/registry 落到便携 HOME（.npmrc）+ 所有 openclaw→npm 入口统一 npm env',
+  async () => {
+    const { readFileSync } = await import('node:fs')
+    const cfg = readFileSync(join(process.cwd(), 'electron', 'main', 'configManager.ts'), 'utf-8')
+    const npmrcSrc = readFileSync(
+      join(process.cwd(), 'electron', 'main', 'portableNpmConfig.ts'),
+      'utf-8'
+    )
+    assert(/ensurePortableNpmrc/.test(cfg), 'configManager 启动/保存时维护便携 .npmrc')
+    assert(/\.npm-cache/.test(npmrcSrc), '.npmrc 必须把 cache 固定到应用内目录')
+    assert(/registry\.npmmirror\.com/.test(npmrcSrc), '.npmrc 跟随国内镜像开关写 registry')
+
+    const pathsSrc = readFileSync(
+      join(process.cwd(), 'electron', 'main', 'openClawPaths.ts'),
+      'utf-8'
+    )
+    assert(/npm_config_cache/.test(pathsSrc), 'buildOpenClawEnv 必须注入应用内 npm_config_cache')
+
+    const dmSrc = readFileSync(
+      join(process.cwd(), 'electron', 'main', 'downloadManager.ts'),
+      'utf-8'
+    )
+    const wxBody = dmSrc.slice(
+      dmSrc.indexOf('private async _installWeixinChannelPlugin('),
+      dmSrc.indexOf('private async _installQQBotChannelPlugin(')
+    )
+    assert(wxBody.includes('buildNpmRuntimeEnv({'), '微信受管安装必须使用统一 npm env')
+    const qqBody = dmSrc.slice(
+      dmSrc.indexOf('private async _installQQBotChannelPlugin('),
+      dmSrc.indexOf('private _assembleWeixinPluginManually(')
+    )
+    assert(qqBody.includes('buildNpmRuntimeEnv({'), 'QQ 受管安装必须使用统一 npm env')
+    const repairBody = dmSrc.slice(
+      dmSrc.indexOf('private async _runUpdateRepair('),
+      dmSrc.indexOf('\n  private ', dmSrc.indexOf('private async _runUpdateRepair(') + 1)
+    )
+    assert(
+      repairBody.includes('buildNpmRuntimeEnv({'),
+      'update repair 必须走统一 npm env（插件收敛会拉 npm）'
+    )
+
+    // 网关 env 不能把宿主继承的 NPM_CONFIG_CACHE 带回来（Windows 大小写不敏感，
+    // 在 commonEnv 之后重新 spread process.env 会让大写变体覆盖小写值）
+    const clawSrc = readFileSync(
+      join(process.cwd(), 'electron', 'main', 'clawManager.ts'),
+      'utf-8'
+    )
+    assert(clawSrc.includes('...commonEnv'), '网关 env 以 buildOpenClawEnv 结果为基础')
+    assert(
+      !/const env = \{\s*\r?\n\s*\.\.\.process\.env,/.test(clawSrc),
+      '网关 env 不得在 commonEnv 之后重新 spread process.env'
+    )
+    return 'cache/registry 落 .npmrc、受管安装与 update repair 统一 env、网关 env 不带旧 cache'
+  }
+)
+
 await rec.check('eta-wiring', 'ETA 接线：状态里有估算值、store/Dashboard 展示', async () => {
   const { readFileSync } = await import('node:fs')
   const clawSrc = readFileSync(join(process.cwd(), 'electron', 'main', 'clawManager.ts'), 'utf-8')

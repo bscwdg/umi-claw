@@ -1277,6 +1277,37 @@ try {
     }
     return 'DEGRADED：本机 3213 / 3214 都没有在跑的 Gateway，真机探活未验（语义与错误映射已由 G2/G3 用真 HTTP 服务端覆盖）'
   })
+
+  // ── G31 便携 .npmrc（覆盖 OpenClaw 真正的 npm install：它会 reset env 里的 cache）──
+  await r.check('G31', 'ConfigManager 启动/保存写便携 .npmrc：cache 落应用内、registry 跟随镜像开关', async () => {
+    const dir = join(runDir, 'cfg-npmrc')
+    mkdirSync(dir, { recursive: true })
+    const prev = process.env.CLAW_DATA_DIR
+    process.env.CLAW_DATA_DIR = dir
+    try {
+      const manager = new ConfigManager()
+      const npmrcPath = join(dir, 'config', '.npmrc')
+      assert(existsSync(npmrcPath), 'ConfigManager 启动必须写便携 .npmrc')
+      const text = readFileSync(npmrcPath, 'utf-8')
+      assert(
+        text.includes('cache=' + join(dir, 'config', '.npm-cache').replace(/\\/g, '/')),
+        '.npmrc 的 cache 必须指向应用内（用户级 npm-cache 只读时 npm install 会 EPERM）'
+      )
+      assert(/registry=https:\/\/registry\.npmmirror\.com/.test(text), '默认镜像开关 → npmmirror')
+
+      await manager.saveConfig({ useChineseMirror: false })
+      const off = readFileSync(npmrcPath, 'utf-8')
+      assert(/registry=https:\/\/registry\.npmjs\.org/.test(off), '关闭镜像后 registry 改为官方源')
+
+      const before = readFileSync(npmrcPath, 'utf-8')
+      await manager.saveConfig({})
+      assertEq(readFileSync(npmrcPath, 'utf-8'), before, '.npmrc 内容幂等（重复保存不抖动）')
+      return '启动写 .npmrc（cache 应用内 + 镜像 registry）；关镜像会切官方源；重复保存幂等'
+    } finally {
+      if (prev === undefined) delete process.env.CLAW_DATA_DIR
+      else process.env.CLAW_DATA_DIR = prev
+    }
+  })
 } catch (e) {
   console.error('验收脚本自身异常:', e)
 } finally {

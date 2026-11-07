@@ -78,6 +78,9 @@ export const toPosix = (p: string) => p.replace(/\\/g, '/')
  * 统一 HOME/USERPROFILE/OPENCLAW_CONFIG_DIR/OPENCLAW_DATA_DIR、PATH 隔离（绿色 Node 顶到最前）
  * 以及 NODE_ENV。调用方可在此基础上 spread 自己的特有变量（如 PORT、GATEWAY_MODE 等）。
  *
+ * npm_config_cache 也在这里统一落到 `<dataDir>/config/.npm-cache`：OpenClaw 子进程
+ * 在插件缺失时会自己拉起 npm，不能让它写宿主机用户级缓存（可能只读，实测 EPERM）。
+ *
  * @param dataDir  数据目录（configManager.getDataDir()）
  * @param nodePath 绿色 node 可执行文件绝对路径（用于把其 bin 目录顶到 PATH 最前）
  * @param extra    额外覆盖的环境变量
@@ -95,13 +98,26 @@ export function buildOpenClawEnv(
   const pathDelimiter = process.platform === 'win32' ? ';' : ':'
   const isolatedPath = `${nodeBinDir}${pathDelimiter}${process.env.PATH || ''}`
 
+  // npm 子进程统一用便携目录里的缓存（与 downloadManager.buildNpmRuntimeEnv 同口径）。
+  // 从低权限/沙箱/管理员环境继承来的用户级 %LOCALAPPDATA%\npm-cache 可能不可写：
+  // OpenClaw 在插件缺失时会自己拉起 npm（`channels login` 的兜底安装、`plugins install`），
+  // 写用户级 cache 直接 EPERM → npm view 超时 → 渠道插件装不上（实测见 runtime-debug.log）。
+  // Windows 环境变量不区分大小写，必须清掉旧 cache 的所有大小写变体，否则 npm 可能
+  // 优先采用继承来的 NPM_CONFIG_CACHE。
+  const baseEnv: NodeJS.ProcessEnv = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key.toLowerCase() === 'npm_config_cache') continue
+    if (value !== undefined) baseEnv[key] = value
+  }
+
   return {
-    ...process.env,
+    ...baseEnv,
     PATH: isolatedPath,
     HOME: portableHome,
     USERPROFILE: portableHome,
     OPENCLAW_CONFIG_DIR: configDir,
     OPENCLAW_DATA_DIR: openClawData,
+    npm_config_cache: toPosix(join(dataDir, 'config', '.npm-cache')),
     NODE_ENV: 'production',
     ...extra
   }

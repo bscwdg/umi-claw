@@ -341,9 +341,10 @@ export function getWorkGatewayClient(): GatewayClient {
 
 /**
  * 解析终端命令入口与配套环境变量。
- * npx 模式下按用户的镜像开关注入 npm_config_registry，加快国内网络拉包；
- * 同时把 npm 缓存固定到便携数据目录（Windows 的 npm 默认缓存走 LOCALAPPDATA，
- * 不显式指定会在宿主机用户目录留缓存，破坏便携隔离）。
+ * npx 模式按用户的镜像开关注入 npm_config_registry，加快国内网络拉包。
+ * openclaw 模式不额外注入 npm 配置：OpenClaw 拉起 npm 时会重置 env 里的
+ * npm_config_cache（其余 npm 配置键不受影响），所以缓存/镜像源统一由便携 HOME 的
+ * .npmrc 生效（见 portableNpmConfig.ts）——那是唯一能覆盖到真正 `npm install` 的入口。
  * 其余环境（HOME/USERPROFILE 指向便携 config 目录）与 openclaw 一致，
  * 企微 CLI 正是靠 USERPROFILE/.openclaw 定位本应用托管的 OpenClaw 配置。
  */

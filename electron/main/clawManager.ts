@@ -711,8 +711,10 @@ export class ClawManager extends EventEmitter {
       providerEnv[`${upperCleanKey}_BASE_URL`] = activeProvider.baseUrl ?? ''
     }
 
+    // 不再 spread process.env：commonEnv 已由 buildOpenClawEnv 从 process.env 派生，
+    // 并清掉了 npm_config_cache 的大小写变体。在它之后重新 spread 会把宿主继承的
+    // 大写 NPM_CONFIG_CACHE 带回来（Windows 环境变量不区分大小写，会覆盖小写值）。
     const env = {
-      ...process.env,
       ...commonEnv,
       ...providerEnv,
       ...voiceTtsEnv
