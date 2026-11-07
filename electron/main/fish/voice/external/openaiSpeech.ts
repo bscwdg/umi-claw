@@ -27,13 +27,26 @@ function trimRequired(value: unknown, label: string, maxLength: number): string 
 
 export function normalizeExternalBaseUrl(value: unknown): string {
   if (typeof value !== 'string') throw invalid('服务地址必须是字符串')
-  const raw = value.trim()
+  let raw = value.trim()
   if (!raw) throw invalid('服务地址不能为空')
+  // 本机/局域网服务常被直接填成 `192.168.31.36:7860`（无协议头）。
+  // 注意不能只看 `://`：`http:/example.com`、`http:example.com` 是合法 http 写法，
+  // 误补成 `http://http:/...` 会把 host 变成 "http"，带 Key 时会发到错误主机。
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(raw)
+  if (!scheme) {
+    raw = `http://${raw}`
+  } else if (scheme[1].toLowerCase() !== 'http' && scheme[1].toLowerCase() !== 'https') {
+    // `localhost:7860` 这类 host:port 会被上面的正则误认成 scheme，端口前面是纯数字；
+    // 其余如 `mailto:`、`ftp://` 明确拒绝，避免用户把协议写错却看到「用户名/密码」提示。
+    const rest = raw.slice(scheme[0].length)
+    if (/^\d+(?:[/?#]|$)/.test(rest)) raw = `http://${raw}`
+    else throw invalid('服务地址只支持 http:// 或 https://')
+  }
   let url: URL
   try {
     url = new URL(raw)
   } catch {
-    throw invalid('服务地址不是合法 URL')
+    throw invalid('服务地址不是合法 URL（示例：192.168.31.36:7860 或 http://192.168.31.36:7860）')
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw invalid('服务地址只支持 http:// 或 https://')

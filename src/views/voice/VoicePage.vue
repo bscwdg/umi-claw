@@ -360,7 +360,7 @@
           <div>
             <h2>本地 TTS 服务</h2>
             <p>
-              接入用户自己部署的 OpenAI Audio Speech 兼容服务。应用只保存连接信息，
+              接入本机或局域网里自部署的 OpenAI Audio Speech 兼容服务。应用只保存连接信息，
               不安装、不启动、不更新远端或本机 TTS。
             </p>
           </div>
@@ -371,30 +371,54 @@
           </div>
         </div>
 
-        <div v-if="externalFormOpen" class="external-form">
+        <p v-if="externalStatus" class="external-status" :class="externalStatus.kind">
+          {{ externalStatus.text }}
+        </p>
+
+        <div
+          v-if="externalFormOpen"
+          class="external-form"
+          @input="clearExternalFormMessages"
+          @change="clearExternalFormMessages"
+        >
           <div class="form-group">
-            <label class="form-label">实例名称</label>
-            <input v-model="externalForm.label" class="form-input" maxlength="80" />
+            <label class="form-label">实例名称 *</label>
+            <input
+              v-model="externalForm.label"
+              class="form-input"
+              maxlength="80"
+              placeholder="例如：局域网 TTS"
+            />
           </div>
           <div class="form-group">
-            <label class="form-label">服务地址</label>
+            <label class="form-label">服务地址 *</label>
             <input
               v-model="externalForm.baseUrl"
               class="form-input"
-              placeholder="http://192.168.1.20:8091/v1"
+              placeholder="http://192.168.31.36:7860"
             />
             <p class="field-hint">
-              填不带 /v1 的地址也会自动补全；只支持 http/https。
+              填主机和端口即可（会自动补 http:// 与 /v1）；只支持 http/https。
               <span v-if="externalEditingId">修改服务地址会自动清除原 Key。</span>
             </p>
           </div>
           <div class="form-group">
-            <label class="form-label">模型名</label>
-            <input v-model="externalForm.model" class="form-input" maxlength="256" />
+            <label class="form-label">模型名 *</label>
+            <input
+              v-model="externalForm.model"
+              class="form-input"
+              maxlength="256"
+              placeholder="服务要求的 model 字段，例如 tts-1 / qwen3-tts"
+            />
           </div>
           <div class="form-group">
-            <label class="form-label">音色</label>
-            <input v-model="externalForm.voice" class="form-input" maxlength="256" />
+            <label class="form-label">音色 *</label>
+            <input
+              v-model="externalForm.voice"
+              class="form-input"
+              maxlength="256"
+              placeholder="服务支持的 voice 名称"
+            />
           </div>
           <div class="form-group">
             <label class="form-label">响应格式</label>
@@ -418,22 +442,37 @@
               清除该实例已保存的 Key
             </label>
             <p class="field-hint">
-              合成文本会发送到上面填写的服务地址；请只接入你信任的本机、局域网或远端服务。
+              合成文本会发送到上面填写的服务地址；请只接入你信任的本机或局域网服务。
             </p>
             <p v-if="externalHttpKeyRisk" class="field-hint warning">
               HTTP 不加密，当前配置的 API Key 会以明文传输。请改用 HTTPS，或只在不敏感的局域网环境中使用。
             </p>
           </div>
+          <p v-if="externalFormNotice" class="external-form-result">{{ externalFormNotice }}</p>
+          <p v-if="externalFormError" class="external-form-error">{{ externalFormError }}</p>
           <div class="form-group external-form-actions">
-            <button class="btn" :disabled="busy" @click="closeExternalForm">取消</button>
-            <button class="btn btn-primary" :disabled="busy" @click="saveExternalService">
+            <button class="btn" :disabled="busy || externalDraftProbing" @click="closeExternalForm">
+              取消
+            </button>
+            <button
+              class="btn"
+              :disabled="busy || externalDraftProbing"
+              @click="probeExternalDraft"
+            >
+              {{ externalDraftProbing ? '测试中…' : '测试连接' }}
+            </button>
+            <button
+              class="btn btn-primary"
+              :disabled="busy || externalDraftProbing"
+              @click="saveExternalService"
+            >
               保存实例
             </button>
           </div>
         </div>
 
         <div v-if="!externalServices.length" class="empty-clone">
-          暂无本地 TTS 实例。用户可填写本机、局域网或远端兼容服务地址接入。
+          暂无本地 TTS 实例。可填写本机或局域网里 OpenAI Audio Speech 兼容服务的地址接入。
         </div>
         <div v-else class="external-list">
           <div v-for="item in externalServices" :key="item.id" class="external-row">
@@ -791,6 +830,10 @@ const externalServices = ref<ExternalTtsServiceView[]>([])
 const externalFormOpen = ref(false)
 const externalEditingId = ref('')
 const externalTestingId = ref('')
+const externalFormError = ref('')
+const externalFormNotice = ref('')
+const externalStatus = ref<{ text: string; kind: 'ok' | 'warn' } | null>(null)
+const externalDraftProbing = ref(false)
 const externalForm = reactive({
   label: '',
   baseUrl: '',
@@ -895,11 +938,13 @@ const editingExternalHasKey = computed(
     !!externalEditingId.value &&
     !!externalServices.value.find((item) => item.id === externalEditingId.value)?.hasKey
 )
-const externalHttpKeyRisk = computed(
-  () =>
-    externalForm.baseUrl.trim().toLowerCase().startsWith('http://') &&
-    (!!externalForm.apiKey.trim() || editingExternalHasKey.value)
-)
+const externalHttpKeyRisk = computed(() => {
+  const raw = externalForm.baseUrl.trim().toLowerCase()
+  const explicitScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw)
+  // 省略协议时后端会补 http://，同样属于明文传输
+  const isHttp = raw.startsWith('http://') || (raw.length > 0 && !explicitScheme)
+  return isHttp && (!!externalForm.apiKey.trim() || editingExternalHasKey.value)
+})
 
 const selectableSpeakers = computed(() => [
   ...(catalog.value?.voices ?? []).map((voice) => voice.voiceType),
@@ -1074,9 +1119,13 @@ async function refreshExternalServices(): Promise<void> {
 
 function openExternalForm(service?: ExternalTtsServiceView): void {
   error.value = ''
+  externalFormError.value = ''
+  externalFormNotice.value = ''
+  externalStatus.value = null
   externalEditingId.value = service?.id ?? ''
   externalForm.label = service?.label ?? ''
-  externalForm.baseUrl = service?.baseUrl ?? 'http://192.168.1.20:8091/v1'
+  // 默认留空：占位符已经给了例子，预填一个不存在的地址会让人以为要改它。
+  externalForm.baseUrl = service?.baseUrl ?? ''
   externalForm.model = service?.model ?? ''
   externalForm.voice = service?.voice ?? ''
   externalForm.responseFormat = service?.responseFormat ?? 'mp3'
@@ -1088,9 +1137,68 @@ function openExternalForm(service?: ExternalTtsServiceView): void {
 function closeExternalForm(): void {
   externalFormOpen.value = false
   externalEditingId.value = ''
+  externalFormError.value = ''
+  externalFormNotice.value = ''
+}
+
+/** 输入变化时清掉上一次的测试结果/错误，避免旧提示误导。 */
+function clearExternalFormMessages(): void {
+  externalFormError.value = ''
+  externalFormNotice.value = ''
+}
+
+/** 保存前校验必填项：错误显示在按钮上方，避免顶部提示被滚出视野后像“按钮没反应”。 */
+function validateExternalForm(): string {
+  const missing: string[] = []
+  if (!externalForm.label.trim()) missing.push('实例名称')
+  if (!externalForm.baseUrl.trim()) missing.push('服务地址')
+  if (!externalForm.model.trim()) missing.push('模型名')
+  if (!externalForm.voice.trim()) missing.push('音色')
+  if (missing.length) return `请先填写：${missing.join('、')}`
+  const rawUrl = externalForm.baseUrl.trim()
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(rawUrl) && !/^https?:\/\//i.test(rawUrl)) {
+    return '服务地址只支持 http:// 或 https://'
+  }
+  if (/[\s]/.test(rawUrl)) return '服务地址不能包含空格'
+  return ''
+}
+
+function errorMessageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+async function probeExternalDraft(): Promise<void> {
+  if (!externalForm.baseUrl.trim()) {
+    externalFormError.value = '请先填写服务地址'
+    return
+  }
+  externalFormError.value = ''
+  externalFormNotice.value = ''
+  externalDraftProbing.value = true
+  try {
+    const result = await api.external.probeDraft({
+      baseUrl: externalForm.baseUrl,
+      apiKey: externalForm.clearKey ? '' : externalForm.apiKey,
+      // clearKey 表示准备删 Key，此时不能拿旧 Key 去测试，否则反馈与实际保存不一致
+      id: externalForm.clearKey ? undefined : externalEditingId.value || undefined
+    })
+    externalFormNotice.value = result.ok
+      ? `连接测试：${result.detail}（${result.latencyMs}ms）`
+      : `服务可达但未通过探活：${result.detail}（${result.latencyMs}ms）`
+  } catch (e) {
+    externalFormError.value = errorMessageOf(e)
+  } finally {
+    externalDraftProbing.value = false
+  }
 }
 
 async function saveExternalService(): Promise<void> {
+  const invalid = validateExternalForm()
+  if (invalid) {
+    externalFormError.value = invalid
+    return
+  }
+  externalFormError.value = ''
   busy.value = true
   error.value = ''
   try {
@@ -1108,9 +1216,25 @@ async function saveExternalService(): Promise<void> {
     await refreshExternalServices()
     if (!voiceForm.externalProviderId) voiceForm.externalProviderId = saved.id
     closeExternalForm()
-    showNotice('本地 TTS 实例已保存')
+    externalStatus.value = { text: `已保存「${saved.label}」，正在测试连接…`, kind: 'ok' }
+    // 保存后立刻探活：地址填错/服务没起来时用户马上知道原因。
+    // 注意：探活失败不能覆盖「保存成功」的事实，所以这里只改状态行，不弹错误横幅。
+    try {
+      const probe = await api.external.probe(saved.id)
+      externalStatus.value = {
+        text: probe.ok
+          ? `已保存「${saved.label}」：${probe.detail}（${probe.latencyMs}ms）`
+          : `已保存「${saved.label}」，但探活未通过：${probe.detail}（${probe.latencyMs}ms）`,
+        kind: probe.ok ? 'ok' : 'warn'
+      }
+    } catch (e) {
+      externalStatus.value = {
+        text: `已保存「${saved.label}」，但连接测试失败：${errorMessageOf(e)}`,
+        kind: 'warn'
+      }
+    }
   } catch (e) {
-    showError(e)
+    externalFormError.value = errorMessageOf(e)
   } finally {
     busy.value = false
   }
@@ -1148,7 +1272,7 @@ function deleteExternalService(service: ExternalTtsServiceView): void {
   askConfirm(
     {
       title: '删除本地 TTS 实例',
-      message: `删除「${service.label}」及其本地保存的 API Key？\n\n不会影响远端服务本身；已缓存音频保留到缓存清理。`,
+      message: `删除「${service.label}」及其本地保存的 API Key？\n\n不会影响你部署的服务本身；已缓存音频保留到缓存清理。`,
       confirmText: '删除'
     },
     () => doDeleteExternalService(service)
@@ -1900,11 +2024,59 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.03);
 }
 
+.external-form-result {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(120, 220, 160, 0.35);
+  background: rgba(120, 220, 160, 0.10);
+  color: #9fe7bd;
+  font-size: 13px;
+}
+
+.external-status {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.external-status.ok {
+  border: 1px solid rgba(120, 220, 160, 0.35);
+  background: rgba(120, 220, 160, 0.10);
+  color: #9fe7bd;
+}
+.external-status.warn {
+  border: 1px solid rgba(255, 200, 120, 0.4);
+  background: rgba(255, 200, 120, 0.10);
+  color: #ffd79a;
+}
+
+.external-form-error {
+  /* 跨整行：错误在表单顶部，保存失败时不会被滚出视野 */
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 107, 107, 0.45);
+  background: rgba(255, 107, 107, 0.12);
+  color: #ff9d9d;
+  font-size: 13px;
+}
+
 .external-form-actions {
+  /* .form-group 默认是 column，这里要恢复成一行并占满整行，
+     否则「取消 / 测试连接 / 保存实例」会被拉成竖排且左右不对齐 */
+  grid-column: 1 / -1;
   display: flex;
-  align-items: flex-end;
+  flex-direction: row;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.external-form-actions .btn {
+  min-width: 96px;
 }
 
 .external-list {

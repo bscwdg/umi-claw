@@ -33,6 +33,14 @@ export interface ExternalTtsServiceInput {
   clearKey?: unknown
 }
 
+/** 未保存实例的草稿探测（设置页「测试连接」用，不落盘、不写 Key）。 */
+export interface ExternalTtsDraftProbeInput {
+  baseUrl?: unknown
+  apiKey?: unknown
+  /** 编辑已有实例时传 id：地址未变则复用已存 Key，避免误报鉴权失败。 */
+  id?: unknown
+}
+
 export interface ExternalTtsServiceView extends ExternalTtsService {
   hasKey: boolean
   keyTail: string | null

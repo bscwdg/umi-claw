@@ -41,8 +41,9 @@ import {
   ExternalAvailabilityTracker,
   createExternalAvailabilityTracker
 } from '../external/availability'
-import { createOpenAISpeechProvider } from '../external/openaiSpeech'
+import { createOpenAISpeechProvider, normalizeExternalBaseUrl } from '../external/openaiSpeech'
 import type {
+  ExternalTtsDraftProbeInput,
   ExternalTtsProbeResult,
   ExternalTtsService,
   ExternalTtsServiceInput,
@@ -301,6 +302,39 @@ export class VoiceManager {
     const service = await this.requireExternalService(id)
     const key = this.externalSecrets ? await this.externalSecrets.get(id) : null
     return this.externalProvider(service, key).probe()
+  }
+
+  /**
+   * 设置页「测试连接」：用表单草稿直接探活，不保存实例、不写 Key。
+   * 这样用户不必先猜对「必填项」才能确认地址/Key 是否可达。
+   */
+  async probeExternalDraft(input: ExternalTtsDraftProbeInput): Promise<ExternalTtsProbeResult> {
+    const baseUrl = normalizeExternalBaseUrl(input?.baseUrl)
+    let key =
+      typeof input?.apiKey === 'string' && input.apiKey.trim() ? input.apiKey.trim() : null
+    if (key && key.length > 2048) {
+      throw new VoiceError(VOICE_ERROR_CODES.INVALID_INPUT, 'API Key 过长（上限 2048 字符）')
+    }
+    // 编辑已有实例时若 Key 留空，允许复用该实例已存的 Key；
+    // 但地址变了就不复用（不能把旧主机的凭据发到新主机）。
+    if (!key && isExternalServiceId(input?.id) && this.externalSecrets) {
+      const existing = await this.externalServices?.get(input.id)
+      if (existing && existing.baseUrl === baseUrl) {
+        key = await this.externalSecrets.get(input.id)
+      }
+    }
+    const draft: ExternalTtsService = {
+      id: 'ext:00000000-0000-4000-8000-000000000000',
+      kind: 'openai-speech',
+      label: 'draft',
+      baseUrl,
+      model: '',
+      voice: '',
+      responseFormat: 'mp3',
+      createdAt: 0,
+      updatedAt: 0
+    }
+    return this.externalProvider(draft, key).probe()
   }
 
   async testExternalService(id: string): Promise<ExternalTtsTestResult> {

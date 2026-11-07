@@ -5,7 +5,7 @@
 //   - URL 归一化 / 请求体 / Bearer / 音频响应 / 错误码
 //   - external 路由、缓存、失败冷却、auto 回落火山云
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -213,6 +213,35 @@ await recorder.check('E2', 'OpenAI 适配器：URL、请求体、Bearer、音频
     'http://127.0.0.1:8091/v1',
     '已有 /v1 不重复'
   )
+  // 本机/局域网服务最常见的填法：只写主机:端口（不带协议头）
+  assertEq(
+    normalizeExternalBaseUrl('192.168.31.36:7860'),
+    'http://192.168.31.36:7860/v1',
+    '省略协议自动补 http:// 并补 /v1'
+  )
+  assertEq(
+    normalizeExternalBaseUrl('localhost:7860'),
+    'http://localhost:7860/v1',
+    'localhost:port 不能被误当成 scheme'
+  )
+  // 合法但少一个斜杠的 http 写法不能被补成 http://http/...
+  assertEq(
+    normalizeExternalBaseUrl('http:/example.com'),
+    'http://example.com/v1',
+    'http:/ 单斜杠仍按 http 解析'
+  )
+  assertEq(
+    normalizeExternalBaseUrl('http:example.com'),
+    'http://example.com/v1',
+    'http: 无斜杠仍按 http 解析'
+  )
+  let schemeCode = ''
+  try {
+    normalizeExternalBaseUrl('mailto:a@example.com')
+  } catch (error) {
+    schemeCode = error.code
+  }
+  assertEq(schemeCode, VOICE_ERROR_CODES.INVALID_INPUT, 'mailto: 等非 http 协议拒绝')
   let code = ''
   try {
     normalizeExternalBaseUrl('ftp://example.com')
@@ -557,7 +586,7 @@ await recorder.check('E5', '本地实例 CRUD 通过 Manager，删除时清理 K
   return 'CRUD 与 Key 生命周期正确'
 })
 
-await recorder.check('E6', '语音页已接入本地实例管理、测试连接与试听入口', async () => {
+await recorder.check('E6', '语音页已接入本地实例管理、必填校验、草稿测试与试听入口', async () => {
   const vue = readFileSync(
     join(repoRoot, 'src/views/voice/VoicePage.vue'),
     'utf8'
@@ -566,9 +595,121 @@ await recorder.check('E6', '语音页已接入本地实例管理、测试连接�
   assert(vue.includes('本地 TTS 服务'), '本地服务卡片')
   assert(vue.includes('api.external.save'), '保存调用')
   assert(vue.includes('api.external.probe'), '测试连接调用')
+  assert(vue.includes('api.external.probeDraft'), '未保存草稿的测试连接调用')
   assert(vue.includes('api.external.test'), '试听调用')
   assert(vue.includes('api.external.remove'), '删除调用')
-  return 'VoicePage 本地实例操作入口已装配'
+  // 必填项要在界面上标出来；新表单不能预填一个假地址（旧实现会让用户直接保存错地址）
+  assert(vue.includes('实例名称 *'), '实例名称必填标记')
+  assert(vue.includes('服务地址 *'), '服务地址必填标记')
+  assert(vue.includes("externalForm.baseUrl = service?.baseUrl ?? ''"), '新表单地址默认为空')
+  assert(vue.includes('external-form-actions'), '按钮行样式类')
+  assert(vue.includes('function validateExternalForm'), '表单必填校验函数存在')
+  assert(vue.includes("missing.push('实例名称')"), '必填校验覆盖实例名称')
+  assert(vue.includes('externalFormError.value = invalid'), '校验失败写行内错误')
+  // 草稿通道必须主进程/preload 两端都有，且主进程真的注册了 handler（只断言常量会假绿）
+  const ipcSrc = readFileSync(join(repoRoot, 'electron/main/fish/voice/ipc.ts'), 'utf8')
+  const preloadSrc = readFileSync(join(repoRoot, 'electron/preload/index.ts'), 'utf8')
+  assert(
+    ipcSrc.includes("externalProbeDraft: 'fish:voice:external:probeDraft'"),
+    '主进程通道常量含 probeDraft'
+  )
+  assert(
+    ipcSrc.includes('handle(VOICE_CHANNELS.externalProbeDraft'),
+    '主进程真的注册了 probeDraft handler（不是只声明常量）'
+  )
+  assert(
+    preloadSrc.includes("'fish:voice:external:probeDraft'"),
+    'preload 暴露 fish:voice:external:probeDraft'
+  )
+  return 'VoicePage 本地实例操作/必填/草稿测试入口已装配'
+})
+
+await recorder.check('E10', '草稿连接测试：不保存实例、不写 Key；省略协议自动补全', async () => {
+  const calls = []
+  const servicesPath = join(runDir, 'draft-services.json')
+  const store = createExternalServiceStore(servicesPath)
+  const draftSecretsPath = join(runDir, 'draft-secrets.bin')
+  const manager = createVoiceManager({
+    storage: memoryStore(),
+    secrets: cloudSecrets(),
+    externalServices: store,
+    externalSecrets: createExternalVoiceSecretStore(draftSecretsPath, fakeEncryption()),
+    cacheDir: join(runDir, 'draft-audio'),
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), headers: init?.headers })
+      return new Response(JSON.stringify({ data: [{ id: 'tts-1' }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    },
+    logger: () => undefined
+  })
+  const result = await manager.probeExternalDraft({
+    baseUrl: '192.168.31.36:7860',
+    apiKey: 'draft-key'
+  })
+  assertEq(result.ok, true, '草稿探活成功')
+  assertEq(calls[0].url, 'http://192.168.31.36:7860/v1/models', '省略协议也会补全到 /v1/models')
+  assertEq(calls[0].headers.Authorization, 'Bearer draft-key', '草稿 Key 只进本次请求头')
+  assertEq((await manager.listExternalServices()).length, 0, '草稿测试不保存实例')
+  assertEq(existsSync(servicesPath), false, '草稿测试不创建实例 JSON')
+  assertEq(existsSync(draftSecretsPath), false, '草稿测试不创建 Key 文件')
+  assertEq(
+    existsSync(servicesPath) ? readFileSync(servicesPath, 'utf8').includes('draft-key') : false,
+    false,
+    '草稿 Key 不落盘'
+  )
+
+  let badCode = ''
+  try {
+    await manager.probeExternalDraft({ baseUrl: 'ftp://example.com' })
+  } catch (error) {
+    badCode = error.code
+  }
+  assertEq(badCode, VOICE_ERROR_CODES.INVALID_INPUT, '非 http(s) 草稿地址拒绝')
+
+  // 编辑已有实例时 Key 留空：地址没变复用已存 Key；地址变了不得把旧凭据发到新主机
+  const reuseCalls = []
+  const reusePath = join(runDir, 'draft-reuse-services.json')
+  const reuseSecrets = createExternalVoiceSecretStore(
+    join(runDir, 'draft-reuse-secrets.bin'),
+    fakeEncryption()
+  )
+  const reuseManager = createVoiceManager({
+    storage: memoryStore(),
+    secrets: cloudSecrets(),
+    externalServices: createExternalServiceStore(reusePath),
+    externalSecrets: reuseSecrets,
+    cacheDir: join(runDir, 'draft-reuse-audio'),
+    fetchImpl: async (url, init) => {
+      reuseCalls.push({ url: String(url), headers: init?.headers })
+      return new Response(JSON.stringify({ data: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    },
+    logger: () => undefined
+  })
+  const stored = await reuseManager.saveExternalService({
+    label: '复用 Key',
+    baseUrl: 'http://127.0.0.1:9100',
+    model: 'model',
+    voice: 'voice',
+    apiKey: 'stored-key-123456'
+  })
+  await reuseManager.probeExternalDraft({ baseUrl: '127.0.0.1:9100', id: stored.id })
+  assertEq(
+    reuseCalls[0].headers.Authorization,
+    'Bearer stored-key-123456',
+    '编辑态地址未变：草稿测试复用已存 Key'
+  )
+  await reuseManager.probeExternalDraft({ baseUrl: '127.0.0.1:9101', id: stored.id })
+  assertEq(
+    reuseCalls[1].headers.Authorization,
+    undefined,
+    '地址变了：不得把旧主机的 Key 发给新地址'
+  )
+  return '草稿探活不落盘、Key 不持久化、非法地址拒绝、编辑态安全复用 Key'
 })
 
 await recorder.check('E7', '地址变更清 Key；非法参数；PCM 请求强制 WAV 且不串缓存', async () => {
