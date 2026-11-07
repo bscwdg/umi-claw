@@ -131,3 +131,22 @@ node test/one-day.e2e.mjs   # 「一天」端到端
 - 确认 `data` 目录可写：手动建一个文件再删掉即可（不需要命令行工具）；
 - 重装运行环境（应用内「环境初始化/更新」或删除 `data/runtime` 后重新初始化），并检查安全软件白名单；
 - 测试机若 `npm run accept` 报 SQLite 14/EPERM：验收脚本会自动把便携 Node 复制到系统临时目录规避（`test/_lib.mjs:resolveNodePath`），与产品问题无关，但要在用户终端复跑一次确认。
+
+## 9. QQ 语音条发送（QQBot）
+
+C2C 语音条**不是文件**：音频必须是 SILK（`0x02` + `#!SILK_V3`，16kHz 单声道），
+上传用 `file_data`，发送用 `msg_type=7` + `media.file_info`；走 `attachments` 会退化成文件。
+完整配方、坑位与新电脑自检清单见 **[QQBOT-VOICE.md](voice/QQBOT-VOICE.md)**。
+
+最短路径（在仓库根目录）：
+
+```powershell
+ffmpeg -y -f lavfi -i "sine=frequency=440:duration=1" -ac 1 -ar 16000 media/voice.wav
+node scripts/qqbot-voice-make-silk.mjs media/voice.wav media/voice.silk
+node scripts/qqbot-voice-send.cjs media/voice.silk --openid <openid> --msg-id <msg_id> --seq 1
+```
+
+- 凭据：`<dataDir>/config/.openclaw/qqbot/data/credential-backup/current.json`（32 位 secret）；
+  换机器用 `CLAW_DATA_DIR` 指定 data 目录。
+- 新电脑先跑 `node scripts/qqbot-voice-send.cjs <silk> --openid <openid> --dry-run` 自检，
+  不会发消息。
