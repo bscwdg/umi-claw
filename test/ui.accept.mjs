@@ -821,6 +821,7 @@ try {
 
   // ── U16 语音页 ──
   await r.check('U16', '语音页挂载：设置 / 精选音色 / 预算 / 克隆列表四路加载', async () => {
+    let adapterOnline = true
     const res = await mount('src/views/voice/VoicePage.vue', 'ui-voice', {
       'fish:voice:settings:get': {
         provider: 'volcengine',
@@ -872,7 +873,14 @@ try {
         failures: 0,
         usageTokens: 12
       },
-      'fish:voice:clone:list': []
+      'fish:voice:clone:list': [],
+      // 本机适配器在线：打开「添加本地服务」后应异步填入默认值
+      'fish:voice:external:list': [],
+      // 注意：结果对象本身也含 ok，必须返回完整信封，否则 stub 会把它当信封解包成 undefined
+      'fish:voice:external:probeDraft': () =>
+        adapterOnline
+          ? { ok: true, data: { ok: true, latencyMs: 1, detail: '服务可达，/models 返回有效 JSON' } }
+          : { ok: false, error: { code: 'VOICE_EXTERNAL_UNREACHABLE', message: '本机没有适配器' } }
     })
     const called = calls().map((c) => c.channel)
     assert(called.includes('fish:voice:settings:get'), '应调语音设置')
@@ -883,6 +891,47 @@ try {
     assert(res.html.includes('Vivi 2.0'), '渲染精选音色')
     assert(res.html.includes('预设 TTS 已配置'), '渲染 Key 状态')
     assert(res.html.includes('12 / 1'), '渲染今日用量')
+
+    // 打开「本地 TTS 服务」表单：本机适配器可达时才填默认值
+    const tabBtn = findButton(res.root, '音色')
+    assert(tabBtn, '存在音色 tab')
+    tabBtn.props.onClick()
+    await flushTicks()
+    const addBtn = findButton(res.root, '添加本地服务')
+    assert(addBtn, '音色页存在「添加本地服务」')
+    addBtn.props.onClick()
+    await flushTicks()
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    const baseInput = findTag(res.root, 'input', (n) =>
+      String(n.props.placeholder ?? '').includes('192.168.1.20')
+    )
+    const modelInput = findTag(res.root, 'input', (n) =>
+      String(n.props.placeholder ?? '').includes('tts-1')
+    )
+    const voiceInput = findTag(res.root, 'input', (n) =>
+      String(n.props.placeholder ?? '').includes('voice 名称')
+    )
+    assert(baseInput, '存在服务地址输入框')
+    assertEq(baseInput.value, 'http://127.0.0.1:7862', '探测到适配器后填入默认地址')
+    assertEq(modelInput.value, 'tts-1', '探测到适配器后填入默认模型')
+    assertEq(voiceInput.value, 'Vivian', '探测到适配器后填入默认音色')
+    assert(
+      calls().map((c) => c.channel).includes('fish:voice:external:probeDraft'),
+      '打开表单会探测本机适配器'
+    )
+
+    // 适配器离线：不得预填一个连不上的地址（上一版“默认值”的回归点）
+    findButton(res.root, '取消').props.onClick()
+    await flushTicks()
+    adapterOnline = false
+    findButton(res.root, '添加本地服务').props.onClick()
+    await flushTicks()
+    await new Promise((resolve) => setTimeout(resolve, 80))
+    const offlineBase = findTag(res.root, 'input', (n) =>
+      String(n.props.placeholder ?? '').includes('192.168.1.20')
+    )
+    assertEq(offlineBase.value, '', '本机适配器离线时地址保持为空')
+    assertEq(offlineBase.props.placeholder, 'http://192.168.1.20:7860', '空表单用占位符给示例地址')
     return '语音页四路加载与概览渲染 ✓'
   })
 

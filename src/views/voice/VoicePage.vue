@@ -395,7 +395,7 @@
             <input
               v-model="externalForm.baseUrl"
               class="form-input"
-              placeholder="http://192.168.31.36:7860"
+              placeholder="http://192.168.1.20:7860"
             />
             <p class="field-hint">
               填主机和端口即可（会自动补 http:// 与 /v1）；只支持 http/https。
@@ -832,6 +832,8 @@ const externalEditingId = ref('')
 const externalTestingId = ref('')
 const externalFormError = ref('')
 const externalFormNotice = ref('')
+/** 用户一旦动过表单，异步探测到的默认值就不再覆盖。 */
+const externalFormTouched = ref(false)
 const externalStatus = ref<{ text: string; kind: 'ok' | 'warn' } | null>(null)
 const externalDraftProbing = ref(false)
 const externalForm = reactive({
@@ -1117,6 +1119,15 @@ async function refreshExternalServices(): Promise<void> {
   }
 }
 
+/** 本机 Gradio→OpenAI 适配器的约定默认值（只在真的探到 /models 时才填，避免空环境误填）。 */
+const LOCAL_ADAPTER_DEFAULTS = {
+  label: '本机 TTS（127.0.0.1:7862）',
+  baseUrl: 'http://127.0.0.1:7862',
+  model: 'tts-1',
+  voice: 'Vivian',
+  responseFormat: 'mp3' as const
+}
+
 function openExternalForm(service?: ExternalTtsServiceView): void {
   error.value = ''
   externalFormError.value = ''
@@ -1124,14 +1135,42 @@ function openExternalForm(service?: ExternalTtsServiceView): void {
   externalStatus.value = null
   externalEditingId.value = service?.id ?? ''
   externalForm.label = service?.label ?? ''
-  // 默认留空：占位符已经给了例子，预填一个不存在的地址会让人以为要改它。
+  // 新实例先留空；本机适配器在线时 detectLocalAdapterDefaults() 会异步填入默认值，
+  // 用户一旦开始输入就不再覆盖（externalFormTouched）。
   externalForm.baseUrl = service?.baseUrl ?? ''
   externalForm.model = service?.model ?? ''
   externalForm.voice = service?.voice ?? ''
   externalForm.responseFormat = service?.responseFormat ?? 'mp3'
+  externalFormTouched.value = false
   externalForm.apiKey = ''
   externalForm.clearKey = false
   externalFormOpen.value = true
+  if (!service) void detectLocalAdapterDefaults()
+}
+
+/** 本机适配器在线才填默认值；没装/没启动就保持空表单，不预填一个连不上的地址。 */
+async function detectLocalAdapterDefaults(): Promise<void> {
+  try {
+    const probe = await api.external.probeDraft({ baseUrl: LOCAL_ADAPTER_DEFAULTS.baseUrl })
+    if (!probe.ok) return
+    if (!externalFormOpen.value || externalEditingId.value || externalFormTouched.value) return
+    if (
+      externalForm.label.trim() ||
+      externalForm.baseUrl.trim() ||
+      externalForm.model.trim() ||
+      externalForm.voice.trim()
+    ) {
+      return
+    }
+    externalForm.label = LOCAL_ADAPTER_DEFAULTS.label
+    externalForm.baseUrl = LOCAL_ADAPTER_DEFAULTS.baseUrl
+    externalForm.model = LOCAL_ADAPTER_DEFAULTS.model
+    externalForm.voice = LOCAL_ADAPTER_DEFAULTS.voice
+    externalForm.responseFormat = LOCAL_ADAPTER_DEFAULTS.responseFormat
+    externalFormNotice.value = '检测到本机 TTS 适配器，已填入默认值；接其它服务请改地址/模型/音色。'
+  } catch {
+    // 本机没有适配器：保持空表单，由用户填写自己的地址
+  }
 }
 
 function closeExternalForm(): void {
@@ -1141,8 +1180,9 @@ function closeExternalForm(): void {
   externalFormNotice.value = ''
 }
 
-/** 输入变化时清掉上一次的测试结果/错误，避免旧提示误导。 */
+/** 输入变化时清掉上一次的测试结果/错误，避免旧提示误导；同时标记用户已动过表单。 */
 function clearExternalFormMessages(): void {
+  externalFormTouched.value = true
   externalFormError.value = ''
   externalFormNotice.value = ''
 }
@@ -1183,7 +1223,7 @@ async function probeExternalDraft(): Promise<void> {
       id: externalForm.clearKey ? undefined : externalEditingId.value || undefined
     })
     externalFormNotice.value = result.ok
-      ? `连接测试：${result.detail}（${result.latencyMs}ms）`
+      ? `连接测试：${result.detail}（${result.latencyMs}ms）；模型/音色需用试听确认`
       : `服务可达但未通过探活：${result.detail}（${result.latencyMs}ms）`
   } catch (e) {
     externalFormError.value = errorMessageOf(e)
@@ -1223,7 +1263,7 @@ async function saveExternalService(): Promise<void> {
       const probe = await api.external.probe(saved.id)
       externalStatus.value = {
         text: probe.ok
-          ? `已保存「${saved.label}」：${probe.detail}（${probe.latencyMs}ms）`
+          ? `已保存「${saved.label}」：${probe.detail}（${probe.latencyMs}ms）；模型/音色需用试听确认`
           : `已保存「${saved.label}」，但探活未通过：${probe.detail}（${probe.latencyMs}ms）`,
         kind: probe.ok ? 'ok' : 'warn'
       }

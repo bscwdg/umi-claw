@@ -598,10 +598,18 @@ await recorder.check('E6', '语音页已接入本地实例管理、必填校验�
   assert(vue.includes('api.external.probeDraft'), '未保存草稿的测试连接调用')
   assert(vue.includes('api.external.test'), '试听调用')
   assert(vue.includes('api.external.remove'), '删除调用')
-  // 必填项要在界面上标出来；新表单不能预填一个假地址（旧实现会让用户直接保存错地址）
+  // 必填项要在界面上标出来；默认值只在探测到本机适配器时异步填入
   assert(vue.includes('实例名称 *'), '实例名称必填标记')
   assert(vue.includes('服务地址 *'), '服务地址必填标记')
-  assert(vue.includes("externalForm.baseUrl = service?.baseUrl ?? ''"), '新表单地址默认为空')
+  assert(vue.includes('LOCAL_ADAPTER_DEFAULTS'), '默认值单一定义（避免多处硬编码）')
+  assert(vue.includes("baseUrl: 'http://127.0.0.1:7862'"), '默认地址指向本机适配器')
+  assert(vue.includes('detectLocalAdapterDefaults'), '仅探测到本机适配器时才填默认值')
+  assert(vue.includes('externalFormTouched'), '用户输入后不得被异步默认值覆盖')
+  assert(
+    vue.includes("externalForm.baseUrl = service?.baseUrl ?? ''"),
+    '新表单初始为空（未探测到适配器时不预填连不上的地址）'
+  )
+  assert(vue.includes("externalForm.model = service?.model ?? ''"), '编辑态模型取已存值')
   assert(vue.includes('external-form-actions'), '按钮行样式类')
   assert(vue.includes('function validateExternalForm'), '表单必填校验函数存在')
   assert(vue.includes("missing.push('实例名称')"), '必填校验覆盖实例名称')
