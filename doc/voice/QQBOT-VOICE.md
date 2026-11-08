@@ -86,9 +86,6 @@ $env:CLAW_DATA_DIR = 'D:\work2026\files\claw-desktop\data'
 - 本次脚本实测：`file_data` 传 base64 可行。
 - `url: "base64://..."` 实测返回 `400 40093010 上传URL错误`；`data:` URI、裸 base64
   同样失败。
-- 仓库里另一个实现 `electron/main/character/qqVoice.ts` 用的是 **multipart FormData**
-  （`form.append('file', …)`）；QQ 文档两种上传形态都存在，但 multipart 这条
-  **尚未在真机验证**，不要仅凭本文档判定它不可用。
 - 成功返回 `file_info`（部分版本可能给 `file_uuid`，脚本两者都兼容）。
 
 ### 3.2 发送语音条
@@ -109,9 +106,7 @@ $env:CLAW_DATA_DIR = 'D:\work2026\files\claw-desktop\data'
 - 请求头：`Authorization: QQBot <access_token>`（不是 `Bearer`）。
 - token 用 `POST https://bots.qq.com/app/getAppAccessToken` 换，body
   `{ appId, clientSecret }`。
-- `msg_id` 说明：本次两次真机验证都带 `msg_id` + `msg_seq=1`；不带 `msg_id` 的
-  主动消息未在本次验证。仓库 `qqVoice.ts` 的注释要求语音条不带 `msg_id`，两者
-  口径不一致，发送前按实际使用路径确认。
+- `msg_id`：被动回复的消息 id；本次实测带 `msg_id` + `msg_seq=1`。
 
 ### 3.3 音频格式
 
@@ -132,9 +127,7 @@ $env:CLAW_DATA_DIR = 'D:\work2026\files\claw-desktop\data'
    `credential-backup/current.json` 的 32 位为准（脚本已优先读它）。
 5. **`msg_seq` 必须递增**：同一个 `msg_id` 的多条回复从 1 开始逐条加 1；
    重复/过小会被 QQ 拒绝或去重。
-6. **收到的语音是 `.amr` 且没有转写**：STT 未配置时只能播放，不能转文字；
-   不要把它当 SILK 再发回去。
-7. **上传 40093010**：见 §3.1，`file_data` 是本次实测可用的路；multipart 待验证。
+6. **上传 40093010**：见 §3.1，`file_data` 是本次实测可用的路。
 
 ## 5. 脚本参数、环境变量与退出码
 
@@ -178,7 +171,6 @@ node scripts/qqbot-voice-send.cjs <silkFile> [openid] [msg_id] [msg_seq]
 | 发出去是文件 | 是否走了 `attachments`/`replyTo`；看插件 `mediaKind` |
 | `msg_seq` 报错 | 同一 `msg_id` 是否从 1 递增、是否重复 |
 | 上传成功但发送失败 | `openid` 是否正确、是否在 allowFrom、主动消息权限 |
-| 收到 `.amr` 无文字 | STT 未配置 |
 | 新电脑脚本找不到 data | 设置 `CLAW_DATA_DIR`；确认已扫码登录 |
 | 找不到 silk-wasm | `npm install`（不要 `--omit=optional`），或重装依赖 |
 
