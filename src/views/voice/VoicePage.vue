@@ -121,7 +121,7 @@
             autocomplete="off"
             placeholder="输入后保存，明文不会回传到页面"
           />
-          <button class="btn" :disabled="busy || !ttsKeyInput.trim()" @click="saveKey('tts')">保存</button>
+          <button class="btn btn-primary" :disabled="busy || !ttsKeyInput.trim()" @click="saveKey('tts')">保存</button>
           <button class="btn" :disabled="busy || !settings?.hasTtsKey" @click="testKey('tts')">测试</button>
           <button class="btn btn-danger" :disabled="busy || !settings?.hasTtsKey" @click="clearKey('tts')">清除</button>
         </div>
@@ -143,7 +143,7 @@
             autocomplete="off"
             placeholder="输入语音控制台 API Key"
           />
-          <button class="btn" :disabled="busy || !cloneKeyInput.trim()" @click="saveKey('clone')">保存</button>
+          <button class="btn btn-primary" :disabled="busy || !cloneKeyInput.trim()" @click="saveKey('clone')">保存</button>
           <button class="btn" :disabled="busy || !settings?.hasCloneKey" @click="testKey('clone')">测试</button>
           <button class="btn btn-danger" :disabled="busy || !settings?.hasCloneKey" @click="clearKey('clone')">清除</button>
         </div>

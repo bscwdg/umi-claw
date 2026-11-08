@@ -91,7 +91,7 @@
           <!-- 操作 -->
           <div class="detail-actions">
             <template v-if="detail.status === 'draft'">
-              <button class="btn" @click="saveDraft">保存草稿</button>
+              <button class="btn btn-primary" @click="saveDraft">保存草稿</button>
               <button class="btn btn-primary" @click="confirm">确认报告</button>
               <button class="btn" @click="regenerate">重生成</button>
             </template>

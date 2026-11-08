@@ -355,7 +355,7 @@
       <div v-if="memoryEditor" class="memo-editor">
         <div class="row">
           <strong>{{ memoryEditor.kind === 'diary' ? memoryEditor.id + ' 的日记' : memoryEditor.id }}</strong>
-          <button v-if="memoryEditor.kind === 'diary'" class="btn" :disabled="busy || !memoryEditorDirty" @click="saveMemoryEntry">保存</button>
+          <button v-if="memoryEditor.kind === 'diary'" class="btn primary" :disabled="busy || !memoryEditorDirty" @click="saveMemoryEntry">保存</button>
           <span v-if="memoryEditor.kind === 'diary' && memoryEditorDirty" class="hint">未保存</span>
           <button class="btn ghost" :disabled="busy" @click="confirmDiscardEdit(() => { memoryEditor = null })">关闭</button>
         </div>

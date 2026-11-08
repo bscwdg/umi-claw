@@ -173,7 +173,7 @@
     </div>
 
     <div class="row actions">
-      <button class="btn primary" :disabled="saving || !enabled || !settings" @click="save">
+      <button class="btn btn-primary" :disabled="saving || !enabled || !settings" @click="save">
         保存设置
       </button>
       <span v-if="dirty" class="hint">有未保存的修改</span>
