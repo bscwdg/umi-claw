@@ -419,6 +419,10 @@
               maxlength="256"
               placeholder="服务支持的 voice 名称"
             />
+            <p class="field-hint">
+              Voicebox 原生服务（如 17493）：模型名可填 voicebox，音色填 /profiles 里的 name 或 id；
+              仅在 OpenAI 接口 404/405 时自动改走 /generate/stream，原生固定返回 WAV、语速/响应格式不生效。
+            </p>
           </div>
           <div class="form-group">
             <label class="form-label">响应格式</label>

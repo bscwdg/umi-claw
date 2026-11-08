@@ -444,6 +444,90 @@ await recorder.check('E2', 'OpenAI 适配器：URL、请求体、Bearer、音频
   }
   assertEq(unauthorizedCode, VOICE_ERROR_CODES.AUTH_ERROR, 'probe 遇 401 仍抛鉴权错误')
 
+  // Voicebox 原生接口：/v1/models 404，但 /profiles 200 → 直接支持 /generate/stream
+  const nativeRequests = []
+  const nativeProvider = createOpenAISpeechProvider(
+    { ...service, baseUrl: 'http://127.0.0.1:17493' },
+    null,
+    async (url, init) => {
+      const target = String(url)
+      if (target.endsWith('/v1/models')) return new Response('{}', { status: 404 })
+      if (target.endsWith('/profiles')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 'profile-vivian',
+              name: 'Vivian 中文女声',
+              language: 'zh',
+              preset_engine: 'qwen_custom_voice'
+            }
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      }
+      if (target.endsWith('/generate/stream')) {
+        nativeRequests.push({ url: target, body: JSON.parse(String(init?.body ?? '{}')) })
+        return externalWav()
+      }
+      return new Response('not found', { status: 404 })
+    }
+  )
+  const nativeProbe = await nativeProvider.probe()
+  assertEq(nativeProbe.ok, true, 'Voicebox /profiles 可读时探活通过')
+  assertEq(nativeProbe.weak, undefined, 'Voicebox 原生探活是强成功，不是 weak')
+  const nativeAudio = await nativeProvider.synthesize({
+    text: '你好',
+    voice: 'Vivian 中文女声'
+  })
+  assertEq(nativeAudio.extension, 'wav', 'Voicebox 原生返回 WAV')
+  assertEq(nativeRequests.length, 1, '调用 /generate/stream')
+  assertEq(nativeRequests[0].body.profile_id, 'profile-vivian', '按名称解析 profile_id')
+  assertEq(nativeRequests[0].body.engine, 'qwen_custom_voice', 'engine 使用 preset_engine')
+  assert(
+    nativeRequests[0].body.profile_id && !nativeRequests[0].url.includes('/v1/generate/stream'),
+    '原生接口走根路径 /generate/stream，不在 /v1 下'
+  )
+
+  // 真 OpenAI 404：原生也不可用时，错误必须保留原 speech 的 404，而不是只报 profiles 404
+  const true404 = createOpenAISpeechProvider(
+    { ...service, baseUrl: 'http://127.0.0.1:17494' },
+    null,
+    async (url) => {
+      const target = String(url)
+      if (target.endsWith('/audio/speech')) return new Response('speech not found', { status: 404 })
+      return new Response('profiles not found', { status: 404 })
+    }
+  )
+  let true404Code = ''
+  let true404Message = ''
+  try {
+    await true404.synthesize({ text: '你好', voice: 'Vivian' })
+  } catch (error) {
+    true404Code = error.code
+    true404Message = String(error.message)
+  }
+  assertEq(true404Code, VOICE_ERROR_CODES.PROVIDER_ERROR, '真 404 不伪装成成功')
+  assert(true404Message.includes('HTTP 404'), '真 404 错误保留原 speech 状态')
+  assert(true404Message.includes('profiles not found') === false, '原生 profiles 404 不覆盖原错误')
+
+  // /profiles 401 时探活不能报“可达”
+  const profiles401 = createOpenAISpeechProvider(
+    { ...service, baseUrl: 'http://127.0.0.1:17495' },
+    null,
+    async (url) => {
+      const target = String(url)
+      if (target.endsWith('/v1/models')) return new Response('{}', { status: 404 })
+      return new Response('unauthorized', { status: 401 })
+    }
+  )
+  let profiles401Code = ''
+  try {
+    await profiles401.probe()
+  } catch (error) {
+    profiles401Code = error.code
+  }
+  assertEq(profiles401Code, VOICE_ERROR_CODES.AUTH_ERROR, '原生 /profiles 401 探活抛鉴权错误')
+
   return '适配器协议与错误映射正确'
 })
 
