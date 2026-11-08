@@ -170,6 +170,31 @@ export function buildCharacterDeps(src: CharacterHostSources): CharacterWiringDe
         return null
       }
     },
+    // QQ 主动文本直发只需要 App 凭据；openid 从会话 target 取，不要求配置里填 openid
+    qqAppCreds: () => {
+      const channels = src.configManager.getOpenClawChannels()
+      const qq = (channels?.qqbot ?? {}) as Record<string, unknown>
+      const accounts = (qq.accounts ?? {}) as Record<string, Record<string, unknown>>
+      const candidates: Record<string, unknown>[] = [qq, ...Object.values(accounts ?? {})]
+      const pickString = (obj: Record<string, unknown>, keys: string[]): string => {
+        for (const key of keys) {
+          const value = obj[key]
+          if (typeof value === 'string' && value.trim()) return value.trim()
+        }
+        return ''
+      }
+      for (const candidate of candidates) {
+        const appId = pickString(candidate, ['appId', 'appid', 'app_id'])
+        const secret = pickString(candidate, ['clientSecret', 'secret', 'appSecret'])
+        if (appId && secret.length === 32) return { appId, clientSecret: secret }
+      }
+      const envApp = process.env.UMI_QQBOT_APP_ID
+      const envSecret = process.env.UMI_QQBOT_CLIENT_SECRET
+      if (envApp && envSecret && envSecret.length === 32) {
+        return { appId: envApp, clientSecret: envSecret }
+      }
+      return null
+    },
     obsidianVaultPath: () => src.configManager.getConfig().obsidian?.vaultPath,
     gatewayReady: src.gatewayReady,
     // 「外部渠道」就绪：QQ/飞书/微信任一配置即可（不强制 QQ）

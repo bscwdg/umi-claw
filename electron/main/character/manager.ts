@@ -717,7 +717,7 @@ export class CharacterManager {
       }
 
       const state = await this.getState()
-      const unansweredCount = resolveUnansweredCount(day, state)
+      const unansweredCount = resolveUnansweredCount(day, state, now)
       if (unansweredCount >= PROACTIVE_BACKOFF_THRESHOLD) {
         return { ok: false, reason: 'unanswered-backoff' as const }
       }

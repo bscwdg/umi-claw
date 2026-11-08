@@ -16,6 +16,7 @@ import { loadPersonaTemplates, runBootstrap } from './bootstrap'
 import { parseLifeDeck } from './contentCards'
 import { createEmptyContentDeck, parseContentDeck } from './contentEngine'
 import { deliverVoice, type QqBotCreds } from './qqVoice'
+import { sendQqProactiveText, parseQqC2cOpenid } from './qqProactiveText'
 import { isVoiceRequest } from './voicePolicy'
 import { formatSearchContext, looksLikeRecallQuery, withTimeout } from './searchContext'
 import { buildMemoryContext, recallDates } from './memoryRecall'
@@ -107,6 +108,8 @@ export interface CharacterWiringDeps {
     creds: () => QqBotCreds | null
     encodeSilk?: (pcm: Uint8Array, sampleRate: number) => Promise<Uint8Array>
   }
+  /** QQ App 凭据（appId/clientSecret）；主动文本直发时 openid 从会话 target 取 */
+  qqAppCreds?: () => { appId: string; clientSecret: string } | null
   /** 既有 Obsidian vault 路径（只在其下建 `大肥鱼/`，不新增知识库） */
   obsidianVaultPath?: () => string | undefined
   /** 知识体检（4.3）：vault/MCP/索引/角色笔记数；由宿主装配，缺省则 UI 显示未接线 */
@@ -235,7 +238,27 @@ async function registerCharacterInternal(
       dataDir: deps.dataDir,
       nodePath: deps.cli.nodePath,
       runner,
-      logger
+      logger,
+      // qqbot 不在 OpenClaw CLI 的 channel 列表里；主动文本直接走 QQBot C2C API
+      sendDirect: async (target, text) => {
+        const appCreds = deps.qqAppCreds?.() ?? null
+        const openid = parseQqC2cOpenid(target.target)
+        if (!appCreds || !openid) {
+          logger('[character] 主动消息 QQ 直发失败：缺少 App 凭据或目标 openid')
+          return false
+        }
+        const result = await sendQqProactiveText({
+          creds: { ...appCreds, openid },
+          target: target.target,
+          text
+        })
+        if (!result.ok) {
+          logger(`[character] 主动消息 QQ 直发失败：${result.reason ?? 'unknown'}`)
+          return false
+        }
+        logger('[character] 主动消息 QQ 直发成功')
+        return true
+      }
     })
     // 删除全量时再摘 agent 条目（bootstrap 接线在下方，先留可调用位）
     let removeAgentEntryFn: (() => Promise<unknown>) | null = null

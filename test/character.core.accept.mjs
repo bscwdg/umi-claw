@@ -1487,6 +1487,17 @@ await recorder.check('C42c', '内容引擎：候选池 2–10 + 去重 + 未回�
   assertEq(round4.unansweredCount, 0, '清零后计数为 0')
   assertEq(round4.nudge.allowed, false, '清零后不再试探')
 
+  // 6.1) 长时间无新主动消息：上一轮未回状态过期，不能永久卡在 backoff
+  const staleDay = {
+    ...day3,
+    sentTimes: [now - 7 * 3_600_000],
+    lastProactiveAt: now - 7 * 3_600_000,
+    lastActiveAt: now - 7 * 3_600_000
+  }
+  assertEq(resolveUnansweredCount(staleDay, state, now), 0, '超过 6 小时重置未回计数')
+  const staleRound = generateProactiveContent({ ...base, day: staleDay })
+  assertEq(staleRound.send, true, '过期后恢复主动消息')
+
   // 7) 跨天兼容：旧 kv day 只有老字段
   const legacyDay = sanitizeProactiveDay({
     activeSent: 2,

@@ -353,20 +353,36 @@ export function sanitizeProactiveDay(raw: unknown): ProactiveDayState {
   return day
 }
 
+/** 超过这个时长没有任何新主动消息，视为上一轮“未回试探”已结束，重新开始计数 */
+export const UNANSWERED_EPISODE_RESET_MS = 6 * 60 * 60 * 1000
+
 /**
  * 未回复计数 = 用户最后一次互动之后又发了多少条主动消息。
  * 先看 state.lastInteractionAt 与 day.lastProactiveAt：互动不早于最后一次发送说明用户回过，
  * 直接清零；否则按 day.sentTimes 数（跨天沿用）。没有 sentTimes 的旧数据用 unansweredCount /
  * activeSent 兜底，保证升级后行为连续。
+ *
+ * now 传入时：最后一次发送已超过 6 小时则重新开一轮，避免用户长时间没回后
+ * 被历史计数永久卡在 unanswered-backoff（主动消息再也不发）。
  */
 export function resolveUnansweredCount(
   day: ProactiveDayState,
-  state: Pick<CharacterState, 'lastInteractionAt'>
+  state: Pick<CharacterState, 'lastInteractionAt'>,
+  now?: number
 ): number {
   const lastInteractionAt = finiteTime(state?.lastInteractionAt) ?? 0
   const lastProactiveAt = finiteTime(day.lastProactiveAt) ?? finiteTime(day.lastActiveAt) ?? 0
   if (lastInteractionAt > 0 && lastInteractionAt >= lastProactiveAt) return 0
   const sentTimes = sanitizeTimeList(day.sentTimes)
+  const lastSentAt = Math.max(lastProactiveAt, ...sentTimes)
+  if (
+    typeof now === 'number' &&
+    Number.isFinite(now) &&
+    lastSentAt > 0 &&
+    now - lastSentAt >= UNANSWERED_EPISODE_RESET_MS
+  ) {
+    return 0
+  }
   if (sentTimes.length > 0) {
     return Math.min(99, sentTimes.filter((at) => at > lastInteractionAt).length)
   }
@@ -504,7 +520,7 @@ export function generateProactiveContent(options: ContentEngineOptions): Proacti
   const unansweredCount =
     typeof options.unansweredCount === 'number' && Number.isFinite(options.unansweredCount)
       ? Math.max(0, Math.round(options.unansweredCount))
-      : resolveUnansweredCount(day, state)
+      : resolveUnansweredCount(day, state, options.now)
   const backoffThreshold = clampInteger(
     options.backoffThreshold ?? PROACTIVE_BACKOFF_THRESHOLD,
     1,

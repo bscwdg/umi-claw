@@ -19,7 +19,7 @@ import { join } from 'node:path'
 import type { CliRunner } from './agentPatchRunner'
 import { CHARACTER_AGENT_ID } from './agentConfig'
 import { listChatChannels } from './channelBindings'
-import { pickProactiveTarget, type ProactiveConversation } from './proactiveTarget'
+import { pickProactiveTarget, type ProactiveConversation, type ProactiveTarget } from './proactiveTarget'
 
 export interface ProactiveSenderOptions {
   dataDir: string
@@ -36,6 +36,8 @@ export interface ProactiveSenderOptions {
   ) => Promise<ProactiveConversation[]>
   /** 测试注入：默认 listChatChannels */
   readBoundChannels?: (agentId: string) => Promise<string[]>
+  /** QQ 直发：CLI 不支持 qqbot，生产由 wiring 注入；其它渠道仍走 CLI */
+  sendDirect?: (target: ProactiveTarget, text: string) => Promise<boolean>
 }
 
 export interface ProactiveSender {
@@ -178,6 +180,11 @@ export function createProactiveSender(options: ProactiveSenderOptions): Proactiv
       if (!target) {
         logger('[character] 主动消息跳过：已绑定渠道里没有可用的会话（先在外面对她说句话）')
         return false
+      }
+      if (target.channel === 'qqbot' && options.sendDirect) {
+        const sent = await options.sendDirect(target, message)
+        if (!sent) logger('[character] 主动消息 QQ 直发失败（CLI 不支持 qqbot，不重试）')
+        return sent
       }
       const args = [
         'message',
