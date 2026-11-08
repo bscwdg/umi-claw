@@ -1272,6 +1272,7 @@ await recorder.check('C44', '记忆 prompt：带日期/状态/她的一天/事�
   assertEq(prompt.includes('鱼的状态'), true, '含 STATE')
   assertEq(prompt.includes('她的一天'), true, '含 LIFE')
   assertEq(prompt.includes('11:00:pat'), true, '含事件')
+  assertEq(prompt.includes('tags 必须包含 大肥鱼/日记'), true, 'prompt 明确要求 tags 含 大肥鱼/日记')
   assertEq(prompt.length < 5000, true, 'prompt 有预算')
   return 'prompt 正确'
 })
@@ -1286,6 +1287,44 @@ await recorder.check('C45', '日记校验：frontmatter/日期/正文；围栏�
   assertEq(validateDiary(goodDiary, '2026-11-02').ok, false, '日期不匹配拒绝')
   const noTags = goodDiary.replace('[大肥鱼/日记]', '[]')
   assertEq(validateDiary(noTags, '2026-11-01').ok, false, '缺 tags 拒绝')
+  // 模型常写 `[日记, 大肥鱼]`；normalizeDiary 必须补上精确 `大肥鱼/日记` 再通过校验
+  const altTags = goodDiary.replace('[大肥鱼/日记]', '[日记, 大肥鱼]')
+  const normalizedAlt = normalizeDiary(altTags, '2026-11-01')
+  assertEq(
+    normalizedAlt.includes('tags: [日记, 大肥鱼, 大肥鱼/日记]'),
+    true,
+    'normalizeDiary 生成精确 tags'
+  )
+  assertEq(
+    normalizedAlt
+      .split('\n')
+      .find((x) => x.startsWith('tags:'))
+      ?.split(/[\[\],]/)
+      .map((x) => x.trim())
+      .filter((x) => x === '大肥鱼/日记').length,
+    1,
+    'canonical tag 只出现一次'
+  )
+  assertEq(validateDiary(normalizedAlt, '2026-11-01').ok, true, '补 tag 后校验通过')
+
+  // 不闭合/带注释/多余括号/近似标签：不能拼出坏 YAML，也不能假命中
+  for (const rawTags of ['[日记,', '[日记] # 备注', '日记]', '[大肥鱼/日记备份]']) {
+    const normalized = normalizeDiary(
+      goodDiary.replace('[大肥鱼/日记]', rawTags),
+      '2026-11-01'
+    )
+    const line = normalized.split('\n').find((x) => x.startsWith('tags:')) ?? ''
+    assertEq(/^tags: \[[^\[\]]*大肥鱼\/日记[^\[\]]*\]$/.test(line), true, `tags 行合法：${rawTags}`)
+    assertEq(
+      line
+        .split(/[\[\],]/)
+        .map((x) => x.trim())
+        .filter((x) => x === '大肥鱼/日记').length,
+      1,
+      `canonical 唯一：${rawTags}`
+    )
+    assertEq(validateDiary(normalized, '2026-11-01').ok, true, `normalize 后可校验：${rawTags}`)
+  }
   const shortBody =
     '---\ndate: 2026-11-01\ntags: [大肥鱼/日记]\nstage: 2\nintimacy: 40\nmood: 平静\nsource: x\n---\n\n短\n'
   assertEq(validateDiary(shortBody, '2026-11-01').ok, false, '正文过短拒绝')
