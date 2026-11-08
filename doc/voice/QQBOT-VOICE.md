@@ -111,7 +111,7 @@ $env:CLAW_DATA_DIR = 'D:\work2026\files\claw-desktop\data'
   `{ appId, clientSecret }`。
 - `msg_id` 说明：本次两次真机验证都带 `msg_id` + `msg_seq=1`；不带 `msg_id` 的
   主动消息未在本次验证。仓库 `qqVoice.ts` 的注释要求语音条不带 `msg_id`，两者
-  口径不一致，待后续统一/验证（见 §8）。
+  口径不一致，发送前按实际使用路径确认。
 
 ### 3.3 音频格式
 
@@ -124,8 +124,7 @@ $env:CLAW_DATA_DIR = 'D:\work2026\files\claw-desktop\data'
 ## 4. 已踩过的坑
 
 1. **`message(attachments/asVoice)` 会变成文件**：OpenClaw/插件在 `mediaKind`
-   缺失时默认按 image 处理，走 `attachments` 不会出语音条。（外部插件行为，
-   版本相关，见 §8。）
+   缺失时默认按 image 处理，走 `attachments` 不会出语音条。（外部插件行为，版本相关。）
 2. **`deliveryStatus: "sent"` 不等于语音条**：插件 `sendVoice` 失败会静默
    fallback 成 `sendFile`；必须看发送接口是否 `msg_type=7` 返回 200。
 3. **带 `replyTo` / `message_reference` 会变文件**：语音条不要带引用。
@@ -179,20 +178,11 @@ node scripts/qqbot-voice-send.cjs <silkFile> [openid] [msg_id] [msg_seq]
 | 发出去是文件 | 是否走了 `attachments`/`replyTo`；看插件 `mediaKind` |
 | `msg_seq` 报错 | 同一 `msg_id` 是否从 1 递增、是否重复 |
 | 上传成功但发送失败 | `openid` 是否正确、是否在 allowFrom、主动消息权限 |
-| 收到 `.amr` 无文字 | STT 未配置（见 §8） |
+| 收到 `.amr` 无文字 | STT 未配置 |
 | 新电脑脚本找不到 data | 设置 `CLAW_DATA_DIR`；确认已扫码登录 |
 | 找不到 silk-wasm | `npm install`（不要 `--omit=optional`），或重装依赖 |
 
-## 8. 仍待办
-
-1. 修 OpenClaw QQBot 插件的 `mediaKind`：audio → voice，别默认 image
-2. 配可用 TTS（Windows SAPI 在此环境会卡死；edge-tts 可装到自定义目录）
-3. 配 STT（收到的 `.amr` 无转写）
-4. 验证/统一 `electron/main/character/qqVoice.ts` 的 multipart 上传形态与仓库脚本
-   的 `file_data` 形态；当前 qqVoice 真机未验证
-5. 统一语音条是否带 `msg_id`：本次实测带，qqVoice.ts 注释要求不带
-
-## 9. 新电脑自检清单
+## 8. 新电脑自检清单
 
 1. `npm install`（`silk-wasm` 随依赖安装；不要 `--omit=optional`）
 2. `ffmpeg -version` 或设置 `$env:FFMPEG`
