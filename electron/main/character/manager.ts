@@ -28,11 +28,32 @@ import {
 import { composeLifeDay, renderLifeDoc, type LifeDay } from './life'
 import type { LifeDeck } from './contentCards'
 import {
+  PROACTIVE_BACKOFF_THRESHOLD,
+  RECENT_SENT_LIMIT,
+  RECENT_TOPIC_LIMIT,
+  appendRecentString,
+  appendRecentText,
+  appendRecentTime,
+  createEmptyContentDeck,
+  decideNudge,
+  findDuplicateMessage,
+  generateProactiveContent,
+  mergeRecentStrings,
+  mergeRecentTexts,
+  mergeRecentTimes,
+  resolveUnansweredCount,
+  sanitizeProactiveDay,
+  sanitizeStringList,
+  type ContentDeck,
+  type ProactiveCandidate
+} from './contentEngine'
+import {
   decideProactive,
   proactiveIntervalMs,
   PROACTIVE_MAX_DAILY_CAP,
   type ProactiveDayState,
-  type ProactiveDecision
+  type ProactiveDecision,
+  type ProactiveReason
 } from './proactive'
 import {
   buildMemoryPrompt,
@@ -59,6 +80,18 @@ import {
   type DeleteScope
 } from './safety'
 
+/** 从「她的一天」心情/意图映射到表情包情绪标签（与贴纸库的英文词表一致） */
+function stickerEmotionFor(mood: string | undefined, intent: string): string {
+  const text = mood ?? ''
+  if (/开心|得意|高兴|笑|摸头/.test(text)) return 'happy'
+  if (/累|困|睡|疲/.test(text)) return 'sleepy'
+  if (/难过|委屈|哭|失落/.test(text)) return 'sad'
+  if (/生气|气|怒/.test(text)) return 'angry'
+  if (/害羞|脸红|羞/.test(text)) return 'shy'
+  if (/疑惑|好奇|看/.test(text)) return 'surprised'
+  return intent === 'nudge' ? 'miss' : 'happy'
+}
+
 export interface CharacterManagerOptions {
   store: CharacterStore
   now?: () => number
@@ -68,10 +101,23 @@ export interface CharacterManagerOptions {
   clampPosition?: (x: number, y: number, width: number, height: number) => { x: number; y: number }
   /** 生活内容卡加载（resources/character/cards/life-cards.v1.json） */
   loadLifeDeck?: () => Promise<LifeDeck>
+  /** 话题/台词内容包（直接注入；测试/宿主预加载用；缺省空包 = 只用生活卡模板） */
+  contentDeck?: ContentDeck
+  /** 话题/台词内容包懒加载（wiring 从 resources 读 topics/lines 文件；缺省空包） */
+  loadContentDeck?: () => Promise<ContentDeck>
   /** 把「她的一天」写进 workspace（fish/LIFE.md） */
   writeLifeDoc?: (text: string) => Promise<void>
   /** 主动消息外发（外部渠道由 wiring 注入；不提供则只做应用内气泡） */
   sendProactive?: (message: { text: string; channel: 'external' | 'app' }) => Promise<boolean>
+  /** 主动消息偶尔补一张表情包（QQ 外部渠道；失败不影响文字已送达） */
+  sendProactiveSticker?: (input: {
+    emotion: string
+    channel: 'external' | 'app'
+  }) => Promise<boolean>
+  /** 主动消息配表情包的概率（0–1；默认 0.2，约五条文本一张图） */
+  stickerChance?: number
+  /** 测试注入随机源 */
+  random?: () => number
   /** 每日记忆（C07）：生成日记 + 双写（workspace / Obsidian） */
   generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
   readWorkspaceMemory?: (date: string) => Promise<string | null>
@@ -95,11 +141,19 @@ export class CharacterManager {
     height: number
   ) => { x: number; y: number }
   private readonly loadLifeDeck?: () => Promise<LifeDeck>
+  private readonly contentDeck?: ContentDeck
+  private readonly loadContentDeck?: () => Promise<ContentDeck>
   private readonly writeLifeDoc?: (text: string) => Promise<void>
   private readonly sendProactive?: (message: {
     text: string
     channel: 'external' | 'app'
   }) => Promise<boolean>
+  private readonly sendProactiveSticker?: (input: {
+    emotion: string
+    channel: 'external' | 'app'
+  }) => Promise<boolean>
+  private readonly stickerChance: number
+  private readonly random: () => number
   private readonly generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
   private readonly readWorkspaceMemory?: (date: string) => Promise<string | null>
   private readonly writeWorkspaceMemory?: (date: string, text: string) => Promise<void>
@@ -107,6 +161,7 @@ export class CharacterManager {
   private readonly obsidianAvailable?: () => boolean
   private readonly deleteWorkspaceFiles?: (scope: DeleteScope) => Promise<void>
   private lifeDeckCache: LifeDeck | null = null
+  private contentDeckCache: ContentDeck | null = null
   private memoryInFlight: Promise<{ ran: boolean; reason: MemoryGateReason; errors?: string[] }> | null =
     null
   private proactiveInFlight = false
@@ -145,8 +200,16 @@ export class CharacterManager {
     this.onEvent = options.onEvent
     this.clampPosition = options.clampPosition
     this.loadLifeDeck = options.loadLifeDeck
+    this.contentDeck = options.contentDeck
+    this.loadContentDeck = options.loadContentDeck
     this.writeLifeDoc = options.writeLifeDoc
     this.sendProactive = options.sendProactive
+    this.sendProactiveSticker = options.sendProactiveSticker
+    this.stickerChance =
+      typeof options.stickerChance === 'number' && Number.isFinite(options.stickerChance)
+        ? Math.max(0, Math.min(1, options.stickerChance))
+        : 0.2
+    this.random = options.random ?? Math.random
     this.generateDiary = options.generateDiary
     this.readWorkspaceMemory = options.readWorkspaceMemory
     this.writeWorkspaceMemory = options.writeWorkspaceMemory
@@ -243,6 +306,15 @@ export class CharacterManager {
       throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '角色设置尚未加载')
     }
     return clone(this.settings)
+  }
+
+  /** 备份恢复后从 store 重载内存态，避免旧 settings/state 再写回归档数据 */
+  async reloadFromStore(): Promise<void> {
+    this.assertInitialized()
+    this.settings = await this.store.readSettings()
+    this.state = await this.store.readState()
+    this.emit({ type: 'settings', payload: clone(this.settings), at: this.now() })
+    this.emit({ type: 'state', payload: clone(this.state), at: this.now() })
   }
 
   async updateSettings(patch: unknown): Promise<CharacterSettings> {
@@ -440,10 +512,14 @@ export class CharacterManager {
     return { day, doc: renderLifeDoc(day, this.cardsFor(deck, day.cardIds)) }
   }
 
-  /** 主动性判定（不发送）：返回决策 + 候选文案 */
-  async evaluateProactive(
-    now = this.now()
-  ): Promise<{ decision: ProactiveDecision; message: string; day: LifeDay | null }> {
+  /** 主动性判定（不发送）：返回决策 + 候选池 + 本轮挑中的文案 */
+  async evaluateProactive(now = this.now()): Promise<{
+    decision: ProactiveDecision
+    message: string
+    day: LifeDay | null
+    candidates: ProactiveCandidate[]
+    chosen: ProactiveCandidate | null
+  }> {
     this.assertInitialized()
     const settings = await this.getSettings()
     const state = await this.getState()
@@ -457,11 +533,40 @@ export class CharacterManager {
       today: date,
       fallbackStartAt: state.lastInteractionAt
     })
-    if (!decision.send) return { decision, message: '', day: null }
+    if (!decision.send) {
+      return { decision, message: '', day: null, candidates: [], chosen: null }
+    }
     const life = await this.ensureDailyLife(now)
-    const deck = await this.getLifeDeck()
-    const primary = deck.cards.find((c) => c.id === life.day.cardIds[0])
-    return { decision, message: primary?.hook ?? life.day.activity, day: life.day }
+    const lifeDeck = await this.getLifeDeck()
+    const contentDeck = await this.getContentDeck()
+    const content = generateProactiveContent({
+      settings,
+      state,
+      day,
+      deck: contentDeck,
+      cards: this.cardsFor(lifeDeck, life.day.cardIds),
+      now
+    })
+    if (!content.send || !content.chosen) {
+      return {
+        decision: {
+          ...decision,
+          send: false,
+          reason: content.reason === 'unanswered-backoff' ? 'unanswered-backoff' : 'no-content'
+        },
+        message: '',
+        day: life.day,
+        candidates: content.candidates,
+        chosen: null
+      }
+    }
+    return {
+      decision,
+      message: content.message,
+      day: life.day,
+      candidates: content.candidates,
+      chosen: content.chosen
+    }
   }
 
   /** 记一次主动发送（含降级通道）；用于日上限与状态展示 */
@@ -473,6 +578,8 @@ export class CharacterManager {
       ...day,
       activeSent: (typeof day.activeSent === 'number' ? day.activeSent : 0) + 1,
       lastActiveAt: now,
+      lastProactiveAt: now,
+      sentTimes: appendRecentTime(day.sentTimes, now),
       events: [
         ...(Array.isArray(day.events) ? (day.events as unknown[]) : []),
         `${time}:${channel}`
@@ -495,11 +602,11 @@ export class CharacterManager {
     this.proactiveInFlight = true
     const epoch = this.dataEpoch
     try {
-      const { decision, message } = await this.evaluateProactive(now)
-      if (!decision.send || !message) return { decision }
-      const claimed = await this.claimProactiveSlot(now, epoch)
-      if (!claimed) {
-        return { decision: { ...decision, send: false, reason: 'daily-cap' } }
+      const { decision, message, chosen, day: lifeDay } = await this.evaluateProactive(now)
+      if (!decision.send || !message || !chosen) return { decision }
+      const claimed = await this.claimProactiveSlot(now, chosen, epoch)
+      if (!claimed.ok) {
+        return { decision: { ...decision, send: false, reason: claimed.reason ?? 'min-interval' } }
       }
       // 删除发生在评估/预留之间：不再发送，也不再写回
       if (epoch !== this.dataEpoch) {
@@ -516,6 +623,19 @@ export class CharacterManager {
       // 外发成功就不要再发应用内气泡（避免双通知）；失败才降级
       if (!delivered) {
         this.emit({ type: 'bubble', payload: { text: message }, at: now })
+      } else if (
+        decision.channel === 'external' &&
+        this.sendProactiveSticker &&
+        this.random() < this.stickerChance
+      ) {
+        // 文字已送达后再补一张图：图失败只记日志，不影响本轮投递成功
+        try {
+          const emotion = stickerEmotionFor(lifeDay?.mood, chosen.intent)
+          const sent = await this.sendProactiveSticker({ emotion, channel: decision.channel })
+          if (!sent) this.logger(`[character] 主动表情包未发送（emotion=${emotion}）`)
+        } catch (error) {
+          this.logger(`[character] 主动表情包发送失败: ${(error as Error)?.message ?? String(error)}`)
+        }
       }
       return { decision, message, delivered }
     } finally {
@@ -523,55 +643,127 @@ export class CharacterManager {
     }
   }
 
-  /** 读取当日主动性闸值；午夜后今日为空时沿用昨日 nextAllowedAt，避免跨天连发 */
+  /**
+   * 读取当日主动性闸值。跨天携带三类状态：
+   * 1) 间隔闸值：今日还没发时沿用昨日 nextAllowedAt，避免午夜连发；
+   * 2) 去重历史：sentTexts/recentSentTexts/recentTopics 与昨天合并，防止同一句/同一话题跨天重发；
+   * 3) 未回状态：sentTimes 与试探记录一并带过来，避免午夜把 unansweredCount 清零后重新开始试探。
+   */
   private async readProactiveDay(date: string, now: number): Promise<ProactiveDayState> {
-    const today = (await this.store.readDay<ProactiveDayState>(date)) ?? {}
-    const sanitize = (value: unknown): number | undefined =>
-      typeof value === 'number' && Number.isFinite(value) ? value : undefined
-    const todayGate: ProactiveDayState = { ...today }
-    todayGate.lastActiveAt = sanitize(today.lastActiveAt)
-    todayGate.nextAllowedAt = sanitize(today.nextAllowedAt)
-    if (todayGate.nextAllowedAt || todayGate.lastActiveAt) return todayGate
-    const prevDate = toDateKey(now - 86_400_000)
-    const prev = (await this.store.readDay<ProactiveDayState>(prevDate)) ?? {}
-    const prevNext = sanitize(prev.nextAllowedAt)
-    const prevLast = sanitize(prev.lastActiveAt)
-    if (!prevNext && !prevLast) return todayGate
+    const today = sanitizeProactiveDay(await this.store.readDay<ProactiveDayState>(date))
+    const prev = sanitizeProactiveDay(
+      await this.store.readDay<ProactiveDayState>(toDateKey(now - 86_400_000))
+    )
+    const lastActiveAt = today.lastActiveAt ?? prev.lastActiveAt
+    const lastProactiveAt = today.lastProactiveAt ?? prev.lastProactiveAt
+    const nextAllowedAt = today.nextAllowedAt ?? prev.nextAllowedAt
+    const unansweredCount =
+      typeof today.unansweredCount === 'number' ? today.unansweredCount : prev.unansweredCount
     return {
-      ...todayGate,
-      ...(prevNext ? { nextAllowedAt: prevNext } : {}),
-      ...(prevLast ? { lastActiveAt: prevLast } : {})
+      ...today,
+      ...(lastActiveAt !== undefined ? { lastActiveAt } : {}),
+      ...(lastProactiveAt !== undefined ? { lastProactiveAt } : {}),
+      ...(nextAllowedAt !== undefined ? { nextAllowedAt } : {}),
+      ...(unansweredCount !== undefined ? { unansweredCount } : {}),
+      ...(today.lastIntent === undefined && prev.lastIntent !== undefined
+        ? { lastIntent: prev.lastIntent }
+        : {}),
+      ...(today.lastNudgeFamily === undefined && prev.lastNudgeFamily !== undefined
+        ? { lastNudgeFamily: prev.lastNudgeFamily }
+        : {}),
+      ...(today.lastNudgeAt === undefined && prev.lastNudgeAt !== undefined
+        ? { lastNudgeAt: prev.lastNudgeAt }
+        : {}),
+      recentSentTexts: mergeRecentTexts(
+        prev.recentSentTexts,
+        today.recentSentTexts,
+        RECENT_SENT_LIMIT
+      ),
+      recentTopics: mergeRecentStrings(prev.recentTopics, today.recentTopics, RECENT_TOPIC_LIMIT),
+      sentTimes: mergeRecentTimes(prev.sentTimes, today.sentTimes, RECENT_SENT_LIMIT)
     }
   }
 
-  /** 发送前预留额度（锁内二次校验上限与最小间隔，防并发超发） */
-  private async claimProactiveSlot(now: number, epoch?: number): Promise<boolean> {
+  /**
+   * 发送前预留额度（锁内二次校验：上限 / 最小间隔 / 未回 backoff / 试探闸门 / 精确+近似去重）。
+   * 评估到预留之间用户可能刚回复、别的 tick 可能已写入新文案，所以全部按锁内最新 day/state 重算。
+   */
+  private async claimProactiveSlot(
+    now: number,
+    candidate: ProactiveCandidate | null,
+    epoch?: number
+  ): Promise<{ ok: boolean; reason?: ProactiveReason }> {
     const date = toDateKey(now)
     const time = new Date(now).toTimeString().slice(0, 5)
     return this.withMutation(async () => {
       // 删除已发生：不再预留/写回 day
-      if (epoch !== undefined && epoch !== this.dataEpoch) return false
+      if (epoch !== undefined && epoch !== this.dataEpoch) {
+        return { ok: false, reason: 'disabled' as const }
+      }
       const settings = await this.getSettings()
       const day = await this.readProactiveDay(date, now)
       const cap = Math.max(
         0,
         Math.min(PROACTIVE_MAX_DAILY_CAP, Math.round(settings.proactive.dailyCap))
       )
-      if ((day.activeSent ?? 0) >= cap) return false
+      if ((day.activeSent ?? 0) >= cap) return { ok: false, reason: 'daily-cap' as const }
       const intervalMs = proactiveIntervalMs(settings)
       const nextAllowedAt =
         day.nextAllowedAt ??
         (day.lastActiveAt ? day.lastActiveAt + intervalMs : 0)
-      if (nextAllowedAt > now) return false
+      if (nextAllowedAt > now) return { ok: false, reason: 'min-interval' as const }
+      if (!candidate || !candidate.text.trim()) {
+        return { ok: false, reason: 'no-content' as const }
+      }
+
+      const state = await this.getState()
+      const unansweredCount = resolveUnansweredCount(day, state)
+      if (unansweredCount >= PROACTIVE_BACKOFF_THRESHOLD) {
+        return { ok: false, reason: 'unanswered-backoff' as const }
+      }
+      if (candidate.intent === 'nudge') {
+        const nudge = decideNudge({
+          mode: settings.relationship.mode,
+          day,
+          now,
+          unansweredCount
+        })
+        if (!nudge.allowed) {
+          return {
+            ok: false,
+            reason: unansweredCount >= 2 ? ('unanswered-backoff' as const) : ('nudge-blocked' as const)
+          }
+        }
+      }
+      if (findDuplicateMessage(candidate.text, day.recentSentTexts).duplicate) {
+        return { ok: false, reason: 'duplicate' as const }
+      }
+      if (candidate.intent === 'topic' && (day.recentTopics ?? []).includes(candidate.sourceId)) {
+        return { ok: false, reason: 'duplicate' as const }
+      }
+
+      const sentTimes = appendRecentTime(day.sentTimes, now)
       const next: ProactiveDayState = {
         ...day,
         activeSent: (day.activeSent ?? 0) + 1,
         lastActiveAt: now,
+        lastProactiveAt: now,
         nextAllowedAt: now + intervalMs,
+        sentTimes,
+        recentSentTexts: appendRecentText(day.recentSentTexts, candidate.text),
+        lastIntent: candidate.intent,
+        unansweredCount: unansweredCount + 1,
+        ...(candidate.intent === 'nudge'
+          ? { lastNudgeFamily: candidate.sourceId, lastNudgeAt: now }
+          : {}),
+        recentTopics:
+          candidate.intent === 'topic'
+            ? appendRecentString(day.recentTopics, candidate.sourceId, RECENT_TOPIC_LIMIT)
+            : sanitizeStringList(day.recentTopics, RECENT_TOPIC_LIMIT),
         events: [...(day.events ?? []), `${time}:reserve`].slice(-50)
       }
       await this.store.writeDay(date, next)
-      return true
+      return { ok: true }
     })
   }
 
@@ -590,6 +782,24 @@ export class CharacterManager {
       }
     }
     return this.lifeDeckCache
+  }
+
+  private async getContentDeck(): Promise<ContentDeck> {
+    if (!this.contentDeckCache) {
+      try {
+        if (this.contentDeck) this.contentDeckCache = this.contentDeck
+        else this.contentDeckCache = this.loadContentDeck
+          ? await this.loadContentDeck()
+          : createEmptyContentDeck()
+      } catch (error) {
+        // 坏内容包不能每 30s 刷日志：缓存空包并只记一次（只影响多样性，不影响发送）
+        this.logger(
+          `[character] 话题/台词内容包加载失败，降级为生活卡模板: ${(error as Error)?.message ?? String(error)}`
+        )
+        this.contentDeckCache = createEmptyContentDeck()
+      }
+    }
+    return this.contentDeckCache
   }
 
   private cardsFor(deck: LifeDeck, ids: string[]) {

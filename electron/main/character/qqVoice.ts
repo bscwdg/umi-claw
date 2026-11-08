@@ -108,7 +108,11 @@ async function defaultEncodeSilk(pcm: Uint8Array, sampleRate: number): Promise<U
 
 const tokenCache = new Map<string, { token: string; expiresAt: number }>()
 
-function fetchWithTimeout(
+/**
+ * 带超时的 fetch（表情包发图也复用它，别在两处各写一套）。
+ * 导出而不是复制：凭证/超时/请求头只有这一份真源。
+ */
+export function fetchWithTimeout(
   fetchImpl: typeof fetch,
   url: string,
   init: RequestInit,
@@ -120,7 +124,8 @@ function fetchWithTimeout(
   return fetchImpl(url, { ...init, signal }).finally(() => clearTimeout(timer))
 }
 
-async function getAccessToken(creds: QqBotCreds, deps: QqVoiceDeps): Promise<string> {
+/** 取 QQ access_token（带进程内缓存）；导出给 stickerSender 复用，不重写一套凭证逻辑 */
+export async function getAccessToken(creds: QqBotCreds, deps: QqVoiceDeps): Promise<string> {
   const cacheKey = creds.appId
   const cached = tokenCache.get(cacheKey)
   if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token

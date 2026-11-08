@@ -40,6 +40,8 @@ import type {
 } from '../main/character/types'
 import type { BootstrapReport } from '../main/character/bootstrap'
 import type { CharacterChatStreamEvent } from '../main/character/chat'
+import type { StickerImportResult, StickerRecord } from '../main/character/stickerStore'
+import type { BackupExportResult, BackupImportResult } from '../main/character/backupBundle'
 console.log('✅ preload loaded')
 
 // ── work 域信封解包：IPC 返回 {ok,data} / {ok,error} ────────────────────────
@@ -822,6 +824,40 @@ const api = {
           searchable: boolean
           reasons: string[]
         }>('character:knowledge:status')
+    },
+    // 4.4：表情包库（导入/列表/元数据/手动测试发送）+ 单文件备份（zip）
+    stickers: {
+      list: () => call<StickerRecord[]>('character:stickers:list'),
+      preview: (id: string) =>
+        call<{ dataUrl: string | null; thumbnail: boolean; name: string } | null>(
+          'character:stickers:preview',
+          { id }
+        ),
+      // 只走宿主文件选择框（多选）导入；不再接受渲染端任意路径
+      pickImport: () => call<StickerImportResult | { canceled: true }>('character:stickers:pickImport'),
+      update: (
+        id: string,
+        patch: { name?: string; emotion?: string; tags?: string[]; enabled?: boolean }
+      ) => call<StickerRecord>('character:stickers:update', { id, patch }),
+      remove: (id: string) => call<{ archivedTo: string }>('character:stickers:delete', { id }),
+      send: (target: { id?: string; emotion?: string }) =>
+        call<{
+          ok: boolean
+          reason?: string
+          detail?: string
+          id?: string
+          name?: string
+          messageId?: string
+        }>('character:stickers:send', target)
+    },
+    backup: {
+      export: () => call<BackupExportResult | { canceled: true }>('character:backup:export', {}),
+      // 不传 path 时由宿主弹 zip 选择框；传 path 供自动化/测试直接指定
+      import: (path?: string) =>
+        call<BackupImportResult | { canceled: true }>(
+          'character:backup:import',
+          path ? { path } : {}
+        )
     },
     // 4.3：外部渠道聊天绑定（渠道消息路由到 feiyu；写操作要求角色已启用）
     chatChannels: {

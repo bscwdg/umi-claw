@@ -3,7 +3,8 @@
 // 统一信封 {ok:true,data} | {ok:false,error}，错误码见 types.ts。
 // 返回 disposer：停用/退出时摘除handler（与插件通道同口径）。
 
-import { ipcMain, screen } from 'electron'
+import { BrowserWindow, dialog, ipcMain, nativeImage, screen } from 'electron'
+import { readFileSync, statSync } from 'node:fs'
 import {
   CHARACTER_CHANNELS,
   CharacterError,
@@ -14,6 +15,8 @@ import {
   type CharacterInteractInput,
   type CharacterResetOptions
 } from './types'
+import { CHARACTER_STICKER_CHANNELS } from './stickerStore'
+import { CHARACTER_BACKUP_CHANNELS } from './backupBundle'
 import type { CharacterManager } from './manager'
 import type { PetWindowController } from './petWindow'
 import type { CharacterChatService } from './chat'
@@ -57,6 +60,57 @@ export interface CharacterIpcDeps {
     list: () => Promise<unknown>
     set: (channels: unknown) => Promise<unknown>
     clear: () => Promise<unknown>
+  }
+  /** 表情包（4.4）：导入/列表/元数据修改/归档删除/手动测试发送 */
+  stickers?: {
+    list: () => Promise<unknown>
+    /** 返回 { filePath, name, format, size }（缩略图由 IPC 层用 nativeImage 生成，不把大图塞给渲染端） */
+    preview: (id: string) => Promise<unknown>
+    import: (payload: unknown) => Promise<unknown>
+    update: (payload: unknown) => Promise<unknown>
+    delete: (id: string) => Promise<unknown>
+    send: (target: unknown) => Promise<unknown>
+  }
+  /** 单文件备份（4.4）：不传路径时由 IPC 层弹保存/选择框 */
+  backup?: {
+    defaultExportPath: () => string
+    export: (path?: string) => Promise<unknown>
+    import: (path: string) => Promise<unknown>
+  }
+}
+
+/** 表情包缩略图最大原图字节：超过就不做 base64 兜底（GIF/WebP 走不到 nativeImage 缩放） */
+const STICKER_PREVIEW_MAX_FALLBACK_BYTES = 3 * 1024 * 1024
+
+/** 缩略图：PNG/JPEG 用 nativeImage 缩到 96px；GIF/WebP（nativeImage 不支持）原图 base64 兜底 */
+function buildStickerPreview(target: {
+  filePath?: unknown
+  format?: unknown
+}): { dataUrl: string | null; thumbnail: boolean } {
+  const filePath = typeof target?.filePath === 'string' ? target.filePath : ''
+  if (!filePath) return { dataUrl: null, thumbnail: false }
+  try {
+    const image = nativeImage.createFromPath(filePath)
+    if (!image.isEmpty()) {
+      const resized = image.resize({ width: 96, quality: 'good' })
+      return { dataUrl: resized.toDataURL(), thumbnail: true }
+    }
+  } catch {
+    /* 落到 base64 兜底 */
+  }
+  try {
+    if (statSync(filePath).size > STICKER_PREVIEW_MAX_FALLBACK_BYTES) {
+      return { dataUrl: null, thumbnail: false }
+    }
+    const format = typeof target?.format === 'string' ? target.format : ''
+    const mime =
+      format === 'gif' ? 'image/gif' : format === 'webp' ? 'image/webp' : format === 'jpg' ? 'image/jpeg' : 'image/png'
+    return {
+      dataUrl: `data:${mime};base64,${readFileSync(filePath).toString('base64')}`,
+      thumbnail: false
+    }
+  } catch {
+    return { dataUrl: null, thumbnail: false }
   }
 }
 
@@ -318,7 +372,103 @@ export function registerCharacterIpc(
     manager.deleteData((payload as { scope?: unknown } | undefined)?.scope)
   )
 
+  // ── 4.4 表情包（宿主模块自带通道：types.ts 的 CHARACTER_CHANNELS 正在被并行改动） ──
+  const requireStickers = () => {
+    if (!deps.stickers) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '表情包功能未接线')
+    }
+    return deps.stickers
+  }
+  handle(CHARACTER_STICKER_CHANNELS.list, () => requireStickers().list())
+  handle(CHARACTER_STICKER_CHANNELS.preview, async (payload) => {
+    const id = (payload as { id?: unknown } | undefined)?.id
+    if (typeof id !== 'string' || !id) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '缺少表情包 id')
+    }
+    const target = (await requireStickers().preview(id)) as
+      | { filePath?: unknown; format?: unknown; name?: unknown }
+      | null
+    if (!target) return null
+    return { ...buildStickerPreview(target), name: target.name ?? '' }
+  })
+  handle(CHARACTER_STICKER_CHANNELS.import, (payload) => requireStickers().import(payload ?? {}))
+  handle(CHARACTER_STICKER_CHANNELS.pickImport, async () => {
+    const stickers = requireStickers()
+    const win = BrowserWindow.getFocusedWindow()
+    const options = {
+      title: '选择表情包图片（可多选）',
+      properties: ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'>,
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
+    }
+    const result = win
+      ? await dialog.showOpenDialog(win, options as never)
+      : await dialog.showOpenDialog(options as never)
+    if (result.canceled || !result.filePaths?.length) return { canceled: true }
+    return stickers.import({ paths: result.filePaths })
+  })
+  handle(CHARACTER_STICKER_CHANNELS.update, (payload) => requireStickers().update(payload))
+  handle(CHARACTER_STICKER_CHANNELS.delete, (payload) => {
+    const id = (payload as { id?: unknown } | undefined)?.id
+    if (typeof id !== 'string' || !id) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '缺少表情包 id')
+    }
+    return requireStickers().delete(id)
+  })
+  handle(CHARACTER_STICKER_CHANNELS.send, (payload) => requireStickers().send(payload ?? {}))
+
+  // ── 4.4 单文件备份（zip）：导出/导入都不把路径交给渲染端拼，选择框在宿主侧 ──
+  const requireBackup = () => {
+    if (!deps.backup) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '备份功能未接线')
+    }
+    return deps.backup
+  }
+  handle(CHARACTER_BACKUP_CHANNELS.export, async (payload) => {
+    const backup = requireBackup()
+    const rawPath = (payload as { path?: unknown } | undefined)?.path
+    let target = typeof rawPath === 'string' ? rawPath.trim() : ''
+    if (!target) {
+      const win = BrowserWindow.getFocusedWindow()
+      const options = {
+        title: '导出大肥鱼备份',
+        defaultPath: backup.defaultExportPath(),
+        filters: [{ name: 'Zip 备份', extensions: ['zip'] }]
+      }
+      const result = win
+        ? await dialog.showSaveDialog(win, options as never)
+        : await dialog.showSaveDialog(options as never)
+      if (result.canceled || !result.filePath) return { canceled: true }
+      target = result.filePath
+    }
+    return backup.export(target)
+  })
+  handle(CHARACTER_BACKUP_CHANNELS.import, async (payload) => {
+    const backup = requireBackup()
+    const rawPath = (payload as { path?: unknown } | undefined)?.path
+    let source = typeof rawPath === 'string' ? rawPath.trim() : ''
+    if (!source) {
+      const win = BrowserWindow.getFocusedWindow()
+      const options = {
+        title: '选择大肥鱼备份 zip',
+        properties: ['openFile'] as Array<'openFile'>,
+        filters: [{ name: 'Zip 备份', extensions: ['zip'] }]
+      }
+      const result = win
+        ? await dialog.showOpenDialog(win, options as never)
+        : await dialog.showOpenDialog(options as never)
+      if (result.canceled || !result.filePaths?.[0]) return { canceled: true }
+      source = result.filePaths[0]
+    }
+    return backup.import(source)
+  })
+
+  // 本文件额外注册的通道（types.ts 的 CHARACTER_CHANNELS 之外的），disposer 也要摘干净
+  const extraChannels = [
+    ...Object.values(CHARACTER_STICKER_CHANNELS),
+    ...Object.values(CHARACTER_BACKUP_CHANNELS)
+  ]
+
   return () => {
-    for (const channel of channels) ipcMain.removeHandler(channel)
+    for (const channel of [...channels, ...extraChannels]) ipcMain.removeHandler(channel)
   }
 }

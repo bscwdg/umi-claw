@@ -39,13 +39,36 @@ export interface CharacterHostSources {
   logger: (message: string) => void
 }
 
+/** 角色 KV 的批量读写（单文件备份/导入用）：只有 CharacterKvStore 提供，缺省则备份功能降级 */
+interface BulkCharacterKv {
+  readAll(): Promise<Record<string, string>>
+  writeMany(entries: Record<string, string | null>): Promise<{ changes: number }>
+}
+
+/** 鸭子类型探测：CharacterHostSources.kv 的契约只有 get/set，批量能力是 CharacterKvStore 的扩展 */
+function asBulkKv(kv: CharacterWiringDeps['kv']): BulkCharacterKv | null {
+  const candidate = kv as Partial<BulkCharacterKv>
+  return typeof candidate.readAll === 'function' && typeof candidate.writeMany === 'function'
+    ? (candidate as BulkCharacterKv)
+    : null
+}
+
 /** 装配 registerCharacter 需要的依赖；不做任何 I/O。 */
 export function buildCharacterDeps(src: CharacterHostSources): CharacterWiringDeps {
   const dataDir = src.dataDir
   const nodePath = openClawPaths.nodeBinary(dataDir)
+  const bulkKv = asBulkKv(src.kv)
 
   return {
     kv: src.kv,
+    ...(bulkKv
+      ? {
+          kvBulk: {
+            readAll: () => bulkKv.readAll(),
+            writeMany: (entries: Record<string, string | null>) => bulkKv.writeMany(entries)
+          }
+        }
+      : {}),
     dataDir,
     personaSourceDir: src.isPackaged
       ? join(src.resourcesPath, 'resources', 'character', 'persona')

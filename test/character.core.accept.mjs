@@ -29,6 +29,7 @@ const relationshipMod = await import(pathToFileURL(bundleEntry('electron/main/ch
 const cardsMod = await import(pathToFileURL(bundleEntry('electron/main/character/contentCards.ts', 'character-cards.mjs')).href)
 const lifeMod = await import(pathToFileURL(bundleEntry('electron/main/character/life.ts', 'character-life.mjs')).href)
 const proactiveMod = await import(pathToFileURL(bundleEntry('electron/main/character/proactive.ts', 'character-proactive.mjs')).href)
+const contentEngineMod = await import(pathToFileURL(bundleEntry('electron/main/character/contentEngine.ts', 'character-content-engine.mjs')).href)
 const proactiveTargetMod = await import(pathToFileURL(bundleEntry('electron/main/character/proactiveTarget.ts', 'character-proactive-target.mjs')).href)
 const proactiveSenderMod = await import(pathToFileURL(bundleEntry('electron/main/character/proactiveSender.ts', 'character-proactive-sender.mjs')).href)
 const memoryMod = await import(pathToFileURL(bundleEntry('electron/main/character/memoryJob.ts', 'character-memory.mjs')).href)
@@ -79,6 +80,18 @@ const {
 const { parseLifeDeck, drawLifeCards, slotForHour, seededRandom } = cardsMod
 const { composeLifeDay, renderLifeDoc } = lifeMod
 const { decideProactive, isQuietHours, proactiveIntervalMs } = proactiveMod
+const {
+  NUDGE_TEMPLATES,
+  decideNudge,
+  findDuplicateMessage,
+  generateProactiveContent,
+  jaccardSimilarity,
+  mergeRecentTimes,
+  messageHash,
+  parseContentDeck,
+  resolveUnansweredCount,
+  sanitizeProactiveDay
+} = contentEngineMod
 const {
   buildMemoryPrompt,
   diaryObsidianRelPath,
@@ -1079,6 +1092,14 @@ const lifeDeckRaw = JSON.parse(
   readFileSync(join(repoRoot, 'resources', 'character', 'cards', 'life-cards.v1.json'), 'utf8')
 )
 const lifeDeck = parseLifeDeck(lifeDeckRaw)
+const contentDeck = parseContentDeck({
+  topics: JSON.parse(
+    readFileSync(join(repoRoot, 'resources', 'character', 'cards', 'topics.v1.json'), 'utf8')
+  ),
+  lines: JSON.parse(
+    readFileSync(join(repoRoot, 'resources', 'character', 'cards', 'lines.v1.json'), 'utf8')
+  )
+})
 
 await recorder.check('C37', '内容卡：确定性抽取、阶段过滤、7 天不重复', async () => {
   const a = drawLifeCards(lifeDeck, { stage: 3, date: '2026-11-01', count: 3 })
@@ -1309,9 +1330,350 @@ await recorder.check('C42b', '主动间隔：跨天沿用上一次闸值、改�
   return '跨天闸值 + 改间隔即时生效正确'
 })
 
+await recorder.check('C42c', '内容引擎：候选池 2–10 + 去重 + 未回分级/backoff', async () => {
+  const now = new Date(2026, 10, 5, 10, 30, 0).getTime()
+  const cards = drawLifeCards(lifeDeck, {
+    stage: 3,
+    date: '2026-11-05',
+    count: 3,
+    rng: seededRandom('content-engine')
+  })
+  const makeSettings = () => {
+    const base = JSON.parse(JSON.stringify(DEFAULT_CHARACTER_SETTINGS))
+    base.enabled = true
+    base.safety.ageConfirmed = true
+    base.proactive = { ...base.proactive, enabled: true, silenceDays: 0 }
+    base.relationship = { ...base.relationship, mode: 'lover', address: '老板' }
+    return base
+  }
+  const state = { ...createDefaultCharacterState(now), bornAt: now - 10 * 86_400_000 }
+  const base = {
+    settings: makeSettings(),
+    state,
+    deck: contentDeck,
+    cards,
+    now,
+    rng: () => 0.37
+  }
+
+  // 1) 未回 0：正常分享/提问，候选 2–10 且来源多样
+  const fresh = generateProactiveContent({ ...base, day: {} })
+  assertEq(fresh.send, true, '未回 0 可发')
+  assertEq(fresh.unansweredCount, 0, '未回计数 0')
+  assertEq(fresh.candidates.length >= 2, true, '候选 ≥ 2')
+  assertEq(fresh.candidates.length <= 10, true, '候选 ≤ 10')
+  assertEq(fresh.candidates.some((c) => c.intent === 'life'), true, '候选含生活卡')
+  assertEq(fresh.candidates.some((c) => c.intent === 'topic'), true, '候选含话题卡')
+  assertEq(fresh.candidates.some((c) => c.intent === 'line'), true, '候选含台词库')
+  assertEq(
+    fresh.candidates.every((c) => !c.text.includes('{{address}}')),
+    true,
+    '称呼占位符全部替换'
+  )
+  assertEq(fresh.candidates.some((c) => c.text.includes('老板')), true, '使用设置里的称呼')
+  const hooks = lifeDeck.cards.map((c) => c.hook)
+  assertEq(fresh.candidates.every((c) => !hooks.includes(c.text)), true, '生活 hook 不原样当消息')
+  assertEq(
+    new Set(fresh.candidates.map((c) => messageHash(c.text))).size,
+    fresh.candidates.length,
+    '同轮候选不重复'
+  )
+
+  // 2) 精确 / 近似重复拒绝
+  const exactText = '本鱼今天吃了很多，真的很多'
+  assertEq(findDuplicateMessage(exactText, [exactText]).kind, 'exact', '归一化后完全相同判精确重复')
+  assertEq(findDuplicateMessage(`${exactText}！`, [exactText]).duplicate, true, '标点差异仍算精确')
+  const nearText = `${exactText}呀`
+  assertEq(jaccardSimilarity(exactText, nearText) > 0.72, true, '近似文本 3-gram 相似度 > 0.72')
+  assertEq(findDuplicateMessage(nearText, [exactText]).kind, 'near', '近似重复识别')
+  assertEq(findDuplicateMessage('今天窗外光斑有点多', [exactText]).duplicate, false, '不相似不误杀')
+  assertEq(
+    mergeRecentTimes([1000, 2000], [2000, 3000]).length,
+    3,
+    '跨天合并发送时间去重，避免未回计数翻倍'
+  )
+
+  const firstText = fresh.candidates[0].text
+  const exactBlocked = generateProactiveContent({ ...base, day: { recentSentTexts: [firstText] } })
+  assertEq(
+    exactBlocked.candidates.every((c) => messageHash(c.text) !== messageHash(firstText)),
+    true,
+    '已发过的原句不进候选'
+  )
+  const nearBlocked = generateProactiveContent({
+    ...base,
+    day: { recentSentTexts: [`${firstText}呀`] }
+  })
+  assertEq(
+    nearBlocked.candidates.every((c) => messageHash(c.text) !== messageHash(firstText)),
+    true,
+    '近似重复也不进候选'
+  )
+  assertEq(nearBlocked.candidates.length >= 2, true, '去重后仍有候选')
+
+  // 3) 未回 1：lover 关系试探（同 family 48h / 同一天 / 连续试探都拦）
+  const day1 = { sentTimes: [now - 3_600_000], lastProactiveAt: now - 3_600_000 }
+  const gate1 = decideNudge({
+    mode: 'lover',
+    day: day1,
+    now,
+    unansweredCount: resolveUnansweredCount(day1, state)
+  })
+  assertEq(gate1.allowed, true, '未回 1 允许 lover 试探')
+  const round1 = generateProactiveContent({ ...base, day: day1 })
+  assertEq(round1.unansweredCount, 1, '未回计数 1')
+  assertEq(round1.candidates.some((c) => c.intent === 'nudge'), true, '候选含关系试探')
+  assertEq(round1.chosen?.intent, 'nudge', '未回 1 优先关系试探')
+  assertEq(NUDGE_TEMPLATES.lover.includes(round1.chosen.text), true, 'lover 试探使用规定文案')
+  assertEq(
+    decideNudge({
+      mode: 'lover',
+      day: { ...day1, lastNudgeFamily: 'lover', lastNudgeAt: now - 3_600_000 },
+      now,
+      unansweredCount: 1
+    }).reason,
+    'same-family-48h',
+    '同 family 48h 内不再试探'
+  )
+  assertEq(
+    decideNudge({
+      mode: 'companion',
+      day: { ...day1, lastNudgeFamily: 'lover', lastNudgeAt: now - 3_600_000 },
+      now,
+      unansweredCount: 1
+    }).reason,
+    'same-day',
+    '同一天最多 1 次（换 family 也拦）'
+  )
+  assertEq(
+    decideNudge({
+      mode: 'lover',
+      day: { ...day1, lastIntent: 'nudge', lastNudgeAt: now - 50 * 3_600_000, lastNudgeFamily: 'companion' },
+      now,
+      unansweredCount: 1
+    }).reason,
+    'consecutive',
+    '不许连续试探'
+  )
+
+  // 4) 未回 2：不再试探，必须换话题
+  const day2 = {
+    sentTimes: [now - 7_200_000, now - 3_600_000],
+    lastProactiveAt: now - 3_600_000,
+    recentTopics: ['topic-food']
+  }
+  const round2 = generateProactiveContent({ ...base, day: day2 })
+  assertEq(round2.unansweredCount, 2, '未回计数 2')
+  assertEq(round2.candidates.every((c) => c.intent !== 'nudge'), true, '未回 2 不再试探')
+  assertEq(round2.candidates.every((c) => c.intent === 'topic'), true, '未回 2 改聊话题')
+  assertEq(round2.candidates.every((c) => c.sourceId !== 'topic-food'), true, '避开最近用过的话题')
+
+  // 5) 未回 3：backoff（不发送）
+  const day3 = {
+    sentTimes: [now - 10_800_000, now - 7_200_000, now - 3_600_000],
+    lastProactiveAt: now - 3_600_000
+  }
+  const round3 = generateProactiveContent({ ...base, day: day3 })
+  assertEq(round3.unansweredCount, 3, '未回计数 3')
+  assertEq(round3.send, false, '未回 3 停发')
+  assertEq(round3.reason, 'unanswered-backoff', 'backoff 原因')
+  assertEq(round3.candidates.length, 0, 'backoff 不产出候选')
+
+  // 6) 用户回复重置：lastInteractionAt 晚于 lastProactiveAt → 清零
+  const repliedState = { ...state, lastInteractionAt: now - 1_800_000 }
+  assertEq(resolveUnansweredCount(day3, repliedState), 0, '用户回复后未回清零')
+  const round4 = generateProactiveContent({ ...base, state: repliedState, day: day3 })
+  assertEq(round4.send, true, '清零后恢复发送')
+  assertEq(round4.unansweredCount, 0, '清零后计数为 0')
+  assertEq(round4.nudge.allowed, false, '清零后不再试探')
+
+  // 7) 跨天兼容：旧 kv day 只有老字段
+  const legacyDay = sanitizeProactiveDay({
+    activeSent: 2,
+    lastActiveAt: now - 86_400_000,
+    nextAllowedAt: now - 3_600_000
+  })
+  assertEq(legacyDay.activeSent, 2, '旧字段 activeSent 保留')
+  assertEq(Array.isArray(legacyDay.recentSentTexts), true, '缺新字段时补空数组')
+  assertEq(Array.isArray(legacyDay.sentTimes), true, '缺 sentTimes 时补空数组')
+  assertEq(resolveUnansweredCount(legacyDay, state), 2, '旧数据用 activeSent 兜底未回条数')
+  const legacyRound = generateProactiveContent({ ...base, day: legacyDay })
+  assertEq(legacyRound.send, true, '旧 kv 仍可生成内容')
+  return '候选 2–10 / 去重 / 未回分级 / 跨天兼容 均正确'
+})
+
+await recorder.check('C42d', 'manager：内容引擎接线（试探→换话题→backoff→回复重置→跨天）', async () => {
+  const kv = memoryKv()
+  let now = new Date(2026, 10, 6, 10, 0, 0).getTime()
+  const sent = []
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    loadLifeDeck: async () => lifeDeck,
+    contentDeck,
+    sendProactive: async (message) => {
+      sent.push(message.text)
+      return true
+    }
+  })
+  await manager.init()
+  await manager.updateSettings({
+    enabled: true,
+    safety: { ageConfirmed: true },
+    relationship: { mode: 'lover', address: '老板' },
+    proactive: {
+      enabled: true,
+      silenceDays: 0,
+      dailyCap: 10,
+      quietFrom: '00:00',
+      quietTo: '00:00',
+      intervalMode: 'fixed',
+      intervalMinutes: 1
+    }
+  })
+
+  const first = await manager.runProactiveTick()
+  assertEq(first.decision.send, true, '第 1 轮可发')
+  assertEq(sent.length, 1, '第 1 轮外发一次')
+  let day = storeDayRecord(kv)
+  assertEq(day.unansweredCount, 1, '发完未回 = 1')
+  assertEq(day.recentSentTexts.length, 1, '记录已发文案')
+  assertEq(day.sentTimes.length, 1, '记录发送时间')
+  assertEq(day.lastProactiveAt, now, '落盘 lastProactiveAt')
+
+  now += 2 * 60_000
+  const second = await manager.runProactiveTick()
+  assertEq(second.decision.send, true, '第 2 轮可发')
+  assertEq(NUDGE_TEMPLATES.lover.includes(second.message), true, '未回 1 用 lover 试探')
+  day = storeDayRecord(kv)
+  assertEq(day.unansweredCount, 2, '试探后未回 = 2')
+  assertEq(day.lastNudgeFamily, 'lover', '记录试探 family')
+  assertEq(typeof day.lastNudgeAt, 'number', '记录试探时间')
+
+  now += 2 * 60_000
+  const third = await manager.runProactiveTick()
+  assertEq(third.decision.send, true, '第 3 轮可发')
+  assertEq(NUDGE_TEMPLATES.lover.includes(third.message), false, '未回 2 不再试探')
+  assertEq(third.message !== second.message, true, '不复读上一条')
+  day = storeDayRecord(kv)
+  assertEq(day.unansweredCount, 3, '换话题后未回 = 3')
+
+  now += 2 * 60_000
+  const fourth = await manager.runProactiveTick()
+  assertEq(fourth.decision.send, false, '未回 3 停发')
+  assertEq(fourth.decision.reason, 'unanswered-backoff', '停发原因是 backoff')
+  assertEq(sent.length, 3, '停发后不再外发')
+
+  // 用户回复（摸头）→ 未回清零
+  await manager.interact({ kind: 'pat' })
+  now += 2 * 60_000
+  const fifth = await manager.runProactiveTick()
+  assertEq(fifth.decision.send, true, '用户回复后恢复发送')
+  day = storeDayRecord(kv)
+  assertEq(day.unansweredCount, 1, '重置后未回从 1 重新累计')
+  const dayBefore = day.recentSentTexts.length
+  assertEq(dayBefore, 4, '累计记录 4 条已发文案')
+
+  // 跨天：昨天的去重/未回状态带过来
+  now = new Date(2026, 10, 7, 9, 0, 0).getTime()
+  const cross = await manager.runProactiveTick()
+  assertEq(cross.decision.send, true, '跨天仍可发')
+  const crossDay = storeDayRecordOn(kv, '2026-11-07')
+  assertEq(crossDay.recentSentTexts.length, dayBefore + 1, '跨天累积已发文案（不再重复）')
+  assertEq(
+    new Set(crossDay.recentSentTexts.map((text) => messageHash(text))).size,
+    crossDay.recentSentTexts.length,
+    '跨天去重历史无重复'
+  )
+  assertEq(crossDay.sentTimes.length >= 5, true, '跨天保留发送时间用于未回计数')
+
+  // 旧 kv 兼容：只有老字段的昨天记录也不能让 evaluate 抛错
+  const legacyKv = memoryKv()
+  const legacyNow = new Date(2026, 10, 8, 10, 0, 0).getTime()
+  const legacyManager = new CharacterManager({
+    store: new CharacterStore({ kv: legacyKv, now: () => legacyNow }),
+    now: () => legacyNow,
+    loadLifeDeck: async () => lifeDeck
+  })
+  await legacyManager.init()
+  await legacyManager.updateSettings({
+    enabled: true,
+    safety: { ageConfirmed: true },
+    proactive: {
+      enabled: true,
+      silenceDays: 0,
+      dailyCap: 10,
+      quietFrom: '00:00',
+      quietTo: '00:00',
+      intervalMinutes: 1
+    }
+  })
+  legacyKv.map.set(
+    'fish:v2:day:2026-11-07',
+    JSON.stringify({
+      activeSent: 1,
+      lastActiveAt: legacyNow - 86_400_000,
+      nextAllowedAt: legacyNow - 3_600_000
+    })
+  )
+  const legacyEvaluated = await legacyManager.evaluateProactive()
+  assertEq(legacyEvaluated.decision.send, true, '旧 kv 记录仍可判定/生成内容')
+  assertEq(Boolean(legacyEvaluated.message), true, '旧 kv 记录仍能生成消息')
+  return '试探/换话题/backoff/回复重置/跨天/旧 kv 兼容 均正确'
+})
+
+await recorder.check('C42e', '主动消息补表情包：仅外发成功后按概率补图', async () => {
+  const kv = memoryKv()
+  const now = new Date(2026, 10, 9, 10, 0, 0).getTime()
+  const stickers = []
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    loadLifeDeck: async () => lifeDeck,
+    contentDeck,
+    stickerChance: 1,
+    random: () => 0,
+    sendProactive: async () => true,
+    sendProactiveSticker: async (input) => {
+      stickers.push(input.emotion)
+      return true
+    }
+  })
+  await manager.init()
+  await manager.updateSettings({
+    enabled: true,
+    safety: { ageConfirmed: true },
+    relationship: { mode: 'lover' },
+    proactive: {
+      enabled: true,
+      silenceDays: 0,
+      dailyCap: 10,
+      quietFrom: '00:00',
+      quietTo: '00:00',
+      intervalMode: 'fixed',
+      intervalMinutes: 1
+    }
+  })
+  const tick = await manager.runProactiveTick()
+  assertEq(tick.delivered, true, '文字外发成功')
+  assertEq(stickers.length, 1, '成功后才补一张表情包')
+  assertEq(typeof stickers[0], 'string', '表情包带情绪标签')
+  assertEq(
+    ['happy', 'shy', 'angry', 'sad', 'surprised', 'miss', 'sleepy'].includes(stickers[0]),
+    true,
+    '情绪标签与贴纸库英文词表一致'
+  )
+  return '主动消息配表情包接线正确'
+})
+
 function storeDayRecord(kv) {
   const key = [...kv.map.keys()].find((k) => k.startsWith('fish:v2:day:'))
   return key ? JSON.parse(kv.map.get(key)) : {}
+}
+
+function storeDayRecordOn(kv, date) {
+  const raw = kv.map.get(`fish:v2:day:${date}`)
+  return raw ? JSON.parse(raw) : {}
 }
 
 const goodDiary = `---
@@ -3836,7 +4198,15 @@ await recorder.check('C97', '生产接线：wiring 默认注入 proactiveSender�
     /if\s*\(message\.channel\s*===\s*'app'\)\s*return false/.test(wiringSrc),
     "'app' 分支不得外发"
   )
-  return 'wiring 默认注入 + app 分支锁定 ✓'
+  assert(
+    /loadContentDeck:\s*async/.test(wiringSrc) && /topics\.v1\.json/.test(wiringSrc),
+    'wiring 必须注入 topics/lines 内容包（否则内容引擎退化成只有生活卡）'
+  )
+  assert(
+    /sendProactiveSticker:\s*async/.test(wiringSrc) && /pickByEmotion\(/.test(wiringSrc),
+    'wiring 必须注入主动表情包发送（否则 stickerChance 永远空转）'
+  )
+  return 'wiring 默认注入 + 内容包 + 表情包 + app 分支锁定 ✓'
 })
 
 const characterResult = recorder.toJSON()

@@ -14,6 +14,14 @@ export type ProactiveReason =
   | 'silent-until'
   | 'min-interval'
   | 'age-unconfirmed'
+  /** 未回复累计到阈值：主动停发，等用户互动后重置（避免刷屏） */
+  | 'unanswered-backoff'
+  /** 本轮候选里没有合适内容（如全被去重挡掉） */
+  | 'no-content'
+  /** 与最近已发文案精确/近似重复 */
+  | 'duplicate'
+  /** 关系试探被 48h/同日/连续等闸门挡住 */
+  | 'nudge-blocked'
   | 'ok'
 
 export interface ProactiveDayState {
@@ -23,10 +31,26 @@ export interface ProactiveDayState {
   voiceSent?: number
   intimacyGained?: number
   events?: string[]
-  /** 最近一次主动发送时间（兼容旧数据） */
+  /** 最近一次主动发送时间（兼容旧数据；与 lastProactiveAt 同步写） */
   lastActiveAt?: number
   /** 下一次最早可发送时间（发送后按设置间隔落盘；免打扰结束后最多补一条） */
   nextAllowedAt?: number
+  /** 最近一次真正发出的主动消息时间（语义明确的新字段，与 lastActiveAt 同步） */
+  lastProactiveAt?: number
+  /** 最近已发主动消息文案（≤20，跨天沿用，精确/近似去重用） */
+  recentSentTexts?: string[]
+  /** 最近用过的话题 id（≤10，约 7 天窗口，同 topic 尽量不重复） */
+  recentTopics?: string[]
+  /** 最近一次发送的意图（life/topic/line/nudge；连续 intent 不重复） */
+  lastIntent?: string
+  /** 最近一次关系试探的 family（companion/sister/lover） */
+  lastNudgeFamily?: string
+  /** 最近一次关系试探时间（同 family 48h 内、同一天最多 1 次） */
+  lastNudgeAt?: number
+  /** 用户最后一次互动之后已发的主动消息条数（用于试探升级/backoff） */
+  unansweredCount?: number
+  /** 最近发送时间列表（≤20，跨天沿用；用于重算 unansweredCount，防旧数据漂移） */
+  sentTimes?: number[]
 }
 
 /** 每日主动消息上限的硬上限 */

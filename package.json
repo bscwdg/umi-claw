@@ -42,6 +42,7 @@
     "accept:voice": "node test/voice.accept.mjs",
     "accept:external-tts": "node test/external-tts.accept.mjs",
     "accept:character": "node test/character.core.accept.mjs",
+    "accept:sticker": "node test/sticker.accept.mjs",
     "accept:ui": "node test/ui.accept.mjs",
     "accept:plugin": "node test/plugin.accept.mjs",
     "e2e:day": "node test/one-day.e2e.mjs",

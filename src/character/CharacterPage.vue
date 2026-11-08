@@ -333,6 +333,72 @@
     </section>
 
     <section class="card">
+      <h3>表情包</h3>
+      <p class="hint">
+        导入本地图片当她的 QQ 表情包（PNG / JPEG / GIF / WebP，单张 ≤10MB，最多 200 张；同一张图按 sha256 去重）。
+        删除只是归档到 <code>data/character/stickers-archive/</code>，可手动找回。
+        文字主动消息送达后约五分之一会按当下情绪补一张表情包；聊天回复里自动配图后续再接。
+        这里也可以「发送测试」直接验证 QQ 发图链路。
+      </p>
+      <div class="row">
+        <button class="btn" :disabled="busy || stickersBusy" @click="pickStickers">导入表情包</button>
+        <span class="hint">共 {{ stickerList.length }} / 200 张</span>
+      </div>
+      <p v-if="!stickerList.length" class="hint">
+        还没有表情包：点「导入表情包」选择本地图片（可多选）。QQ 凭据在「连接自检」的外部渠道里配置。
+      </p>
+      <ul v-else class="sticker-list">
+        <li v-for="st in stickerList" :key="st.id" class="sticker-item">
+          <img
+            v-if="stickerPreviews[st.id]"
+            class="sticker-thumb"
+            :src="stickerPreviews[st.id]"
+            :alt="st.name"
+          />
+          <div v-else class="sticker-thumb sticker-thumb-empty">🐟</div>
+          <div class="sticker-body">
+            <div class="row">
+              <input v-model="st.name" class="sticker-name" maxlength="40" placeholder="名称" />
+              <label class="check-row">
+                <input v-model="st.enabled" type="checkbox" @change="saveSticker(st)" />
+                <span>启用</span>
+              </label>
+            </div>
+            <div class="row">
+              <input v-model="st.emotion" maxlength="20" placeholder="情绪（如 happy / shy / angry）" />
+              <input v-model="st.tagsText" maxlength="200" placeholder="标签（逗号分隔）" />
+            </div>
+            <div class="row">
+              <button class="btn ghost" :disabled="busy || stickersBusy" @click="saveSticker(st)">保存</button>
+              <button class="btn" :disabled="busy || stickersBusy || !st.enabled" @click="sendSticker(st)">
+                发送测试
+              </button>
+              <button class="btn ghost" :disabled="busy || stickersBusy" @click="removeSticker(st)">删除</button>
+              <span class="hint">{{ st.format.toUpperCase() }} · {{ formatBytes(st.size) }} · 已用 {{ st.use }} 次</span>
+            </div>
+          </div>
+        </li>
+      </ul>
+      <p v-if="stickersHint" class="hint">{{ stickersHint }}</p>
+    </section>
+
+    <section class="card">
+      <h3>备份</h3>
+      <p class="hint">
+        导出成一个 zip：她的设置/状态/关系数值/解锁/桌宠状态、人格文件、workspace 记忆日记、表情包。
+        <strong>不含</strong>密钥/token/截图/日志、桌宠自定义形象文件；Obsidian vault 里的笔记不打包，
+        恢复时也不会覆盖（需要时手动回填）。
+        导入前会自动把现有数据导出一份 <code>character-pre-import-*.zip</code>，失败会回滚。
+      </p>
+      <div class="row">
+        <button class="btn" :disabled="busy || backupBusy" @click="exportBackup">导出备份</button>
+        <button class="btn ghost" :disabled="busy || backupBusy" @click="importBackup">导入备份</button>
+        <span class="hint">{{ backupBusy ? '处理中…' : '默认保存到 data/backups/character-<时间>.zip' }}</span>
+      </div>
+      <p v-if="backupHint" class="hint">{{ backupHint }}</p>
+    </section>
+
+    <section class="card">
       <h3>今天的日记</h3>
       <p class="hint">{{ memoryText }}</p>
       <div class="row">
@@ -678,6 +744,7 @@ onMounted(async () => {
   void refreshKnowledgeHealth()
   void refreshMemories()
   void refreshPetAppearance()
+  void refreshStickers()
   void refreshChatChannels()
 })
 
@@ -927,6 +994,238 @@ function clearPetAppearance(): void {
       await run(async () => {
         petAppearance.value = await window.api.character.pet.appearance.clear()
         showToast('已恢复默认形象')
+      })
+    }
+  )
+}
+
+// ── 表情包（4.4）：列表/缩略图/导入/元数据/发送测试/归档删除 ──────────────────
+interface StickerView {
+  id: string
+  name: string
+  file: string
+  format: string
+  size: number
+  emotion: string
+  tags: string[]
+  use: number
+  enabled: boolean
+  /** 编辑态的标签原文（逗号分隔）；保存时再拆 */
+  tagsText: string
+}
+const stickerList = ref<StickerView[]>([])
+/** 缩略图 dataUrl（按 id 缓存；list 不塞 base64，避免 200 张大图撑爆 IPC） */
+const stickerPreviews = ref<Record<string, string>>({})
+const stickersBusy = ref(false)
+const stickersHint = ref('')
+/** 一次最多给多少张拉缩略图：再多就只显示占位（页面不是图库，别把主进程读图拖慢） */
+const STICKER_PREVIEW_LIMIT = 60
+const STICKER_SEND_REASON: Record<string, string> = {
+  'no-creds': 'QQ 凭据未配置：先到「连接自检」→ 外部渠道配置 QQ 机器人',
+  'sticker-not-found': '找不到这张表情包（可能已被删除）',
+  'sticker-disabled': '这张表情包未启用，先勾选「启用」',
+  'file-missing': '表情包文件丢失（可能被手动删除，建议重新导入）',
+  'file-too-large': '图片超过 10MB，QQ 不收',
+  'format-mismatch': '图片格式与记录不一致，已拒绝发送',
+  'upload-failed': 'QQ 上传图片失败',
+  'send-failed': 'QQ 发送失败'
+}
+
+function toStickerView(record: {
+  id: string
+  name: string
+  file: string
+  format: string
+  size: number
+  emotion: string
+  tags: string[]
+  use: number
+  enabled: boolean
+}): StickerView {
+  return { ...record, tagsText: (record.tags ?? []).join('，') }
+}
+
+async function refreshStickers(): Promise<void> {
+  try {
+    const list = await window.api.character.stickers.list()
+    stickerList.value = list.map((record) => toStickerView(record))
+    const previews: Record<string, string> = {}
+    const targets = stickerList.value.slice(0, STICKER_PREVIEW_LIMIT)
+    const results = await Promise.all(
+      targets.map(async (item) => {
+        try {
+          const preview = await window.api.character.stickers.preview(item.id)
+          return [item.id, preview?.dataUrl ?? ''] as const
+        } catch {
+          return [item.id, ''] as const
+        }
+      })
+    )
+    for (const [id, dataUrl] of results) {
+      if (dataUrl) previews[id] = dataUrl
+    }
+    stickerPreviews.value = previews
+  } catch {
+    stickerList.value = []
+    stickerPreviews.value = {}
+  }
+}
+
+function formatBytes(bytes: number): string {
+  const value = Number(bytes) || 0
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+async function pickStickers(): Promise<void> {
+  stickersHint.value = ''
+  await run(async () => {
+    stickersBusy.value = true
+    try {
+      const result = await window.api.character.stickers.pickImport()
+      if ('canceled' in result) return
+      const imported = result.imported?.length ?? 0
+      const failed = result.failed ?? []
+      if (imported) showToast(`已导入 ${imported} 张表情包`)
+      if (failed.length) {
+        const head = failed
+          .slice(0, 5)
+          .map((item) => `${item.name}（${item.reason}）`)
+          .join('；')
+        stickersHint.value = `已导入 ${imported} 张，${failed.length} 张失败：${head}${failed.length > 5 ? '…' : ''}`
+      } else {
+        stickersHint.value = imported ? `已导入 ${imported} 张，共 ${result.total} 张` : ''
+      }
+      await refreshStickers()
+    } finally {
+      stickersBusy.value = false
+    }
+  })
+}
+
+async function saveSticker(item: StickerView): Promise<void> {
+  await run(async () => {
+    stickersBusy.value = true
+    try {
+      const updated = await window.api.character.stickers.update(item.id, {
+        name: item.name,
+        emotion: item.emotion,
+        tags: item.tagsText
+          .split(/[，,]/)
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+        enabled: item.enabled
+      })
+      Object.assign(item, toStickerView(updated))
+      stickersHint.value = `已保存「${updated.name}」`
+    } finally {
+      stickersBusy.value = false
+    }
+  })
+}
+
+function removeSticker(item: StickerView): void {
+  askConfirm(
+    {
+      title: '删除表情包',
+      message: `「${item.name}」会被归档到 data/character/stickers-archive/（不会物理删除），确定？`,
+      confirmText: '删除',
+      danger: true
+    },
+    async () => {
+      await run(async () => {
+        stickersBusy.value = true
+        try {
+          const result = await window.api.character.stickers.remove(item.id)
+          stickersHint.value = `已归档到 ${result.archivedTo}`
+          showToast('表情包已归档')
+          await refreshStickers()
+        } finally {
+          stickersBusy.value = false
+        }
+      })
+    }
+  )
+}
+
+async function sendSticker(item: StickerView): Promise<void> {
+  await run(async () => {
+    stickersBusy.value = true
+    try {
+      const result = await window.api.character.stickers.send({ id: item.id })
+      if (result.ok) {
+        showToast(`已发送「${item.name}」到 QQ`)
+        await refreshStickers()
+        return
+      }
+      const label = STICKER_SEND_REASON[result.reason ?? ''] ?? `发送失败（${result.reason ?? 'unknown'}）`
+      error.value = result.detail ? `${label}：${result.detail}` : label
+    } finally {
+      stickersBusy.value = false
+    }
+  })
+}
+
+// ── 单文件备份（4.4）：导出/导入（导入前二次确认；路径由宿主弹框选） ──────────
+const backupBusy = ref(false)
+const backupHint = ref('')
+type BackupExportView = { path: string; bytes: number; counts: { kv: number; persona: number; memory: number; stickers: number } }
+type BackupImportView = {
+  path: string
+  restored: { kv: string[]; persona: string[]; memory: string[]; stickers: number }
+  warnings: string[]
+  backupPath: string
+  restartRequired: boolean
+}
+
+async function exportBackup(): Promise<void> {
+  backupHint.value = ''
+  await run(async () => {
+    backupBusy.value = true
+    try {
+      const result = await window.api.character.backup.export()
+      if ('canceled' in result) return
+      const data = result as BackupExportView
+      backupHint.value = `已导出：${data.path}（kv ${data.counts.kv} / 人格 ${data.counts.persona} / 日记 ${data.counts.memory} / 表情包 ${data.counts.stickers}）`
+      showToast('备份已导出')
+    } finally {
+      backupBusy.value = false
+    }
+  })
+}
+
+function importBackup(): void {
+  askConfirm(
+    {
+      title: '导入备份',
+      message:
+        '会用备份包恢复设置/状态、人格文件、workspace 记忆日记与表情包；导入前自动导出一份现有数据，失败会回滚。' +
+        'Obsidian vault 里的笔记不会被覆盖。确定导入？',
+      confirmText: '导入',
+      danger: true
+    },
+    async () => {
+      backupHint.value = ''
+      await run(async () => {
+        backupBusy.value = true
+        try {
+          const result = await window.api.character.backup.import()
+          if ('canceled' in result) return
+          const data = result as BackupImportView
+          const warnings = data.warnings?.length
+            ? `；忽略：${data.warnings.slice(0, 3).join('；')}${data.warnings.length > 3 ? '…' : ''}`
+            : ''
+          backupHint.value =
+            `已恢复：kv ${data.restored.kv.length} 项 / 人格 ${data.restored.persona.length} 个 / ` +
+            `日记 ${data.restored.memory.length} 篇 / 表情包 ${data.restored.stickers} 张；` +
+            `导入前备份：${data.backupPath}${data.restartRequired ? '；重启应用后设置/状态完全生效' : ''}${warnings}`
+          showToast(data.restartRequired ? '备份已恢复（重启应用后设置完全生效）' : '备份已恢复')
+          await refresh()
+          await refreshStickers()
+        } finally {
+          backupBusy.value = false
+        }
       })
     }
   )
@@ -1626,4 +1925,46 @@ select {
   object-fit: contain;
 }
 
+.sticker-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sticker-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px;
+  border: 1px solid var(--border-color, #2a3244);
+  border-radius: 8px;
+  background: var(--bg-primary, #0d121c);
+}
+.sticker-thumb {
+  flex: 0 0 72px;
+  width: 72px;
+  height: 72px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: var(--bg-secondary, #141a26);
+}
+.sticker-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  opacity: 0.6;
+}
+.sticker-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sticker-body .row {
+  margin-bottom: 6px;
+}
+.sticker-name {
+  max-width: 220px;
+}
 </style>

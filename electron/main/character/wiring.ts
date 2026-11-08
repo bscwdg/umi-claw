@@ -14,6 +14,7 @@ import { createProactiveSender } from './proactiveSender'
 import { CHARACTER_AGENT_ID, CHARACTER_AGENT_MODEL, readAgentEntry } from './agentConfig'
 import { loadPersonaTemplates, runBootstrap } from './bootstrap'
 import { parseLifeDeck } from './contentCards'
+import { createEmptyContentDeck, parseContentDeck } from './contentEngine'
 import { deliverVoice, type QqBotCreds } from './qqVoice'
 import { isVoiceRequest } from './voicePolicy'
 import { formatSearchContext, looksLikeRecallQuery, withTimeout } from './searchContext'
@@ -35,6 +36,9 @@ import {
 } from './petAppearance'
 import { PetWindowController, type PetMenuAction } from './petWindow'
 import { CharacterChatService, type CharacterChatFn } from './chat'
+import { createStickerStore, type StickerImportInput, type StickerUpdatePatch } from './stickerStore'
+import { sendSticker } from './stickerSender'
+import { createBackupBundle } from './backupBundle'
 import {
   CHARACTER_CHANNELS,
   CharacterError,
@@ -65,6 +69,14 @@ export interface CharacterPetWindowConfig {
 export interface CharacterWiringDeps {
   /** 宿主 app_meta KV（work.db；与 voice 同库同口径） */
   kv: CharacterKv
+  /**
+   * 角色 KV 批量读写（4.4 单文件备份用）。
+   * 只有 CharacterKvStore 提供；缺省则备份功能显示「未接线」（其它功能不受影响）。
+   */
+  kvBulk?: {
+    readAll: () => Promise<Record<string, string>>
+    writeMany: (entries: Record<string, string | null>) => Promise<unknown>
+  }
   /** 应用数据目录（<dataDir>/config/.openclaw/workspace-feiyu 在这里） */
   dataDir: string
   /** 人格模板目录（开发态 app/resources/character/persona；打包态 resources/...） */
@@ -169,6 +181,21 @@ async function registerCharacterInternal(
     const store = new CharacterStore({ kv: deps.kv, now: deps.now })
     const workspaceDir = join(deps.dataDir, 'config', '.openclaw', 'workspace-feiyu')
 
+    // 4.4 表情包：图片落 <dataDir>/character/stickers/，元数据 stickers.json；
+    // 发送复用 qqVoice 的 token/multipart 栈（credential 只读 openclaw.json）
+    const stickerStore = createStickerStore({ dataDir: deps.dataDir, now: deps.now })
+    // 4.4 单文件备份：zip 内含 manifest + kv(settings/state/day) + 人格 + workspace 日记 + 表情包，
+    // 不含密钥/token/截图/日志；kvBulk 缺省时降级为「未接线」，不影响角色其它功能
+    const backupBundle = deps.kvBulk
+      ? createBackupBundle({
+          dataDir: deps.dataDir,
+          workspaceDir,
+          kv: deps.kvBulk,
+          now: deps.now,
+          logger
+        })
+      : null
+
     // 桌宠自定义形象：文件在 <dataDir>/character/pet-appearance/，元数据在 KV（4.3 P4）
     const petAppearanceBase = join(deps.dataDir, 'character')
     const readPetAppearanceMeta = async (): Promise<PetAppearanceMeta | null> => {
@@ -243,6 +270,19 @@ async function registerCharacterInternal(
         const file = join(dirname(deps.personaSourceDir), 'cards', 'life-cards.v1.json')
         return parseLifeDeck(JSON.parse(readFileSync(file, 'utf8')))
       },
+      // 话题/台词内容包：随 resources 打包；缺失时退回空包，不阻断主动消息
+      loadContentDeck: async () => {
+        try {
+          const dir = join(dirname(deps.personaSourceDir), 'cards')
+          return parseContentDeck({
+            topics: JSON.parse(readFileSync(join(dir, 'topics.v1.json'), 'utf8')),
+            lines: JSON.parse(readFileSync(join(dir, 'lines.v1.json'), 'utf8'))
+          })
+        } catch (error) {
+          logger(`[character] 话题/台词内容包加载失败，退回生活卡: ${(error as Error)?.message ?? String(error)}`)
+          return createEmptyContentDeck()
+        }
+      },
       writeLifeDoc: async (text) => {
         writeFileSync(join(workspaceDir, 'fish', 'LIFE.md'), text, 'utf8')
       },
@@ -254,6 +294,23 @@ async function registerCharacterInternal(
           if (message.channel === 'app') return false
           return proactiveSender.send(message.text)
         }),
+      // 文字送达后偶尔补一张表情包（仅 QQ 外部渠道；无匹配/无凭据返回 false，不重试）
+      sendProactiveSticker: async ({ emotion }) => {
+        const record = await stickerStore.pickByEmotion(emotion)
+        if (!record) return false
+        const result = await sendSticker({
+          creds: deps.voice?.creds() ?? null,
+          filePath: join(stickerStore.paths().dir, record.file),
+          format: record.format,
+          fileName: record.file
+        })
+        if (!result.ok) {
+          logger(`[character] 主动表情包发送失败：${result.reason ?? 'unknown'}`)
+          return false
+        }
+        await stickerStore.markUsed(record.id)
+        return true
+      },
       generateDiary: deps.generateDiary,
       readWorkspaceMemory: async (date) => {
         try {
@@ -659,7 +716,64 @@ async function registerCharacterInternal(
           const { category, files } = validateKnowledgeImport(payload)
           return writeKnowledgeFiles(vault, category, files)
         }
-      }
+      },
+      // 4.4 表情包：导入（优先本地路径）/列表/缩略图/元数据/归档删除/手动测试发送
+      stickers: {
+        list: () => stickerStore.list(),
+        preview: (id: string) => stickerStore.previewTarget(id),
+        import: (payload) => stickerStore.import((payload ?? {}) as StickerImportInput),
+        update: (payload) => {
+          const p = (payload ?? {}) as { id?: unknown; patch?: unknown }
+          if (typeof p.id !== 'string' || !p.id) {
+            throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '缺少表情包 id')
+          }
+          return stickerStore.update(p.id, (p.patch ?? {}) as StickerUpdatePatch)
+        },
+        delete: (id: string) => stickerStore.remove(id),
+        // 手动测试：id 或 emotion 选一张 → QQ 直发（主动消息，不带 msg_id）
+        // 主动消息接表情包（按情绪自动挑图）由 manager/proactive 侧接线，这里只提供发送能力
+        send: async (target) => {
+          const t = (target ?? {}) as { id?: unknown; emotion?: unknown }
+          const record =
+            typeof t.id === 'string' && t.id
+              ? await stickerStore.get(t.id)
+              : typeof t.emotion === 'string' && t.emotion
+                ? await stickerStore.pickByEmotion(t.emotion)
+                : null
+          if (!record) return { ok: false, reason: 'sticker-not-found' }
+          if (!record.enabled) {
+            return { ok: false, reason: 'sticker-disabled', id: record.id, name: record.name }
+          }
+          // 与语音条同源：openclaw.json 的 qqbot 凭据（deps.voice.creds），不新写一套读取逻辑
+          const result = await sendSticker({
+            creds: deps.voice?.creds() ?? null,
+            filePath: join(stickerStore.paths().dir, record.file),
+            format: record.format,
+            fileName: record.file
+          })
+          if (result.ok) await stickerStore.markUsed(record.id)
+          return { ...result, id: record.id, name: record.name }
+        }
+      },
+      // 4.4 单文件备份：export/import 的路径由 IPC 层弹框选择，这里只做打包/恢复
+      ...(backupBundle
+        ? {
+            backup: {
+              defaultExportPath: () => backupBundle.defaultExportPath(),
+              export: (path?: string) => backupBundle.exportTo(path),
+              import: async (path: string) => {
+                const result = await backupBundle.importFrom(path)
+                try {
+                  await manager.reloadFromStore()
+                  return { ...result, restartRequired: false }
+                } catch (error) {
+                  logger(`[character] 备份恢复后重载内存态失败: ${(error as Error)?.message ?? String(error)}`)
+                  return result
+                }
+              }
+            }
+          }
+        : {})
     })
 
     // 设置/互动后 ≤300ms 合并重写人格文件（STATE.md 即时；用户改过的 SOUL/AGENTS 保留）

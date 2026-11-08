@@ -298,4 +298,37 @@ export class CharacterKvStore implements CharacterKv {
   async keys(): Promise<string[]> {
     return Object.keys(this.load()).sort()
   }
+
+  /** 备份导出用：读出全部键值快照（只读，不改缓存/文件） */
+  async readAll(): Promise<Record<string, string>> {
+    return { ...this.load() }
+  }
+
+  /**
+   * 备份导入/回滚用：批量合并写入（value=null 表示删除）。
+   *
+   * 为什么必须走这里而不是直接写 kv.json：本类有进程内 cache，绕过去写文件后
+   * 下一次 set 会把旧 cache 整份 flush 回去，刚恢复的数据被静默覆盖。
+   */
+  async writeMany(entries: Record<string, string | null>): Promise<{ changes: number }> {
+    if (!entries || typeof entries !== 'object') return { changes: 0 }
+    const map = { ...this.load() }
+    let changes = 0
+    for (const [key, value] of Object.entries(entries)) {
+      if (!key) continue
+      if (value === null) {
+        if (key in map) {
+          delete map[key]
+          changes += 1
+        }
+      } else if (typeof value === 'string') {
+        if (map[key] !== value) {
+          map[key] = value
+          changes += 1
+        }
+      }
+    }
+    if (changes) this.flush(map)
+    return { changes }
+  }
 }
