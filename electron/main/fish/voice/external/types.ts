@@ -49,9 +49,12 @@ export interface ExternalTtsServiceView extends ExternalTtsService {
 }
 
 export interface ExternalTtsProbeResult {
+  /** true = 请求已完成且服务可达；强成功的判断必须同时看 weak */
   ok: boolean
   latencyMs: number
   detail: string
+  /** 服务可达但 /models 不是 OpenAI 兼容面（如 Gradio/自定义 TTS），需试听确认 */
+  weak?: boolean
 }
 
 export interface ExternalTtsTestResult {

@@ -231,7 +231,8 @@ export class OpenAISpeechProvider {
       })
       if (response.status === 404 || response.status === 405) {
         return {
-          ok: false,
+          ok: true,
+          weak: true,
           latencyMs: Math.round(performance.now() - started),
           detail: `服务可达，但 /models 不可用（HTTP ${response.status}），请用试听确认`
         }
@@ -239,7 +240,8 @@ export class OpenAISpeechProvider {
       if (!response.ok) throw mapHttpError(response.status, await responseDetail(response))
       if (response.status === 204) {
         return {
-          ok: false,
+          ok: true,
+          weak: true,
           latencyMs: Math.round(performance.now() - started),
           detail: '服务可达，但 /models 返回 204（无法判断兼容性），请用试听确认'
         }
@@ -247,7 +249,8 @@ export class OpenAISpeechProvider {
       const contentType = (response.headers.get('content-type') ?? '').toLowerCase()
       if (!contentType.includes('application/json')) {
         return {
-          ok: false,
+          ok: true,
+          weak: true,
           latencyMs: Math.round(performance.now() - started),
           detail: '服务可达，但 /models 未返回 JSON，请用试听确认'
         }
@@ -255,7 +258,8 @@ export class OpenAISpeechProvider {
       const text = await response.text()
       if (!text.trim()) {
         return {
-          ok: false,
+          ok: true,
+          weak: true,
           latencyMs: Math.round(performance.now() - started),
           detail: '服务可达，但 /models 返回空内容，请用试听确认'
         }
@@ -264,7 +268,8 @@ export class OpenAISpeechProvider {
         JSON.parse(text)
       } catch {
         return {
-          ok: false,
+          ok: true,
+          weak: true,
           latencyMs: Math.round(performance.now() - started),
           detail: '服务可达，但 /models 返回坏 JSON，请用试听确认'
         }

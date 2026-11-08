@@ -448,7 +448,7 @@
               HTTP 不加密，当前配置的 API Key 会以明文传输。请改用 HTTPS，或只在不敏感的局域网环境中使用。
             </p>
           </div>
-          <p v-if="externalFormNotice" class="external-form-result">{{ externalFormNotice }}</p>
+          <p v-if="externalFormNotice" class="external-form-result" :class="externalFormNoticeKind">{{ externalFormNotice }}</p>
           <p v-if="externalFormError" class="external-form-error">{{ externalFormError }}</p>
           <div class="form-group external-form-actions">
             <button class="btn" :disabled="busy || externalDraftProbing" @click="closeExternalForm">
@@ -832,6 +832,7 @@ const externalEditingId = ref('')
 const externalTestingId = ref('')
 const externalFormError = ref('')
 const externalFormNotice = ref('')
+const externalFormNoticeKind = ref<'ok' | 'warn'>('ok')
 /** 用户一旦动过表单，异步探测到的默认值就不再覆盖。 */
 const externalFormTouched = ref(false)
 const externalStatus = ref<{ text: string; kind: 'ok' | 'warn' } | null>(null)
@@ -1168,6 +1169,7 @@ async function detectLocalAdapterDefaults(): Promise<void> {
     externalForm.voice = LOCAL_ADAPTER_DEFAULTS.voice
     externalForm.responseFormat = LOCAL_ADAPTER_DEFAULTS.responseFormat
     externalFormNotice.value = '检测到本机 TTS 适配器，已填入默认值；接其它服务请改地址/模型/音色。'
+    externalFormNoticeKind.value = 'ok'
   } catch {
     // 本机没有适配器：保持空表单，由用户填写自己的地址
   }
@@ -1223,8 +1225,11 @@ async function probeExternalDraft(): Promise<void> {
       id: externalForm.clearKey ? undefined : externalEditingId.value || undefined
     })
     externalFormNotice.value = result.ok
-      ? `连接测试：${result.detail}（${result.latencyMs}ms）；模型/音色需用试听确认`
-      : `服务可达但未通过探活：${result.detail}（${result.latencyMs}ms）`
+      ? result.weak
+        ? `连接测试：${result.detail}（${result.latencyMs}ms）；模型/音色请以试听结果为准`
+        : `连接测试：${result.detail}（${result.latencyMs}ms）；模型/音色需用试听确认`
+      : `连接失败：${result.detail}（${result.latencyMs}ms）`
+    externalFormNoticeKind.value = result.ok && result.weak ? 'warn' : 'ok'
   } catch (e) {
     externalFormError.value = errorMessageOf(e)
   } finally {
@@ -1263,9 +1268,11 @@ async function saveExternalService(): Promise<void> {
       const probe = await api.external.probe(saved.id)
       externalStatus.value = {
         text: probe.ok
-          ? `已保存「${saved.label}」：${probe.detail}（${probe.latencyMs}ms）；模型/音色需用试听确认`
-          : `已保存「${saved.label}」，但探活未通过：${probe.detail}（${probe.latencyMs}ms）`,
-        kind: probe.ok ? 'ok' : 'warn'
+          ? probe.weak
+            ? `已保存「${saved.label}」：${probe.detail}（${probe.latencyMs}ms）；模型/音色请以试听结果为准`
+            : `已保存「${saved.label}」：${probe.detail}（${probe.latencyMs}ms）；模型/音色需用试听确认`
+          : `已保存「${saved.label}」，但连接测试失败：${probe.detail}（${probe.latencyMs}ms）`,
+        kind: probe.ok ? (probe.weak ? 'warn' : 'ok') : 'warn'
       }
     } catch (e) {
       externalStatus.value = {
@@ -1284,7 +1291,10 @@ async function probeExternalService(service: ExternalTtsServiceView): Promise<vo
   busy.value = true
   try {
     const result = await api.external.probe(service.id)
-    showNotice(`${service.label}：${result.detail}（${result.latencyMs}ms）`)
+    externalStatus.value = {
+      text: `${service.label}：${result.detail}（${result.latencyMs}ms）`,
+      kind: result.weak ? 'warn' : 'ok'
+    }
   } catch (e) {
     showError(e)
   } finally {
@@ -2073,6 +2083,12 @@ onBeforeUnmount(() => {
   background: rgba(120, 220, 160, 0.10);
   color: #9fe7bd;
   font-size: 13px;
+}
+
+.external-form-result.warn {
+  border-color: rgba(255, 200, 120, 0.4);
+  background: rgba(255, 200, 120, 0.10);
+  color: #ffd79a;
 }
 
 .external-status {

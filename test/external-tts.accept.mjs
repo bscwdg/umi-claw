@@ -376,7 +376,8 @@ await recorder.check('E2', 'OpenAI 适配器：URL、请求体、Bearer、音频
     async () => new Response(null, { status: 204 })
   )
   const noModelsProbe = await noModels.probe()
-  assertEq(noModelsProbe.ok, false, '/models 204 不误报成功')
+  assertEq(noModelsProbe.ok, true, '/models 204 按「可达但需试听」处理')
+  assertEq(noModelsProbe.weak, true, '/models 204 标记 weak')
   const validModels = createOpenAISpeechProvider(
     service,
     null,
@@ -398,7 +399,51 @@ await recorder.check('E2', 'OpenAI 适配器：URL、请求体、Bearer、音频
       })
   )
   const badJsonProbe = await badJson.probe()
-  assertEq(badJsonProbe.ok, false, '/models 坏 JSON 不误报成功')
+  assertEq(badJsonProbe.ok, true, '/models 坏 JSON 按「可达但需试听」处理')
+  assertEq(badJsonProbe.weak, true, '/models 坏 JSON 标记 weak')
+
+  // 用户真实场景：Gradio/自定义 TTS 可能 404/405、HTML 或空 200；都算可达待试听
+  const weakCases = [
+    ['404', () => new Response('{}', { status: 404, headers: { 'Content-Type': 'application/json' } })],
+    ['405', () => new Response('', { status: 405 })],
+    [
+      '200 HTML',
+      () =>
+        new Response('<html>gradio</html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' }
+        })
+    ],
+    [
+      '200 空 body',
+      () => new Response('', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    ]
+  ]
+  for (const [label, makeResponse] of weakCases) {
+    const provider = createOpenAISpeechProvider(service, null, async () => makeResponse())
+    const probe = await provider.probe()
+    assertEq(probe.ok, true, `${label} 可达但 /models 不兼容时不算失败`)
+    assertEq(probe.weak, true, `${label} 标记 weak（需试听）`)
+  }
+
+  // 真实错误仍必须抛：401 不能因为返回了 HTTP 响应就被当作“可达待试听”
+  const unauthorizedProbeProvider = createOpenAISpeechProvider(
+    service,
+    null,
+    async () =>
+      new Response('{"error":"unauthorized"}', {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      })
+  )
+  let unauthorizedCode = ''
+  try {
+    await unauthorizedProbeProvider.probe()
+  } catch (error) {
+    unauthorizedCode = error.code
+  }
+  assertEq(unauthorizedCode, VOICE_ERROR_CODES.AUTH_ERROR, 'probe 遇 401 仍抛鉴权错误')
+
   return '适配器协议与错误映射正确'
 })
 
