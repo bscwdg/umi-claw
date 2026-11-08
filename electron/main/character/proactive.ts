@@ -1,7 +1,7 @@
 // electron/main/character/proactive.ts —— 主动性调度决策（纯逻辑）
 //
-// 判定顺序（PLAN-FISH-CHARACTER §5.4）：
-//   开关 → 静默期（bornAt + silenceDays）→ 免打扰 → 日上限 → silentUntil → 可发
+// 判定顺序：开关/年龄 → silentUntil → 静默期（bornAt + silenceDays）→ 免打扰
+// → 日上限 → 间隔（nextAllowedAt）→ 可发。
 // 不做重试/不换通道：失败由调用方降级并记账。
 
 import type { CharacterSettings, CharacterState } from './types'
@@ -23,12 +23,35 @@ export interface ProactiveDayState {
   voiceSent?: number
   intimacyGained?: number
   events?: string[]
-  /** 最近一次主动发送时间（最小间隔用） */
+  /** 最近一次主动发送时间（兼容旧数据） */
   lastActiveAt?: number
+  /** 下一次最早可发送时间（发送后按设置间隔落盘；免打扰结束后最多补一条） */
+  nextAllowedAt?: number
 }
 
-/** 两条主动消息之间的最小间隔：默认 1 小时（避免 tick 连发同一条内容） */
-export const PROACTIVE_MIN_GAP_MS = 60 * 60_000
+/** 每日主动消息上限的硬上限 */
+export const PROACTIVE_MAX_DAILY_CAP = 60
+
+function clampIntervalMinutes(value: number): number {
+  if (!Number.isFinite(value)) return 60
+  return Math.max(1, Math.min(720, Math.round(value)))
+}
+
+/** 按设置算本次间隔；range 模式用 random 取区间内随机值（测试可注入） */
+export function proactiveIntervalMs(
+  settings: CharacterSettings,
+  random: () => number = Math.random
+): number {
+  const p = settings.proactive
+  if (p.intervalMode === 'range') {
+    const a = clampIntervalMinutes(p.intervalMinMinutes)
+    const b = clampIntervalMinutes(p.intervalMaxMinutes)
+    const min = Math.min(a, b)
+    const max = Math.max(a, b)
+    return Math.round((min + random() * (max - min)) * 60_000)
+  }
+  return clampIntervalMinutes(p.intervalMinutes) * 60_000
+}
 
 export interface ProactiveContext {
   settings: CharacterSettings
@@ -93,13 +116,16 @@ export function decideProactive(ctx: ProactiveContext): ProactiveDecision {
   }
 
   // 当日上限
-  const cap = Math.max(0, Math.min(10, Math.round(settings.proactive.dailyCap)))
+  const cap = Math.max(
+    0,
+    Math.min(PROACTIVE_MAX_DAILY_CAP, Math.round(settings.proactive.dailyCap))
+  )
   if ((day.activeSent ?? 0) >= cap) return deny('daily-cap')
 
-  // 最小间隔：tick 每 30s，不设间隔会连发同一条内容
-  if (day.lastActiveAt && now - day.lastActiveAt < PROACTIVE_MIN_GAP_MS) {
-    return deny('min-interval')
-  }
+  // 最小间隔：新数据用 nextAllowedAt；旧数据用 lastActiveAt + 设置间隔兜底
+  const nextAllowedAt =
+    day.nextAllowedAt ?? (day.lastActiveAt ? day.lastActiveAt + proactiveIntervalMs(settings) : 0)
+  if (nextAllowedAt > now) return deny('min-interval')
 
   return { send: true, reason: 'ok', channel }
 }

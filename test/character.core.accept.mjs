@@ -78,7 +78,7 @@ const {
 } = relationshipMod
 const { parseLifeDeck, drawLifeCards, slotForHour, seededRandom } = cardsMod
 const { composeLifeDay, renderLifeDoc } = lifeMod
-const { decideProactive, isQuietHours } = proactiveMod
+const { decideProactive, isQuietHours, proactiveIntervalMs } = proactiveMod
 const {
   buildMemoryPrompt,
   diaryObsidianRelPath,
@@ -137,10 +137,32 @@ await recorder.check('C1', '默认设置完整 + 白名单合并 + 数值夹取'
   })
   assertEq(merged.enabled, true, 'enabled 可写')
   assertEq(merged.proactive.silenceDays, 14, '沉默期夹到 0–14')
-  assertEq(merged.proactive.dailyCap, 0, '日上限夹到 0–10')
+  assertEq(merged.proactive.dailyCap, 0, '日上限夹到 0–60（下界）')
+  assertEq(merged.proactive.intervalMode, 'fixed', '默认固定间隔')
+  assertEq(merged.proactive.intervalMinutes, 60, '默认间隔 60 分钟')
   assertEq(merged.proactive.quietFrom, '23:30', '非法时间格式不生效')
   assertEq(merged.proactive.quietTo, '08:00', '合法时间生效')
   assertEq(merged.voice.dailyCap, 100, '语音日限夹到 0–100')
+
+  const merged2 = mergeCharacterSettings(settings, {
+    proactive: {
+      dailyCap: 9999,
+      intervalMode: 'range',
+      intervalMinutes: 9999,
+      intervalMinMinutes: 120,
+      intervalMaxMinutes: 30
+    }
+  })
+  assertEq(merged2.proactive.dailyCap, 60, '日上限夹到 0–60（上界）')
+  assertEq(merged2.proactive.intervalMode, 'range', '区间模式可写')
+  assertEq(merged2.proactive.intervalMinutes, 720, '固定间隔夹到 5–720')
+  assertEq(merged2.proactive.intervalMinMinutes, 30, '区间上下界自动交换')
+  assertEq(merged2.proactive.intervalMaxMinutes, 120, '区间上下界自动交换（大）')
+  const merged3 = mergeCharacterSettings(settings, {
+    proactive: { intervalMinutes: 0, intervalMinMinutes: 0, intervalMaxMinutes: 9999 }
+  })
+  assertEq(merged3.proactive.intervalMinutes, 1, '固定间隔下界 1 分钟')
+  assertEq(merged3.proactive.intervalMinMinutes, 1, '区间下界 1 分钟')
   assertEq(merged.relationship.address, '阿爸', '称呼 trim 后生效')
   assertEq(JSON.stringify(merged.relationship.taboo), JSON.stringify(['主人']), '禁忌只留非空字符串')
   assertEq('unknownField' in merged, false, '未知字段被丢弃')
@@ -1130,7 +1152,44 @@ await recorder.check('C40', '主动性决策矩阵：开关/静默期/免打扰/
   assertEq(decideProactive(ctx({ proactive: { channel: 'app' } })).channel, 'app', '通道 app')
   assertEq(decideProactive(ctx({ proactive: { silentUntil: now + 1000 } })).reason, 'silent-until', '安静几天')
   assertEq(decideProactive(ctx({ proactive: { dailyCap: 2 } }, { activeSent: 2 })).reason, 'daily-cap', '日上限')
+  assertEq(
+    decideProactive(ctx({ proactive: { dailyCap: 60 } }, { activeSent: 60 })).reason,
+    'daily-cap',
+    '日上限最大 60'
+  )
   assertEq(decideProactive(ctx({ proactive: { quietFrom: '11:00', quietTo: '13:00' } })).reason, 'quiet-hours', '免打扰')
+
+  // 间隔：默认 60 分钟；nextAllowedAt 优先于 lastActiveAt（落盘后不受 tick 抖动影响）
+  assertEq(
+    decideProactive(ctx({}, { lastActiveAt: now - 30 * 60_000 })).reason,
+    'min-interval',
+    '默认间隔内不重复发'
+  )
+  assertEq(
+    decideProactive(ctx({}, { lastActiveAt: now - 61 * 60_000 })).send,
+    true,
+    '超过默认间隔可发'
+  )
+  assertEq(
+    decideProactive(ctx({}, { nextAllowedAt: now + 1 })).reason,
+    'min-interval',
+    'nextAllowedAt 未到不发'
+  )
+  assertEq(
+    decideProactive(ctx({}, { nextAllowedAt: now - 1 })).send,
+    true,
+    'nextAllowedAt 到了可发'
+  )
+  assertEq(
+    proactiveIntervalMs(settings({ proactive: { intervalMinutes: 30 } })),
+    30 * 60_000,
+    '固定间隔换算'
+  )
+  const rangeSettings = settings({
+    proactive: { intervalMode: 'range', intervalMinMinutes: 10, intervalMaxMinutes: 30 }
+  })
+  assertEq(proactiveIntervalMs(rangeSettings, () => 0), 10 * 60_000, '区间下界')
+  assertEq(proactiveIntervalMs(rangeSettings, () => 1), 30 * 60_000, '区间上界')
 
   const newborn = { ...state, bornAt: now - 1000 }
   const newbornDecision = decideProactive({ ...ctx({ proactive: { silenceDays: 3 } }), state: newborn })
@@ -1206,7 +1265,48 @@ await recorder.check('C42', 'manager：主动性 tick 外发失败降级 + 日�
 
   const day = await storeDayRecord(kv)
   assertEq(day.activeSent, 1, '日计数 +1（降级也记）')
+  assertEq(typeof day.nextAllowedAt, 'number', '发送后落盘 nextAllowedAt')
+  assertEq(day.nextAllowedAt > now, true, 'nextAllowedAt 在未来')
   return 'tick/降级/记账正确'
+})
+
+await recorder.check('C42b', '主动间隔：跨天沿用上一次闸值、改设置即时生效', async () => {
+  const kv = memoryKv()
+  let now = new Date(2026, 10, 1, 23, 59, 0).getTime()
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    loadLifeDeck: async () => lifeDeck,
+    sendProactive: async () => true
+  })
+  await manager.init()
+  await manager.updateSettings({
+    enabled: true,
+    safety: { ageConfirmed: true },
+    proactive: {
+      enabled: true,
+      silenceDays: 0,
+      dailyCap: 60,
+      quietFrom: '00:00',
+      quietTo: '00:00',
+      intervalMode: 'fixed',
+      intervalMinutes: 10
+    }
+  })
+  const state = await manager.getState()
+  const kvState = JSON.parse(kv.map.get(FISH_KEYS.state))
+  kvState.bornAt = now - 10 * 86_400_000
+  kv.map.set(FISH_KEYS.state, JSON.stringify(kvState))
+  assertEq((await manager.runProactiveTick()).decision.send, true, '23:59 发送成功')
+
+  // 跨天：今日 day 是空对象，应沿用昨天的 nextAllowedAt（00:09）而不是立即再发
+  now = new Date(2026, 10, 2, 0, 0, 30).getTime()
+  assertEq((await manager.evaluateProactive()).decision.reason, 'min-interval', '跨天仍受间隔约束')
+
+  // 改间隔为 1 分钟：按上次发送重算闸值，当前 00:00:30 已满足
+  await manager.updateSettings({ proactive: { intervalMinutes: 1 } })
+  assertEq((await manager.evaluateProactive()).decision.send, true, '改小间隔后即时生效')
+  return '跨天闸值 + 改间隔即时生效正确'
 })
 
 function storeDayRecord(kv) {

@@ -127,6 +127,14 @@ export interface CharacterSettings {
     enabled: boolean
     silenceDays: number
     dailyCap: number
+    /** fixed=固定最小间隔；range=每次在 min..max 之间随机 */
+    intervalMode: 'fixed' | 'range'
+    /** fixed 模式的间隔（分钟） */
+    intervalMinutes: number
+    /** range 模式的下界（分钟） */
+    intervalMinMinutes: number
+    /** range 模式的上界（分钟） */
+    intervalMaxMinutes: number
     quietFrom: string
     quietTo: string
     contentTypes: string[]
@@ -265,6 +273,10 @@ export const DEFAULT_CHARACTER_SETTINGS: CharacterSettings = {
     enabled: false,
     silenceDays: 3,
     dailyCap: 2,
+    intervalMode: 'fixed',
+    intervalMinutes: 60,
+    intervalMinMinutes: 30,
+    intervalMaxMinutes: 60,
     quietFrom: '23:30',
     quietTo: '08:00',
     contentTypes: ['morning', 'thinkingOfYou', 'herDay', 'anniversary'],
@@ -307,7 +319,24 @@ export function mergeCharacterSettings(
     const p = out.proactive
     if (typeof proactive.enabled === 'boolean') p.enabled = proactive.enabled
     if (typeof proactive.silenceDays === 'number') p.silenceDays = clamp(proactive.silenceDays, 0, 14)
-    if (typeof proactive.dailyCap === 'number') p.dailyCap = clamp(proactive.dailyCap, 0, 10)
+    if (typeof proactive.dailyCap === 'number') p.dailyCap = clamp(proactive.dailyCap, 0, 60)
+    if (proactive.intervalMode === 'fixed' || proactive.intervalMode === 'range') {
+      p.intervalMode = proactive.intervalMode
+    }
+    if (typeof proactive.intervalMinutes === 'number') {
+      p.intervalMinutes = clamp(proactive.intervalMinutes, 1, 720)
+    }
+    if (typeof proactive.intervalMinMinutes === 'number') {
+      p.intervalMinMinutes = clamp(proactive.intervalMinMinutes, 1, 720)
+    }
+    if (typeof proactive.intervalMaxMinutes === 'number') {
+      p.intervalMaxMinutes = clamp(proactive.intervalMaxMinutes, 1, 720)
+    }
+    if (p.intervalMinMinutes > p.intervalMaxMinutes) {
+      const tmp = p.intervalMinMinutes
+      p.intervalMinMinutes = p.intervalMaxMinutes
+      p.intervalMaxMinutes = tmp
+    }
     if (typeof proactive.quietFrom === 'string' && isHhMm(proactive.quietFrom)) p.quietFrom = proactive.quietFrom
     if (typeof proactive.quietTo === 'string' && isHhMm(proactive.quietTo)) p.quietTo = proactive.quietTo
     if (Array.isArray(proactive.contentTypes)) {

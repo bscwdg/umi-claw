@@ -29,7 +29,8 @@ import { composeLifeDay, renderLifeDoc, type LifeDay } from './life'
 import type { LifeDeck } from './contentCards'
 import {
   decideProactive,
-  PROACTIVE_MIN_GAP_MS,
+  proactiveIntervalMs,
+  PROACTIVE_MAX_DAILY_CAP,
   type ProactiveDayState,
   type ProactiveDecision
 } from './proactive'
@@ -254,9 +255,36 @@ export class CharacterManager {
       throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '角色设置尚未加载')
     }
     const wasEnabled = Boolean(this.settings?.enabled)
+    const previous = this.settings
     const next = mergeCharacterSettings(this.settings, patch)
     this.settings = next
     await this.store.writeSettings(next)
+    // 改间隔/模式立即生效：按最后一次发送 + 新间隔重算今日闸值
+    if (previous) {
+      const intervalChanged = (
+        ['intervalMode', 'intervalMinutes', 'intervalMinMinutes', 'intervalMaxMinutes'] as const
+      ).some((key) => previous.proactive[key] !== next.proactive[key])
+      if (intervalChanged) {
+        const now = this.now()
+        const date = toDateKey(now)
+        const today = (await this.store.readDay<ProactiveDayState>(date)) ?? {}
+        let lastActiveAt =
+          typeof today.lastActiveAt === 'number' && Number.isFinite(today.lastActiveAt)
+            ? today.lastActiveAt
+            : undefined
+        if (lastActiveAt === undefined) {
+          const prev =
+            (await this.store.readDay<ProactiveDayState>(toDateKey(now - 86_400_000))) ?? {}
+          if (typeof prev.lastActiveAt === 'number' && Number.isFinite(prev.lastActiveAt)) {
+            lastActiveAt = prev.lastActiveAt
+          }
+        }
+        await this.patchDayUnlocked(date, (day) => ({
+          ...day,
+          nextAllowedAt: lastActiveAt !== undefined ? lastActiveAt + proactiveIntervalMs(next) : 0
+        }))
+      }
+    }
     // 从关到开：自动跑一次引导（幂等；失败只记日志，不影响宿主）
     if (next.enabled && !wasEnabled && this.bootstrapRunner) {
       void this.runBootstrap().catch((error) => {
@@ -420,7 +448,7 @@ export class CharacterManager {
     const settings = await this.getSettings()
     const state = await this.getState()
     const date = toDateKey(now)
-    const day = (await this.store.readDay<ProactiveDayState>(date)) ?? {}
+    const day = await this.readProactiveDay(date, now)
     const decision = decideProactive({
       settings,
       state,
@@ -495,6 +523,27 @@ export class CharacterManager {
     }
   }
 
+  /** 读取当日主动性闸值；午夜后今日为空时沿用昨日 nextAllowedAt，避免跨天连发 */
+  private async readProactiveDay(date: string, now: number): Promise<ProactiveDayState> {
+    const today = (await this.store.readDay<ProactiveDayState>(date)) ?? {}
+    const sanitize = (value: unknown): number | undefined =>
+      typeof value === 'number' && Number.isFinite(value) ? value : undefined
+    const todayGate: ProactiveDayState = { ...today }
+    todayGate.lastActiveAt = sanitize(today.lastActiveAt)
+    todayGate.nextAllowedAt = sanitize(today.nextAllowedAt)
+    if (todayGate.nextAllowedAt || todayGate.lastActiveAt) return todayGate
+    const prevDate = toDateKey(now - 86_400_000)
+    const prev = (await this.store.readDay<ProactiveDayState>(prevDate)) ?? {}
+    const prevNext = sanitize(prev.nextAllowedAt)
+    const prevLast = sanitize(prev.lastActiveAt)
+    if (!prevNext && !prevLast) return todayGate
+    return {
+      ...todayGate,
+      ...(prevNext ? { nextAllowedAt: prevNext } : {}),
+      ...(prevLast ? { lastActiveAt: prevLast } : {})
+    }
+  }
+
   /** 发送前预留额度（锁内二次校验上限与最小间隔，防并发超发） */
   private async claimProactiveSlot(now: number, epoch?: number): Promise<boolean> {
     const date = toDateKey(now)
@@ -503,14 +552,22 @@ export class CharacterManager {
       // 删除已发生：不再预留/写回 day
       if (epoch !== undefined && epoch !== this.dataEpoch) return false
       const settings = await this.getSettings()
-      const day = (await this.store.readDay<ProactiveDayState>(date)) ?? {}
-      const cap = Math.max(0, Math.min(10, Math.round(settings.proactive.dailyCap)))
+      const day = await this.readProactiveDay(date, now)
+      const cap = Math.max(
+        0,
+        Math.min(PROACTIVE_MAX_DAILY_CAP, Math.round(settings.proactive.dailyCap))
+      )
       if ((day.activeSent ?? 0) >= cap) return false
-      if (day.lastActiveAt && now - day.lastActiveAt < PROACTIVE_MIN_GAP_MS) return false
+      const intervalMs = proactiveIntervalMs(settings)
+      const nextAllowedAt =
+        day.nextAllowedAt ??
+        (day.lastActiveAt ? day.lastActiveAt + intervalMs : 0)
+      if (nextAllowedAt > now) return false
       const next: ProactiveDayState = {
         ...day,
         activeSent: (day.activeSent ?? 0) + 1,
         lastActiveAt: now,
+        nextAllowedAt: now + intervalMs,
         events: [...(day.events ?? []), `${time}:reserve`].slice(-50)
       }
       await this.store.writeDay(date, next)

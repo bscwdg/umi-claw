@@ -17,8 +17,55 @@
           <label class="lab">静默几天后才可以主动</label>
           <input v-model.number="draft.proactive.silenceDays" type="number" min="0" max="14" />
           <label class="lab">每天上限</label>
-          <input v-model.number="draft.proactive.dailyCap" type="number" min="0" max="10" />
+          <input v-model.number="draft.proactive.dailyCap" type="number" min="0" max="60" />
         </div>
+        <div class="row">
+          <label class="lab">发送间隔</label>
+          <select v-model="draft.proactive.intervalMode">
+            <option value="fixed">固定间隔</option>
+            <option value="range">随机区间</option>
+          </select>
+          <template v-if="draft.proactive.intervalMode === 'fixed'">
+            <label class="lab">间隔（分钟）</label>
+            <input
+              v-model.number="draft.proactive.intervalMinutes"
+              type="number"
+              min="1"
+              max="720"
+              list="proactive-fixed-presets"
+            />
+            <datalist id="proactive-fixed-presets">
+              <option v-for="m in [10, 20, 30, 60]" :key="m" :value="m">{{ m }} 分钟</option>
+            </datalist>
+          </template>
+          <template v-else>
+            <label class="lab">最短（分钟）</label>
+            <input
+              v-model.number="draft.proactive.intervalMinMinutes"
+              type="number"
+              min="1"
+              max="720"
+              list="proactive-range-presets"
+            />
+            <label class="lab">最长（分钟）</label>
+            <input
+              v-model.number="draft.proactive.intervalMaxMinutes"
+              type="number"
+              min="1"
+              max="720"
+              list="proactive-range-presets"
+            />
+            <datalist id="proactive-range-presets">
+              <option v-for="m in [10, 30, 60, 180, 360]" :key="m" :value="m">
+                {{ m >= 60 ? `${m / 60} 小时` : `${m} 分钟` }}
+              </option>
+            </datalist>
+          </template>
+        </div>
+        <p class="hint">
+          常用固定间隔：10 / 20 / 30 / 60 分钟；随机区间示例：1–10、10–30、30–60 分钟，
+          1–3（60–180）、3–6 小时（180–360）。免打扰期间不发，结束后最多补一条。
+        </p>
         <div class="row">
           <label class="lab">免打扰从</label>
           <input v-model="draft.proactive.quietFrom" type="time" />
@@ -152,6 +199,10 @@ interface DraftSettings {
     enabled: boolean
     silenceDays: number
     dailyCap: number
+    intervalMode: 'fixed' | 'range'
+    intervalMinutes: number
+    intervalMinMinutes: number
+    intervalMaxMinutes: number
     quietFrom: string
     quietTo: string
     contentTypes: string[]
@@ -176,6 +227,10 @@ function emptyDraft(): DraftSettings {
       enabled: false,
       silenceDays: 3,
       dailyCap: 2,
+      intervalMode: 'fixed',
+      intervalMinutes: 60,
+      intervalMinMinutes: 30,
+      intervalMaxMinutes: 60,
       quietFrom: '23:30',
       quietTo: '08:00',
       contentTypes: CONTENT_TYPES.map((x) => x.value),
@@ -201,6 +256,10 @@ function applySettings(next: CharacterSettings | null): void {
       enabled: next.proactive.enabled,
       silenceDays: next.proactive.silenceDays,
       dailyCap: next.proactive.dailyCap,
+      intervalMode: next.proactive.intervalMode,
+      intervalMinutes: next.proactive.intervalMinutes,
+      intervalMinMinutes: next.proactive.intervalMinMinutes,
+      intervalMaxMinutes: next.proactive.intervalMaxMinutes,
       quietFrom: next.proactive.quietFrom,
       quietTo: next.proactive.quietTo,
       contentTypes: [...next.proactive.contentTypes],
@@ -239,6 +298,10 @@ function save(): void {
       enabled: draft.proactive.enabled,
       silenceDays: draft.proactive.silenceDays,
       dailyCap: draft.proactive.dailyCap,
+      intervalMode: draft.proactive.intervalMode,
+      intervalMinutes: draft.proactive.intervalMinutes,
+      intervalMinMinutes: draft.proactive.intervalMinMinutes,
+      intervalMaxMinutes: draft.proactive.intervalMaxMinutes,
       quietFrom: draft.proactive.quietFrom,
       quietTo: draft.proactive.quietTo,
       channel: draft.proactive.channel
