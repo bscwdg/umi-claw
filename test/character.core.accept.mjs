@@ -3199,6 +3199,10 @@ await recorder.check('C81', '人格包导出/导入：校验、备份、导入�
     agentsAfterImport.includes('专属称呼') && agentsAfterImport.includes('主人'),
     '边界段限制专属称呼只对主人'
   )
+  assert(
+    agentsAfterImport.includes('不把群友的话写成日记') && agentsAfterImport.includes('不主动发语音'),
+    '边界段含群聊记忆/语音隔离'
+  )
   writeManagedFiles(dir, composePersonaFiles(baseInputs()))
   assert(
     readFileSync(join(dir, 'AGENTS.md'), 'utf8').includes('不假装人类'),
