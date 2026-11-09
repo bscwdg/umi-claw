@@ -108,7 +108,7 @@ export function composePersonaFiles(inputs: PersonaInputs): Record<string, strin
   return {
     'SOUL.md': applyTemplate(t.soul, extended),
     'IDENTITY.md': applyTemplate(t.identity, extended),
-    'AGENTS.md': `${applyTemplate(t.agents, extended)}\n\n${groupRules(inputs.settings)}`,
+    'AGENTS.md': `${applyTemplate(t.agents, extended)}\n\n<!-- fish:managed:group:start -->\n${groupRules(inputs.settings)}\n<!-- fish:managed:group:end -->`,
     'USER.md': applyTemplate(t.user, extended),
     'fish/STATE.md': renderStateDoc(inputs.state, inputs.settings)
   }
@@ -236,6 +236,8 @@ export function mergeAgentsMemoryBlock(existing: string, template: string): stri
 /** 边界（硬）受管段：AI 明示/危机转介不能被人格导入移除（PLAN-FISH §1.3 安全验收） */
 export const AGENTS_BOUNDARY_START = '<!-- fish:managed:boundary:start -->'
 export const AGENTS_BOUNDARY_END = '<!-- fish:managed:boundary:end -->'
+export const AGENTS_GROUP_START = '<!-- fish:managed:group:start -->'
+export const AGENTS_GROUP_END = '<!-- fish:managed:group:end -->'
 export const AGENTS_BOUNDARY_TEXT = [
   '## 边界（宿主维护，勿删）',
   '- 不假装人类；被问「你是 AI 吗」时诚实承认。',
@@ -267,10 +269,22 @@ export function ensureAgentsBoundary(existing: string): string {
  */
 export function normalizeAgentsDoc(existing: string, template: string): string {
   const memoryBlock = extractAgentsBlock(template)
+  const groupStart = template.indexOf(AGENTS_GROUP_START)
+  const groupEnd = template.indexOf(AGENTS_GROUP_END, groupStart + AGENTS_GROUP_START.length)
+  const groupBlock =
+    groupStart >= 0 && groupEnd > groupStart
+      ? template.slice(groupStart, groupEnd + AGENTS_GROUP_END.length)
+      : ''
   let body = stripMarkedSegments(existing, AGENTS_BLOCK_START, AGENTS_BLOCK_END)
   body = stripMarkedSegments(body, AGENTS_BOUNDARY_START, AGENTS_BOUNDARY_END)
+  body = stripMarkedSegments(body, AGENTS_GROUP_START, AGENTS_GROUP_END)
   body = collapseBlank(body.split(AGENTS_BOUNDARY_TEXT).join(''))
-  const parts = [body, memoryBlock ? memoryBlock.trim() : '', `${AGENTS_BOUNDARY_START}\n${AGENTS_BOUNDARY_TEXT}\n${AGENTS_BOUNDARY_END}`]
+  const parts = [
+    body,
+    memoryBlock ? memoryBlock.trim() : '',
+    groupBlock.trim(),
+    `${AGENTS_BOUNDARY_START}\n${AGENTS_BOUNDARY_TEXT}\n${AGENTS_BOUNDARY_END}`
+  ]
   return parts.filter(Boolean).join('\n\n') + '\n'
 }
 
