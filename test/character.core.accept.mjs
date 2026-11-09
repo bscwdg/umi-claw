@@ -1423,6 +1423,18 @@ await recorder.check('C42c', '内容引擎：候选池 2–10 + 去重 + 未回�
       cards: [],
       day: { recentTopics: [], recentSentTexts: [] }
     }).candidates.filter((candidate) => candidate.sourceId === topic.id)
+    const sensitive = [
+      'topic-sick',
+      'topic-trip',
+      'topic-birthday',
+      'topic-festival',
+      'topic-fight',
+      'topic-neglect'
+    ].includes(topic.id)
+    if (sensitive) {
+      assertEq(candidates.length, 0, `敏感话题「${topic.title}」无上下文不硬发`)
+      continue
+    }
     assertEq(candidates.length > 0, true, `话题「${topic.title}」有可发候选`)
     assertEq(
       candidates.every((candidate) => /[。！？!?…~～）】」』]$/.test(candidate.text)),
@@ -1491,6 +1503,35 @@ await recorder.check('C42c', '内容引擎：候选池 2–10 + 去重 + 未回�
     day: { recentTopics: [], recentSentTexts: [] }
   }).candidates.filter((candidate) => candidate.sourceId === 'topic-night')
   assertEq(noonNightCandidates.length, 0, '深夜话题中午不出现')
+
+  // 最近聊天亲和：用户刚说加班，工作话题应进入候选；没提生病时不能硬问药
+  const workChat = generateProactiveContent({
+    ...base,
+    cards: [],
+    recentChat: '用户：今天加班被老板骂了\n她：先骂，本鱼听着',
+    day: { recentTopics: [], recentSentTexts: [] }
+  })
+  assertEq(
+    workChat.candidates.some((candidate) => candidate.sourceId === 'topic-work'),
+    true,
+    '最近聊工作会提升工作话题'
+  )
+  assertEq(
+    workChat.candidates.some((candidate) => candidate.sourceId === 'topic-sick'),
+    false,
+    '没提生病不硬问药'
+  )
+  const sickChat = generateProactiveContent({
+    ...base,
+    cards: [],
+    recentChat: '用户：今天感冒了，头有点疼',
+    day: { recentTopics: [], recentSentTexts: [] }
+  })
+  assertEq(
+    sickChat.candidates.some((candidate) => candidate.sourceId === 'topic-sick'),
+    true,
+    '最近聊感冒才触发生病话题'
+  )
 
   // 2) 精确 / 近似重复拒绝
   const exactText = '本鱼今天吃了很多，真的很多'
@@ -4385,6 +4426,10 @@ await recorder.check('C97', '生产接线：wiring 默认注入 proactiveSender�
   assert(
     /sendProactiveSticker:\s*async/.test(wiringSrc) && /pickByEmotion\(/.test(wiringSrc),
     'wiring 必须注入主动表情包发送（否则 stickerChance 永远空转）'
+  )
+  assert(
+    /readRecentChat:\s*\(\)\s*=>/.test(wiringSrc) && /readRecentChat\(\{/.test(wiringSrc),
+    'wiring 注入最近聊天读取（话题亲和/敏感话题触发）'
   )
   return 'wiring 默认注入 + 内容包 + 表情包 + app 分支锁定 ✓'
 })

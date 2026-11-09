@@ -508,6 +508,8 @@ export interface ContentEngineOptions {
   rng?: () => number
   /** 台词组白名单（缺省按当前时段挑） */
   lineGroups?: string[]
+  /** 最近真实聊天（用户/她），用于话题亲和与敏感话题触发 */
+  recentChat?: string
 }
 
 export interface ProactiveContentResult {
@@ -564,7 +566,13 @@ export function generateProactiveContent(options: ContentEngineOptions): Proacti
 
   let normal: ProactiveCandidate[] = [
     ...buildLifeCandidates(cards, address),
-    ...buildTopicCandidates(deck.topics, address, recentTopics, slotForHour(options.now)),
+    ...buildTopicCandidates(
+      deck.topics,
+      address,
+      recentTopics,
+      slotForHour(options.now),
+      options.recentChat ?? ''
+    ),
     ...buildLineCandidates(deck.lines, address, options.now, rng, options.lineGroups)
   ]
 
@@ -674,18 +682,79 @@ function buildLifeCandidates(cards: LifeCard[], address: string): ProactiveCandi
   return out
 }
 
+/** 最近聊天关键词 → 话题亲和（命中则提高该话题权重） */
+const TOPIC_KEYWORDS: Record<string, string[]> = {
+  'topic-food': ['吃', '饭', '饿', '白饭', '外卖', '食堂'],
+  'topic-slack': ['摸鱼', '偷懒', '老板', '上班', '工作'],
+  'topic-work': ['工作', '项目', '加班', '甲方', '老板', '公司'],
+  'topic-night': ['熬夜', '睡不着', '晚', '困', '睡'],
+  'topic-weather': ['天气', '下雨', '太阳', '热', '冷'],
+  'topic-game': ['游戏', '打游戏', '开黑', '番', '动漫'],
+  'topic-music': ['歌', '音乐', '耳机', '听歌'],
+  'topic-praise': ['可爱', '夸', '好看', '喜欢'],
+  'topic-neglect': ['没来', '忙', '忘', '回得慢', '不理'],
+  'topic-relationship': ['关系', '称呼', '算什么', '喜欢'],
+  'topic-dream': ['以后', '未来', '愿望', '想干嘛'],
+  'topic-live': ['直播', '上班', '工钱', '打工'],
+  'topic-sick': ['生病', '感冒', '头疼', '胃', '不舒服', '药'],
+  'topic-trip': ['出差', '旅行', '出门', '高铁', '飞机', '酒店'],
+  'topic-birthday': ['生日', '礼物', '蛋糕'],
+  'topic-festival': ['节日', '过年', '春节', '中秋', '圣诞', '元旦'],
+  'topic-fight': ['吵架', '凶', '生气', '对不起', '冷战'],
+  'topic-dress': ['发绳', '衣服', '打扮', '好看', '样子'],
+  'topic-photo': ['拍照', '照片', '合照', '截图'],
+  'topic-movie': ['电影', '剧', '看剧', '恐怖片'],
+  'topic-morning': ['早', '起床', '醒', '闹钟'],
+  'topic-coffee': ['咖啡', '提神', '困'],
+  'topic-lunch': ['午饭', '中午', '吃饭'],
+  'topic-weekend': ['周末', '放假', '休息'],
+  'topic-hot': ['热', '空调', '风扇', '夏天'],
+  'topic-exercise': ['运动', '跑步', '散步', '步数'],
+  'topic-sleep': ['睡', '失眠', '熬夜', '几点睡'],
+  'topic-cat': ['猫', '宠物', '小动物'],
+  'topic-meme': ['梗', '表情包', '好笑', '段子'],
+  'topic-clean': ['收拾', '房间', '乱'],
+  'topic-laundry': ['洗衣服', '晾衣服', '洗衣机'],
+  'topic-grocery': ['超市', '买菜', '购物车'],
+  'topic-cook': ['做饭', '下厨', '厨房', '菜'],
+  'topic-shop': ['快递', '网购', '购物车', '买'],
+  'topic-money': ['工资', '钱', '省钱', '工钱'],
+  'topic-study': ['学习', '看书', '书', '考试'],
+  'topic-news': ['新闻', '热搜', '网上'],
+  'topic-travel': ['旅行', '海边', '出门', '去哪'],
+  'topic-summer': ['夏天', '热', '风扇', '冰'],
+  'topic-hobby': ['爱好', '小玩意', '攒', '玩什么']
+}
+
+/** 这些话题容易冒犯/不搭：只有最近聊天明确提到才发 */
+const SENSITIVE_TOPIC_KEYWORDS: Record<string, string[]> = {
+  'topic-sick': TOPIC_KEYWORDS['topic-sick'],
+  'topic-trip': TOPIC_KEYWORDS['topic-trip'],
+  'topic-birthday': TOPIC_KEYWORDS['topic-birthday'],
+  'topic-festival': TOPIC_KEYWORDS['topic-festival'],
+  'topic-fight': TOPIC_KEYWORDS['topic-fight'],
+  'topic-neglect': TOPIC_KEYWORDS['topic-neglect']
+}
+
 function buildTopicCandidates(
   deck: TopicDeck,
   address: string,
   recentTopics: string[],
-  slot: TopicSlot
+  slot: TopicSlot,
+  recentChat: string
 ): ProactiveCandidate[] {
   const recent = new Set(recentTopics)
+  const chat = recentChat.trim()
   const out: ProactiveCandidate[] = []
   for (const topic of deck?.topics ?? []) {
     if (topic.slots.length > 0 && !topic.slots.includes(slot)) continue
     // 同一 topic 7 天窗口内尽量不重复：直接用最近使用过的 id 排除
     if (recent.has(topic.id)) continue
+    const keywords = TOPIC_KEYWORDS[topic.id] ?? [topic.title]
+    const mentioned = Boolean(chat) && keywords.some((word) => chat.includes(word))
+    // 生病/吵架/出差/生日/节日/被冷落：没有最近聊天触发就不要硬问，避免前后不搭
+    if (SENSITIVE_TOPIC_KEYWORDS[topic.id] && !mentioned) continue
+    const affinity = mentioned ? 1.8 : 1
     const detail = topic.details[0] ?? ''
     const hook = topic.hooks[0] ?? ''
     const hook2 = topic.hooks[1] ?? ''
@@ -694,7 +763,7 @@ function buildTopicCandidates(
         text: fillAddress(topic.sample, address),
         intent: 'topic',
         sourceId: topic.id,
-        weight: 1.4
+        weight: 1.4 * affinity
       })
     }
     // details 是「设定碎片」不是完整句子，不能和 hook 硬拼
@@ -704,14 +773,14 @@ function buildTopicCandidates(
         text: `${speechLead(address)}${asSpeech(fillAddress(hook, address))}`,
         intent: 'topic',
         sourceId: topic.id,
-        weight: 1.3
+        weight: 1.3 * affinity
       })
     } else if (detail) {
       out.push({
         text: `（${topic.title}）${fillAddress(detail, address)}。`,
         intent: 'topic',
         sourceId: topic.id,
-        weight: 1.1
+        weight: 1.1 * affinity
       })
     }
     if (hook2) {
@@ -719,7 +788,7 @@ function buildTopicCandidates(
         text: asSpeech(fillAddress(hook2, address)),
         intent: 'topic',
         sourceId: topic.id,
-        weight: 1
+        weight: 1 * affinity
       })
     }
   }

@@ -121,6 +121,10 @@ export interface CharacterManagerOptions {
   random?: () => number
   /** 每日记忆（C07）：生成日记 + 双写（workspace / Obsidian） */
   generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
+  /** 最近真实聊天（主动消息选话题用）；失败由 manager 降级为空 */
+  readRecentChat?: () => Promise<
+    Array<{ role: 'user' | 'assistant'; text: string; at: number }>
+  >
   readWorkspaceMemory?: (date: string) => Promise<string | null>
   writeWorkspaceMemory?: (date: string, text: string) => Promise<void>
   writeObsidianDiary?: (relPath: string, text: string) => Promise<void>
@@ -156,6 +160,9 @@ export class CharacterManager {
   private readonly stickerChance: number
   private readonly random: () => number
   private readonly generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
+  private readonly readRecentChat?: () => Promise<
+    Array<{ role: 'user' | 'assistant'; text: string; at: number }>
+  >
   private readonly readWorkspaceMemory?: (date: string) => Promise<string | null>
   private readonly writeWorkspaceMemory?: (date: string, text: string) => Promise<void>
   private readonly writeObsidianDiary?: (relPath: string, text: string) => Promise<void>
@@ -212,6 +219,7 @@ export class CharacterManager {
         : 0.2
     this.random = options.random ?? Math.random
     this.generateDiary = options.generateDiary
+    this.readRecentChat = options.readRecentChat
     this.readWorkspaceMemory = options.readWorkspaceMemory
     this.writeWorkspaceMemory = options.writeWorkspaceMemory
     this.writeObsidianDiary = options.writeObsidianDiary
@@ -540,13 +548,27 @@ export class CharacterManager {
     const life = await this.ensureDailyLife(now)
     const lifeDeck = await this.getLifeDeck()
     const contentDeck = await this.getContentDeck()
+    let recentChat = ''
+    if (this.readRecentChat) {
+      try {
+        const messages = await this.readRecentChat()
+        recentChat = messages
+          .filter((message) => message.text.trim())
+          .map((message) => `${message.role === 'user' ? '用户' : '她'}：${message.text.trim()}`)
+          .join('\n')
+          .slice(-2000)
+      } catch {
+        // 最近聊天读取失败不影响主动消息，只降级为纯话题池
+      }
+    }
     const content = generateProactiveContent({
       settings,
       state,
       day,
       deck: contentDeck,
       cards: this.cardsFor(lifeDeck, life.day.cardIds),
-      now
+      now,
+      recentChat
     })
     if (!content.send || !content.chosen) {
       return {

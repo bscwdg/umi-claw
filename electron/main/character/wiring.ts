@@ -17,6 +17,7 @@ import { parseLifeDeck } from './contentCards'
 import { createEmptyContentDeck, parseContentDeck } from './contentEngine'
 import { deliverVoice, type QqBotCreds } from './qqVoice'
 import { sendQqProactiveText, parseQqC2cOpenid } from './qqProactiveText'
+import { readRecentChat } from './recentChat'
 import { isVoiceRequest } from './voicePolicy'
 import { formatSearchContext, looksLikeRecallQuery, withTimeout } from './searchContext'
 import { buildMemoryContext, recallDates } from './memoryRecall'
@@ -335,6 +336,21 @@ async function registerCharacterInternal(
         return true
       },
       generateDiary: deps.generateDiary,
+      // 主动消息选话题前读最近真实聊天（只读 transcript_events；失败降级为空）
+      readRecentChat: () =>
+        readRecentChat({
+          nodePath: deps.cli.nodePath,
+          dbPath: join(
+            deps.dataDir,
+            'config',
+            '.openclaw',
+            'agents',
+            CHARACTER_AGENT_ID,
+            'agent',
+            'openclaw-agent.sqlite'
+          ),
+          limit: 8
+        }),
       readWorkspaceMemory: async (date) => {
         try {
           return readFileSync(join(workspaceDir, 'memory', `${date}.md`), 'utf8')
