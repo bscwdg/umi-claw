@@ -1401,6 +1401,50 @@ await recorder.check('C42c', '内容引擎：候选池 2–10 + 去重 + 未回�
     true,
     '话题候选必须有句末标点（hook2 也不能裸句）'
   )
+  for (const topic of contentDeck.topics.topics) {
+    const onlyTopicDeck = {
+      ...contentDeck,
+      topics: { ...contentDeck.topics, topics: [topic] }
+    }
+    const candidates = generateProactiveContent({
+      ...base,
+      deck: onlyTopicDeck,
+      cards: [],
+      day: { recentTopics: [], recentSentTexts: [] }
+    }).candidates.filter((candidate) => candidate.sourceId === topic.id)
+    assertEq(candidates.length > 0, true, `话题「${topic.title}」有可发候选`)
+    assertEq(
+      candidates.every((candidate) => /[。！？!?…~～）】」』]$/.test(candidate.text)),
+      true,
+      `话题「${topic.title}」候选都有句末标点`
+    )
+    assertEq(
+      candidates.every((candidate) => !candidate.text.includes('？？')),
+      true,
+      `话题「${topic.title}」没有重复问号`
+    )
+    if (topic.id === 'topic-dream') {
+      assertEq(
+        candidates.some((candidate) => candidate.text.includes('干嘛？')),
+        true,
+        '「干嘛」按问句补问号'
+      )
+    }
+    if (topic.id === 'topic-sick') {
+      assertEq(
+        candidates.some((candidate) => candidate.text.includes('药吃了没？')),
+        true,
+        '「没」结尾按问句补问号'
+      )
+    }
+    if (topic.id === 'topic-food') {
+      assertEq(
+        candidates.some((candidate) => candidate.text.includes('碗比你的脸还大。')),
+        true,
+        '陈述 hook 不应被改成问句'
+      )
+    }
+  }
 
   // 2) 精确 / 近似重复拒绝
   const exactText = '本鱼今天吃了很多，真的很多'

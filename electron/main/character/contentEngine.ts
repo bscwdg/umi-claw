@@ -688,7 +688,7 @@ function buildTopicCandidates(
     // （会出现「新发绳执念。新发绳好看吗？」这种读不懂的拼接）；优先用 sample/hook。
     if (hook) {
       out.push({
-        text: `${address}，${asQuestion(fillAddress(hook, address))}`,
+        text: `${speechLead(address)}${asSpeech(fillAddress(hook, address))}`,
         intent: 'topic',
         sourceId: topic.id,
         weight: 1.3
@@ -703,7 +703,7 @@ function buildTopicCandidates(
     }
     if (hook2) {
       out.push({
-        text: asQuestion(fillAddress(hook2, address)),
+        text: asSpeech(fillAddress(hook2, address)),
         intent: 'topic',
         sourceId: topic.id,
         weight: 1
@@ -713,8 +713,22 @@ function buildTopicCandidates(
   return out
 }
 
-function asQuestion(text: string): string {
-  return /[？?！!。…~～]$/.test(text) ? text : `${text}？`
+/** 称呼在句首：默认「你」用「诶，」更自然，避免「你，新发绳好看吗？」 */
+function speechLead(address: string): string {
+  const text = address.trim()
+  return !text || text === '你' ? '诶，' : `${text}，`
+}
+
+/** hooks 有陈述句也有问句；按语气词/疑问词补标点，不能一律加问号 */
+function asSpeech(text: string): string {
+  const value = text.trim()
+  if (!value) return value
+  if (/[。！？!?…~～]$/.test(value)) return value
+  const isQuestion =
+    /吗|呢|吧$|嘛|干嘛|什么|怎么|为什么|是不是|有没有|多少|几号|几天|哪里|哪儿|谁|哪$|没$/.test(
+      value
+    )
+  return `${value}${isQuestion ? '？' : '。'}`
 }
 
 function buildLineCandidates(
