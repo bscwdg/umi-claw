@@ -575,6 +575,8 @@ export function generateProactiveContent(options: ContentEngineOptions): Proacti
     ),
     ...buildLineCandidates(deck.lines, address, options.now, rng, options.lineGroups)
   ]
+  const followUp = buildRecentChatFollowUp(options.recentChat ?? '')
+  if (followUp) normal = [followUp, ...normal]
 
   // 未回 ≥2：不再试探，必须换话题/问别的事（话题卡够用就只留话题卡）
   if (unansweredCount >= 2) {
@@ -795,6 +797,26 @@ function buildTopicCandidates(
     }
   }
   return out
+}
+
+/** 最近一条用户聊天做“接话”候选：只有具体内容才追问，避免「在吗」也被接成一句 */
+function buildRecentChatFollowUp(recentChat: string): ProactiveCandidate | null {
+  const lines = recentChat
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('用户：'))
+  const last = lines.length > 0 ? lines[lines.length - 1].slice('用户：'.length).trim() : ''
+  if (last.length < 6 || last.length > 60) return null
+  if (/^(在吗|在不在|你好|嗨|hi|hello|嗯|哦|好)[呀啊]?$/i.test(last)) return null
+  if (!/[\u4e00-\u9fa5]{4,}/.test(last)) return null
+  const quote = last.replace(/[。！？!?…~～]+$/g, '').replace(/\s+/g, ' ').slice(0, 40)
+  if (!quote) return null
+  return {
+    text: `你刚才说「${quote}」，后来呢？`,
+    intent: 'line',
+    sourceId: 'recent-chat',
+    weight: 1.2
+  }
 }
 
 /** 称呼在句首：默认「你」用「诶，」更自然，避免「你，新发绳好看吗？」 */

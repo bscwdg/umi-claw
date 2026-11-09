@@ -1517,6 +1517,13 @@ await recorder.check('C42c', '内容引擎：候选池 2–10 + 去重 + 未回�
     '最近聊工作会提升工作话题'
   )
   assertEq(
+    workChat.candidates.some(
+      (candidate) => candidate.sourceId === 'recent-chat' && candidate.text.includes('后来呢？')
+    ),
+    true,
+    '最近聊天有具体内容时生成接话候选'
+  )
+  assertEq(
     workChat.candidates.some((candidate) => candidate.sourceId === 'topic-sick'),
     false,
     '没提生病不硬问药'
@@ -3187,6 +3194,11 @@ await recorder.check('C81', '人格包导出/导入：校验、备份、导入�
   const agentsAfterImport = readFileSync(join(dir, 'AGENTS.md'), 'utf8')
   assert(agentsAfterImport.includes('fish:managed:boundary:start'), '导入 AGENTS 后补边界硬段')
   assert(agentsAfterImport.includes('不假装人类'), '边界段含 AI 明示')
+  assert(agentsAfterImport.includes('群聊'), '边界段含群聊称呼隔离')
+  assert(
+    agentsAfterImport.includes('专属称呼') && agentsAfterImport.includes('主人'),
+    '边界段限制专属称呼只对主人'
+  )
   writeManagedFiles(dir, composePersonaFiles(baseInputs()))
   assert(
     readFileSync(join(dir, 'AGENTS.md'), 'utf8').includes('不假装人类'),
