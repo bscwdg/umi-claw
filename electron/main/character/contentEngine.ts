@@ -28,6 +28,9 @@ export type ProactiveIntent = 'life' | 'topic' | 'line' | 'nudge'
 
 const INTENT_ORDER: ProactiveIntent[] = ['life', 'topic', 'line', 'nudge']
 
+export type TopicSlot = 'morning' | 'noon' | 'afternoon' | 'evening' | 'night'
+const TOPIC_SLOTS: TopicSlot[] = ['morning', 'noon', 'afternoon', 'evening', 'night']
+
 export interface TopicCard {
   id: string
   title: string
@@ -36,6 +39,8 @@ export interface TopicCard {
   details: string[]
   hooks: string[]
   sample: string
+  /** 允许出现的时段；空 = 任意时段 */
+  slots: TopicSlot[]
 }
 
 export interface TopicDeck {
@@ -94,7 +99,13 @@ function parseTopicCard(raw: unknown): TopicCard | null {
     stance: typeof src.stance === 'string' ? src.stance.trim() : '',
     details: readStringList(src.details, 10),
     hooks,
-    sample
+    sample,
+    slots: Array.isArray(src.slots)
+      ? src.slots.filter(
+          (slot): slot is TopicSlot =>
+            typeof slot === 'string' && TOPIC_SLOTS.includes(slot as TopicSlot)
+        )
+      : []
   }
 }
 
@@ -553,7 +564,7 @@ export function generateProactiveContent(options: ContentEngineOptions): Proacti
 
   let normal: ProactiveCandidate[] = [
     ...buildLifeCandidates(cards, address),
-    ...buildTopicCandidates(deck.topics, address, recentTopics),
+    ...buildTopicCandidates(deck.topics, address, recentTopics, slotForHour(options.now)),
     ...buildLineCandidates(deck.lines, address, options.now, rng, options.lineGroups)
   ]
 
@@ -666,11 +677,13 @@ function buildLifeCandidates(cards: LifeCard[], address: string): ProactiveCandi
 function buildTopicCandidates(
   deck: TopicDeck,
   address: string,
-  recentTopics: string[]
+  recentTopics: string[],
+  slot: TopicSlot
 ): ProactiveCandidate[] {
   const recent = new Set(recentTopics)
   const out: ProactiveCandidate[] = []
   for (const topic of deck?.topics ?? []) {
+    if (topic.slots.length > 0 && !topic.slots.includes(slot)) continue
     // 同一 topic 7 天窗口内尽量不重复：直接用最近使用过的 id 排除
     if (recent.has(topic.id)) continue
     const detail = topic.details[0] ?? ''
@@ -720,12 +733,22 @@ function speechLead(address: string): string {
 }
 
 /** hooks 有陈述句也有问句；按语气词/疑问词补标点，不能一律加问号 */
+/** 与 life.ts 的 slotForHour 同口径；内容引擎保持纯逻辑，不 import 宿主 */
+function slotForHour(now: number): TopicSlot {
+  const hour = new Date(now).getHours()
+  if (hour < 10) return 'morning'
+  if (hour < 13) return 'noon'
+  if (hour < 18) return 'afternoon'
+  if (hour < 22) return 'evening'
+  return 'night'
+}
+
 function asSpeech(text: string): string {
   const value = text.trim()
   if (!value) return value
   if (/[。！？!?…~～]$/.test(value)) return value
   const isQuestion =
-    /吗|呢|吧$|嘛|干嘛|什么|怎么|为什么|是不是|有没有|多少|几号|几天|哪里|哪儿|谁|哪$|没$/.test(
+    /吗|呢|吧$|嘛|干嘛|什么|怎么|为什么|是不是|有没有|多少|几|要不要|热不热|好不好|对不对|行不行|可不可以|想不想|去不去|哪里|哪儿|谁|哪$|没$/.test(
       value
     )
   return `${value}${isQuestion ? '？' : '。'}`

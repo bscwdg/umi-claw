@@ -1406,8 +1406,19 @@ await recorder.check('C42c', '内容引擎：候选池 2–10 + 去重 + 未回�
       ...contentDeck,
       topics: { ...contentDeck.topics, topics: [topic] }
     }
+    const hour = topic.slots.includes('night')
+      ? 23
+      : topic.slots.includes('evening')
+        ? 19
+        : topic.slots.includes('afternoon')
+          ? 15
+          : topic.slots.includes('noon')
+            ? 12
+            : 9
+    const topicNow = new Date(2026, 10, 5, hour, 0, 0).getTime()
     const candidates = generateProactiveContent({
       ...base,
+      now: topicNow,
       deck: onlyTopicDeck,
       cards: [],
       day: { recentTopics: [], recentSentTexts: [] }
@@ -1444,7 +1455,42 @@ await recorder.check('C42c', '内容引擎：候选池 2–10 + 去重 + 未回�
         '陈述 hook 不应被改成问句'
       )
     }
+    if (topic.id === 'topic-hot') {
+      assertEq(
+        candidates.some((candidate) => candidate.text.includes('热不热？')),
+        true,
+        '「热不热」按问句补问号'
+      )
+    }
+    if (topic.id === 'topic-sleep') {
+      assertEq(
+        candidates.some((candidate) => candidate.text.includes('几点睡？')),
+        true,
+        '「几点」按问句补问号'
+      )
+    }
+    if (topic.id === 'topic-exercise') {
+      assertEq(
+        candidates.some((candidate) => candidate.text.includes('要不要一起散步？')),
+        true,
+        '「要不要」按问句补问号'
+      )
+    }
   }
+  assertEq(contentDeck.topics.topics.length >= 40, true, '话题库已扩到至少 40 张')
+  const nightTopic = contentDeck.topics.topics.find((topic) => topic.id === 'topic-night')
+  assertEq(Boolean(nightTopic), true, '存在深夜话题')
+  const noonNightCandidates = generateProactiveContent({
+    ...base,
+    now: new Date(2026, 10, 5, 12, 0, 0).getTime(),
+    deck: {
+      ...contentDeck,
+      topics: { ...contentDeck.topics, topics: nightTopic ? [nightTopic] : [] }
+    },
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] }
+  }).candidates.filter((candidate) => candidate.sourceId === 'topic-night')
+  assertEq(noonNightCandidates.length, 0, '深夜话题中午不出现')
 
   // 2) 精确 / 近似重复拒绝
   const exactText = '本鱼今天吃了很多，真的很多'
