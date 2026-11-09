@@ -657,7 +657,9 @@ function buildLifeCandidates(cards: LifeCard[], address: string): ProactiveCandi
     const mood = (card.mood || '平静').trim()
     const goal = typeof card.goal === 'string' ? card.goal.trim() : ''
     const weight = typeof card.weight === 'number' && card.weight > 0 ? card.weight : 1
-    out.push({ text: `（${activity}）${hook}`, intent: 'life', sourceId: card.id, weight })
+    // 第一条不要 activity+hook 硬拼（如「（睡到很晚）本鱼今天起晚了」），
+    // 直接说 hook 更像人在聊天；活动/心情放到后面模板里。
+    out.push({ text: hook, intent: 'life', sourceId: card.id, weight })
     out.push({
       text: `${hook}——${address}今天怎么样？`,
       intent: 'life',
@@ -763,7 +765,7 @@ function buildTopicCandidates(
         text: fillAddress(topic.sample, address),
         intent: 'topic',
         sourceId: topic.id,
-        weight: 1.4 * affinity
+        weight: 1.15 * affinity
       })
     }
     // details 是「设定碎片」不是完整句子，不能和 hook 硬拼
