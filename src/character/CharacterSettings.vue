@@ -111,6 +111,23 @@
       </div>
 
       <div class="group">
+        <h4>群聊</h4>
+        <label class="check-row">
+          <input v-model="draft.group.replyEnabled" type="checkbox" />
+          <span>允许她在 QQ 群里回复</span>
+        </label>
+        <label class="check-row">
+          <input v-model="draft.group.voiceEnabled" type="checkbox" />
+          <span>允许群聊语音（默认关；只放开私聊更安全）</span>
+        </label>
+        <div class="row">
+          <label class="lab">群聊每天语音条上限</label>
+          <input v-model.number="draft.group.dailyVoiceCap" type="number" min="0" max="20" />
+        </div>
+        <p class="hint">群聊记忆不写入私聊日记；群聊称呼只用群昵称/「你」，不叫宝宝。</p>
+      </div>
+
+      <div class="group">
         <h4>记忆</h4>
         <label class="check-row">
           <input v-model="draft.memory.autoEnabled" type="checkbox" />
@@ -209,6 +226,7 @@ interface DraftSettings {
     channel: 'external' | 'app'
   }
   voice: { enabled: boolean; requestAllowed: boolean; dailyCap: number; sttEnabled: boolean }
+  group: { replyEnabled: boolean; voiceEnabled: boolean; dailyVoiceCap: number }
   memory: { autoEnabled: boolean; confirmImportant: boolean }
   pet: { visible: boolean; size: 'small' | 'medium' | 'large'; clickThrough: boolean }
   relationship: { mode: 'companion' | 'sister' | 'lover'; userName: string; address: string }
@@ -237,6 +255,7 @@ function emptyDraft(): DraftSettings {
       channel: 'external'
     },
     voice: { enabled: true, requestAllowed: true, dailyCap: 10, sttEnabled: true },
+    group: { replyEnabled: true, voiceEnabled: false, dailyVoiceCap: 2 },
     memory: { autoEnabled: true, confirmImportant: true },
     pet: { visible: true, size: 'medium', clickThrough: false },
     relationship: { mode: 'companion', userName: '', address: '你' }
@@ -266,6 +285,7 @@ function applySettings(next: CharacterSettings | null): void {
       channel: next.proactive.channel
     }
     base.voice = { ...next.voice }
+    base.group = { ...next.group }
     base.memory = { ...next.memory }
     base.pet = { ...next.pet }
     base.relationship = {
@@ -310,6 +330,11 @@ function save(): void {
       enabled: draft.voice.enabled,
       requestAllowed: draft.voice.requestAllowed,
       dailyCap: draft.voice.dailyCap
+    },
+    group: {
+      replyEnabled: draft.group.replyEnabled,
+      voiceEnabled: draft.group.voiceEnabled,
+      dailyVoiceCap: draft.group.dailyVoiceCap
     },
     memory: { autoEnabled: draft.memory.autoEnabled },
     relationship: {

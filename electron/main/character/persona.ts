@@ -108,10 +108,21 @@ export function composePersonaFiles(inputs: PersonaInputs): Record<string, strin
   return {
     'SOUL.md': applyTemplate(t.soul, extended),
     'IDENTITY.md': applyTemplate(t.identity, extended),
-    'AGENTS.md': applyTemplate(t.agents, extended),
+    'AGENTS.md': `${applyTemplate(t.agents, extended)}\n\n${groupRules(inputs.settings)}`,
     'USER.md': applyTemplate(t.user, extended),
     'fish/STATE.md': renderStateDoc(inputs.state, inputs.settings)
   }
+}
+
+/** 群聊策略由设置实时生成，避免群聊回复/语音开关只存在于 UI */
+function groupRules(settings: CharacterSettings): string {
+  const group = settings.group ?? { replyEnabled: true, voiceEnabled: false, dailyVoiceCap: 2 }
+  return [
+    '## 群聊策略（宿主维护）',
+    `- 群聊回复：${group.replyEnabled ? '允许' : '禁止（只做私聊）'}`,
+    `- 群聊语音：${group.voiceEnabled ? '允许' : '禁止'}；每天最多 ${group.dailyVoiceCap} 条`,
+    '- 群聊内容不写入私聊日记/长期记忆，不更新主人关系数值。'
+  ].join('\n')
 }
 
 /** STATE.md：宿主每次状态变更重写（固定键值行） */

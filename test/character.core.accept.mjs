@@ -140,12 +140,15 @@ await recorder.check('C1', '默认设置完整 + 白名单合并 + 数值夹取'
   assertEq(settings.enabled, false, '默认关闭（D8）')
   assertEq(settings.proactive.silenceDays, 3, '默认静默期 3 天')
   assertEq(settings.relationship.address, '你', '默认称呼「你」')
+  assertEq(settings.group.voiceEnabled, false, '群聊语音默认关闭')
+  assertEq(settings.group.dailyVoiceCap, 2, '群聊语音默认每天 2 条')
 
   const merged = mergeCharacterSettings(settings, {
     enabled: true,
     unknownField: 'ignored',
     proactive: { silenceDays: 99, dailyCap: -1, quietFrom: '25:00', quietTo: '08:00' },
     voice: { dailyCap: 9999 },
+    group: { replyEnabled: false, voiceEnabled: true, dailyVoiceCap: 99 },
     relationship: { address: '  阿爸  ', taboo: ['', ' 主人 ', 123] }
   })
   assertEq(merged.enabled, true, 'enabled 可写')
@@ -156,6 +159,9 @@ await recorder.check('C1', '默认设置完整 + 白名单合并 + 数值夹取'
   assertEq(merged.proactive.quietFrom, '23:30', '非法时间格式不生效')
   assertEq(merged.proactive.quietTo, '08:00', '合法时间生效')
   assertEq(merged.voice.dailyCap, 100, '语音日限夹到 0–100')
+  assertEq(merged.group.replyEnabled, false, '群聊回复开关可写')
+  assertEq(merged.group.voiceEnabled, true, '群聊语音开关可写')
+  assertEq(merged.group.dailyVoiceCap, 20, '群聊语音日限夹到 0–20')
 
   const merged2 = mergeCharacterSettings(settings, {
     proactive: {

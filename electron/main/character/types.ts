@@ -148,6 +148,12 @@ export interface CharacterSettings {
     dailyCap: number
     sttEnabled: boolean
   }
+  /** 群聊策略：群聊回复/语音开关与语音条上限（外部群聊由 OpenClaw agent 执行） */
+  group: {
+    replyEnabled: boolean
+    voiceEnabled: boolean
+    dailyVoiceCap: number
+  }
   memory: { autoEnabled: boolean; confirmImportant: boolean }
   pet: { visible: boolean; size: 'small' | 'medium' | 'large'; clickThrough: boolean }
   safety: { aiDisclosure: boolean; crisisRedirect: boolean; ageConfirmed: boolean }
@@ -284,6 +290,7 @@ export const DEFAULT_CHARACTER_SETTINGS: CharacterSettings = {
     silentUntil: 0
   },
   voice: { enabled: true, requestAllowed: true, dailyCap: 10, sttEnabled: true },
+  group: { replyEnabled: true, voiceEnabled: false, dailyVoiceCap: 2 },
   memory: { autoEnabled: true, confirmImportant: true },
   pet: { visible: true, size: 'medium', clickThrough: false },
   safety: { aiDisclosure: true, crisisRedirect: true, ageConfirmed: false },
@@ -359,6 +366,15 @@ export function mergeCharacterSettings(
     if (typeof voice.requestAllowed === 'boolean') v.requestAllowed = voice.requestAllowed
     if (typeof voice.dailyCap === 'number') v.dailyCap = clamp(voice.dailyCap, 0, 100)
     if (typeof voice.sttEnabled === 'boolean') v.sttEnabled = voice.sttEnabled
+  }
+
+  const group = src.group as Record<string, unknown> | undefined
+  if (group && typeof group === 'object') {
+    if (typeof group.replyEnabled === 'boolean') out.group.replyEnabled = group.replyEnabled
+    if (typeof group.voiceEnabled === 'boolean') out.group.voiceEnabled = group.voiceEnabled
+    if (typeof group.dailyVoiceCap === 'number') {
+      out.group.dailyVoiceCap = clamp(group.dailyVoiceCap, 0, 20)
+    }
   }
 
   const memory = src.memory as Record<string, unknown> | undefined
