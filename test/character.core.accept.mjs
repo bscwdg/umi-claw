@@ -1378,6 +1378,29 @@ await recorder.check('C42c', '内容引擎：候选池 2–10 + 去重 + 未回�
     fresh.candidates.length,
     '同轮候选不重复'
   )
+  const dressTopic = contentDeck.topics.topics.find((topic) => topic.id === 'topic-dress')
+  assertEq(Boolean(dressTopic), true, '内容包含打扮话题')
+  const dressDeck = {
+    ...contentDeck,
+    topics: { ...contentDeck.topics, topics: dressTopic ? [dressTopic] : [] }
+  }
+  const dressCandidates = generateProactiveContent({
+    ...base,
+    deck: dressDeck,
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] }
+  }).candidates.filter((c) => c.sourceId === 'topic-dress')
+  assertEq(dressCandidates.length > 0, true, '含打扮话题候选')
+  assertEq(
+    dressCandidates.every((c) => !c.text.includes('新发绳执念。新发绳')),
+    true,
+    '设定碎片不能和 hook 硬拼成读不懂的句子'
+  )
+  assertEq(
+    dressCandidates.every((c) => /[。！？!?…~～]$/.test(c.text)),
+    true,
+    '话题候选必须有句末标点（hook2 也不能裸句）'
+  )
 
   // 2) 精确 / 近似重复拒绝
   const exactText = '本鱼今天吃了很多，真的很多'
@@ -1596,7 +1619,8 @@ await recorder.check('C42d', 'manager：内容引擎接线（试探→换话题�
     crossDay.recentSentTexts.length,
     '跨天去重历史无重复'
   )
-  assertEq(crossDay.sentTimes.length >= 5, true, '跨天保留发送时间用于未回计数')
+  assertEq(crossDay.sentTimes.length, 1, '超过 6h 后跨天视为新一轮，不带旧未回计数')
+  assertEq(crossDay.unansweredCount, 1, '新一轮未回从 1 开始')
 
   // 旧 kv 兼容：只有老字段的昨天记录也不能让 evaluate 抛错
   const legacyKv = memoryKv()
@@ -1675,6 +1699,61 @@ await recorder.check('C42e', '主动消息补表情包：仅外发成功后按�
     '情绪标签与贴纸库英文词表一致'
   )
   return '主动消息配表情包接线正确'
+})
+
+await recorder.check('C42f', '主动消息 6h 过期后开新一轮：清旧计数并可连续发送', async () => {
+  const kv = memoryKv()
+  let now = new Date(2026, 10, 10, 10, 0, 0).getTime()
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    loadLifeDeck: async () => lifeDeck,
+    contentDeck,
+    sendProactive: async () => true
+  })
+  await manager.init()
+  await manager.updateSettings({
+    enabled: true,
+    safety: { ageConfirmed: true },
+    proactive: {
+      enabled: true,
+      silenceDays: 0,
+      dailyCap: 10,
+      quietFrom: '00:00',
+      quietTo: '00:00',
+      intervalMode: 'fixed',
+      intervalMinutes: 1
+    }
+  })
+  const state = await manager.getState()
+  const kvState = JSON.parse(kv.map.get(FISH_KEYS.state))
+  kvState.bornAt = now - 10 * 86_400_000
+  kvState.lastInteractionAt = 0
+  kv.map.set(FISH_KEYS.state, JSON.stringify(kvState))
+  const old = now - 8 * 3_600_000
+  kv.map.set(
+    'fish:v2:day:2026-11-10',
+    JSON.stringify({
+      activeSent: 3,
+      lastActiveAt: old,
+      lastProactiveAt: old,
+      sentTimes: [old],
+      unansweredCount: 3
+    })
+  )
+
+  const first = await manager.runProactiveTick()
+  assertEq(first.decision.send, true, '过期后第一轮放行')
+  let day = storeDayRecordOn(kv, '2026-11-10')
+  assertEq(day.sentTimes.length, 1, '过期后清掉旧 sentTimes，只保留新一轮')
+  assertEq(day.unansweredCount, 1, '新一轮只计 1 条')
+
+  now += 2 * 60_000
+  const second = await manager.runProactiveTick()
+  assertEq(second.decision.send, true, '间隔满足后可连续发第二条，而不是又 backoff')
+  day = storeDayRecordOn(kv, '2026-11-10')
+  assertEq(day.unansweredCount, 2, '第二条计为未回 2')
+  return '6h 过期重置计数基准正确'
 })
 
 function storeDayRecord(kv) {

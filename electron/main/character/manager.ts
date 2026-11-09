@@ -38,6 +38,7 @@ import {
   decideNudge,
   findDuplicateMessage,
   generateProactiveContent,
+  isUnansweredEpisodeStale,
   mergeRecentStrings,
   mergeRecentTexts,
   mergeRecentTimes,
@@ -717,7 +718,15 @@ export class CharacterManager {
       }
 
       const state = await this.getState()
-      const unansweredCount = resolveUnansweredCount(day, state, now)
+      // 6h 过期是“开新一轮”：清掉旧 sentTimes，否则发完本轮 1 条后
+      // 下一 tick 又会被历史未回计数顶回 backoff，表现成每 6 小时只发一条。
+      const staleEpisode = isUnansweredEpisodeStale(day, now)
+      const baseSentTimes = staleEpisode ? [] : day.sentTimes
+      const unansweredCount = resolveUnansweredCount(
+        { ...day, sentTimes: baseSentTimes },
+        state,
+        now
+      )
       if (unansweredCount >= PROACTIVE_BACKOFF_THRESHOLD) {
         return { ok: false, reason: 'unanswered-backoff' as const }
       }
@@ -742,7 +751,7 @@ export class CharacterManager {
         return { ok: false, reason: 'duplicate' as const }
       }
 
-      const sentTimes = appendRecentTime(day.sentTimes, now)
+      const sentTimes = appendRecentTime(baseSentTimes, now)
       const next: ProactiveDayState = {
         ...day,
         activeSent: (day.activeSent ?? 0) + 1,

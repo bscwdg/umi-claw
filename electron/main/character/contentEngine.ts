@@ -356,6 +356,15 @@ export function sanitizeProactiveDay(raw: unknown): ProactiveDayState {
 /** 超过这个时长没有任何新主动消息，视为上一轮“未回试探”已结束，重新开始计数 */
 export const UNANSWERED_EPISODE_RESET_MS = 6 * 60 * 60 * 1000
 
+/** 最后一轮主动消息是否已超过 6 小时；是则新一轮应从 0 计数，并清掉旧 sentTimes */
+export function isUnansweredEpisodeStale(day: ProactiveDayState, now?: number): boolean {
+  if (typeof now !== 'number' || !Number.isFinite(now)) return false
+  const lastProactiveAt = finiteTime(day.lastProactiveAt) ?? finiteTime(day.lastActiveAt) ?? 0
+  const sentTimes = sanitizeTimeList(day.sentTimes)
+  const lastSentAt = Math.max(lastProactiveAt, ...sentTimes)
+  return lastSentAt > 0 && now - lastSentAt >= UNANSWERED_EPISODE_RESET_MS
+}
+
 /**
  * 未回复计数 = 用户最后一次互动之后又发了多少条主动消息。
  * 先看 state.lastInteractionAt 与 day.lastProactiveAt：互动不早于最后一次发送说明用户回过，
@@ -373,16 +382,8 @@ export function resolveUnansweredCount(
   const lastInteractionAt = finiteTime(state?.lastInteractionAt) ?? 0
   const lastProactiveAt = finiteTime(day.lastProactiveAt) ?? finiteTime(day.lastActiveAt) ?? 0
   if (lastInteractionAt > 0 && lastInteractionAt >= lastProactiveAt) return 0
+  if (isUnansweredEpisodeStale(day, now)) return 0
   const sentTimes = sanitizeTimeList(day.sentTimes)
-  const lastSentAt = Math.max(lastProactiveAt, ...sentTimes)
-  if (
-    typeof now === 'number' &&
-    Number.isFinite(now) &&
-    lastSentAt > 0 &&
-    now - lastSentAt >= UNANSWERED_EPISODE_RESET_MS
-  ) {
-    return 0
-  }
   if (sentTimes.length > 0) {
     return Math.min(99, sentTimes.filter((at) => at > lastInteractionAt).length)
   }
@@ -683,23 +684,18 @@ function buildTopicCandidates(
         weight: 1.4
       })
     }
-    if (detail && hook) {
-      out.push({
-        text: `${detail}。${asQuestion(fillAddress(hook, address))}`,
-        intent: 'topic',
-        sourceId: topic.id,
-        weight: 1.3
-      })
-    } else if (hook) {
+    // details 是「设定碎片」不是完整句子，不能和 hook 硬拼
+    // （会出现「新发绳执念。新发绳好看吗？」这种读不懂的拼接）；优先用 sample/hook。
+    if (hook) {
       out.push({
         text: `${address}，${asQuestion(fillAddress(hook, address))}`,
         intent: 'topic',
         sourceId: topic.id,
-        weight: 1.2
+        weight: 1.3
       })
     } else if (detail) {
       out.push({
-        text: `（想起来）${detail}。${address}呢？`,
+        text: `（${topic.title}）${fillAddress(detail, address)}。`,
         intent: 'topic',
         sourceId: topic.id,
         weight: 1.1
@@ -707,7 +703,7 @@ function buildTopicCandidates(
     }
     if (hook2) {
       out.push({
-        text: fillAddress(hook2, address),
+        text: asQuestion(fillAddress(hook2, address)),
         intent: 'topic',
         sourceId: topic.id,
         weight: 1
