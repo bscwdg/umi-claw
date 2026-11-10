@@ -1140,7 +1140,7 @@ try {
 
     const res = await mountAbout('ui-about-consent', true)
     assert(!res.mountError, '关于页挂载无异常')
-    assert(res.html.includes('同意用户协议'), '已同意时反显同意记录')
+    assert(res.html.includes('你已于'), '已同意时反显同意记录（已同意态独有文案，区分未同意态）')
     let revokeBtns = allButtons(res.root).filter((b) => btnText(b) === '撤销同意')
     assertEq(revokeBtns.length, 1, '宿主关于页渲染一个撤销入口')
     revokeBtns[0].props.onClick()
@@ -1167,6 +1167,7 @@ try {
 
     const res2 = await mountAbout('ui-about-no-consent', false)
     assert(res2.html.includes('尚未同意用户协议'), '未同意时反显警示文案')
+    assert(!res2.html.includes('你已于'), '未同意态不得反显已同意记录（锁两态文案区分度）')
     assertEq(
       allButtons(res2.root).filter((b) => btnText(b) === '撤销同意').length,
       0,
