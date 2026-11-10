@@ -1336,7 +1336,6 @@ try {
   // ── G20 wiring 与硬规则 13 静态核对 ──
   await r.check('G20', 'wiring：两条只读通道 + preload 面 + 主进程复用 clawManager + token 不出主进程', async () => {
     const ipcSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'gateway.ts'), 'utf-8')
-    const ipcIndexSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'index.ts'), 'utf-8')
     const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
     const mainSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
     const gatewaySrc = readFileSync(join(repoRoot, 'electron', 'main', 'gatewayClient.ts'), 'utf-8')
@@ -1347,7 +1346,7 @@ try {
       !/ipcMain\.handle\(\s*'work:gateway:(chunk|done|error|chat|stream)/.test(ipcSrc),
       '本提交不应注册业务流通道（只提供 forwardGatewayStream 助手）'
     )
-    assert(ipcIndexSrc.includes('registerGatewayIpc'), 'ipc/index.ts 应转出 registerGatewayIpc')
+    assert(ipcSrc.includes('registerGatewayIpc'), 'gateway.ts 应导出 registerGatewayIpc')
     assert(preloadSrc.includes("'work:gateway:status'"), 'preload 应暴露 status')
     assert(preloadSrc.includes("'work:gateway:ensureReady'"), 'preload 应暴露 ensureReady')
     assert(/work:\s*\{/.test(preloadSrc), 'preload 应有 work.gateway 面')

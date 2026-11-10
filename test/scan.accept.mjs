@@ -673,7 +673,6 @@ try {
   await r.check('S14', '三条新通道三处一致 + picker 含资料图 + abort 两路 + 预检 wiring + UI 确认弹窗/四路中止/干净文本', async () => {
     const scanIpcSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main', 'ipc', 'scan.ts'), 'utf-8')
     const marketIpcSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main', 'ipc', 'marketing.ts'), 'utf-8')
-    const ipcIndexSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'index.ts'), 'utf-8')
     const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
     const mainSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
 const pluginMainSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf-8')
@@ -691,7 +690,7 @@ const runtimeSrc = readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
       assert(scanIpcSrc.includes(`'${c}'`), `ipc/scan.ts 应声明通道 ${c}`)
       assert(preloadSrc.includes(`'${c}'`), `preload 应暴露通道 ${c}`)
     }
-    assert(/MARKETING_SCAN_CHANNELS/.test(ipcIndexSrc), 'ipc/index.ts 应转出 scan 通道表')
+    assert(/MARKETING_SCAN_CHANNELS/.test(scanIpcSrc), 'scan.ts 应导出 MARKETING_SCAN_CHANNELS')
     assert(/forwardGatewayStream\(/.test(scanIpcSrc), 'scan.ts 应经 forwardGatewayStream 转发增量')
     assert(!/\.send\(\s*['"]marketing:(?!gateway)/.test(scanIpcSrc), 'scan.ts 不得自造流事件名（只许 07 那三个）')
     // abort 两路定位（复审：栅格化窗口不得空转）

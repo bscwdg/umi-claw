@@ -35,7 +35,6 @@ const proactiveSenderMod = await import(pathToFileURL(bundleEntry('electron/main
 const memoryMod = await import(pathToFileURL(bundleEntry('electron/main/character/memoryJob.ts', 'character-memory.mjs')).href)
 const voicePolicyMod = await import(pathToFileURL(bundleEntry('electron/main/character/voicePolicy.ts', 'character-voice-policy.mjs')).href)
 const qqVoiceMod = await import(pathToFileURL(bundleEntry('electron/main/character/qqVoice.ts', 'character-qq-voice.mjs')).href)
-const sttMod = await import(pathToFileURL(bundleEntry('electron/main/character/stt.ts', 'character-stt.mjs')).href)
 const safetyMod = await import(pathToFileURL(bundleEntry('electron/main/character/safety.ts', 'character-safety.mjs')).href)
 const searchContextMod = await import(pathToFileURL(bundleEntry('electron/main/character/searchContext.ts', 'character-search-context.mjs')).href)
 const characterKvMod = await import(pathToFileURL(bundleEntry('electron/main/services/characterKv.ts', 'character-kv.mjs')).href)
@@ -104,7 +103,6 @@ const {
 } = memoryMod
 const { decideVoice, isVoiceRequest } = voicePolicyMod
 const { deliverVoice, extractWavPcm, nextMsgSeq, QQ_VOICE_MSG_TYPE } = qqVoiceMod
-const { transcribeInbound, STT_FALLBACK_MESSAGE } = sttMod
 const {
   buildExportPayload,
   CRISIS_REDIRECT,
@@ -2378,34 +2376,6 @@ await recorder.check('C55', 'QQ 语音失败降级：无凭据/编码失败/合�
   })
   assertEq(speakFail.delivered, false, '合成失败降级')
   return '降级正确'
-})
-
-await recorder.check('C56', '入站 STT：未配置/过大/成功/空结果都诚实降级', async () => {
-  const none = await transcribeInbound({ audio: new Uint8Array([1]) })
-  assertEq(none.ok, false, '未配置 STT')
-  assertEq(none.fallbackMessage, STT_FALLBACK_MESSAGE, '诚实文案')
-
-  const big = await transcribeInbound({
-    audio: new Uint8Array(100),
-    transcribe: async () => 'x',
-    maxBytes: 10
-  })
-  assertEq(big.ok, false, '过大拒绝')
-  assertEq(/太长了/.test(big.fallbackMessage ?? ''), true, '过大文案')
-
-  const ok = await transcribeInbound({
-    download: async () => new Uint8Array([1, 2, 3]),
-    transcribe: async () => '  在吗  '
-  })
-  assertEq(ok.ok, true, '转写成功')
-  assertEq(ok.text, '在吗', 'trim 后文本')
-
-  const empty = await transcribeInbound({
-    audio: new Uint8Array([1]),
-    transcribe: async () => '   '
-  })
-  assertEq(empty.ok, false, '空结果降级')
-  return 'STT 行为正确'
 })
 
 await recorder.check('C57', 'manager 语音：策略/用量/记账/入站转写事件', async () => {

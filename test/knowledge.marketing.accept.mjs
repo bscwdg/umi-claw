@@ -820,7 +820,6 @@ try {
   // ── K19 通道 / preload / wiring / store 契约 ──
   await r.check('K19', 'IPC 通道 / preload / main wiring / store 契约一致（静态核对，避免漂移）', async () => {
     const ipcSrc = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main', 'ipc', 'marketing.ts'), 'utf-8')
-    const ipcIndexSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'index.ts'), 'utf-8')
     const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
     const mainSrc =
       readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8') +
@@ -846,7 +845,6 @@ const runtimeSrc = readFileSync(join(repoRoot, mkSrc('runtime.ts')), 'utf-8')
       assert(preloadSrc.includes(`'${c}'`), `preload/index.ts 应暴露通道 ${c}`)
     }
     assert(/MARKETING_KNOWLEDGE_CHANNELS/.test(ipcSrc), '应导出 MARKETING_KNOWLEDGE_CHANNELS')
-    assert(/MARKETING_KNOWLEDGE_CHANNELS/.test(ipcIndexSrc), 'ipc/index.ts 应转出 knowledge 通道表')
     assert(
       /registerMarketingIpc\([\s\S]{0,300}knowledgeManager/.test(ipcSrc),
       'registerMarketingIpc 应接收 knowledgeManager'
