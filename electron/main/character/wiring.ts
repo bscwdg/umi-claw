@@ -18,6 +18,7 @@ import { createEmptyContentDeck, parseContentDeck } from './contentEngine'
 import { deliverVoice, type QqBotCreds } from './qqVoice'
 import { sendQqProactiveText, parseQqC2cOpenid } from './qqProactiveText'
 import { readRecentChat } from './recentChat'
+import { ensureGroupAgent, writeGroupAgentFiles } from './groupAgent'
 import { isVoiceRequest } from './voicePolicy'
 import { formatSearchContext, looksLikeRecallQuery, withTimeout } from './searchContext'
 import { buildMemoryContext, recallDates } from './memoryRecall'
@@ -818,13 +819,31 @@ async function registerCharacterInternal(
     // 设置/互动后 ≤300ms 合并重写人格文件（STATE.md 即时；用户改过的 SOUL/AGENTS 保留）
     manager.setPersonaSyncRunner(async () => {
       const templates = loadPersonaTemplates(deps.personaSourceDir)
+      const settings = await manager.getSettings()
       const files = composePersonaFiles({
-        settings: await manager.getSettings(),
+        settings,
         state: await manager.getState(),
         templates
       })
       writeManagedFiles(workspaceDir, files)
+      // 群聊独立 workspace 的 AGENTS 也随群聊开关更新
+      writeGroupAgentFiles(deps.dataDir, settings)
     })
+    // 启动时自动建群聊 agent + qqbot peer=group:* 通配绑定（用户不用手工加群 ID）
+    void manager
+      .getSettings()
+      .then((settings) =>
+        ensureGroupAgent({
+          runner,
+          tmpDir,
+          dataDir: deps.dataDir,
+          settings,
+          logger
+        })
+      )
+      .catch((error) => {
+        logger(`[character] 群聊 agent 初始化失败: ${(error as Error)?.message ?? String(error)}`)
+      })
 
     // 引导接线：官方 CLI 写 agent 条目；人格文件走受管写入
     removeAgentEntryFn = () => removeAgentEntry({ runner, tmpDir, agentId: CHARACTER_AGENT_ID })
