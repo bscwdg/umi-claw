@@ -24,6 +24,8 @@ const ACCEPT = [
   ['node-runtime', 'test/node-runtime.accept.mjs'],
   ['maintenance', 'test/claw-maintenance.accept.mjs'],
   ['terminal-sessions', 'test/terminal-sessions.accept.mjs'],
+  // P45：宿主 IPC 行为级验收（env / claw / config / terminal 四组通道，fake registrar + 注入 deps）
+  ['host-ipc', 'test/host-ipc.accept.mjs'],
   ['config-writer', 'test/openclaw-config-writer.accept.mjs'],
   ['work', 'test/work.accept.mjs'],
   ['record', 'test/record.accept.mjs'],

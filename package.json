@@ -20,6 +20,7 @@
     "accept:node-runtime": "node test/node-runtime.accept.mjs",
     "accept:maintenance": "node test/claw-maintenance.accept.mjs",
     "accept:terminal-sessions": "node test/terminal-sessions.accept.mjs",
+    "accept:host-ipc": "node test/host-ipc.accept.mjs",
     "accept:work": "node test/work.accept.mjs",
     "accept:record": "node test/record.accept.mjs",
     "accept:context:work": "node test/context.work.accept.mjs",
