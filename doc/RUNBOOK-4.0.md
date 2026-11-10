@@ -111,7 +111,7 @@ npm run build               # 生成 + 构建（含插件代码）
 npm run typecheck:node      # 主进程
 npm run typecheck:web       # 渲染端（tsc 只管 .ts；.vue 由构建期 vite/vue 编译检查）
 node test/plugin.accept.mjs # 插件内核 + 两个域装箱 + 加固（64 项）
-npm run accept               # 全量验收（37 套：accept×35 + e2e + smoke，709 条断言；node:test 21 条另计）
+npm run accept               # 全量验收（37 套：accept×35 + e2e + smoke；断言数 709 为 Recorder 口径：37 个 accept-result JSON 求和，含 db-client 子进程 16 条、不含 config-writer 的 node:test 21 条）
 node test/packaged.smoke.mjs# 打包态静态冒烟
 node test/one-day.e2e.mjs   # 「一天」端到端
 ```

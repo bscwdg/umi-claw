@@ -48,7 +48,7 @@ electron/main/
 ├── fish/voice/      # 语音服务
 ├── work/            # 已删除：work 域代码在 plugins/work/domain/
 ├── marketing/       # 已删除：marketing 域代码在 plugins/marketing/domain/
-├── claw/            # clawManager 拆出的纯模块（reclaim/doctor/migrations/gatewayRuntime/skills/probe/status/…；J2 分步拆分产物，详见 PLAN-4.2 §四 #7）
+├── claw/            # clawManager 拆出的纯模块（reclaim/doctor/migrations/gatewayRuntime/skills/probe/status/…；J2（clawManager 2543→1484）拆分产物，详见 PLAN-4.2 §四 #7）
 ├── clawManager.ts / configManager.ts / downloadManager.ts / channelManager.ts ...
 └── index.ts         # 只做组装；目标 ≤ 1,800 行（现状 1,753 ✅，2026-11-10 实测）
 
@@ -82,7 +82,7 @@ doc/                 # 计划、施工日志、运维手册、调研
 | 项 | 规则 | 现状证据 |
 | --- | --- | --- |
 | 主进程（`electron/**`、`plugins/*/main.ts`） | **不加行尾分号** | `todoManager.ts` 619 行 0 个行尾分号；`kernel/lifecycle.ts` 612 行 0 个 |
-| 主进程引号 | **单引号** | `electron/main` 506 处单引号 / 2 处双引号 |
+| 主进程引号 | **单引号** | `electron/main` 的 `import … from '…'` **518 处**（含 `claw/` 42 处）/ 双引号 **0**（2026-11-10 实测） |
 | 缩进 | **2 空格**；续行用 4 空格对齐 | 全仓无 tab |
 | 换行 | **LF**（`.gitattributes` 已强制 `text=auto eol=lf`，`*.bat`/`*.cmd` 除外） | 抽查 3 个文件 CRLF=0 |
 | 编码 | **UTF-8 无 BOM** | 抽查 3 个文件 BOM=False |
@@ -96,7 +96,7 @@ doc/                 # 计划、施工日志、运维手册、调研
 | --- | --- | --- |
 | 渲染端分号 | `src/` 约 20% 行尾有分号（2,597/12,849），文件间 27%–43% 不等 | **跟随所在文件的既有风格**；同一文件内不得混用。禁止为「统一」而全仓格式化（会造成 2,600 行噪声 diff） |
 | 渲染端引号 | `src/` 48 单 / 26 双 | 单引号 |
-| 文件头 | 58 个 `.ts` 无头（`configManager.ts`、`downloadManager.ts`、`fish/voice/**` 多数、`database/**`、`obsidianManager.ts`、`todayManager.ts` 等；`clawManager.ts` 已在 2026-11-10 拆分时补头） | **新文件必须带头**；老文件改动时顺手补，不单独提交格式化 |
+| 文件头 | 58 个首行不是 `// electron/main/…` 规范头（**33 个**是 `// xxx —— …` 简写路径头，如 `gatewayClient.ts`、`kernel/index.ts`、`services/errors.ts`；**25 个**完全无注释头，如 `channelManager.ts`、`configManager.ts`、`downloadManager.ts`、`database/**` 多数）。`obsidianManager.ts`/`todayManager.ts` 等 WP3 搬家后的旧路径已不在 `electron/main`。`clawManager.ts` 已在 2026-11-10 拆分时补头 | **新文件必须带头**；老文件改动时顺手补，不单独提交格式化 |
 | 提交 message | 类型/范围混用：`feat(4.0)` / `fix(3.0)` / `fix` / `feat(2.0-03)` | 见 §9 |
 
 **理由**：本仓库没有 `.editorconfig`、没有 lint，格式化靠习惯。这些差异是历史沉淀，不是错误。**一次性的全仓格式化会淹没真正的改动**（`§18.5` 已把「验收留档时效」列为风险）。
