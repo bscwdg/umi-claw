@@ -271,11 +271,32 @@
       </p>
       <div class="agreement-actions">
         <button class="btn btn-sm" @click="openWizard">开始向导</button>
+        <button
+          v-if="consentGranted"
+          class="btn btn-sm btn-danger"
+          :disabled="revoking"
+          @click="openRevokeConfirm"
+        >
+          撤销同意
+        </button>
       </div>
       <p class="text-sm text-muted agreement-hint">
         「开始向导」随时可重跑（画像 / 知识库 / 第一条待办，均可跳过）。
       </p>
+      <p v-if="consentGranted" class="text-sm text-muted agreement-hint">
+        撤销后 OpenClaw 将无法启动，工作问答 / 日报等能力随即停用；随时重新同意即可恢复。
+      </p>
     </section>
+
+    <ConfirmDialog
+      v-model:visible="revokeConfirmVisible"
+      icon="⚠️"
+      title="撤销用户协议？"
+      message="撤销后 OpenClaw 将无法启动，工作问答 / 日报等能力停用；你的本地数据不会被删除，随时可以重新同意恢复。"
+      confirm-text="撤销同意"
+      danger
+      @confirm="confirmRevokeConsent"
+    />
 
     <!-- 旧数据（可重入） -->
     <section class="card">
@@ -315,9 +336,10 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
-import { workApi, clawApi } from '../../../shared/hostBridge'
+import { workApi, clawApi, consentApi } from '../../../shared/hostBridge'
 import { useRouter, useRoute } from 'vue-router'
 import { useToast } from '@/composables/useToast'
+import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 import {
   consentGranted,
   consentAt,
@@ -329,6 +351,12 @@ import { openWizard } from '@/composables/useWizardGate'
 const router = useRouter()
 const route = useRoute()
 const { toast, showToast } = useToast()
+const revokeConfirmVisible = ref(false)
+const revoking = ref(false)
+
+function openRevokeConfirm(): void {
+  revokeConfirmVisible.value = true
+}
 
 const form = ref({
   callName: '', position: '', department: '', company: '',
@@ -709,6 +737,21 @@ onMounted(async () => {
 /** 复核用户协议：弹窗会反显之前填的（已同意则默认打勾）。弹窗实例在 App.vue。 */
 function openAgreement(): void {
   openAgreementReview()
+}
+
+/** 撤销同意：走宿主 consent:revoke 单源通道，二次确认在模板的 ConfirmDialog 里完成。 */
+async function confirmRevokeConsent(): Promise<void> {
+  revokeConfirmVisible.value = false
+  revoking.value = true
+  try {
+    await consentApi().revoke()
+    syncConsent(false, null)
+    showToast('已撤销用户协议，OpenClaw 相关能力已停用', 'warning')
+  } catch (e: any) {
+    showToast(`撤销失败：${e?.message ?? '未知错误'}`, 'error')
+  } finally {
+    revoking.value = false
+  }
 }
 </script>
 

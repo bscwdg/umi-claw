@@ -1040,6 +1040,140 @@ try {
     assertEq(saved.args[0]?.channels?.qqbot?.appId, '102030405', '保存包含 channels.qqbot.appId')
     assertEq(saved.args[0]?.channels?.qqbot?.clientSecret, 's3cret', '保存包含 channels.qqbot.clientSecret')
     return 'QQ 卡片渲染/扫码前准备/失败留页/保存接线 ✓'
+  })
+
+  // ── U26 撤销用户协议：ConfirmDialog 二次确认 → consent:revoke 宿主单源通道 → 状态同步 ──
+  await r.check('U26', '撤销用户协议：二次确认后调 consent:revoke，未同意时无入口', async () => {
+    const allButtons = (root) => {
+      const out = []
+      const rec = (n) => {
+        if (n.tag === 'button') out.push(n)
+        for (const c of n.children ?? []) rec(c)
+      }
+      rec(root)
+      return out
+    }
+    const btnText = (n) =>
+      n.children.map((c) => (c.tag === '#text' ? c.text ?? '' : '')).join('').trim()
+    const settingsMocks = {
+      'work:profile:get': {
+        profile: { id: 'default', call_name: '小北' },
+        completeness: { filled: 1, total: 6, percent: 17, missing: [] }
+      },
+      'work:reminder:isEnabled': () => false,
+      'work:reminder:getTimes': { morning: { hour: 9, minute: 0 }, report: { hour: 18, minute: 30 } },
+      'work:reminder:getPushConfig': { enabled: false },
+      'work:reminder:availablePushChannels': [],
+      'work:reminder:getPushStatus': null,
+      'work:openclaw-summary:isAutoEnabled': false,
+      'consent:revoke': { consent: false }
+    }
+
+    const res = await mount('PLUGIN_UI_WORK/SettingsPage.vue', 'ui-settings-revoke', {
+      ...settingsMocks,
+      'work:wizard:status': { consent: true, consentAt: 1790000000000, completed: true, oldDb: null, oldDbDecision: null }
+    }, { realComponents: ['ConfirmDialog.vue'] })
+    let revokeBtns = allButtons(res.root).filter((b) => btnText(b) === '撤销同意')
+    assertEq(revokeBtns.length, 1, '已同意时渲染一个撤销入口')
+    revokeBtns[0].props.onClick()
+    await flushTicks()
+    assertEq(
+      calls().filter((c) => c.channel === 'consent:revoke').length,
+      0,
+      '确认弹窗阶段不得调 revoke'
+    )
+    await waitFor(() => serialize(res.root).includes('撤销用户协议？'), {
+      timeout: 2000,
+      label: 'U26 撤销确认弹窗'
+    })
+    revokeBtns = allButtons(res.root).filter((b) => btnText(b) === '撤销同意')
+    assertEq(revokeBtns.length, 2, '弹窗确认按钮出现（页面按钮 + 弹窗按钮）')
+    revokeBtns[1].props.onClick()
+    await flushTicks()
+    const revokes = calls().filter((c) => c.channel === 'consent:revoke')
+    assertEq(revokes.length, 1, '确认后只调一次 consent:revoke')
+    await waitFor(() => !serialize(res.root).includes('撤销同意'), {
+      timeout: 2000,
+      label: 'U26 撤销后入口消失'
+    })
+    assert(!serialize(res.root).includes('撤销同意'), '同步未同意状态后撤销入口消失')
+
+    const res2 = await mount('PLUGIN_UI_WORK/SettingsPage.vue', 'ui-settings-no-consent', {
+      ...settingsMocks,
+      'work:wizard:status': { consent: false, consentAt: null, completed: false, oldDb: null, oldDbDecision: null }
+    }, { realComponents: ['ConfirmDialog.vue'] })
+    assertEq(
+      allButtons(res2.root).filter((b) => btnText(b) === '撤销同意').length,
+      0,
+      '未同意时不渲染撤销入口'
+    )
+    return '撤销流程：二次确认 + 单源通道 + 状态同步 ✓'
+  })
+
+  // ── U27 宿主页「关于」协议卡：work 插件停用后仍有查看/撤销入口（对抗审查 P3）──
+  await r.check('U27', '关于页宿主级协议卡：状态反显 + 二次确认撤销 + 未同意无入口', async () => {
+    const allButtons = (root) => {
+      const out = []
+      const rec = (n) => {
+        if (n.tag === 'button') out.push(n)
+        for (const c of n.children ?? []) rec(c)
+      }
+      rec(root)
+      return out
+    }
+    const btnText = (n) =>
+      n.children.map((c) => (c.tag === '#text' ? c.text ?? '' : '')).join('').trim()
+    const mountAbout = (outName, consent) => {
+      setIpc({
+        'app:getVersion': '4.2.0',
+        'consent:status': { consent, consentAt: consent ? 1790000000000 : null },
+        'consent:revoke': { consent: false }
+      })
+      const bundle = compileVuePage('src/views/About.vue', outName, {
+        routerStub: stubs.routerStub,
+        realComponents: ['ConfirmDialog.vue']
+      })
+      return import(pathToFileURL(bundle).href).then((mod) =>
+        mountPage(mod.default, { api, flush: 30 })
+      )
+    }
+
+    const res = await mountAbout('ui-about-consent', true)
+    assert(!res.mountError, '关于页挂载无异常')
+    assert(res.html.includes('同意用户协议'), '已同意时反显同意记录')
+    let revokeBtns = allButtons(res.root).filter((b) => btnText(b) === '撤销同意')
+    assertEq(revokeBtns.length, 1, '宿主关于页渲染一个撤销入口')
+    revokeBtns[0].props.onClick()
+    await flushTicks()
+    assertEq(
+      calls().filter((c) => c.channel === 'consent:revoke').length,
+      0,
+      '确认弹窗阶段不得调 revoke'
+    )
+    await waitFor(() => serialize(res.root).includes('撤销用户协议？'), {
+      timeout: 2000,
+      label: 'U27 撤销确认弹窗'
+    })
+    revokeBtns = allButtons(res.root).filter((b) => btnText(b) === '撤销同意')
+    assertEq(revokeBtns.length, 2, '弹窗确认按钮出现（页面按钮 + 弹窗按钮）')
+    revokeBtns[1].props.onClick()
+    await flushTicks()
+    const revokes = calls().filter((c) => c.channel === 'consent:revoke')
+    assertEq(revokes.length, 1, '确认后只调一次 consent:revoke')
+    await waitFor(() => serialize(res.root).includes('尚未同意用户协议'), {
+      timeout: 2000,
+      label: 'U27 撤销后状态翻转为未同意'
+    })
+
+    const res2 = await mountAbout('ui-about-no-consent', false)
+    assert(res2.html.includes('尚未同意用户协议'), '未同意时反显警示文案')
+    assertEq(
+      allButtons(res2.root).filter((b) => btnText(b) === '撤销同意').length,
+      0,
+      '未同意时不渲染撤销入口'
+    )
+    assert(!!findButton(res2.root, '查看用户协议'), '查看协议入口始终保留')
+    return '宿主级协议卡：不依赖 work 插件，撤销链路完整 ✓'
   })} catch (e) {
   console.error('UI 验收脚本自身异常:', e)
 }

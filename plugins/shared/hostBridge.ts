@@ -41,3 +41,8 @@ export function shellApi(): AnyApi {
 export function pluginsApi(): AnyApi {
   return root().plugins ?? {}
 }
+
+/** 用户协议（宿主 consent:* 单源通道；work 插件停用也不影响通道，宿主页「关于」始终保留撤销入口） */
+export function consentApi(): AnyApi {
+  return root().consent ?? {}
+}

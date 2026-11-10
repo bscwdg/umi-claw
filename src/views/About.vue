@@ -60,6 +60,40 @@
       </div>
     </div>
 
+    <div class="card consent-card">
+      <h3 style="margin-bottom:14px">📜 用户协议与隐私</h3>
+      <p class="consent-status">
+        <template v-if="consentGranted">
+          ✅ 你已于 {{ consentAtLabel }} 同意用户协议
+        </template>
+        <template v-else>
+          ⚠️ 尚未同意用户协议，OpenClaw 无法启动
+        </template>
+      </p>
+      <div class="consent-actions">
+        <button class="link-btn" @click="openAgreementReview">
+          <span>📄</span> 查看用户协议
+        </button>
+        <button
+          v-if="consentGranted"
+          class="link-btn link-btn-danger"
+          :disabled="revoking"
+          @click="revokeConfirmVisible = true"
+        >
+          <span>⚠️</span> 撤销同意
+        </button>
+      </div>
+      <ConfirmDialog
+        v-model:visible="revokeConfirmVisible"
+        icon="⚠️"
+        title="撤销用户协议？"
+        message="撤销后 OpenClaw 将无法启动，AI 相关能力停用；你的本地数据不会被删除，随时可以重新同意恢复。"
+        confirm-text="撤销同意"
+        danger
+        @confirm="confirmRevokeConsent"
+      />
+    </div>
+
     <div class="card" style="text-align:center; padding:20px; color:var(--text-muted); font-size:13px">
       MIT License · 基于 OpenClaw 开源项目重构 · Made with 🦞
     </div>
@@ -67,13 +101,54 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { useToast } from '@/composables/useToast'
+import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
+import {
+  consentGranted,
+  consentAt,
+  openAgreementReview,
+  syncConsent
+} from '@/composables/useAgreementGate'
 
 const version = ref('')
+const { showToast } = useToast()
+const revokeConfirmVisible = ref(false)
+const revoking = ref(false)
+
+const consentAtLabel = computed(() => {
+  const t = consentAt.value
+  if (!t) return ''
+  const d = new Date(t)
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+})
 
 onMounted(async () => {
   version.value = await window.api.app.getVersion()
+  // 宿主页主动同步一次协议状态：work 插件停用时这里仍是可靠的查看/撤销入口
+  try {
+    const status = await window.api.consent.status()
+    syncConsent(status.consent, status.consentAt ?? null)
+  } catch (e: any) {
+    showToast(`读取协议状态失败：${e?.message ?? '未知错误'}`, 'error')
+  }
 })
+
+/** 撤销同意：宿主页直接走 consent:revoke 单源通道，二次确认在模板的 ConfirmDialog 里完成。 */
+async function confirmRevokeConsent(): Promise<void> {
+  revokeConfirmVisible.value = false
+  revoking.value = true
+  try {
+    await window.api.consent.revoke()
+    syncConsent(false, null)
+    showToast('已撤销用户协议，OpenClaw 相关能力已停用', 'warning')
+  } catch (e: any) {
+    showToast(`撤销失败：${e?.message ?? '未知错误'}`, 'error')
+  } finally {
+    revoking.value = false
+  }
+}
 
 const techStack = [
   { name: 'Electron 30', desc: '跨平台桌面应用框架' },
@@ -123,6 +198,16 @@ function open(url: string) {
 
 .links-grid {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+}
+.consent-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.consent-status { margin: 0 0 12px; font-size: 13px; color: var(--text-secondary); }
+.link-btn-danger {
+  border-color: var(--red);
+  color: var(--red);
+}
+.link-btn-danger:hover {
+  border-color: var(--red);
+  background: rgba(255, 80, 80, 0.1);
 }
 .link-btn {
   display: flex; align-items: center; gap: 8px;
