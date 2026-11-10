@@ -1947,7 +1947,8 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 - 桌宠窗口「恢复接线」按用户要求推迟；自定义桌宠形象不随单文件备份迁移；不支持 SVG/Live2D/精灵表。
 - 批量删除仍是「先 store.reset 再 CLI 清理」，CLI 失败只回 warning，非事务。
 - 真实 QQ/企微/微信入站未用真实凭据发包验收；只自动接管单账号，多账号需 OpenClaw 原生逐账号绑定；
-  渠道级绑定无法只接管私聊；群聊是否触发仍由渠道白名单/@ 规则决定。
+  渠道级绑定无法只接管私聊；群聊是否触发原由渠道白名单/@ 规则决定（**2026-11-11 起改由宿主
+  GroupPolicy/`groups["*"]` 接管，见文末「群聊架构重构」**）。
 - 群聊策略原靠 AGENTS 提示词约束 OpenClaw 行为（4.4 初版）；2026-11-11 已改为随包 `feiyu-guard`
   hook 插件硬执行（见文末「群聊架构重构」），仍有边界：记忆隔离只拦 `write/edit/apply_patch`、
   语音识别依赖 ReplyPayload 元数据、真实 QQ 群全链路待手工验收。
@@ -2040,7 +2041,7 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 
 | # | 欠账 | 状态变化 | 说明 |
 | --- | --- | --- | --- |
-| 1 | J2 剩余 5 个 >1,500 行单文件治理 | 接受（不再继续拆） | clawManager **2,543 → 1,484**（≤1,500；新增 `electron/main/claw/` 13 个模块，行为零变化）；剩余 downloadManager 2084 / configManager 2116 / marketing store 2001 / VoicePage 2418 / CharacterPage 1970（总行数，CharacterPage 非空 1,874）。CharacterPage 自 11-04 `bf84d1f` 起越线（该提交总行 1,613 / 非空 1,530，此前漏计）。**2026-11-10 用户决定：J2 不再继续拆分**——继续拆的边际收益低于风险/回归成本，剩余 5 个作为已知边界接受，不阻塞发布 |
+| 1 | J2 剩余 5 个 >1,500 行单文件治理 | 接受（不再继续拆） | clawManager **2,543 → 1,484**（≤1,500；新增 `electron/main/claw/` 13 个模块，行为零变化）；剩余 downloadManager 2084 / configManager 2127 / marketing store 2001 / VoicePage 2418 / CharacterPage 1970（总行数，CharacterPage 非空 1,874）。CharacterPage 自 11-04 `bf84d1f` 起越线（该提交总行 1,613 / 非空 1,530，此前漏计）。**2026-11-10 用户决定：J2 不再继续拆分**——继续拆的边际收益低于风险/回归成本，剩余 5 个作为已知边界接受，不阻塞发布 |
 | 2 | P45 宿主通道行为级测试 | 本次完成 | 新增 `test/host-ipc.accept.mjs` **31 条**（env/claw/terminal/config 行为级），已注册 run-all `ACCEPT` 与 `accept:host-ipc`；残留盲区 2 项（边界门禁不扫 `electron/main/claw/**`；`getStatus` 的 getConfig 两次调用合并为一次、判定等价）已接受 |
 | 3 | consent 历史撤销判定 | 已知边界（已降级） | v4.1.0 前渲染端无撤销入口（`7b940cc` 才引入「撤销同意」UI），`work:wizard:revokeConsent` 通道也无 UI 调用方，故不存在 UI 可产生的历史撤销；且「撤销过」与「从未同意」行为后果一致——`services/consent.ts` 无 granted 时 `migrateFromPluginDb` 返回 `no-source`（`status().consent=false`、`ensure()` 同样抛「请先同意用户协议」）。不产生「撤销被复活」错误，不再占产品决策欠账 |
 | 4 | consent 接线行为测试 | 部分缓解 | U26/U27 覆盖两端渲染撤销流程；启动迁移/委托分支仍只有静态 C10 |
@@ -2109,9 +2110,12 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
   且剥受管段标记）、`buildGroupPrompt`；types/persona/manager merge 同源；删除 `groupAgent.ts`（142 行）。
 - **配置编译** `electron/main/services/characterGroupConfig.ts`：策略 → `channels.qqbot.groupPolicy` +
   `channels.qqbot.groups["*"]`（requireMention/historyLimit/toolPolicy restricted/prompt）+
-  `plugins.load.paths` + `plugins.entries["feiyu-guard"]`（enabled/allowConversationAccess/config）；
+  `plugins.load.paths` + `plugins.entries["feiyu-guard"]`（enabled/config；不申请 allowConversationAccess）；
   迁移 patch：`agents.entries["feiyu-group"]=null`、bindings 去掉 feiyu-group 并确保 feiyu 的 qqbot
-  渠道绑定、保留其它 agent/用户手工绑定；写盘走 `openClawConfigWriter` 官方 config patch（串行，
+  渠道绑定、保留其它 agent/用户手工绑定；bindings **直接读 openclaw.json 全量**（保留 ACP/comment，
+  不用 CLI——冷启动约 19s 会超时、只列 route、且带 schema 不收的 `description`）；拿不到 bindings
+  时不删 agent 条目（防旧绑定引用已删 agent 让 schema 整单拒绝）；既有 `groupPolicy=allowlist` 在
+  开启群回复时保留，不强改 `open`。写盘走 `openClawConfigWriter` 官方 config patch（串行，
   `--replace-path` 由原/目标 diff 计算）。
 - **wiring**：bootstrap 与 settings 变更各同步一次，串行队列；bootstrap 在途时挂起，避免与
   runBootstrap 的 config patch 并发（4.4 撞锁教训）；失败只记日志。`configManager._syncOpenClawConfig`
@@ -2121,7 +2125,9 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
   `message_sending` 群词过滤（replace/block）+ 群回复取消；`reply_payload_sending` 渠道出站语音
   （剥离/取消，保留文本与非音频 media）；`before_tool_call` 拦 `qqbot_platform_api` 群语音上传
   （`/v2/groups/<id>/files` + `file_type=3`，按群按天计数，与 reply 路径共用额度）与群会话
-  `write/edit/apply_patch`（记忆隔离）；私聊/未知/状态异常/版本≠1 → fail-open。
+  `write/edit/apply_patch`（记忆隔离）；`reply_payload_sending`/`before_tool_call` 也先判
+  replyEnabled；私聊/未知/版本≠1 一律放行，状态文件读失败按空状态、写失败保留进程内计数
+  （语音上限仍生效），不阻断私聊/宿主。
 - **设置页**：群聊卡新增 @ 开关/语音开关/每群日上限/历史条数/记忆隔离/亲密词启停+替换词+动作+词表/
   额外提示词；旧 settings 缺字段补默认。
 - **「删除全部」**：清理旧 `workspace-feiyu-group`、`agents/feiyu-group` 与 guard 计数状态
@@ -2129,16 +2135,21 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 
 ### 验证（2026-11-11）
 
-- 新增 accept：`group-policy` **11**、`group-config` **7**、`guard-plugin` **33**（含 MUTATION 7 条）；
+- 新增 accept：`group-policy` **11**、`group-config` **13**、`guard-plugin` **36**（含 MUTATION 7 条）；
   `character.core` **103/103**（+C98 迁移 / +C99 单 agent 接线 / +C100 遗留清理）；
   双 typecheck 0 错、build 通过、`check:boundary` 0/0/0。
-- 全量 accept：**40 套（accept×38 + e2e + smoke）/ 766 条 / 0 失败**。
-- 真实配置校验：官方 `openclaw config patch --stdin --dry-run --replace-path bindings
+- 全量 accept（2026-11-11 01:46 单轮）：**40 套（accept×38 + e2e + smoke）/ 772 条 / 0 失败**
+  （40 个套件 result 求和，不含 `accept-result.json` 汇总与 config-writer 的 node:test 21 条）。
+- 真实配置校验：官方 `openclaw config patch --stdin --dry-run --json --replace-path bindings
   --replace-path plugins.load.paths` 在真实 `data/config/.openclaw/openclaw.json` 上 dry-run 通过
-  （`ok=true`、23 个操作、schema/resolvability true）。
-- 插件真实加载：临时 `OPENCLAW_STATE_DIR` 下 `plugins inspect feiyu-guard --json` =
+  （`ok=true`、22 个操作、schema/resolvability true）。bindings 取自 openclaw.json 全量；曾实测
+  CLI 输出带 `description` 被 schema 拒（G5/G11 锁剥离）、CLI 冷启动 19s 会超时（已改读配置文件）。
+  新增 G12（缺失 bindings 按空数组仍补 feiyu 绑定）、G13（既有 allowlist 不被 `open` 覆盖）、
+  guard G18（attachments-only 语音）、G19/G20（replyEnabled=false 覆盖 reply/tool 路径）。
+- 插件真实加载：临时 `HOME=<dataDir>/config` + `OPENCLAW_CONFIG_DIR=<dataDir>/config/.openclaw` +
+  `OPENCLAW_DATA_DIR=<dataDir>/data`（网关同款环境）下 `plugins inspect feiyu-guard --json` =
   loaded/activated、configSchema 通过；`--runtime` 因本机 OpenClaw loader 的 `plugin-captures`
-  EPERM 卡住（无 import 的最小插件同样复现，属环境），用 stub SDK 入口验证 hookCount=3
+  EPERM 卡住（无 import 的最小插件同样复现，属环境，非产品结论），用 stub SDK 入口验证 hookCount=3
   （message_sending / reply_payload_sending / before_tool_call）。
 
 ### 已知边界（登记 4.5）
@@ -2150,9 +2161,35 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
   原生 `groups["*"]` 配置执行。
 - guard 计数跨进程无文件锁（单 Gateway 进程内「同步判定+占位」保证并发正确）；同 payload 幂等，
   跨重启重放会再计一次。
+- 迁移 patch 的 bindings 来源是 `openclaw.json`（不是 CLI）；读取与写盘之间仍有一个极小并发窗口
+  （与 configManager 同时改 bindings 时可能 lost update），已接受并登记。配置解析失败（含 JSON5
+  注释等非严格 JSON）时整单跳过、群策略静默不落盘，只有 logger，已接受为已知边界。
+- guard 没有 agentId 作用域：同一 qqbot 账户下其它 agent 的群会话也会被群策略（词/语音/记忆）约束；
+  当前产品语义是「整个 qqbot 群聊统一由大肥鱼策略管」，若未来多 agent 共用渠道需按 session agent 收窄。
+- `plugins.load.paths` 里的 feiyu-guard 配置/条目与 `channels.qqbot.groups["*"]` 属于「配置」而非
+  用户数据，「删除全部数据」只清 workspace/agentDir/guard 状态文件，不回滚 openclaw 配置。
+- `parseGuardConfig(undefined)` 会按 v1 默认策略执行（语音关/词过滤开/记忆隔离开）；宿主总会下发
+  config，手工安装插件时属于已知边界。
+- 双真源判定以 `groups["*"]` 是否存在为准：用户手工写 wildcard groups 也会让渠道页旧表单失效；
+  角色停用/删数据后 groups["*"] 不会自动清理（旧表单保持失联），不损坏数据、已接受。
+- `desiredBindings` 只在缺少 feiyu 的 qqbot「渠道级」绑定时补一条；若用户原有 feiyu qqbot 绑定带
+  `accountId`，可能同时存在 account 级 + 新增 channel 级两条 qqbot 路由（以 OpenClaw 绑定优先级裁决），
+  已接受为已知边界。
+- 每次角色设置保存（宠物/语音等任意字段）都会串行触发一次 openclaw config patch；CLI 冷启动可能较慢，
+  失败只记日志（不阻塞保存/启动），已接受为已知边界；后续可收窄为「仅 group 变化时同步」。
 - 真实 QQ 群全链路仍需用户配好凭据后手工验收。
 
 ### 对抗审查
 
-- 宿主域、guard 插件、文档三块各自独立只读子代理审查；群判定限定 `qqbot` 渠道的
-  `:qqbot:group:`（不裸用 `:group:`，避免误伤 telegram 群）为本轮明确决策。
+- 三组独立只读子代理（快照 2026-11-11 01:16–01:40）：
+  - `1d5da181`（高风险终审）：属实→已修 4 项——① `readBindings` 15s 超时 + 无条件删 agent 会让
+    升级用户整单 schema 拒绝（改读 openclaw.json，且拿不到 bindings 不删 agent）；② CLI bindings
+    带 `description` 被拒（sanitize + G5/G11）；③ attachments-only 语音可绕过（policy + G18）；
+    ④ replyEnabled=false 未覆盖 reply/tool 路径（guard + G19/G20）。前提不成立 0 项；B 项
+    （ACP/comment 保留、JSON5、agentId 作用域、双真源 marker 等）已逐条登记为已知边界。
+  - `7a49a99c`（文档/数字）：属实→已统一 40 套/772/group-config 13；RUNBOOK inspect 命令补环境变量
+    与随包 Node、`--runtime` EPERM 警告；allowlist 行为改为「保留既有 allowlist」并写文档。
+  - `04f7350d`（代码复审）：A1 缺失 bindings 视为空数组（G12 正向锁）；A2/A3 同上；A4 数字/提交
+    状态已在本轮收口；B 项（ACP/comment 保留、JSON5 解析、agentId 作用域、双真源 marker、accountId
+    路由、每次保存一次 patch、allowConversationAccess 去掉、状态口径统一）逐条已修或登记为已知边界。
+- 群判定限定 `qqbot` 渠道的 `:qqbot:group:`（不裸用 `:group:`，避免误伤 telegram 群）为本轮明确决策。

@@ -9,6 +9,7 @@
 ## [4.4]（未发布，4.3 之后）— 2026-11-10
 
 > 主题：**大肥鱼内容质量、表情包、跨机迁移与 QQ 群聊**；同时补齐本地 TTS 与界面一致性。真机验收仍由用户执行。
+> 4.5 批次的「QQ 群聊单 agent 重构」（见下方「重构与清理」）并入本未发布批次，不单独起版本号。
 
 ### 新增
 - **主动消息内容引擎**：每轮 2–10 条候选（生活三卡 + 20 个话题 + 约 100 句台词 + 关系试探），
@@ -32,6 +33,7 @@
   OpenClaw 插件 `feiyu-guard`（`plugins.load.paths` 加载）；插件用官方 hook 只对 QQ 群硬执行
   （`message_sending` 词过滤/回复取消、`reply_payload_sending` 渠道语音、`before_tool_call`
   群语音上传与记忆写入），私聊/未知会话一律放行。群聊称呼仍只用群昵称/「你」，不写私聊日记与长期记忆。
+  开启群回复会保留既有 `groupPolicy=allowlist`（不会静默放开所有群，只有原本非白名单才写 `open`）。
 - **主动消息质量与渠道**：主动消息改发已绑定渠道、QQ 主动文本直发；话题库从 20 张扩到 40 张并按时段过滤，
   发送前参考最近聊天选话题；生活卡不再硬拼动作旁白；每 6 小时重置后真正开启新一轮，不再复读语料碎片。
 - **本地 TTS 表单**：实例可保存、可测试（必填校验、草稿探活、协议补全），按本机适配器在线状态预填默认值；
@@ -56,11 +58,12 @@
 ### 测试
 - `accept:character` 103/103；`accept:sticker` 12/12；`accept:external-tts` 10/10；`accept:ui` 27/27；
   `accept:terminal-sessions` 6/6；新增 `accept:host-ipc` 31/31（env/claw/terminal/config 宿主通道行为级，
-  即 P45）、`accept:group-policy` 11/11、`accept:group-config` 7/7、`accept:guard-plugin` 33/33；
+  即 P45）、`accept:group-policy` 11/11、`accept:group-config` 13/13、`accept:guard-plugin` 36/36；
   `typecheck:node/web` 0 错；`build` 成功；`check:boundary` 全 0。
-- 2026-11-11 最终轮全量复测：**40 套（accept×38 + e2e + smoke）766 条断言 / 0 失败**
-  （Recorder 口径；`openclaw-config-writer` 的 21 条 node:test 另计），packaged smoke 7/7；
-  群聊 patch 另用 `openclaw config patch --dry-run` 在真实配置上验过（schema ok、23 个操作）。
+- 2026-11-11 最终轮全量复测：**40 套（accept×38 + e2e + smoke）772 条断言 / 0 失败**
+  （Recorder 口径：40 个套件 result 求和，不含汇总文件 `accept-result.json` 与 `openclaw-config-writer`
+  的 21 条 node:test），packaged smoke 7/7；群聊 patch 另用 `openclaw config patch --dry-run` 在真实
+  配置上验过（schema ok、22 个操作；bindings 取自 openclaw.json 全量，保留 ACP/comment）。
 - 本轮首测暴露的 `claw-maintenance` 失败项 `plugin-captures-cleanup` **不是环境问题，而是测试断言
   写错了**：原断言 `!existsSync(rename 后的新目标路径)`，但目标目录随整棵树 rename 后必然存在于新位置、
   junction 可用时结构性必红；已改为断言原目标 `built.target` 不存在。修复后首次真正执行「悬空 junction
@@ -81,12 +84,13 @@
   `channels.qqbot.groups["*"]` + `plugins.load.paths`/`plugins.entries["feiyu-guard"]` 的唯一编译/落盘点）
   与随包 `resources/openclaw-plugins/feiyu-guard`（OpenClaw hook 插件：`message_sending` /
   `reply_payload_sending` / `before_tool_call`，只对 QQ 群生效、fail-open）。旧 `feiyu-group` 的
-  agent/绑定/workspace 在启动同步时清理；「删除全部」会清旧 workspace/agent 目录与 guard 计数状态。
+  agent 条目/绑定在启动同步时清理；旧 `workspace-feiyu-group`/`agents/feiyu-group` 与 guard 计数
+  状态只在「删除全部数据」时清理。
   存在角色管理的 `groups["*"]` 后，`configManager` 不再用 app.json 旧表单覆盖群聊策略（双真源防护）。
 
 ### 已知残差（登记 4.5，不阻塞发版）
 - J2 剩余 5 个单文件 >1,500 行未拆（`clawManager.ts` 已拆 2,543 → 1,484，退出名单）：
-  `downloadManager.ts` 2,084 / `configManager.ts` 2,116 / marketing `store.ts` 2,001 /
+  `downloadManager.ts` 2,084 / `configManager.ts` 2,127 / marketing `store.ts` 2,001 /
   `VoicePage.vue` 2,418 / `src/character/CharacterPage.vue` 1,970（11-04 `bf84d1f` 起越线）。
 - P45 已补 `accept:host-ipc` 31 条（env/claw/terminal/config 行为级）；残留盲区 2 项
   （边界门禁不扫 `electron/main/claw/**`、`getStatus` 的 getConfig 合并判定）登记 4.5。

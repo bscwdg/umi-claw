@@ -206,7 +206,7 @@ gateway{parts,stream,types} / dbTypes / abortRegistry）+ `ipc/host/*` 七个文
 
 | 选项 | 做法 | 能否达 ≤26,000 | 代价 |
 | --- | --- | --- | --- |
-| **P1 改目标定义** | 放弃「总行数」指标，改用结构性指标：单文件 ≤1500 行（现存 5 个超标的：clawManager 2321 / downloadManager 2043 / configManager 2024 / marketing store 2001 / VoicePage 1842）+ index ≤1800（已达成）（2026-11-03 口径；**2026-11-10 更新**：clawManager 已拆 2543→1484，当前 5 个＝downloadManager 2084 / configManager 2116 / marketing store 2001 / VoicePage 2418 / CharacterPage 1970） | 不适用 | 低；承认「总量」不是有效度量 |
+| **P1 改目标定义** | 放弃「总行数」指标，改用结构性指标：单文件 ≤1500 行（现存 5 个超标的：clawManager 2321 / downloadManager 2043 / configManager 2024 / marketing store 2001 / VoicePage 1842）+ index ≤1800（已达成）（2026-11-03 口径；**2026-11-10 更新**：clawManager 已拆 2543→1484，当前 5 个＝downloadManager 2084 / configManager 2127 / marketing store 2001 / VoicePage 2418 / CharacterPage 1970） | 不适用 | 低；承认「总量」不是有效度量 |
 | **P2 外置 character/fish** | 把 `character/`(5357) 与 `fish/`(3567) 移出 `electron/main`（如 `electron/modules/`） | 是（29,115-9,450=19,665） | 中；但 **总代码量不变**，只是换目录——违反 G12 精神 |
 | **P3 真删功能** | 合并 / 删除壳能力中的冗余实现（需先找出确实冗余的部分） | 待评估 | 高；需逐项确认无行为回退 |
 
@@ -300,7 +300,7 @@ packaged.smoke       7/7（但 release/ 产物仍是 4.1.0；发布前需按 4.2
 | 4 | tag `v4.2.0` 创建 + push | ⏳ 待用户确认；本地仅 `v1.0.0` / `v4.1.0` |
 | 5 | 4.2 版本级两轮独立复核入档 | ✅ 已补跑，见 `doc/PROGRESS-4.0.md`「4.2 版本级收尾复核」 |
 | 6 | P45（env/claw/terminal/config 宿主通道行为级测试，4.1 结转） | ✅ 已补（2026-11-10）：新增 `test/host-ipc.accept.mjs` **31 条 check**，已注册 run-all `ACCEPT` 与 `accept:host-ipc`；残留盲区见 `doc/PROGRESS-4.0.md`「4.5 复核补充」 |
-| 7 | J2 单文件治理 / `ipc/index.ts` barrel 测试依赖 / `character/stt.ts` 死代码 | ⚠️ **J2 剩余 5 个**（clawManager 已拆 2543→1484；剩 downloadManager 2084 / configManager 2116 / marketing store 2001 / VoicePage 2418 / CharacterPage 1970）；barrel/stt 已完成（4.4 收官 R3/R2）。**2026-11-10 用户决定：J2 不再继续拆分**，剩余 5 个作为已知边界接受，不阻塞发布 |
+| 7 | J2 单文件治理 / `ipc/index.ts` barrel 测试依赖 / `character/stt.ts` 死代码 | ⚠️ **J2 剩余 5 个**（clawManager 已拆 2543→1484；剩 downloadManager 2084 / configManager 2127 / marketing store 2001 / VoicePage 2418 / CharacterPage 1970）；barrel/stt 已完成（4.4 收官 R3/R2）。**2026-11-10 用户决定：J2 不再继续拆分**，剩余 5 个作为已知边界接受，不阻塞发布 |
 | 8 | 安装器文件名与 updater URL 对齐 | ⚠️ **发布通道确认项**（不是已确认的 404）。仓库**无 `electron-updater` 依赖、无 `autoUpdater` 调用**（`package.json` / `electron` / `src` / `plugins` 全 0 命中），`release/latest.yml` 只是 electron-builder 产出的构建产物（url 是连字符安全名 `Umi-Claw-Setup-4.2.0.exe`，磁盘文件名带空格）。若走 GitHub release，electron-builder 上传发布资产时通常使用连字符安全名（**本仓库未实测该上传行为，需发布时核对**）；若改自建 feed（`build.publish` 指向自有地址），需设 `artifactName` 把磁盘名对齐到 feed 名。发布通道拍板后按该口径验收 |
 
 ### 4.3 欠账清单（登记；4.3 计划文件尚未建立）
@@ -312,7 +312,7 @@ packaged.smoke       7/7（但 release/ 产物仍是 4.1.0；发布前需按 4.2
 
 - ~~**P45**：env / claw / terminal / config 宿主通道行为级测试（4.1 结转）~~ ✅ 已完成（2026-11-10：
   `test/host-ipc.accept.mjs` **31 条**，注册 run-all `ACCEPT` 与 `accept:host-ipc`）；残留盲区见 PROGRESS「4.5 复核补充」；
-- **J2**：剩余 5 个非 index 单文件 >1,500 行（downloadManager 2,084 / configManager 2,116 /
+- **J2**：剩余 5 个非 index 单文件 >1,500 行（downloadManager 2,084 / configManager 2,127、
   marketing-ui store 2,001 / VoicePage 2,418 / `src/character/CharacterPage.vue` 1,970；clawManager 已拆
   2,543→1,484），`index.ts` 1,753 由 J1 约束；
 - ~~`electron/main/ipc/index.ts`（78 行，`@test-only`）：清测试依赖后删~~ ✅ 已完成（4.4 收官 R3 整删）；

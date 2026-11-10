@@ -64,7 +64,7 @@ function input(group = defaultGroup()) {
 const r = new Recorder('群聊策略 → OpenClaw 配置（单 agent + feiyu-guard）')
 
 await r.check('G1', '默认策略：qqbot 群配置/回复闸/guard 插件条目 形状正确', () => {
-  const { patch } = buildGroupOpenClawPatch(input())
+  const { patch } = buildGroupOpenClawPatch(input(), { bindings: [] })
   const qqbot = patch.channels.qqbot
   assertEq(qqbot.groupPolicy, 'open', '群回复默认开 → groupPolicy=open')
   const group = qqbot.groups['*']
@@ -75,7 +75,7 @@ await r.check('G1', '默认策略：qqbot 群配置/回复闸/guard 插件条目
   assert(group.prompt.includes('你'), '提示词含称呼规则')
   const entry = patch.plugins.entries[GUARD_PLUGIN_ID]
   assertEq(entry.enabled, true, 'guard 插件启用')
-  assertEq(entry.hooks.allowConversationAccess, true, 'guard 需要对话访问授权')
+  assertEq(entry.hooks, undefined, 'guard 不读取会话内容，不申请 allowConversationAccess（最小授权）')
   assertDeepEq(entry.config.policy, {
     replyEnabled: true,
     requireMention: true,
@@ -135,8 +135,8 @@ await r.check('G4', 'plugins.load.paths 追加 guard 目录且保留既有路径
 await r.check('G5', '迁移：删 feiyu-group 条目与绑定，确保 feiyu 的 qqbot 渠道绑定，保留其它绑定', () => {
   const { patch } = buildGroupOpenClawPatch(input(), {
     bindings: [
-      { type: 'route', agentId: 'feiyu-group', match: { channel: 'qqbot', peer: { kind: 'group', id: '*' } } },
-      { type: 'route', agentId: 'feiyu', match: { channel: 'qqbot' } },
+      { type: 'route', agentId: 'feiyu-group', match: { channel: 'qqbot', peer: { kind: 'group', id: '*' } }, description: 'qqbot peer=group:*' },
+      { type: 'route', agentId: 'feiyu', match: { channel: 'qqbot' }, description: 'qqbot' },
       { type: 'route', agentId: 'main', match: { channel: 'telegram' } },
       { type: 'route', agentId: 'main', match: { channel: 'qqbot', peer: { kind: 'group', id: 'g1' } } }
     ]
@@ -147,6 +147,7 @@ await r.check('G5', '迁移：删 feiyu-group 条目与绑定，确保 feiyu 的
   assert(bindings.some((b) => b.agentId === 'feiyu' && b.match.channel === 'qqbot' && !b.match.peer), 'feiyu qqbot 渠道绑定保留')
   assert(bindings.some((b) => b.agentId === 'main' && b.match.channel === 'telegram'), '其它渠道绑定保留')
   assert(bindings.some((b) => b.agentId === 'main' && b.match.peer), '其它 agent 的 peer 规则保留（用户手工绑定不碰）')
+  assert(!bindings.some((b) => 'description' in b), 'CLI 展示字段 description 必须剥离（schema 不接受）')
   return '双 agent 迁移 + 用户绑定保留'
 })
 
@@ -175,7 +176,7 @@ await r.check('G8', 'qqbot 未配置：只装 guard 插件、不写半截 channe
   )
   assertEq(patch.channels, undefined, '不写 channels.qqbot（避免造出缺 appId 的半截配置）')
   assertEq(patch.bindings, undefined, '不碰 bindings（避免把 feiyu 绑到不存在的渠道）')
-  assertEq(patch.agents.entries['feiyu-group'], null, 'feiyu-group 条目仍清掉')
+  assertEq(patch.agents, undefined, '没有 bindings 可迁移时不删 feiyu-group agent（防 schema 整单被拒）')
   assertEq(patch.plugins.entries[GUARD_PLUGIN_ID].enabled, true, 'guard 插件照装')
   assert(!replacePaths.includes('bindings'), 'replacePaths 不含 bindings')
   return '未配置渠道时安全降级'
@@ -200,6 +201,55 @@ await r.check('G10', '双真源防护：configManager 不再用 app.json 旧表�
     '旧表单 groupPolicy/requireMention 写入必须被该判定包住'
   )
   return '旧表单不再覆盖角色页群策略'
+})
+
+await r.check('G11', '真实 CLI 形状（无 type、带 description）→ patch 收敛且保留 schema 允许字段', () => {
+  // `openclaw agents bindings --json` 的实际输出形状（描述字段为展示用，schema 不接受）
+  const cliShape = [
+    { agentId: 'feiyu-group', match: { channel: 'qqbot', peer: { kind: 'group', id: '*' } }, description: 'qqbot peer=group:*' },
+    { agentId: 'main', match: { channel: 'feishu' }, comment: 'keep me', description: 'feishu' }
+  ]
+  const cleaned = desiredBindings(cliShape)
+  assertEq(cleaned.length, 2, '合法绑定保留 + 补 feiyu qqbot')
+  for (const binding of cleaned) {
+    assert(!('description' in binding), `description 已剥离：${JSON.stringify(binding)}`)
+    assertEq(binding.type, 'route', '缺失 type 补 route')
+  }
+  assertEq(cleaned.find((b) => b.agentId === 'main')?.comment, 'keep me', 'schema 允许的 comment 保留（不只留三字段）')
+  assert(!cleaned.some((b) => b.agentId === 'feiyu-group'), 'feiyu-group 已删')
+  assert(cleaned.some((b) => b.agentId === 'feiyu' && b.match.channel === 'qqbot'), '补了 feiyu qqbot')
+  return 'CLI 输出可直接安全进 config patch'
+})
+
+await r.check('G12', 'openclaw.json 存在但 bindings 缺失（视为空数组）：仍补 feiyu qqbot 绑定并清旧 agent', () => {
+  const { patch, replacePaths } = buildGroupOpenClawPatch({ ...input(), qqbotConfigured: true }, { bindings: [] })
+  assertEq(patch.agents.entries['feiyu-group'], null, '空 bindings 也清 feiyu-group agent 条目')
+  assertDeepEq(
+    patch.bindings,
+    [{ type: 'route', agentId: 'feiyu', match: { channel: 'qqbot' } }],
+    '补 feiyu 的 qqbot 渠道绑定（新装/清空 bindings 用户也要路由到 feiyu）'
+  )
+  assert(replacePaths.includes('bindings'), 'replacePaths 含 bindings')
+  return '缺失 bindings 按空数组处理'
+})
+
+await r.check('G13', '既有 allowlist 保留：开启群回复不静默放开所有群；关闭仍写 disabled', () => {
+  const allow = buildGroupOpenClawPatch(
+    { ...input(), qqbotConfigured: true },
+    { bindings: [], groupPolicy: 'allowlist' }
+  )
+  assertEq(allow.patch.channels.qqbot.groupPolicy, 'allowlist', '原 allowlist 保留')
+  const off = buildGroupOpenClawPatch(
+    { ...input(defaultGroup({ replyEnabled: false })), qqbotConfigured: true },
+    { bindings: [], groupPolicy: 'allowlist' }
+  )
+  assertEq(off.patch.channels.qqbot.groupPolicy, 'disabled', '关群回复仍硬置 disabled')
+  const open = buildGroupOpenClawPatch(
+    { ...input(), qqbotConfigured: true },
+    { bindings: [], groupPolicy: 'disabled' }
+  )
+  assertEq(open.patch.channels.qqbot.groupPolicy, 'open', '原 disabled 且开启 → open')
+  return '白名单不被静默改写'
 })
 
 const result = r.toJSON()

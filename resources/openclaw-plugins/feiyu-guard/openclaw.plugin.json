@@ -1,7 +1,7 @@
 {
   "id": "feiyu-guard",
   "name": "Feiyu Group Guard",
-  "description": "QQ 群聊硬策略（群回复开关、亲密词过滤、群语音条开关/日上限、群记忆隔离）。只在 QQ 群会话生效；私聊、未知会话、状态文件异常一律放行。",
+  "description": "QQ 群聊硬策略（群回复开关、亲密词过滤、群语音条开关/日上限、群记忆隔离）。只在 QQ 群会话生效；私聊/未知会话一律放行；状态文件读失败按空状态、写失败保留进程内计数（语音上限仍生效）。",
   "version": "1.0.0",
   "categories": ["security"],
   "activation": {

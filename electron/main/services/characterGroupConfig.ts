@@ -7,16 +7,15 @@
 //   1) channels.qqbot.groups["*"] —— 需要 @、群历史、群提示词（qqbot 插件原生支持）；
 //   2) plugins.load.paths + plugins.entries["feiyu-guard"] —— 随包 hook 插件，硬执行
 //      亲密词过滤 / 群语音开关与日上限 / 群聊不写记忆（只在群会话生效，私聊放行）。
-// 新增群策略字段时只改这里的编译 + character/groupPolicy.ts 的模型；UI/插件各自读同一份
-// 语义，避免三处漂移。写盘一律走 openClawConfigWriter 的官方 config patch 串行队列。
+// 新增群策略字段要同步五处：本文件编译、character/groupPolicy.ts 的模型、types.ts 的
+// GROUP_PATCH_KEYS（否则 UI 局部补丁不生效）、src/character/CharacterSettings.vue 的
+// draft/保存列表、插件 policy.mjs 的读取/执行。写盘一律走 openClawConfigWriter 的串行队列。
 
 import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { spawn } from 'node:child_process'
+import { join } from 'node:path'
 
 import { applyOpenClawConfigPatch, collectLossyIdArrayReplacePaths } from '../openClawConfigWriter'
 import { openClawPaths } from '../openClawPaths'
-import { buildOpenClawEnv } from '../openClawPaths'
 import { buildGroupPrompt, type GroupSettings } from '../character/groupPolicy'
 
 export const GUARD_PLUGIN_ID = 'feiyu-guard'
@@ -77,6 +76,8 @@ export function buildGroupOpenClawPatch(
   current: {
     loadPaths?: string[]
     bindings?: Array<Record<string, unknown>>
+    /** 既有 channels.qqbot.groupPolicy；replyEnabled=true 时若原本是 allowlist 需保留，不能强改成 open */
+    groupPolicy?: string
   } = {}
 ): { patch: Record<string, unknown>; replacePaths: string[] } {
   const g = input.group
@@ -90,21 +91,20 @@ export function buildGroupOpenClawPatch(
       entries: {
         [GUARD_PLUGIN_ID]: {
           enabled: true,
-          hooks: { allowConversationAccess: true },
           config: buildGuardConfig(input)
         }
       }
-    },
-    // 4.4 的双 agent 迁移：删掉 feiyu-group 条目与其 peer 绑定，只保留 feiyu 的渠道绑定
-    agents: { entries: { 'feiyu-group': null } }
+    }
   }
 
   const replacePaths: string[] = ['plugins.load.paths']
   if (qqbotConfigured) {
-    // 群聊总开关：关闭后 qqbot 插件直接不响应群消息（硬闸）；开启时群策略交给 groups["*"]
+    // 群聊总开关：关闭后 qqbot 插件直接不响应群消息（硬闸）；开启时群策略交给 groups["*"]。
+    // 开启时保留既有 allowlist（否则会静默把所有群放开），只有非白名单才写 open。
+    const keepAllowlist = current.groupPolicy === 'allowlist'
     patch.channels = {
       qqbot: {
-        groupPolicy: g.replyEnabled ? 'open' : 'disabled',
+        groupPolicy: g.replyEnabled ? (keepAllowlist ? 'allowlist' : 'open') : 'disabled',
         groups: {
           '*': {
             requireMention: g.requireMention,
@@ -117,22 +117,47 @@ export function buildGroupOpenClawPatch(
     }
     if (current.bindings) {
       patch.bindings = desiredBindings(current.bindings)
+      // 只有拿得到完整 bindings（来自 openclaw.json）并完成迁移后，才删 feiyu-group agent 条目：
+      // 否则会留下「绑定仍引用已删除 agent」的非法配置，官方 schema 会拒掉整单 patch。
+      patch.agents = { entries: { 'feiyu-group': null } }
       replacePaths.push('bindings')
     }
   }
   return { patch, replacePaths }
 }
 
+/** openclaw.json 里的 bindings 是配置真源（含 route/ACP），不要用 CLI 列表重建：
+ *  - CLI `agents bindings --json` 只列 route，且会附加展示用 `description`（schema 拒）；
+ *  - 直接读文件可完整保留 comment/session/ACP 绑定，也避免一次 15–20s 的 CLI spawn。 */
+function readConfigBindings(cfg: Record<string, unknown> | null): Array<Record<string, unknown>> {
+  const raw = cfg?.bindings
+  // 配置存在但 bindings 键缺失/非数组 = 视为空数组：新装/清空 bindings 的用户也要补 feiyu 的
+  // qqbot 绑定；只有整份 openclaw.json 读不出时才跳过（由 applyCharacterGroupPolicy 处理）。
+  if (!Array.isArray(raw)) return []
+  return raw.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+}
+
+/** 收敛成配置文件允许的绑定形状：保留未知字段（comment/session/ACP 等），只删 CLI 展示字段 */
+function sanitizeBinding(binding: Record<string, unknown>): Record<string, unknown> | null {
+  const agentId = typeof binding.agentId === 'string' ? binding.agentId.trim() : ''
+  const match = binding.match
+  if (!agentId || !match || typeof match !== 'object') return null
+  const copy: Record<string, unknown> = { ...binding }
+  delete copy.description
+  copy.type = typeof binding.type === 'string' && binding.type.trim() ? binding.type.trim() : 'route'
+  copy.agentId = agentId
+  return copy
+}
+
 /** 迁移：去掉 feiyu-group 的 route，保留用户手工的其它绑定；确保 feiyu 有 qqbot 渠道绑定 */
 export function desiredBindings(current: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
-  const kept = current.filter((binding) => {
-    const agentId = typeof binding.agentId === 'string' ? binding.agentId : ''
-    if (agentId === 'feiyu-group') return false
-    const match = (binding.match ?? {}) as Record<string, unknown>
-    // 4.4 的群聊 peer 规则只属于 feiyu-group；其它 agent 的 peer 规则保留
-    if (agentId === 'feiyu-group' && match.peer) return false
-    return true
-  })
+  const kept: Array<Record<string, unknown>> = []
+  for (const raw of current) {
+    const binding = sanitizeBinding(raw)
+    if (!binding) continue
+    if (binding.agentId === 'feiyu-group') continue
+    kept.push(binding)
+  }
   const hasFeiyuQqbot = kept.some((binding) => {
     const match = (binding.match ?? {}) as Record<string, unknown>
     return binding.agentId === 'feiyu' && match.channel === 'qqbot' && !match.peer && !match.accountId
@@ -143,7 +168,7 @@ export function desiredBindings(current: Array<Record<string, unknown>>): Array<
   return kept
 }
 
-/** 读 openclaw.json（只读；用于保留既有 plugins.load.paths） */
+/** 读 openclaw.json（只读；用于保留既有 plugins.load.paths 与 bindings） */
 function readOpenClawConfig(dataDir: string): Record<string, unknown> | null {
   const path = openClawPaths.openClawConfig(dataDir)
   try {
@@ -162,52 +187,6 @@ function loadPathsOf(cfg: Record<string, unknown> | null): string[] {
   return Array.isArray(paths) ? paths.map((p) => String(p)).filter(Boolean) : []
 }
 
-/** 用官方 CLI 读当前 agent bindings（读失败返回 null，调用方跳过 bindings 迁移） */
-function readBindings(dataDir: string): Promise<Array<Record<string, unknown>> | null> {
-  const nodePath = openClawPaths.nodeBinary(dataDir)
-  const clawJs = openClawPaths.clawJs(dataDir)
-  return new Promise((resolve) => {
-    const child = spawn(nodePath, [clawJs, 'agents', 'bindings', '--json'], {
-      cwd: openClawPaths.installDir(dataDir),
-      env: buildOpenClawEnv(dataDir, nodePath),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: false
-    })
-    let out = ''
-    let settled = false
-    const done = (value: Array<Record<string, unknown>> | null): void => {
-      if (settled) return
-      settled = true
-      resolve(value)
-    }
-    const timer = setTimeout(() => {
-      try {
-        child.kill()
-      } catch {
-        /* ignore */
-      }
-      done(null)
-    }, 15_000)
-    child.stdout.on('data', (chunk) => {
-      out += chunk.toString()
-    })
-    child.on('error', () => {
-      clearTimeout(timer)
-      done(null)
-    })
-    child.on('close', () => {
-      clearTimeout(timer)
-      try {
-        const parsed = JSON.parse(out.replace(/^\uFEFF/, ''))
-        const list = Array.isArray(parsed) ? parsed : parsed?.bindings
-        done(Array.isArray(list) ? (list as Array<Record<string, unknown>>) : null)
-      } catch {
-        done(null)
-      }
-    })
-  })
-}
-
 /**
  * 把群聊策略应用到 openclaw.json（settings 变更 / bootstrap 时调用）。
  * 幂等：内容没变时 config patch 不产生实质变更；失败只返回错误，由调用方记日志，不阻塞启动。
@@ -216,15 +195,23 @@ export async function applyCharacterGroupPolicy(
   input: GroupConfigSyncInput
 ): Promise<GroupConfigSyncResult> {
   const before = readOpenClawConfig(input.dataDir)
-  const bindings = await readBindings(input.dataDir)
-  const qqbotConfigured = Boolean(
-    before && typeof before.channels === 'object' && before.channels !== null && (before.channels as Record<string, unknown>).qqbot
-  )
+  // 配置读不出时不猜：整单跳过（尤其不能在没有 bindings 的情况下删 feiyu-group agent 条目，
+  // 否则旧绑定仍引用它 → 官方 schema 拒绝整份 patch，群策略永远不会落盘）。
+  if (!before) {
+    return { ok: false, error: 'openclaw.json 不存在或无法解析，跳过群聊策略同步' }
+  }
+  const bindings = readConfigBindings(before)
+  const qqbotRaw = before.channels && typeof before.channels === 'object'
+    ? (before.channels as Record<string, unknown>).qqbot
+    : undefined
+  const qqbot = qqbotRaw && typeof qqbotRaw === 'object' ? (qqbotRaw as Record<string, unknown>) : undefined
+  const qqbotConfigured = Boolean(qqbot)
   const { patch, replacePaths } = buildGroupOpenClawPatch(
     { ...input, qqbotConfigured },
     {
       loadPaths: loadPathsOf(before),
-      bindings: bindings ?? undefined
+      bindings,
+      groupPolicy: typeof qqbot?.groupPolicy === 'string' ? qqbot.groupPolicy : undefined
     }
   )
 
@@ -258,9 +245,4 @@ function applyMergePatch(target: unknown, patch: unknown): unknown {
     base[key] = applyMergePatch(base[key], value)
   }
   return base
-}
-
-/** 供其它调用方复用的路径 helper（测试用；避免重复拼 dirname） */
-export function pluginEntryPackageDir(pluginsRoot: string): string {
-  return dirname(guardPluginDir(pluginsRoot))
 }

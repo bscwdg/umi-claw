@@ -7,7 +7,8 @@
 // **fail-open 是硬要求**：
 // - 判定不了群/私聊（to/sessionKey/channelId 都缺失）→ 放行；
 // - 私聊（qqbot:direct 或 sessionKey 无 :group:）→ 放行；
-// - 配置版本不认识、状态文件读/写失败、JSON 损坏、statePath 为空 → 只记日志，继续放行；
+// - 配置版本不认识、状态文件读/写失败、JSON 损坏、statePath 为空 → 只记日志，不阻断判定；
+//   读失败按空状态、写失败保留进程内计数（语音上限仍按内存判定），私聊/宿主永远不受影响；
 // - handler 内部任何异常都自己吞掉：before_tool_call 的失败策略是「block」，抛错等于
 //   误伤工具调用；message_sending/reply_payload_sending 抛错虽被宿主吞掉，也统一走同一层兜底。
 // 只有明确命中「QQ 群 + 策略开关」时才返回 cancel/block/剥离后的 payload。
@@ -164,7 +165,8 @@ function createStateStore({ statePath, timezone, now, readState, writeState, war
 }
 
 /**
- * 注册 feiyu-guard 的两个 hook。返回 disposer（当前没有需要清理的资源，保留形状给宿主 LIFO）。
+ * 注册 feiyu-guard 的三个 hook（message_sending / reply_payload_sending / before_tool_call）。
+ * 返回 disposer（当前没有需要清理的资源，保留形状给宿主 LIFO）。
  * @param {object} api OpenClaw 插件 API（只用 api.on / api.pluginConfig，fake api 即可测）
  * @param {object} [deps] 可注入依赖：{ now, readState, writeState, warn }
  */
@@ -254,6 +256,10 @@ export function registerGuard(api, deps) {
     const group = isGroupTarget({ channelId, sessionKey })
     if (!group) return undefined
 
+    // 群回复总开关关闭时，reply 路径也不能出任何消息（媒体/语音同样取消）；
+    // 不能只靠 channels.qqbot.groupPolicy=disabled（配置写失败时仍需兜底）。
+    if (!policy.replyEnabled) return { cancel: true, reason: GUARD_REASONS.REPLY_DISABLED }
+
     const payload = event?.payload
     const voice = payloadVoiceInfo(payload)
     if (!voice.isVoice) return undefined
@@ -338,6 +344,8 @@ export function registerGuard(api, deps) {
 
       const toolName = typeof event?.toolName === 'string' ? event.toolName : ''
       if (toolName === 'qqbot_platform_api') {
+        // 群回复关闭时连平台 API 的群发送也拦（语音/媒体上传都走这里）
+        if (!policy.replyEnabled) return { block: true, blockReason: GUARD_REASONS.REPLY_DISABLED }
         const groupId = voiceUploadGroupId(event?.params)
         if (!groupId) return undefined
         return await guardVoiceUpload(groupId)

@@ -255,23 +255,26 @@ export function payloadVoiceInfo(payload) {
       ? [singleMediaUrl]
       : []
   const attachments = Array.isArray(src.attachments) ? src.attachments : []
+  const attachmentVoice = attachments.map((attachment) => isAudioAttachment(attachment))
 
   const voiceFlags = mediaUrls.map((_url, index) => {
-    const attachment = attachments[index]
-    if (isRecord(attachment)) return isAudioAttachment(attachment)
+    // 有 attachments 元数据时按音频类型判定；没有元数据才退回 audioAsVoice（audioAsVoice 可伴随图片）
+    if (isRecord(attachments[index])) return attachmentVoice[index]
     return audioAsVoice
   })
-  const isVoice = audioAsVoice || voiceFlags.some(Boolean)
+  // attachments-only（mediaUrls 为空）也是真实出站路径：qqbot deliver-pipeline 会回落到
+  // attachments[].path/url 并按下标推断语音，必须识别，否则语音开关/上限可被绕过。
+  const isVoice = audioAsVoice || voiceFlags.some(Boolean) || attachmentVoice.some(Boolean)
   if (!isVoice) return { isVoice: false, changed: false, payload: src, removedMedia: 0 }
 
-  // audioAsVoice 但没有 media：没有可剥离的媒体，只把标记关掉（调用方再按 text 判定是否取消）
+  // 没有 mediaUrls：只剥 audio attachments（以及 audioAsVoice 标记）
   if (mediaUrls.length === 0) {
-    return {
-      isVoice: true,
-      changed: audioAsVoice,
-      payload: audioAsVoice ? { ...src, audioAsVoice: false } : src,
-      removedMedia: 0
-    }
+    const keptAttachments = attachments.filter((_attachment, index) => !attachmentVoice[index])
+    const attachmentsChanged = keptAttachments.length !== attachments.length
+    const changed = audioAsVoice || attachmentsChanged
+    const stripped = changed ? { ...src, audioAsVoice: false } : src
+    if (changed && Array.isArray(src.attachments)) stripped.attachments = keptAttachments
+    return { isVoice: true, changed, payload: stripped, removedMedia: 0 }
   }
 
   const keptMedia = []
@@ -284,6 +287,11 @@ export function payloadVoiceInfo(payload) {
     }
     keptMedia.push(mediaUrls[index])
     if (index < attachments.length) keptAttachments.push(attachments[index])
+  }
+  // attachments 可能比 mediaUrls 多：多出来的音频附件同样剥掉，非音频保留
+  for (let index = mediaUrls.length; index < attachments.length; index += 1) {
+    if (attachmentVoice[index]) removedMedia += 1
+    else keptAttachments.push(attachments[index])
   }
 
   const stripped = { ...src, audioAsVoice: false }

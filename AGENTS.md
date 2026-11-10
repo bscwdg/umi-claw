@@ -13,7 +13,7 @@
 cd D:\work2026\umi-claw
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 40 套验收（accept×38 + e2e + smoke，766 条断言；node:test 21 条另计）
+npm run accept         # 40 套验收（accept×38 + e2e + smoke，772 条断言；node:test 21 条另计）
 npm run build          # 构建（含 plugin:gen）
 ```
 
@@ -84,11 +84,11 @@ doc/                 # 计划、施工日志、运维手册、调研
 | 项 | 规则 | 现状证据 |
 | --- | --- | --- |
 | 主进程（`electron/**`、`plugins/*/main.ts`） | **不加行尾分号** | `todoManager.ts` 619 行 0 个行尾分号；`kernel/lifecycle.ts` 612 行 0 个 |
-| 主进程引号 | **单引号** | `electron/main` 的 `import … from '…'` **518 处**（含 `claw/` 42 处）/ 双引号 **0**（2026-11-10 实测） |
+| 主进程引号 | **单引号** | `electron/main` 的 `import … from '…'` **524 处**（含 `claw/` 42 处）/ 双引号 **0**（2026-11-11 实测） |
 | 缩进 | **2 空格**；续行用 4 空格对齐 | 全仓无 tab |
 | 换行 | **LF**（`.gitattributes` 已强制 `text=auto eol=lf`，`*.bat`/`*.cmd` 除外） | 抽查 3 个文件 CRLF=0 |
 | 编码 | **UTF-8 无 BOM** | 抽查 3 个文件 BOM=False |
-| 文件头 | 首行 `// <相对路径> —— <一句话职责>`，随后用空注释行写**为什么** | `electron/main` 90/148 个 `.ts` 有头（2026-11-10 实测） |
+| 文件头 | 首行 `// <相对路径> —— <一句话职责>`，随后用空注释行写**为什么** | `electron/main` 92/150 个 `.ts` 有头（2026-11-11 实测） |
 | 注释语言 | **中文**，写「为什么」和「踩过的坑」，不写「这行在赋值」 | 全仓一致 |
 | 类型 | `strict`（由 `@electron-toolkit/tsconfig` 提供）；公共导出显式类型 | 双 typecheck 0 错 |
 
@@ -202,7 +202,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 
 - `plugin.json` 的 `id` **必须等于目录名**（`scripts/gen-plugin-entries.mjs` 强制校验）
 - 入口表由脚本生成，**禁止手改** `kernel/plugins.main.generated.ts` 与 `src/renderer/plugins.renderer.generated.ts`
-- 禁止运行时从磁盘/网络加载可执行模块（`PLAN-4.0 §17.3`）
+- 禁止运行时从磁盘/网络加载可执行模块（`PLAN-4.0 §17.3`）。**例外**：§5.4 的随包 OpenClaw 原生插件由网关 `plugins.load.paths` 加载，不属于 Umi 插件入口表；路径固定随包、不提供第三方安装。
 - 注册物一律返回 disposer，停用由宿主 LIFO 清理；不要在 `deactivate` 里才擦屁股
 
 **现状证据**：`lifecycle.ts` 已实现 LIFO + 激活超时 + 迟到注册拒绝 + 失败隔离；`plugin.accept` **64 项**（P58 锁「ctx.services 使用 ⊆ inject」）。
@@ -219,9 +219,9 @@ export default { routes, nav, slot, setup } as PluginUiModule
 
 硬约束：
 
-- **fail-open 红线**：私聊、非 qqbot 渠道、会话类型判不出、配置版本≠1、状态文件异常 → 一律放行；插件故障不得影响私聊或宿主启动。
+- **fail-open 红线**：私聊、非 qqbot 渠道、会话类型判不出、配置版本≠1 → 一律放行；状态文件读失败按空状态、写失败保留进程内计数（语音上限仍按内存判定），状态异常不得影响私聊或宿主启动。
 - **策略唯一真源**是宿主 `GroupPolicy`（`electron/main/character/groupPolicy.ts`）→ `services/characterGroupConfig.ts` 编译进 `plugins.entries["feiyu-guard"].config`；插件内 `api.pluginConfig` 只读，不得另立配置真源。
-- 新增群策略字段要同步三处：`groupPolicy.ts`（模型/默认值/夹紧）、`characterGroupConfig.ts`（编译）、插件 `policy.mjs`（读取/执行）；manifest `configSchema` 的对象层保持 `additionalProperties: true`，避免扩字段时整份配置校验失败。
+- 新增群策略字段要同步五处：`groupPolicy.ts`（模型/默认值/夹紧）、`types.ts` 的 `GROUP_PATCH_KEYS`（否则 UI 保存的局部补丁不生效）、`src/character/CharacterSettings.vue`（draft 默认值/回填/保存列表）、`characterGroupConfig.ts`（编译进 OpenClaw 配置）、插件 `policy.mjs`（读取/执行）；manifest `configSchema` 的对象层保持 `additionalProperties: true`，避免扩字段时整份配置校验失败。
 - 新 hook 必须先在 `test/guard-plugin.accept.mjs` 有 fake-api 行为断言（零 npm 依赖），并保持 `MUTATION` 可红。
 
 ---
@@ -235,7 +235,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 | 知识库原件 | work：`<dataDir>/plugins/work/knowledge/<id>/`；marketing：`<dataDir>/projects/<id>/`；character：**既有 Obsidian vault 的 `大肥鱼/<类别>/`**（世界书/角色卡/关系/约定，不新增 KB） | `source_path` 存相对 dataDir 的路径（可随 data 目录搬移）；work 旧全局 `<dataDir>/knowledge` 仅历史数据（4.0.2 起新导入不再写） |
 | 应用配置 | `<dataDir>/config/.openclaw/openclaw.json` | **单写入口**：`configManager` + `openClawConfigWriter.runSerializedOpenClawConfigWrite` |
 | 密钥 | `safeStorage` | 按 `plugin:<id>:<key>` 命名空间；永不写日志/配置/导出包 |
-| 群聊策略状态 | `<dataDir>/character/group-guard-state.json` | `feiyu-guard` 按群按天语音计数（原子写）；只由插件读写；损坏/不可写时 fail-open；「删除全部数据」时清理 |
+| 群聊策略状态 | `<dataDir>/character/group-guard-state.json` | `feiyu-guard` 按群按天语音计数（原子写）；只由插件读写；读失败按空状态、写失败保留进程内计数（语音上限仍生效），不阻断私聊/宿主；「删除全部数据」时清理 |
 | 迁移 | `migrations/*.sql` | 幂等、可重入、失败可回滚；迁移前必须 `backup()` |
 
 **现状证据**：`openclaw.json` 的写盘调用集中在 `configManager.ts`（2 处 writeFileSync）+ `openClawConfigWriter.ts`（串行队列），其余文件只读或经它们写。
@@ -349,7 +349,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 40 套（accept×38 + e2e + smoke，766 条断言；node:test 21 条另计）
+# ② 全量验收 40 套（accept×38 + e2e + smoke，772 条断言；node:test 21 条另计）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）

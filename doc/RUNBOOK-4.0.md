@@ -111,7 +111,7 @@ npm run build               # 生成 + 构建（含插件代码）
 npm run typecheck:node      # 主进程
 npm run typecheck:web       # 渲染端（tsc 只管 .ts；.vue 由构建期 vite/vue 编译检查）
 node test/plugin.accept.mjs # 插件内核 + 两个域装箱 + 加固（64 项）
-npm run accept               # 全量验收（40 套：accept×38 + e2e + smoke；断言数 766 为 Recorder 口径：40 个 result JSON 求和，含 db-client 子进程 16 条、不含 config-writer 的 node:test 21 条）
+npm run accept               # 全量验收（40 套：accept×38 + e2e + smoke；断言数 772 为 Recorder 口径：40 个套件 result 求和，另有一份 accept-result.json 汇总，不算第 41 套；不含 config-writer 的 node:test 21 条）
 node test/packaged.smoke.mjs# 打包态静态冒烟
 node test/one-day.e2e.mjs   # 「一天」端到端
 ```
@@ -160,16 +160,29 @@ node scripts/qqbot-voice-send.cjs media/voice.silk --openid <openid> --msg-id <m
 **症状与排查**：
 
 - 群里不回复：先看设置页「允许她在 QQ 群里回复」；关= `channels.qqbot.groupPolicy: "disabled"`。
-  需 @ 才回复？看「群里必须 @ 她才回复」→ `groups["*"].requireMention`。改完需重启网关。
+  需 @ 才回复？看「群里必须 @ 她才回复」→ `groups["*"].requireMention`。**宿主保存设置后即时重写
+  openclaw.json，但 qqbot 群配置生效仍需重启网关**。开启群回复会保留既有 `allowlist`（不会静默放开
+  所有群；只有原本非白名单才写 `open`）。
 - 语音发不出去/超限：`feiyu-guard` 只对群硬控；看 `<dataDir>/character/group-guard-state.json`
-  的当日计数（按群 openid）。语音开关/上限在角色设置「群聊」组；改设置会即时重写配置。
+  的当日计数（按群 openid）。语音开关/上限在角色设置「群聊」组；改设置会即时重写配置（生效仍需重启网关）。
 - 亲密词没过滤：确认「启用」+ 词表；filter 只对群 `message_sending` 文本生效（含 agent 回复），
-  私聊不生效；命中「整条拦截」时群里看不到回复，日志会有 `group-word-blocked` 抑制原因。
+  私聊不生效；命中「整条拦截」时群里看不到回复，投递记录里会有 `group-word-blocked` 抑制原因。
 - 群聊写了记忆：`feiyu-guard` 只拦 `write`/`edit`/`apply_patch`，`exec`/cron/专用工具拦不到；
   确认设置里「群聊不写入私聊日记/长期记忆」为开。
-- 插件是否加载：`data/openclaw/node_modules/openclaw` 自带 CLI 执行
-  `node <dataDir>/openclaw/node_modules/openclaw/dist/index.js plugins inspect feiyu-guard --json`
-  （需与网关相同的环境变量；应用内网关运行时可加 `--runtime` 看 hookNames：
-  `message_sending, reply_payload_sending, before_tool_call`）。插件异常是 fail-open，私聊不受影响。
-- 旧双 agent 残留：升级后启动会删 `agents.entries["feiyu-group"]` 与对应绑定；旧
-  `workspace-feiyu-group/`、`agents/feiyu-group/` 与 guard 计数状态只会在「删除全部数据」时清理。
+- 插件是否加载（**必须补网关同款环境变量**，否则 CLI 读 `~/.openclaw` 会报 Plugin not found）：
+  ```powershell
+  $dataDir = 'D:\work2026\files\claw-desktop\data'
+  $env:HOME = "$dataDir\config"; $env:USERPROFILE = $env:HOME
+  $env:OPENCLAW_CONFIG_DIR = "$dataDir\config\.openclaw"
+  $env:OPENCLAW_DATA_DIR = "$dataDir\data"
+  & "$dataDir\runtime\node-win32-x64\node.exe" `
+    "$dataDir\openclaw\node_modules\openclaw\dist\index.js" `
+    plugins inspect feiyu-guard --json
+  ```
+  应用内网关运行时可加 `--runtime` 看 hookNames（应为 `message_sending, reply_payload_sending,
+  before_tool_call`）；注意本机沙箱下 `--runtime` 可能卡在 OpenClaw loader 的 `plugin-captures` EPERM
+  （环境问题，不是插件代码），卡住时用 metadata `--json` + 应用日志判断。插件异常是 fail-open，私聊不受影响。
+- 旧双 agent 残留：配置可读且 bindings 可读时，升级后启动会删 `agents.entries["feiyu-group"]` 与对应
+  绑定；读不到 bindings 会保留旧条目等下次同步。旧 `workspace-feiyu-group/`、`agents/feiyu-group/`
+  与 guard 计数状态只会在「删除全部数据」时清理；**openclaw.json 里的 guard 条目/groups 配置不会随
+  「删除全部数据」回滚**（配置不属于用户数据）。

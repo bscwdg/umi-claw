@@ -1056,6 +1056,72 @@ await r.check('G9', '宿主 buildGuardConfig 输出形状原样通过 parseGuard
   return '宿主编译器形状 round-trip 一致'
 })
 
+// ── G18：attachments-only 语音也要受群语音策略约束 ──────────────────────────
+await r.check('G18', 'attachments-only 音频：群语音关闭/上限同样拦截（不能只认 mediaUrls/audioAsVoice）', async () => {
+  const off = setup(guardConfig({ policy: { voice: { enabled: false, dailyCap: 2 } } }))
+  const stripped = await sendReplyPayload(
+    off,
+    replyEvent({ text: '在呢', attachments: [{ type: 'audio', path: 'x.silk' }] }),
+    groupCtx
+  )
+  assertEq(stripped.reason, GUARD_REASONS.VOICE_DISABLED, 'attachments-only 语音被识别')
+  assertEq(stripped.payload.text, '在呢', 'text 保留')
+  assertDeepEq(stripped.payload.attachments, [], '音频 attachment 被剥离')
+
+  const store = memoryStore()
+  const on = setup(guardConfig({ policy: { voice: { enabled: true, dailyCap: 1 } } }), store.deps)
+  assertEq(
+    await sendReplyPayload(on, replyEvent({ text: 'a', attachments: [{ type: 'audio' }] }), groupCtx),
+    undefined,
+    '第 1 条 attachments-only 语音放行并计数'
+  )
+  const second = await sendReplyPayload(on, replyEvent({ text: 'b', attachments: [{ mimeType: 'audio/silk' }] }), groupCtx)
+  assertEq(second.reason, GUARD_REASONS.VOICE_DAILY_CAP, '第 2 条按日上限拦')
+  assertEq(
+    await sendReplyPayload(on, replyEvent({ text: 'c', attachments: [{ type: 'image' }] }), groupCtx),
+    undefined,
+    '非音频 attachments-only 放行'
+  )
+  return 'attachments-only 语音覆盖 + 图片负向'
+})
+
+// ── G19：replyEnabled=false 覆盖 reply_payload_sending ─────────────────────
+await r.check('G19', '群回复关闭：reply_payload_sending 整条 cancel（文字/语音都取消），私聊放行', async () => {
+  const fake = setup(guardConfig({ policy: { replyEnabled: false } }))
+  assertDeepEq(
+    await sendReplyPayload(fake, replyEvent({ text: '你好' }), groupCtx),
+    { cancel: true, reason: GUARD_REASONS.REPLY_DISABLED },
+    '文字 payload 取消'
+  )
+  assertDeepEq(
+    await sendReplyPayload(fake, replyEvent(voicePayload()), groupCtx),
+    { cancel: true, reason: GUARD_REASONS.REPLY_DISABLED },
+    '语音 payload 取消'
+  )
+  assertEq(
+    await sendReplyPayload(fake, replyEvent({ text: '你好' }, { sessionKey: DM_SESSION }), dmCtx),
+    undefined,
+    '私聊 payload 不取消'
+  )
+  return 'reply 路径受 replyEnabled 硬控，私聊不受影响'
+})
+
+// ── G20：replyEnabled=false 覆盖 before_tool_call 群发送 ───────────────────
+await r.check('G20', '群回复关闭：qqbot_platform_api 群发送被 block，私聊工具调用放行', async () => {
+  const fake = setup(guardConfig({ policy: { replyEnabled: false } }))
+  assertDeepEq(
+    await callTool(fake, { toolName: 'qqbot_platform_api', params: voiceUploadParams(GROUP_ID) }, groupCtx),
+    { block: true, blockReason: GUARD_REASONS.REPLY_DISABLED },
+    '群平台 API 发送被 block'
+  )
+  assertEq(
+    await callTool(fake, { toolName: 'qqbot_platform_api', params: voiceUploadParams(GROUP_ID) }, dmCtx),
+    undefined,
+    '私聊工具调用放行'
+  )
+  return 'tool 路径受 replyEnabled 硬控'
+})
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-guard-plugin.json'), result)
