@@ -19,6 +19,7 @@ import type { CharacterWiringDeps } from '../character/wiring'
 import { filterCharacterHits } from '../character/searchContext'
 import { buildKnowledgeHealth, countCharacterNotes } from '../character/knowledgeHealth'
 import { scrubForLog } from '../character/safety'
+import { applyCharacterGroupPolicy } from './characterGroupConfig'
 
 /** 宿主侧能提供的一切（都是现成对象，不是新造） */
 export interface CharacterHostSources {
@@ -73,6 +74,24 @@ export function buildCharacterDeps(src: CharacterHostSources): CharacterWiringDe
     personaSourceDir: src.isPackaged
       ? join(src.resourcesPath, 'resources', 'character', 'persona')
       : join(src.appPath, 'resources', 'character', 'persona'),
+    // 群聊策略同步：把 settings.group 编译成 openclaw.json（qqbot 群配置 + feiyu-guard 插件），
+    // 单 agent 路由不变。失败只记日志，不阻塞启动/设置保存。
+    syncGroupPolicy: async (settings) => {
+      try {
+        const result = await applyCharacterGroupPolicy({
+          dataDir,
+          pluginsRoot: join(
+            src.isPackaged ? src.resourcesPath : src.appPath,
+            'resources',
+            'openclaw-plugins'
+          ),
+          group: settings.group
+        })
+        if (!result.ok) src.logger(`[character] 群聊策略同步失败: ${result.error}`)
+      } catch (error) {
+        src.logger(`[character] 群聊策略同步异常: ${(error as Error)?.message ?? String(error)}`)
+      }
+    },
     configPath: openClawPaths.openClawConfig(dataDir),
     cli: {
       nodePath,

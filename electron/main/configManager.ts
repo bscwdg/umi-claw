@@ -1404,9 +1404,20 @@ private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string; kind
           qqbot.appId = appId
           qqbot.clientSecret = clientSecret
         }
-        if (qqCfg.groupPolicy) qqbot.groupPolicy = qqCfg.groupPolicy
-        const requireMention = qqCfg.requireMention ?? qqCfg.defaultRequireMention
-        if (requireMention !== undefined) qqbot.defaultRequireMention = Boolean(requireMention)
+        // 群聊策略在 4.5 起由角色页 GroupPolicy 单一管理（写 channels.qqbot.groupPolicy +
+        // groups["*"]，见 services/characterGroupConfig.ts）。一旦存在角色管理的 groups["*"]，
+        // 这里就不能再用 app.json 里的旧表单值覆盖，否则改「群里是否回复」会被下一次配置
+        // 保存悄悄改回去（双真源）。旧用户尚未写过群策略时保持旧行为。
+        const qqbotGroups = existingQQ?.groups
+        const qqbotManagedByCharacter =
+          !!qqbotGroups &&
+          typeof qqbotGroups === 'object' &&
+          !!(qqbotGroups as Record<string, unknown>)['*']
+        if (!qqbotManagedByCharacter) {
+          if (qqCfg.groupPolicy) qqbot.groupPolicy = qqCfg.groupPolicy
+          const requireMention = qqCfg.requireMention ?? qqCfg.defaultRequireMention
+          if (requireMention !== undefined) qqbot.defaultRequireMention = Boolean(requireMention)
+        }
         // OpenClaw 2026.10.9 的 qqbot channelHostConfig 要求 allowFrom 非空且不能是 "*"；
         // 缺省用官方最小配置的 openclaw:approval-disabled（不放开陌生人私聊）。
         if (!Array.isArray(qqbot.allowFrom) || qqbot.allowFrom.length === 0) {

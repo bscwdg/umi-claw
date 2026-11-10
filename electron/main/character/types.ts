@@ -6,6 +6,12 @@
 // - 不新增知识库：世界书/热梗/日记全部走既有 Obsidian（MCP 检索）；
 // - 默认关闭（D8）：enabled=false 时整段不启动，不影响宿主。
 
+import {
+  createDefaultGroupSettings,
+  normalizeGroupSettings,
+  type GroupSettings
+} from './groupPolicy'
+
 /** IPC 通道（宿主 `character:*` 命名空间，与插件租约互不冲突） */
 export const CHARACTER_CHANNELS = {
   statusGet: 'character:status:get',
@@ -148,12 +154,11 @@ export interface CharacterSettings {
     dailyCap: number
     sttEnabled: boolean
   }
-  /** 群聊策略：群聊回复/语音开关与语音条上限（外部群聊由 OpenClaw agent 执行） */
-  group: {
-    replyEnabled: boolean
-    voiceEnabled: boolean
-    dailyVoiceCap: number
-  }
+  /**
+   * 群聊策略：QQ 群聊行为（单 agent 下由 OpenClaw 群配置 + feiyu-guard 插件执行）。
+   * 形状/默认值/校验唯一来源是 groupPolicy.ts 的 GroupSettings v1。
+   */
+  group: GroupSettings
   memory: { autoEnabled: boolean; confirmImportant: boolean }
   pet: { visible: boolean; size: 'small' | 'medium' | 'large'; clickThrough: boolean }
   safety: { aiDisclosure: boolean; crisisRedirect: boolean; ageConfirmed: boolean }
@@ -290,7 +295,7 @@ export const DEFAULT_CHARACTER_SETTINGS: CharacterSettings = {
     silentUntil: 0
   },
   voice: { enabled: true, requestAllowed: true, dailyCap: 10, sttEnabled: true },
-  group: { replyEnabled: true, voiceEnabled: false, dailyVoiceCap: 2 },
+  group: createDefaultGroupSettings(),
   memory: { autoEnabled: true, confirmImportant: true },
   pet: { visible: true, size: 'medium', clickThrough: false },
   safety: { aiDisclosure: true, crisisRedirect: true, ageConfirmed: false },
@@ -310,6 +315,17 @@ export function createDefaultCharacterState(now: number): CharacterState {
     updatedAt: now
   }
 }
+
+/** settings.group 可被补丁覆盖的顶层键（新增 GroupSettings 字段时要同步到这里，否则 UI 保存不生效） */
+const GROUP_PATCH_KEYS = [
+  'replyEnabled',
+  'requireMention',
+  'voiceEnabled',
+  'dailyVoiceCap',
+  'memoryIsolated',
+  'historyLimit',
+  'extraPrompt'
+] as const
 
 /** 设置白名单合并：只允许已知字段，数组整体替换，数值夹到合理范围 */
 export function mergeCharacterSettings(
@@ -370,11 +386,21 @@ export function mergeCharacterSettings(
 
   const group = src.group as Record<string, unknown> | undefined
   if (group && typeof group === 'object') {
-    if (typeof group.replyEnabled === 'boolean') out.group.replyEnabled = group.replyEnabled
-    if (typeof group.voiceEnabled === 'boolean') out.group.voiceEnabled = group.voiceEnabled
-    if (typeof group.dailyVoiceCap === 'number') {
-      out.group.dailyVoiceCap = clamp(group.dailyVoiceCap, 0, 20)
+    // 群聊策略走 groupPolicy 的唯一归一入口：旧数据（4.4 只有 reply/voice/cap）补默认，
+    // 新字段夹紧/去重。这里只覆盖补丁里出现的键，words 逐字段合并（UI 会发整份，兼容局部补丁）。
+    const current = out.group as unknown as Record<string, unknown>
+    const merged: Record<string, unknown> = { ...current }
+    for (const key of GROUP_PATCH_KEYS) {
+      if (group[key] !== undefined) merged[key] = group[key]
     }
+    const words = group.words
+    if (words && typeof words === 'object' && !Array.isArray(words)) {
+      merged.words = {
+        ...(current.words as Record<string, unknown>),
+        ...(words as Record<string, unknown>)
+      }
+    }
+    out.group = normalizeGroupSettings(merged)
   }
 
   const memory = src.memory as Record<string, unknown> | undefined

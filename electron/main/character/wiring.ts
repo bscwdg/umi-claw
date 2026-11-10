@@ -18,7 +18,7 @@ import { createEmptyContentDeck, parseContentDeck } from './contentEngine'
 import { deliverVoice, type QqBotCreds } from './qqVoice'
 import { sendQqProactiveText, parseQqC2cOpenid } from './qqProactiveText'
 import { readRecentChat } from './recentChat'
-import { ensureGroupAgent, writeGroupAgentFiles } from './groupAgent'
+import { legacyGroupCleanupPaths, removePathsCollectingFailures } from './legacyGroupCleanup'
 import { isVoiceRequest } from './voicePolicy'
 import { formatSearchContext, looksLikeRecallQuery, withTimeout } from './searchContext'
 import { buildMemoryContext, recallDates } from './memoryRecall'
@@ -49,7 +49,8 @@ import {
   clampPetPosition,
   FISH_KEYS,
   type CharacterEvent,
-  type CharacterKv
+  type CharacterKv,
+  type CharacterSettings
 } from './types'
 
 /** 点击穿透的逃生热键（穿透开启时注册；关掉即注销） */
@@ -120,6 +121,12 @@ export interface CharacterWiringDeps {
   qqReady?: () => boolean
   ttsReady?: () => boolean
   memorySearchReady?: () => boolean
+  /**
+   * 群聊策略同步（4.5）：把 settings.group 编译成 OpenClaw 配置（qqbot groups + guard 插件）。
+   * 由宿主在 index.ts/services.characterHost 注入（写盘是宿主能力，角色模块不自写 openclaw.json）。
+   * 缺省则跳过（纯测试装配/降级场景），失败只记日志，不阻塞启动与设置保存。
+   */
+  syncGroupPolicy?: (settings: CharacterSettings) => Promise<void>
   logger?: (message: string) => void
   onEvent?: (event: CharacterEvent) => void
   now?: () => number
@@ -264,12 +271,37 @@ async function registerCharacterInternal(
     })
     // 删除全量时再摘 agent 条目（bootstrap 接线在下方，先留可调用位）
     let removeAgentEntryFn: (() => Promise<unknown>) | null = null
+    // 群聊策略同步（4.5）：settings 变更（onEvent）与 bootstrap 各触发一次；串行执行，
+    // 避免两次配置写并发（openclaw 写盘队列与 CLI config patch 不共享同一把锁）。
+    // 写盘实现由宿主注入：角色模块不直接碰 openclaw.json（分层约定 / PLAN-4.0 §17.2）。
+    let groupPolicySyncChain: Promise<void> = Promise.resolve()
+    // bootstrap 在途时先把 settings 事件挂起：bootstrap 收尾会用最新 settings 同步一次，
+    // 否则「启用角色」会在 runBootstrap 的 CLI config patch 同时再写一次 openclaw.json（4.4 踩过撞锁）。
+    let bootstrapping = false
+    let groupSyncAfterBootstrap = false
+    const requestGroupPolicySync = (settings: CharacterSettings): Promise<void> => {
+      const sync = deps.syncGroupPolicy
+      if (!sync) return groupPolicySyncChain
+      groupPolicySyncChain = groupPolicySyncChain.then(async () => {
+        try {
+          await sync(settings)
+        } catch (error) {
+          logger(`[character] 群聊策略同步失败: ${(error as Error)?.message ?? String(error)}`)
+        }
+      })
+      return groupPolicySyncChain
+    }
     const manager = new CharacterManager({
       store,
       now: deps.now,
       logger,
       onEvent: (event) => {
-        if (event.type === 'settings') void syncPet()
+        if (event.type === 'settings') {
+          // 保存/重载/重置设置都走事件，统一在这里同步群聊策略（与 persona 同步同一时机）
+          if (bootstrapping) groupSyncAfterBootstrap = true
+          else void requestGroupPolicySync(event.payload)
+          void syncPet()
+        }
         if (event.type === 'reset') void chatService?.reloadGeneration().catch(() => undefined)
         // 桌宠窗口也要收到状态/设置事件（尺寸/表情/可见性同步）
         if (event.type === 'emotion') {
@@ -449,6 +481,12 @@ async function registerCharacterInternal(
         }
         removeSafe(join(workspaceDir, 'fish', 'STATE.md'))
         removeSafe(join(workspaceDir, 'fish', 'LIFE.md'))
+        // 4.5：4.4 双 agent 遗留（workspace-feiyu-group / agents/feiyu-group）与 feiyu-guard
+        // 群语音计数状态只在「删除全部数据」时清（helper 内按 scope 判定；不存在视为已清理）。
+        // 失败收集进 failedRemovals → manager 转 warning，不阻断开头的删除主流程。
+        failedRemovals.push(
+          ...removePathsCollectingFailures(legacyGroupCleanupPaths(deps.dataDir, scope))
+        )
         if (scope === 'all') {
           for (const file of ['SOUL.md', 'IDENTITY.md', 'AGENTS.md', 'USER.md']) {
             removeSafe(join(workspaceDir, file))
@@ -816,7 +854,8 @@ async function registerCharacterInternal(
         : {})
     })
 
-    // 设置/互动后 ≤300ms 合并重写人格文件（STATE.md 即时；用户改过的 SOUL/AGENTS 保留）
+    // 设置/互动后 ≤300ms 合并重写人格文件（STATE.md 即时；用户改过的 SOUL/AGENTS 保留）。
+    // 4.5 起群聊不再写独立 workspace：群规则随人格文件的受管段 + OpenClaw 群配置下发。
     manager.setPersonaSyncRunner(async () => {
       const templates = loadPersonaTemplates(deps.personaSourceDir)
       const settings = await manager.getSettings()
@@ -826,46 +865,41 @@ async function registerCharacterInternal(
         templates
       })
       writeManagedFiles(workspaceDir, files)
-      // 群聊独立 workspace 的 AGENTS 也随群聊开关更新
-      writeGroupAgentFiles(deps.dataDir, settings)
     })
-    // 启动时自动建群聊 agent + qqbot peer=group:* 通配绑定（用户不用手工加群 ID）。
-    // 必须在 bootstrap 之后跑：两者都走 config patch，并发会撞锁。
-    const syncGroupAgent = async (): Promise<void> => {
-      try {
-        await ensureGroupAgent({
-          runner,
-          tmpDir,
-          dataDir: deps.dataDir,
-          settings: await manager.getSettings(),
-          logger
-        })
-      } catch (error) {
-        logger(`[character] 群聊 agent 初始化失败: ${(error as Error)?.message ?? String(error)}`)
-      }
-    }
 
     // 引导接线：官方 CLI 写 agent 条目；人格文件走受管写入
     removeAgentEntryFn = () => removeAgentEntry({ runner, tmpDir, agentId: CHARACTER_AGENT_ID })
     manager.setBootstrapRunner(async () => {
-      const report = await runBootstrap({
-        workspaceDir,
-        personaSourceDir: deps.personaSourceDir,
-        getSettings: () => manager.getSettings(),
-        getState: () => manager.getState(),
-        obsidianVaultPath: deps.obsidianVaultPath?.(),
-        ensureAgentEntry: (ws) =>
-          applyAgentPatch({ runner, tmpDir, agentId: CHARACTER_AGENT_ID, workspace: ws }),
-        agentConfigured: isAgentConfigured,
-        gatewayReady: deps.gatewayReady,
-        qqReady: deps.qqReady,
-        ttsReady: deps.ttsReady,
-        memorySearchReady: deps.memorySearchReady,
-        logger,
-        now: deps.now
-      })
-      await syncGroupAgent()
-      return report
+      // 引导期间挂起 settings 触发的群策略同步（避免与下面 ensureAgentEntry 的 CLI patch 并发写配置）
+      bootstrapping = true
+      try {
+        const report = await runBootstrap({
+          workspaceDir,
+          personaSourceDir: deps.personaSourceDir,
+          getSettings: () => manager.getSettings(),
+          getState: () => manager.getState(),
+          obsidianVaultPath: deps.obsidianVaultPath?.(),
+          ensureAgentEntry: (ws) =>
+            applyAgentPatch({ runner, tmpDir, agentId: CHARACTER_AGENT_ID, workspace: ws }),
+          agentConfigured: isAgentConfigured,
+          gatewayReady: deps.gatewayReady,
+          qqReady: deps.qqReady,
+          ttsReady: deps.ttsReady,
+          memorySearchReady: deps.memorySearchReady,
+          logger,
+          now: deps.now
+        })
+        // 引导后同步一次群聊策略（单 agent + 群配置；写盘失败只记日志，由注入实现兜底）
+        await requestGroupPolicySync(await manager.getSettings())
+        return report
+      } finally {
+        bootstrapping = false
+        // 引导期间有设置变更：用最新值补一次同步（否则用户"保存了但没生效"）
+        if (groupSyncAfterBootstrap) {
+          groupSyncAfterBootstrap = false
+          await requestGroupPolicySync(await manager.getSettings())
+        }
+      }
     })
 
     let proactiveTimer: NodeJS.Timeout | null = null

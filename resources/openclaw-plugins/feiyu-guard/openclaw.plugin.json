@@ -1,0 +1,92 @@
+{
+  "id": "feiyu-guard",
+  "name": "Feiyu Group Guard",
+  "description": "QQ 群聊硬策略（群回复开关、亲密词过滤、群语音条开关/日上限、群记忆隔离）。只在 QQ 群会话生效；私聊、未知会话、状态文件异常一律放行。",
+  "version": "1.0.0",
+  "categories": ["security"],
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "version": {
+        "type": "number",
+        "description": "配置版本，当前只支持 1；其它版本不执行任何策略（fail-open）。"
+      },
+      "statePath": {
+        "type": "string",
+        "description": "群语音按天计数的状态文件路径（JSON，原子写）。空串时计数只留在进程内。"
+      },
+      "timezone": {
+        "type": "string",
+        "description": "统计「每天」用的 IANA 时区，非法值回落 UTC。"
+      },
+      "policy": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "replyEnabled": {
+            "type": "boolean",
+            "description": "群里是否回复；false 时取消所有 QQ 群出站消息。"
+          },
+          "requireMention": {
+            "type": "boolean",
+            "description": "是否必须 @ 才回复（由 qqbot 渠道 groups 配置执行；guard 只透传）。"
+          },
+          "voice": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "群里是否允许发语音条；false 时拦截所有群语音上传。"
+              },
+              "dailyCap": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 20,
+                "description": "每群每天语音条数上限；0 表示当天一条都不允许。"
+              }
+            }
+          },
+          "words": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "是否启用亲密词过滤。"
+              },
+              "action": {
+                "type": "string",
+                "enum": ["replace", "block"],
+                "description": "replace=改写成 replaceWith；block=取消整条群回复。"
+              },
+              "replaceWith": {
+                "type": "string",
+                "description": "replace 时的替换词，默认「你」。"
+              },
+              "list": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "亲密词表（trim/去重/限长由插件再校验）。"
+              }
+            }
+          },
+          "memoryIsolated": {
+            "type": "boolean",
+            "description": "群聊不写记忆：true 时拦截群会话里的 write/edit/apply_patch 工具调用。"
+          },
+          "historyLimit": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 50,
+            "description": "群历史条数（由 qqbot 渠道 groups 配置执行；guard 只透传）。"
+          }
+        }
+      }
+    }
+  }
+}

@@ -26,6 +26,10 @@ const ACCEPT = [
   ['terminal-sessions', 'test/terminal-sessions.accept.mjs'],
   // P45：宿主 IPC 行为级验收（env / claw / config / terminal 四组通道，fake registrar + 注入 deps）
   ['host-ipc', 'test/host-ipc.accept.mjs'],
+  // 4.5：群聊策略（GroupSettings 模型/迁移/编译成 OpenClaw 配置）+ 随包 feiyu-guard hook 插件
+  ['group-policy', 'test/group-policy.accept.mjs'],
+  ['group-config', 'test/group-config.accept.mjs'],
+  ['guard-plugin', 'test/guard-plugin.accept.mjs'],
   ['config-writer', 'test/openclaw-config-writer.accept.mjs'],
   ['work', 'test/work.accept.mjs'],
   ['record', 'test/record.accept.mjs'],

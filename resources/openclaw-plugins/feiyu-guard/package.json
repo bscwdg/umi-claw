@@ -1,0 +1,20 @@
+{
+  "name": "feiyu-guard",
+  "version": "1.0.0",
+  "description": "Umi Claw 随包 OpenClaw hook 插件：只对 QQ 群聊硬执行群策略（回复开关/亲密词/群语音/记忆隔离），私聊与未知会话一律放行。",
+  "type": "module",
+  "peerDependencies": {
+    "openclaw": ">=2026.11.1"
+  },
+  "openclaw": {
+    "extensions": ["./index.mjs"],
+    "compat": {
+      "pluginApi": ">=2026.11.1",
+      "minGatewayVersion": "2026.11.1"
+    },
+    "build": {
+      "openclawVersion": "2026.11.1",
+      "pluginSdkVersion": "2026.11.1"
+    }
+  }
+}

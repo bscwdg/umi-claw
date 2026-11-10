@@ -13,7 +13,7 @@
 cd D:\work2026\umi-claw
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 37 套验收（accept×35 + e2e + smoke，709 条断言；node:test 21 条另计）
+npm run accept         # 40 套验收（accept×38 + e2e + smoke，766 条断言；node:test 21 条另计）
 npm run build          # 构建（含 plugin:gen）
 ```
 
@@ -66,6 +66,8 @@ src/                 # 渲染端（Vue3 + Pinia + vue-router）
 └── composables/     # useToast
 
 resources/           # 打包为 extraResources（只放数据与脚本，不放业务源码）
+├── openclaw-plugins/ # 随包 OpenClaw 原生插件（feiyu-guard：QQ 群聊硬策略，plugins.load.paths 加载）
+└── ...              # character 内容包 / database db-worker / pdfjs 等数据与脚本
 test/                # accept 验收脚本（零 npm 依赖）
 scripts/             # 构建/验收脚本
 doc/                 # 计划、施工日志、运维手册、调研
@@ -109,7 +111,7 @@ doc/                 # 计划、施工日志、运维手册、调研
 
 **规则**：`plugins/<id>/domain/**/*Manager.ts` 与 `contextEngine.ts` **禁止** `import ... from 'electron'`（WP3 起域代码住在 `plugins/<id>/domain/`；宿主 `electron/main/{work,marketing}` 已删除）。
 
-**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 37 套验收能在纯 Node 里跑真源码的前提。
+**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 40 套验收能在纯 Node 里跑真源码的前提。
 
 **写法**：工厂函数 + 显式 options，不 `new`、不单例、不从全局推。
 
@@ -211,6 +213,17 @@ export default { routes, nav, slot, setup } as PluginUiModule
 
 **结论**：保留为宿主模块 `electron/main/character/`，但依赖仍走契约注入（`doc/PLAN-4.1-DEBT.md` C4.3），不得在 `index.ts` 里堆裸函数。**不要把它"顺手装箱"——那会破掉 §4.2 这条边界。**
 
+### 5.4 随包 OpenClaw 原生 hook 插件（feiyu-guard）
+
+`resources/openclaw-plugins/feiyu-guard/` 是随安装包发布的 OpenClaw 原生插件（`plugins.load.paths` 加载，不走 npm 安装），只对 **QQ 群会话**硬执行群聊策略：`message_sending`（群回复取消 / 亲密词替换或拦截）、`reply_payload_sending`（渠道出站语音）、`before_tool_call`（群语音上传 `qqbot_platform_api` 按群按天限额、群会话 `write/edit/apply_patch` 记忆隔离）。
+
+硬约束：
+
+- **fail-open 红线**：私聊、非 qqbot 渠道、会话类型判不出、配置版本≠1、状态文件异常 → 一律放行；插件故障不得影响私聊或宿主启动。
+- **策略唯一真源**是宿主 `GroupPolicy`（`electron/main/character/groupPolicy.ts`）→ `services/characterGroupConfig.ts` 编译进 `plugins.entries["feiyu-guard"].config`；插件内 `api.pluginConfig` 只读，不得另立配置真源。
+- 新增群策略字段要同步三处：`groupPolicy.ts`（模型/默认值/夹紧）、`characterGroupConfig.ts`（编译）、插件 `policy.mjs`（读取/执行）；manifest `configSchema` 的对象层保持 `additionalProperties: true`，避免扩字段时整份配置校验失败。
+- 新 hook 必须先在 `test/guard-plugin.accept.mjs` 有 fake-api 行为断言（零 npm 依赖），并保持 `MUTATION` 可红。
+
 ---
 
 ## 6. 数据与配置
@@ -222,6 +235,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 | 知识库原件 | work：`<dataDir>/plugins/work/knowledge/<id>/`；marketing：`<dataDir>/projects/<id>/`；character：**既有 Obsidian vault 的 `大肥鱼/<类别>/`**（世界书/角色卡/关系/约定，不新增 KB） | `source_path` 存相对 dataDir 的路径（可随 data 目录搬移）；work 旧全局 `<dataDir>/knowledge` 仅历史数据（4.0.2 起新导入不再写） |
 | 应用配置 | `<dataDir>/config/.openclaw/openclaw.json` | **单写入口**：`configManager` + `openClawConfigWriter.runSerializedOpenClawConfigWrite` |
 | 密钥 | `safeStorage` | 按 `plugin:<id>:<key>` 命名空间；永不写日志/配置/导出包 |
+| 群聊策略状态 | `<dataDir>/character/group-guard-state.json` | `feiyu-guard` 按群按天语音计数（原子写）；只由插件读写；损坏/不可写时 fail-open；「删除全部数据」时清理 |
 | 迁移 | `migrations/*.sql` | 幂等、可重入、失败可回滚；迁移前必须 `backup()` |
 
 **现状证据**：`openclaw.json` 的写盘调用集中在 `configManager.ts`（2 处 writeFileSync）+ `openClawConfigWriter.ts`（串行队列），其余文件只读或经它们写。
@@ -242,7 +256,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 - 验收脚本**零 npm 依赖**，只用 `node:` 内置 + `test/_lib.mjs`
 - 断言打**真源码**：`bundleEntry('electron/main/work/todoManager.ts', 'todo-todo.mjs')` 后 `import()`，不 mock 被测逻辑
 
-**现状证据**：36 个 `.accept.mjs`、run-all `ACCEPT` 35 项；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。
+**现状证据**：39 个 `.accept.mjs`、run-all `ACCEPT` 38 项；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。
 
 ### 7.2 `_lib.mjs` 提供的工具
 
@@ -335,7 +349,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 37 套（accept×35 + e2e + smoke，709 条断言；node:test 21 条另计）
+# ② 全量验收 40 套（accept×38 + e2e + smoke，766 条断言；node:test 21 条另计）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）

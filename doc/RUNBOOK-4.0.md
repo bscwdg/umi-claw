@@ -111,7 +111,7 @@ npm run build               # 生成 + 构建（含插件代码）
 npm run typecheck:node      # 主进程
 npm run typecheck:web       # 渲染端（tsc 只管 .ts；.vue 由构建期 vite/vue 编译检查）
 node test/plugin.accept.mjs # 插件内核 + 两个域装箱 + 加固（64 项）
-npm run accept               # 全量验收（37 套：accept×35 + e2e + smoke；断言数 709 为 Recorder 口径：37 个 accept-result JSON 求和，含 db-client 子进程 16 条、不含 config-writer 的 node:test 21 条）
+npm run accept               # 全量验收（40 套：accept×38 + e2e + smoke；断言数 766 为 Recorder 口径：40 个 result JSON 求和，含 db-client 子进程 16 条、不含 config-writer 的 node:test 21 条）
 node test/packaged.smoke.mjs# 打包态静态冒烟
 node test/one-day.e2e.mjs   # 「一天」端到端
 ```
@@ -150,3 +150,26 @@ node scripts/qqbot-voice-send.cjs media/voice.silk --openid <openid> --msg-id <m
   换机器用 `CLAW_DATA_DIR` 指定 data 目录。
 - 新电脑先跑 `node scripts/qqbot-voice-send.cjs <silk> --openid <openid> --dry-run` 自检，
   不会发消息。
+
+## 10. QQ 群聊策略与 feiyu-guard 排障
+
+群聊走**单 agent**：qqbot 私聊/群聊都路由到 `feiyu`；群策略由宿主写入
+`channels.qqbot.groups["*"]` + 随包插件 `resources/openclaw-plugins/feiyu-guard`
+（`plugins.load.paths` 加载、`plugins.entries["feiyu-guard"].config` 配置）。
+
+**症状与排查**：
+
+- 群里不回复：先看设置页「允许她在 QQ 群里回复」；关= `channels.qqbot.groupPolicy: "disabled"`。
+  需 @ 才回复？看「群里必须 @ 她才回复」→ `groups["*"].requireMention`。改完需重启网关。
+- 语音发不出去/超限：`feiyu-guard` 只对群硬控；看 `<dataDir>/character/group-guard-state.json`
+  的当日计数（按群 openid）。语音开关/上限在角色设置「群聊」组；改设置会即时重写配置。
+- 亲密词没过滤：确认「启用」+ 词表；filter 只对群 `message_sending` 文本生效（含 agent 回复），
+  私聊不生效；命中「整条拦截」时群里看不到回复，日志会有 `group-word-blocked` 抑制原因。
+- 群聊写了记忆：`feiyu-guard` 只拦 `write`/`edit`/`apply_patch`，`exec`/cron/专用工具拦不到；
+  确认设置里「群聊不写入私聊日记/长期记忆」为开。
+- 插件是否加载：`data/openclaw/node_modules/openclaw` 自带 CLI 执行
+  `node <dataDir>/openclaw/node_modules/openclaw/dist/index.js plugins inspect feiyu-guard --json`
+  （需与网关相同的环境变量；应用内网关运行时可加 `--runtime` 看 hookNames：
+  `message_sending, reply_payload_sending, before_tool_call`）。插件异常是 fail-open，私聊不受影响。
+- 旧双 agent 残留：升级后启动会删 `agents.entries["feiyu-group"]` 与对应绑定；旧
+  `workspace-feiyu-group/`、`agents/feiyu-group/` 与 guard 计数状态只会在「删除全部数据」时清理。

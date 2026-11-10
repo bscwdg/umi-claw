@@ -117,14 +117,56 @@
           <span>允许她在 QQ 群里回复</span>
         </label>
         <label class="check-row">
+          <input v-model="draft.group.requireMention" type="checkbox" />
+          <span>群里必须 @ 她才回复（关掉=她可自主接话）</span>
+        </label>
+        <label class="check-row">
           <input v-model="draft.group.voiceEnabled" type="checkbox" />
           <span>允许群聊语音（默认关；只放开私聊更安全）</span>
         </label>
         <div class="row">
-          <label class="lab">群聊每天语音条上限</label>
+          <label class="lab">每个群每天语音上限</label>
           <input v-model.number="draft.group.dailyVoiceCap" type="number" min="0" max="20" />
+          <label class="lab">群历史缓存条数</label>
+          <input v-model.number="draft.group.historyLimit" type="number" min="0" max="50" />
         </div>
-        <p class="hint">群聊记忆不写入私聊日记；群聊称呼只用群昵称/「你」，不叫宝宝。</p>
+        <label class="check-row">
+          <input v-model="draft.group.memoryIsolated" type="checkbox" />
+          <span>群聊不写入私聊日记/长期记忆（群聊记忆隔离）</span>
+        </label>
+        <div class="row">
+          <label class="lab">亲密词过滤</label>
+          <select v-model="draft.group.words.action" :disabled="!draft.group.words.enabled">
+            <option value="replace">替换</option>
+            <option value="block">整条拦截</option>
+          </select>
+          <input
+            v-if="draft.group.words.action === 'replace'"
+            v-model="draft.group.words.replaceWith"
+            class="short"
+            :disabled="!draft.group.words.enabled"
+            placeholder="替换成"
+          />
+          <label class="check-row">
+            <input v-model="draft.group.words.enabled" type="checkbox" />
+            <span>启用</span>
+          </label>
+        </div>
+        <div class="row column">
+          <label class="lab">亲密词列表（逗号/换行分隔，只在群聊生效）</label>
+          <textarea
+            v-model="wordsText"
+            class="words"
+            :disabled="!draft.group.words.enabled"
+            rows="3"
+            placeholder="宝宝，宝贝，亲爱的，老公，老婆，主人"
+          />
+        </div>
+        <div class="row column">
+          <label class="lab">额外群聊提示词（可选，≤1000 字）</label>
+          <textarea v-model="draft.group.extraPrompt" rows="3" maxlength="1000" />
+        </div>
+        <p class="hint">群聊称呼只用群昵称/「你」；过滤、语音上限、记忆隔离只对群聊生效，私聊不受影响。</p>
       </div>
 
       <div class="group">
@@ -226,7 +268,16 @@ interface DraftSettings {
     channel: 'external' | 'app'
   }
   voice: { enabled: boolean; requestAllowed: boolean; dailyCap: number; sttEnabled: boolean }
-  group: { replyEnabled: boolean; voiceEnabled: boolean; dailyVoiceCap: number }
+  group: {
+    replyEnabled: boolean
+    requireMention: boolean
+    voiceEnabled: boolean
+    dailyVoiceCap: number
+    words: { enabled: boolean; action: 'replace' | 'block'; replaceWith: string; list: string[] }
+    memoryIsolated: boolean
+    historyLimit: number
+    extraPrompt: string
+  }
   memory: { autoEnabled: boolean; confirmImportant: boolean }
   pet: { visible: boolean; size: 'small' | 'medium' | 'large'; clickThrough: boolean }
   relationship: { mode: 'companion' | 'sister' | 'lover'; userName: string; address: string }
@@ -255,7 +306,21 @@ function emptyDraft(): DraftSettings {
       channel: 'external'
     },
     voice: { enabled: true, requestAllowed: true, dailyCap: 10, sttEnabled: true },
-    group: { replyEnabled: true, voiceEnabled: false, dailyVoiceCap: 2 },
+    group: {
+      replyEnabled: true,
+      requireMention: true,
+      voiceEnabled: false,
+      dailyVoiceCap: 2,
+      words: {
+        enabled: true,
+        action: 'replace',
+        replaceWith: '你',
+        list: ['宝宝', '宝贝', '亲爱的', '老公', '老婆', '主人']
+      },
+      memoryIsolated: true,
+      historyLimit: 20,
+      extraPrompt: ''
+    },
     memory: { autoEnabled: true, confirmImportant: true },
     pet: { visible: true, size: 'medium', clickThrough: false },
     relationship: { mode: 'companion', userName: '', address: '你' }
@@ -264,9 +329,47 @@ function emptyDraft(): DraftSettings {
 
 const draft = reactive<DraftSettings>(emptyDraft())
 const tabooText = ref('')
+/** 亲密词用文本框编辑（逗号/换行分隔），保存时拆成数组 */
+const wordsText = ref('')
 const saving = ref(false)
 /** 用户改过任何字段 → 不回填，避免 onEvent→refresh 静默覆盖未保存编辑 */
 const dirty = ref(false)
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
+
+/** 旧数据没有 4.5 新字段时补默认值（GroupSettings v1 迁移在宿主侧也会做一次） */
+function normalizeGroupDraft(raw: DraftSettings['group'] | undefined): DraftSettings['group'] {
+  const d = emptyDraft().group
+  if (!raw) return d
+  return {
+    replyEnabled: raw.replyEnabled ?? d.replyEnabled,
+    requireMention: raw.requireMention ?? d.requireMention,
+    voiceEnabled: raw.voiceEnabled ?? d.voiceEnabled,
+    dailyVoiceCap: clampNumber(raw.dailyVoiceCap ?? d.dailyVoiceCap, 0, 20),
+    words: {
+      enabled: raw.words?.enabled ?? d.words.enabled,
+      action: raw.words?.action === 'block' ? 'block' : 'replace',
+      replaceWith: (raw.words?.replaceWith ?? d.words.replaceWith).trim() || '你',
+      list: [...(raw.words?.list ?? d.words.list)].slice(0, 100)
+    },
+    memoryIsolated: raw.memoryIsolated ?? d.memoryIsolated,
+    historyLimit: clampNumber(raw.historyLimit ?? d.historyLimit, 0, 50),
+    extraPrompt: (raw.extraPrompt ?? d.extraPrompt).slice(0, 1000)
+  }
+}
+
+function parseWords(raw: string): string[] {
+  const out: string[] = []
+  for (const piece of raw.split(/[，,\n]/)) {
+    const word = piece.trim().slice(0, 20)
+    if (word && !out.includes(word)) out.push(word)
+    if (out.length >= 100) break
+  }
+  return out
+}
 
 function applySettings(next: CharacterSettings | null): void {
   const base = emptyDraft()
@@ -285,7 +388,7 @@ function applySettings(next: CharacterSettings | null): void {
       channel: next.proactive.channel
     }
     base.voice = { ...next.voice }
-    base.group = { ...next.group }
+    base.group = normalizeGroupDraft(next.group)
     base.memory = { ...next.memory }
     base.pet = { ...next.pet }
     base.relationship = {
@@ -295,6 +398,7 @@ function applySettings(next: CharacterSettings | null): void {
     }
     tabooText.value = (next.relationship.taboo ?? []).join('，')
   }
+  wordsText.value = base.group.words.list.join('，')
   Object.assign(draft, base)
 }
 
@@ -333,8 +437,18 @@ function save(): void {
     },
     group: {
       replyEnabled: draft.group.replyEnabled,
+      requireMention: draft.group.requireMention,
       voiceEnabled: draft.group.voiceEnabled,
-      dailyVoiceCap: draft.group.dailyVoiceCap
+      dailyVoiceCap: draft.group.dailyVoiceCap,
+      words: {
+        enabled: draft.group.words.enabled,
+        action: draft.group.words.action,
+        replaceWith: draft.group.words.replaceWith.trim() || '你',
+        list: parseWords(wordsText.value)
+      },
+      memoryIsolated: draft.group.memoryIsolated,
+      historyLimit: draft.group.historyLimit,
+      extraPrompt: draft.group.extraPrompt.trim()
     },
     memory: { autoEnabled: draft.memory.autoEnabled },
     relationship: {
@@ -405,6 +519,26 @@ defineExpose({ setSaving, markSaved, dirty })
 .settings .check-row.disabled {
   opacity: 0.65;
   cursor: default;
+}
+.settings .row.column {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings .row .short {
+  width: 96px;
+}
+.settings textarea {
+  width: 100%;
+  min-height: 56px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color, #3a3a3a);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
 }
 .settings .actions {
   margin-top: 16px;

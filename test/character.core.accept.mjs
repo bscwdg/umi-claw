@@ -10,9 +10,11 @@
 import { pathToFileURL } from 'node:url'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Recorder, __dirname, assert, assertEq, bundleEntry, printResult, repoRoot, tmpDir, writeJson } from './_lib.mjs'
+import { Recorder, __dirname, assert, assertDeepEq, assertEq, bundleEntry, printResult, repoRoot, tmpDir, writeJson } from './_lib.mjs'
 
 const typesMod = await import(pathToFileURL(bundleEntry('electron/main/character/types.ts', 'character-types.mjs')).href)
+const groupPolicyMod = await import(pathToFileURL(bundleEntry('electron/main/character/groupPolicy.ts', 'character-group-policy.mjs')).href)
+const legacyGroupCleanupMod = await import(pathToFileURL(bundleEntry('electron/main/character/legacyGroupCleanup.ts', 'character-legacy-group-cleanup.mjs')).href)
 const storeMod = await import(pathToFileURL(bundleEntry('electron/main/character/store.ts', 'character-store.mjs')).href)
 const managerMod = await import(pathToFileURL(bundleEntry('electron/main/character/manager.ts', 'character-manager.mjs')).href)
 const personaMod = await import(pathToFileURL(bundleEntry('electron/main/character/persona.ts', 'character-persona.mjs')).href)
@@ -115,6 +117,12 @@ const {
   scrubForLog
 } = safetyMod
 const { CharacterKvStore } = characterKvMod
+const { DEFAULT_GROUP_SETTINGS, buildGroupPrompt, normalizeGroupSettings } = groupPolicyMod
+const {
+  LEGACY_GROUP_AGENT_ID,
+  legacyGroupCleanupPaths,
+  removePathsCollectingFailures
+} = legacyGroupCleanupMod
 
 function memoryKv(initial = new Map()) {
   return {
@@ -138,8 +146,19 @@ await recorder.check('C1', '默认设置完整 + 白名单合并 + 数值夹取'
   assertEq(settings.enabled, false, '默认关闭（D8）')
   assertEq(settings.proactive.silenceDays, 3, '默认静默期 3 天')
   assertEq(settings.relationship.address, '你', '默认称呼「你」')
+  assertEq(settings.group.replyEnabled, true, '群聊回复默认开')
+  assertEq(settings.group.requireMention, true, '群聊默认必须 @ 才回复')
   assertEq(settings.group.voiceEnabled, false, '群聊语音默认关闭')
   assertEq(settings.group.dailyVoiceCap, 2, '群聊语音默认每天 2 条')
+  assertEq(settings.group.memoryIsolated, true, '群聊默认记忆隔离')
+  assertEq(settings.group.historyLimit, 20, '群聊默认历史 20 条')
+  assertEq(settings.group.extraPrompt, '', '群聊默认无额外提示词')
+  assertDeepEq(settings.group.words, {
+    enabled: true,
+    action: 'replace',
+    replaceWith: '你',
+    list: ['宝宝', '宝贝', '亲爱的', '老公', '老婆', '主人']
+  }, '群聊亲密词默认：替换为「你」+ 默认词表')
 
   const merged = mergeCharacterSettings(settings, {
     enabled: true,
@@ -160,6 +179,28 @@ await recorder.check('C1', '默认设置完整 + 白名单合并 + 数值夹取'
   assertEq(merged.group.replyEnabled, false, '群聊回复开关可写')
   assertEq(merged.group.voiceEnabled, true, '群聊语音开关可写')
   assertEq(merged.group.dailyVoiceCap, 20, '群聊语音日限夹到 0–20')
+  assertEq(merged.group.requireMention, true, '旧式补丁只给三字段：未给的新字段保持默认（不是 undefined）')
+  assertEq(merged.group.historyLimit, 20, '群聊历史未给时保持默认')
+
+  // 新字段的局部补丁：words 逐字段合并、超限夹紧、输入消毒
+  const groupPatched = mergeCharacterSettings(settings, {
+    group: {
+      requireMention: false,
+      historyLimit: 999,
+      memoryIsolated: false,
+      extraPrompt: '  群里别聊工作  ',
+      words: { action: 'block', list: [' 宝宝 ', '宝宝', ' 主人 ', ''] }
+    }
+  })
+  assertEq(groupPatched.group.requireMention, false, '群聊 requireMention 可写')
+  assertEq(groupPatched.group.historyLimit, 50, '群聊历史夹到 0–50')
+  assertEq(groupPatched.group.memoryIsolated, false, '群聊记忆隔离可写')
+  assertEq(groupPatched.group.extraPrompt, '群里别聊工作', '群聊额外提示词 trim')
+  assertEq(JSON.stringify(groupPatched.group.words.list), JSON.stringify(['宝宝', '主人']), '群聊词表去空去重')
+  assertEq(groupPatched.group.words.action, 'block', '群聊词动作可写')
+  assertEq(groupPatched.group.words.enabled, true, 'words 局部补丁未给的键保持默认')
+  assertEq(groupPatched.group.words.replaceWith, '你', 'words 局部补丁未给的 replaceWith 保持默认')
+  assertEq(groupPatched.group.dailyVoiceCap, 2, '未给的语音上限保持默认')
 
   const merged2 = mergeCharacterSettings(settings, {
     proactive: {
@@ -4424,6 +4465,203 @@ await recorder.check('C97', '生产接线：wiring 默认注入 proactiveSender�
     'wiring 注入最近聊天读取（话题亲和/敏感话题触发）'
   )
   return 'wiring 默认注入 + 内容包 + 表情包 + app 分支锁定 ✓'
+})
+
+await recorder.check('C98', '群聊策略迁移：旧 settings 读成完整 GroupSettings，persona 群规则来自 buildGroupPrompt', async () => {
+  // 旧 kv.json 里只有 4.4 的三字段 group（没有 words/requireMention/...）
+  const legacySettings = JSON.parse(JSON.stringify(DEFAULT_CHARACTER_SETTINGS))
+  legacySettings.group = { replyEnabled: false, voiceEnabled: true, dailyVoiceCap: 9 }
+  const kv = memoryKv(new Map([[FISH_KEYS.settings, JSON.stringify(legacySettings)]]))
+  const store = new CharacterStore({ kv })
+  const migrated = await store.readSettings()
+  assertEq(migrated.group.replyEnabled, false, '旧 replyEnabled 保留')
+  assertEq(migrated.group.voiceEnabled, true, '旧 voiceEnabled 保留')
+  assertEq(migrated.group.dailyVoiceCap, 9, '旧 dailyVoiceCap 保留（合法范围）')
+  assertEq(migrated.group.requireMention, true, '迁移补 requireMention 默认')
+  assertEq(migrated.group.memoryIsolated, true, '迁移补 memoryIsolated 默认')
+  assertEq(migrated.group.historyLimit, 20, '迁移补 historyLimit 默认')
+  assertEq(migrated.group.extraPrompt, '', '迁移补 extraPrompt 默认')
+  assertDeepEq(
+    migrated.group.words,
+    DEFAULT_GROUP_SETTINGS.words,
+    '迁移补默认词表（与 groupPolicy 默认值同源）'
+  )
+  assertEq(
+    'words' in JSON.parse(kv.map.get(FISH_KEYS.settings)).group,
+    false,
+    '读盘只归一内存态，不擅自改写旧数据（写回由下一次保存负责）'
+  )
+
+  // manager 暴露的 settings 必须已是完整新形状（wiring 拿它去 syncGroupPolicy）
+  const manager = new CharacterManager({ store, onEvent: () => undefined })
+  await manager.init()
+  const mgrSettings = await manager.getSettings()
+  assertEq(mgrSettings.group.requireMention, true, 'manager 读到的群设置已补全新字段')
+  assertEq(mgrSettings.group.words.enabled, true, 'manager 读到的词表默认开启')
+  assertEq(
+    normalizeGroupSettings(mgrSettings.group).historyLimit,
+    20,
+    'manager 输出可再经 normalize 归一（幂等）'
+  )
+  manager.dispose()
+
+  // persona 的群规则段 = buildGroupPrompt 的同一份文本（避免 AGENTS 与 qqbot prompt 双份漂移）
+  const inputs = baseInputs()
+  inputs.settings.group = {
+    ...inputs.settings.group,
+    requireMention: false,
+    extraPrompt: '群里别聊工作'
+  }
+  const agents = composePersonaFiles(inputs)['AGENTS.md']
+  assert(agents.includes('<!-- fish:managed:group:start -->'), 'AGENTS 保留群规则受管段 start 标记')
+  assert(agents.includes('<!-- fish:managed:group:end -->'), 'AGENTS 保留群规则受管段 end 标记')
+  assert(agents.includes(buildGroupPrompt(inputs.settings.group).trim()), 'AGENTS 群规则段 = buildGroupPrompt 原文')
+  assert(agents.includes('不必被 @'), '群规则来自新模型（requireMention=false 分支）')
+  assert(agents.includes('群里别聊工作'), '群规则包含额外提示词')
+  assertEq(
+    agents.split('<!-- fish:managed:group:start -->').length - 1,
+    1,
+    '群规则受管段只有一个 start 标记（写盘幂等前提）'
+  )
+  assertEq(normalizeAgentsDoc(agents, agents), normalizeAgentsDoc(agents, agents), '含群规则的 AGENTS 规范化结果确定')
+  return '旧数据迁移/manager 形状/persona 群规则同源 ✓'
+})
+
+await recorder.check('C99', '群聊单 agent 接线：wiring 注入 syncGroupPolicy，groupAgent 已删除且无残留引用', async () => {
+  const characterDir = join(repoRoot, 'electron', 'main', 'character')
+  const wiringSrc = readFileSync(join(characterDir, 'wiring.ts'), 'utf8')
+  assert(
+    /syncGroupPolicy\?:?\s*\(settings: CharacterSettings\)\s*=>\s*Promise<void>/.test(wiringSrc),
+    'CharacterWiringDeps 暴露可选 syncGroupPolicy(settings) 注入（存在才调）'
+  )
+  assert(
+    /requestGroupPolicySync\(event\.payload\)/.test(wiringSrc),
+    'settings 事件必须触发群策略同步（保存设置即生效）'
+  )
+  assert(
+    /requestGroupPolicySync\(await manager\.getSettings\(\)\)/.test(wiringSrc),
+    'bootstrap 完成后必须触发一次群策略同步'
+  )
+  assert(
+    /const sync = deps\.syncGroupPolicy[\s\S]{0,80}if \(!sync\) return/.test(wiringSrc),
+    '注入缺省时必须跳过（纯测试装配/降级场景不能炸）'
+  )
+  assert(
+    /if \(bootstrapping\) groupSyncAfterBootstrap = true/.test(wiringSrc),
+    'bootstrap 在途时 settings 同步先挂起（避免与 CLI config patch 并发写配置）'
+  )
+  assert(!wiringSrc.includes("from './groupAgent'"), 'wiring 不得再 import groupAgent')
+  assert(!wiringSrc.includes('writeGroupAgentFiles'), 'wiring 不得再写群聊独立 workspace')
+  assert(!wiringSrc.includes('ensureGroupAgent'), 'wiring 不得再建 feiyu-group agent')
+  assert(!existsSync(join(characterDir, 'groupAgent.ts')), 'groupAgent.ts 已删除')
+
+  const offenders = readdirSync(characterDir)
+    .filter((name) => name.endsWith('.ts'))
+    .filter((name) => readFileSync(join(characterDir, name), 'utf8').includes("from './groupAgent'"))
+  assertEq(offenders.length, 0, `character 目录无残留 groupAgent import（实际：${offenders.join(',')}）`)
+
+  // 分层：角色模块不自己写 openclaw.json（写盘由宿主注入的 services/characterGroupConfig 负责）
+  assert(
+    !wiringSrc.includes("from '../services/characterGroupConfig'"),
+    '角色模块不直接 import 配置编译器（依赖注入）'
+  )
+  assert(
+    !wiringSrc.includes('openClawConfigWriter') && !wiringSrc.includes('applyOpenClawConfigPatch'),
+    '角色模块不 import 官方配置写入器（写盘只在宿主 services 层）'
+  )
+  assert(
+    !wiringSrc.includes('character-group-binding'),
+    'wiring 不得再拼 feiyu-group 绑定 patch 文件（旧双 agent 路径）'
+  )
+  return '单 agent 接线/残留清理/分层 ✓'
+})
+
+await recorder.check('C100', '删除全部数据：清理 4.4 双 agent 遗留 workspace/agentDir + guard 计数状态', async () => {
+  const dataDir = join(tmpDir, `character-legacy-group-${Date.now()}`)
+  const openclawDir = join(dataDir, 'config', '.openclaw')
+  const workspaceDir = join(openclawDir, 'workspace-feiyu-group')
+  const agentDir = join(openclawDir, 'agents', 'feiyu-group')
+  const guardState = join(dataDir, 'character', 'group-guard-state.json')
+  // 对照组：正常的 feiyu workspace，删遗留时不能被误删
+  const keepWorkspace = join(openclawDir, 'workspace-feiyu')
+
+  // 造真实遗留（含嵌套目录与文件）；agentDir/character 的父目录由业务代码自己建
+  mkdirSync(join(workspaceDir, 'memory'), { recursive: true })
+  writeFileSync(join(workspaceDir, 'AGENTS.md'), '# 群聊遗留', 'utf8')
+  writeFileSync(join(workspaceDir, 'memory', '2026-11-01.md'), '旧记忆', 'utf8')
+  mkdirSync(agentDir, { recursive: true })
+  writeFileSync(join(agentDir, 'openclaw-agent.sqlite'), 'x', 'utf8')
+  mkdirSync(join(dataDir, 'character'), { recursive: true })
+  writeFileSync(guardState, '{"version":1}', 'utf8')
+  mkdirSync(join(keepWorkspace, 'fish'), { recursive: true })
+  writeFileSync(join(keepWorkspace, 'fish', 'STATE.md'), '保留', 'utf8')
+
+  // 路径计算：all = 3 条固定目标；values/memory 不碰配置目录
+  const allPaths = legacyGroupCleanupPaths(dataDir, 'all')
+  assertDeepEq(allPaths, [workspaceDir, agentDir, guardState], 'scope=all 清理 3 个遗留目标（顺序固定）')
+  assertEq(LEGACY_GROUP_AGENT_ID, 'feiyu-group', '遗留 agentId 常量为 4.4 的 feiyu-group')
+  for (const scope of ['values', 'memory']) {
+    assertDeepEq(legacyGroupCleanupPaths(dataDir, scope), [], `scope=${scope} 不清理配置目录`)
+  }
+
+  // 非 all 真的不碰：按 scope 算出的空计划执行删除，遗留必须原样保留
+  removePathsCollectingFailures(legacyGroupCleanupPaths(dataDir, 'memory'))
+  assert(
+    existsSync(workspaceDir) && existsSync(agentDir) && existsSync(guardState),
+    '非 all 不删除任何遗留（workspace/agentDir/guard 状态都还在）'
+  )
+
+  // 存在 → 全部删除，且对照组保留
+  const failures = removePathsCollectingFailures(allPaths)
+  assertDeepEq(failures, [], '目标存在时删除成功、无失败文案')
+  assert(!existsSync(workspaceDir), 'workspace-feiyu-group 已删除（含嵌套 memory）')
+  assert(!existsSync(agentDir), 'agents/feiyu-group 已删除')
+  assert(!existsSync(guardState), 'group-guard-state.json 已删除')
+  assert(existsSync(join(keepWorkspace, 'fish', 'STATE.md')), '正常的 workspace-feiyu 不受影响')
+
+  // 不存在 → 不报错（rmSync force 语义：视为已清理）
+  assertDeepEq(removePathsCollectingFailures(allPaths), [], '目标已不存在时再删不报错')
+
+  // 失败 → 收集文案、不中断后续路径（manager 会把 failedRemovals 转 warning，不阻断删除主流程）
+  const failDir = join(tmpDir, `character-legacy-group-fail-${Date.now()}`)
+  const first = join(failDir, 'a')
+  const second = join(failDir, 'b')
+  mkdirSync(first, { recursive: true })
+  mkdirSync(second, { recursive: true })
+  const collected = removePathsCollectingFailures([first, second], {
+    remove: (path) => {
+      if (path === first) throw new Error('文件被占用')
+      rmSync(path, { recursive: true, force: true })
+    }
+  })
+  assertEq(collected.length, 1, '单点失败只收集 1 条')
+  assert(
+    collected[0].includes('a：') && collected[0].includes('文件被占用'),
+    '失败文案带目标名与原因（不带完整路径）'
+  )
+  assert(existsSync(second) === false, '单个失败不中断后续路径（b 仍被删）')
+
+  // 接线锁定：只测 helper 会假绿——wiring 的 deleteWorkspaceFiles 必须真的调用它
+  const wiringSrc = readFileSync(join(repoRoot, 'electron/main/character/wiring.ts'), 'utf8')
+  const deleteStart = wiringSrc.indexOf('deleteWorkspaceFiles:')
+  const deleteEnd = wiringSrc.indexOf('managerRef = manager', deleteStart)
+  const deleteSlice = deleteStart >= 0 && deleteEnd > deleteStart
+    ? wiringSrc.slice(deleteStart, deleteEnd)
+    : ''
+  assert(deleteSlice.length > 0, 'wiring 应有 deleteWorkspaceFiles 实现')
+  assertEq(
+    (deleteSlice.match(/legacyGroupCleanupPaths\(deps\.dataDir, scope\)/g) || []).length,
+    1,
+    'deleteWorkspaceFiles 内恰好调用一次遗留清理（带 scope 门禁）'
+  )
+  assert(
+    /failedRemovals\.push\(\s*\.\.\.removePathsCollectingFailures/.test(deleteSlice),
+    '失败必须并入既有 failedRemovals 收集模式（→ manager warning，不阻断）'
+  )
+
+  rmSync(dataDir, { recursive: true, force: true })
+  rmSync(failDir, { recursive: true, force: true })
+  return '遗留路径/scope 门禁/存在删除/缺失不报错/失败收集/接线 ✓'
 })
 
 const characterResult = recorder.toJSON()
