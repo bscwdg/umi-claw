@@ -622,13 +622,23 @@ await rec.check(
 
     // ── 生产格式 junction（目标存在）：先 rm(EISDIR) → rmdir 回退 → rename → rm ──
     let junctionSupported = true
+    let junctionError = ''
     const uuidD = '44444444-4444-4444-4444-444444444444'
     try {
       buildGlobalJunctionTree(join(capturesDir, uuidD))
       makeOld(join(capturesDir, uuidD))
-    } catch {
+    } catch (e) {
       junctionSupported = false
+      junctionError = (e && e.message) || String(e)
     }
+    // 不能静默跳过：junction 是本 check 的被测对象，mklink 失败时若整段跳过，
+    // 这里会绿着返回「均能清掉」——历史上正是这样把悬空清理从未验证过
+    // （2026-11-10 对抗审查实测）。Windows 上 mklink /J 不需要管理员权限，
+    // 失败只可能是环境异常，直接红比假绿安全。
+    assert(
+      junctionSupported,
+      `本机 Windows 应支持 mklink /J（失败原因：${junctionError}）；跳过会掩盖 junction 清理回归`
+    )
     if (junctionSupported) {
       const startedAt = Date.now()
       await cm._cleanStalePluginCaptures(sandbox)
@@ -642,9 +652,16 @@ await rec.check(
       const treeE = join(capturesDir, uuidE)
       const built = buildGlobalJunctionTree(treeE)
       renameSync(treeE, join(capturesDir, `.stale-${uuidE}`))
-      const staleTarget = built.target.replace(treeE, join(capturesDir, `.stale-${uuidE}`))
       const staleLink = built.link.replace(treeE, join(capturesDir, `.stale-${uuidE}`))
-      assert(!existsSync(staleTarget), '测试前提：rename 后 junction 目标应悬空')
+      // 原断言错在哪（2026-11-10 对抗审查）：rename 后 junction 存的是
+      // `\??\Global\<旧绝对路径>`，所以悬空的是**原目标路径**；此前断言的是
+      // 「按新树算出的目标路径」，而目标目录随整棵树一起 rename 到新位置、
+      // 必然存在 —— 该断言在任何 junction 可用的机器上结构性必红，且使后续
+      // 「悬空 junction 的 .stale- 副本能否清掉」从未真正执行。
+      assert(!existsSync(built.target), '测试前提：rename 后 junction 原目标应悬空')
+      // 直接证明「junction 解析失败」而不只证明旧目标路径不存在：若未来
+      // `\\?\Global\` 语义变化（链接改存相对路径），单看旧目标会假绿。
+      assert(!existsSync(staleLink), '测试前提：悬空 junction 解析应失败（existsSync 为 false）')
       assert(
         existsInDir(join(staleLink, '..'), 'node-sdk'),
         '测试前提：悬空 junction 本体仍在（existsSync 会误判）'
