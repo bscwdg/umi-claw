@@ -2038,7 +2038,7 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 
 | # | 欠账 | 状态变化 | 说明 |
 | --- | --- | --- | --- |
-| 1 | J2 剩余 5 个 >1,500 行单文件治理 | 部分推进（本批 clawManager 已拆） | clawManager **2,543 → 1,484**（≤1,500；新增 `electron/main/claw/` 13 个模块，行为零变化）；剩余 downloadManager 2084 / configManager 2116 / marketing store 2001 / VoicePage 2418 / CharacterPage 1970（总行数，CharacterPage 非空 1,874）。CharacterPage 自 11-04 `bf84d1f` 起越线（该提交总行 1,613 / 非空 1,530，此前漏计）；一次拆一个、每拆跑全量，不打包大提交 |
+| 1 | J2 剩余 5 个 >1,500 行单文件治理 | 接受（不再继续拆） | clawManager **2,543 → 1,484**（≤1,500；新增 `electron/main/claw/` 13 个模块，行为零变化）；剩余 downloadManager 2084 / configManager 2116 / marketing store 2001 / VoicePage 2418 / CharacterPage 1970（总行数，CharacterPage 非空 1,874）。CharacterPage 自 11-04 `bf84d1f` 起越线（该提交总行 1,613 / 非空 1,530，此前漏计）。**2026-11-10 用户决定：J2 不再继续拆分**——继续拆的边际收益低于风险/回归成本，剩余 5 个作为已知边界接受，不阻塞发布 |
 | 2 | P45 宿主通道行为级测试 | 本次完成 | 新增 `test/host-ipc.accept.mjs` **31 条**（env/claw/terminal/config 行为级），已注册 run-all `ACCEPT` 与 `accept:host-ipc`；残留盲区 2 项（边界门禁不扫 `electron/main/claw/**`；`getStatus` 的 getConfig 两次调用合并为一次、判定等价）已接受 |
 | 3 | consent 历史撤销判定 | 已知边界（已降级） | v4.1.0 前渲染端无撤销入口（`7b940cc` 才引入「撤销同意」UI），`work:wizard:revokeConsent` 通道也无 UI 调用方，故不存在 UI 可产生的历史撤销；且「撤销过」与「从未同意」行为后果一致——`services/consent.ts` 无 granted 时 `migrateFromPluginDb` 返回 `no-source`（`status().consent=false`、`ensure()` 同样抛「请先同意用户协议」）。不产生「撤销被复活」错误，不再占产品决策欠账 |
 | 4 | consent 接线行为测试 | 部分缓解 | U26/U27 覆盖两端渲染撤销流程；启动迁移/委托分支仍只有静态 C10 |
