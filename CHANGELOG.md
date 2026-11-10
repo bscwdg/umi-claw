@@ -55,10 +55,12 @@
   即 P45）；`typecheck:node/web` 0 错；`build` 成功；`check:boundary` 全 0。
 - 2026-11-10 最终轮全量复测：**37 套（accept×35 + e2e + smoke）709 条断言 / 0 失败**
   （Recorder 口径；`openclaw-config-writer` 的 21 条 node:test 另计），packaged smoke 7/7。
-- 此前一轮的 `claw-maintenance` 失败**不是环境问题，而是测试断言写错了**：原断言
-  `!existsSync(rename 后的新目标路径)`，但目标目录随整棵树 rename 后必然存在于新位置、junction 可用时
-  结构性必红；已改为断言原目标 `built.target` 不存在。修复后首次真正执行「悬空 junction 的 `.stale-`
-  副本清理」路径（生产侧 222ms 通过），`accept:maintenance` 现 30/30。
+- 本轮首测暴露的 `claw-maintenance` 失败项 `plugin-captures-cleanup` **不是环境问题，而是测试断言
+  写错了**：原断言 `!existsSync(rename 后的新目标路径)`，但目标目录随整棵树 rename 后必然存在于新位置、
+  junction 可用时结构性必红；已改为断言原目标 `built.target` 不存在。修复后首次真正执行「悬空 junction
+  的 `.stale-` 副本清理」路径（生产侧未出现卡死），`accept:maintenance` 现 30/30。
+  （4.4 基线记录的 677/678 是另一条 `ghost-node-cleanup` 的 WMI/CIM 环境问题，本轮实测该检查 PASS、
+  未再复现，两者不要混谈。）
 
 ### 重构与清理
 - 终端/PTY 会话注册表从主进程入口抽到 `electron/main/terminalSessions.ts`（纯 Node 工厂），
@@ -152,7 +154,7 @@
   退出兜底为空；`plugin.accept` 新增 P58 锁「ctx.services 使用 ⊆ inject」。）
 - **宿主任意行数指标退役**（B1）：实测宿主 114 文件里仅 3 个零外部引用
   （其中 `index.ts` 是入口），逐字节相同文件 0 对，真可删仅 143 行。
-  「总行数」已无法反映模块化程度，改用结构性判据：`index.ts` ≤1,800（当前 **1,800**）、
+  「总行数」已无法反映模块化程度，改用结构性判据：`index.ts` ≤1,800（4.2 时 **1,800**；4.4 收官后 **1,753**）、
   非 index 单文件 ≤1,500（5 个文件待治理，不阻塞发布）、插件边界 0/0/0。
 
 ### 验收
@@ -178,7 +180,7 @@
   （`index.ts` 1,800 由 J1 约束）；
 - `electron/main/ipc/index.ts`（78 行，`@test-only` barrel）待清测试依赖后删除；
 - `electron/main/character/stt.ts`（65 行，仅单测引用）待删或写明保留理由；
-- **P45**：4.1 结转的 env/claw/terminal/config 宿主通道行为级测试仍未补；
+- **P45**：4.1 结转的 env/claw/terminal/config 宿主通道行为级测试仍未补（4.2 时点；**2026-11-10 已补** `test/host-ipc.accept.mjs` 31 条，见 4.4 测试段）；
 - **consent 历史撤销判定**：3.0 升级且 4.0 期间点过撤销的用户，宿主库仍是历史 `granted`、
   无墓碑可判，无法自动区分；需产品定复核策略；
 - **撤销入口**：`api.consent.revoke` 已在 preload 暴露，但设置页/宿主 UI 尚无调用入口；

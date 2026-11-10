@@ -168,7 +168,7 @@ gateway{parts,stream,types} / dbTypes / abortRegistry）+ `ipc/host/*` 七个文
 
 | # | 判据 | 当前实测 | 状态 |
 | --- | --- | --- | --- |
-| J1 | `electron/main/index.ts` ≤ 1,800 行 | **1,800** | ✅（B2 后曾涨到 1,801，已压回） |
+| J1 | `electron/main/index.ts` ≤ 1,800 行 | **1,753** | ✅（4.2 收尾时 1,800；4.4 收官 R1 抽出终端会话注册表后 1,813→1,753，2026-11-10 实测） |
 | J2 | 单文件 ≤ 1,500 行（`index.ts` 由 J1 单独约束，不计入 J2） | **当前 5 个非 index 文件超标**（clawManager 已拆 2543→1484；含 index 共 6 个 >1,500） | ⚠️ 待治理（不阻塞发布） |
 | J3 | 插件边界 `pluginHostBoundary=0` / `pluginHostTypeOnly=0` / `managerElectron=0` | 0 / 0 / 0 | ✅ |
 | J4 | 全量 accept 全绿 | **33 套 / 619 PASS / 0 FAIL**（2026-11-03 复核补修后复测） | ✅ |
@@ -288,20 +288,20 @@ packaged.smoke       7/7（但 release/ 产物仍是 4.1.0；发布前需按 4.2
 
 判据：人为把 `data/runtime/node.exe` 标成 Low IL → 启动后横幅可见、可点重装、日志有记录。
 
-## 四、发布状态与待办（2026-11-03 收尾）
+## 四、发布状态与待办（2026-11-03 起，2026-11-10 更新）
 
 **代码与验收已完成；发布闭环未完成，不代做人工与用户决策项。**
 
 | # | 事项 | 状态 / 证据 |
 | --- | --- | --- |
 | 1 | 4.2.0 重新打包（win-unpacked + 安装器） | ✅ 已完成（2026-11-10 19:09–19:10 实测）：`release/win-unpacked/Umi Claw.exe` FileVersion **4.2.0**（19:09:30）、`release/Umi Claw Setup 4.2.0.exe` **95,190,135 B**（19:10:12）、`release/latest.yml` `version: 4.2.0` |
-| 2 | packaged.smoke 在 4.2.0 产物上重跑 | ✅ 已完成：本批最终验证轮 packaged.smoke **7/7、0 失败**（`test/accept-result-smoke.json` 是 gitignore 的最近一轮，会被后续轮覆盖，不作为固定时间戳证据）；S1–S7 全绿；S6/S7 默认取 `release/win-unpacked`（候选顺序实现见 `test/packaged.smoke.mjs`，结果 json 未记录所用路径） |
+| 2 | packaged.smoke 在 4.2.0 产物上重跑 | ✅ 已完成：本批最终验证轮 packaged.smoke **7/7、0 失败**（`test/accept-result-smoke.json` 是 gitignore 的最近一轮，会被后续轮覆盖，不作为固定时间戳证据）；S1–S7 全绿；S6/S7 按候选顺序取已解包产物（`UMI_PACKAGED_DIR` > `release-build` > `release-alt` > `release/win-unpacked`，见 `test/packaged.smoke.mjs:24-35`；本机实际命中 `release/win-unpacked`，结果 json 未记录所用路径） |
 | 3 | NSIS 安装器 + Windows 真机安装 7 步（RUNBOOK §6） | ⚠️ 安装器已产出（`release/Umi Claw Setup 4.2.0.exe`，95,190,135 B）；Windows 真机 7 步待人工；`release-nsis/` 不存在（构建输出在 `release/`） |
 | 4 | tag `v4.2.0` 创建 + push | ⏳ 待用户确认；本地仅 `v1.0.0` / `v4.1.0` |
 | 5 | 4.2 版本级两轮独立复核入档 | ✅ 已补跑，见 `doc/PROGRESS-4.0.md`「4.2 版本级收尾复核」 |
 | 6 | P45（env/claw/terminal/config 宿主通道行为级测试，4.1 结转） | ✅ 已补（2026-11-10）：新增 `test/host-ipc.accept.mjs` **31 条 check**，已注册 run-all `ACCEPT` 与 `accept:host-ipc`；残留盲区见 `doc/PROGRESS-4.0.md`「4.5 复核补充」 |
 | 7 | J2 单文件治理 / `ipc/index.ts` barrel 测试依赖 / `character/stt.ts` 死代码 | ⚠️ **J2 剩余 5 个**（clawManager 已拆 2543→1484；剩 downloadManager 2084 / configManager 2116 / marketing store 2001 / VoicePage 2418 / CharacterPage 1970）；barrel/stt 已完成（4.4 收官 R3/R2） |
-| 8 | 安装器文件名与 updater URL 对齐 | ⚠️ **发布通道确认项**（不是已确认的 404）。仓库**无 `electron-updater` 依赖、无 `autoUpdater` 调用**（`package.json` / `electron` / `src` / `plugins` 全 0 命中），`release/latest.yml` 只是 electron-builder 产出的构建产物（url 是连字符安全名 `Umi-Claw-Setup-4.2.0.exe`，磁盘文件名带空格）。若走 GitHub release，上传资产本就按 electron-builder 的安全名（连字符），两者一致；若改自建 feed（`build.publish` 指向自有地址），需设 `artifactName` 把磁盘名对齐到 feed 名。发布通道拍板后按该口径验收 |
+| 8 | 安装器文件名与 updater URL 对齐 | ⚠️ **发布通道确认项**（不是已确认的 404）。仓库**无 `electron-updater` 依赖、无 `autoUpdater` 调用**（`package.json` / `electron` / `src` / `plugins` 全 0 命中），`release/latest.yml` 只是 electron-builder 产出的构建产物（url 是连字符安全名 `Umi-Claw-Setup-4.2.0.exe`，磁盘文件名带空格）。若走 GitHub release，electron-builder 上传发布资产时通常使用连字符安全名（**本仓库未实测该上传行为，需发布时核对**）；若改自建 feed（`build.publish` 指向自有地址），需设 `artifactName` 把磁盘名对齐到 feed 名。发布通道拍板后按该口径验收 |
 
 ### 4.3 欠账清单（登记；4.3 计划文件尚未建立）
 
