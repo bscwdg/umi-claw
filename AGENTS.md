@@ -48,6 +48,7 @@ electron/main/
 ├── fish/voice/      # 语音服务
 ├── work/            # 已删除：work 域代码在 plugins/work/domain/
 ├── marketing/       # 已删除：marketing 域代码在 plugins/marketing/domain/
+├── claw/            # clawManager 拆出的纯模块（reclaim/doctor/migrations/gatewayRuntime/skills/probe/status/…；J2 分步拆分产物，详见 PLAN-4.2 §四 #7）
 ├── clawManager.ts / configManager.ts / downloadManager.ts / channelManager.ts ...
 └── index.ts         # 只做组装；目标 ≤ 1,800 行（现状 1,753 ✅，2026-11-10 实测）
 
@@ -85,7 +86,7 @@ doc/                 # 计划、施工日志、运维手册、调研
 | 缩进 | **2 空格**；续行用 4 空格对齐 | 全仓无 tab |
 | 换行 | **LF**（`.gitattributes` 已强制 `text=auto eol=lf`，`*.bat`/`*.cmd` 除外） | 抽查 3 个文件 CRLF=0 |
 | 编码 | **UTF-8 无 BOM** | 抽查 3 个文件 BOM=False |
-| 文件头 | 首行 `// <相对路径> —— <一句话职责>`，随后用空注释行写**为什么** | `electron/main` 101/128 个 `.ts` 有头 |
+| 文件头 | 首行 `// <相对路径> —— <一句话职责>`，随后用空注释行写**为什么** | `electron/main` 90/148 个 `.ts` 有头（2026-11-10 实测） |
 | 注释语言 | **中文**，写「为什么」和「踩过的坑」，不写「这行在赋值」 | 全仓一致 |
 | 类型 | `strict`（由 `@electron-toolkit/tsconfig` 提供）；公共导出显式类型 | 双 typecheck 0 错 |
 
@@ -95,7 +96,7 @@ doc/                 # 计划、施工日志、运维手册、调研
 | --- | --- | --- |
 | 渲染端分号 | `src/` 约 20% 行尾有分号（2,597/12,849），文件间 27%–43% 不等 | **跟随所在文件的既有风格**；同一文件内不得混用。禁止为「统一」而全仓格式化（会造成 2,600 行噪声 diff） |
 | 渲染端引号 | `src/` 48 单 / 26 双 | 单引号 |
-| 文件头 | 27 个 `.ts` 无头（`clawManager.ts`、`configManager.ts`、`fish/voice/**` 多数、`obsidianManager.ts`、`todayManager.ts` 等） | **新文件必须带头**；老文件改动时顺手补，不单独提交格式化 |
+| 文件头 | 58 个 `.ts` 无头（`configManager.ts`、`downloadManager.ts`、`fish/voice/**` 多数、`database/**`、`obsidianManager.ts`、`todayManager.ts` 等；`clawManager.ts` 已在 2026-11-10 拆分时补头） | **新文件必须带头**；老文件改动时顺手补，不单独提交格式化 |
 | 提交 message | 类型/范围混用：`feat(4.0)` / `fix(3.0)` / `fix` / `feat(2.0-03)` | 见 §9 |
 
 **理由**：本仓库没有 `.editorconfig`、没有 lint，格式化靠习惯。这些差异是历史沉淀，不是错误。**一次性的全仓格式化会淹没真正的改动**（`§18.5` 已把「验收留档时效」列为风险）。
@@ -174,7 +175,7 @@ export const WORK_TODOS_CHANNELS = {
 
 **非字面量引用**：`import(someVar)` / `require(someVar)` 无法静态判定目标，记成 `<non-literal>` **按违规处理**（宁可多报）；`typeof import(...)` 是类型查询，放行。注释与字符串/模板文案里的示例 `import(...)` 不算引用（门禁先做词法掩码）。
 
-**反向依赖（host→plugin）**：4.2 B3 已拆除——插件在 activate 时自注册「中止我的后台任务」到 `abortRegistry`，宿主退出统一 `abortRegistry.abortAll()`；`electron/main/ipc/index.ts` 仅剩 `@test-only` re-export（生产依赖 0），测试依赖清理登记 4.3。新代码不得再依赖 host→plugin 值导出（类型可 type-only）。
+**反向依赖（host→plugin）**：4.2 B3 已拆除——插件在 activate 时自注册「中止我的后台任务」到 `abortRegistry`，宿主退出统一 `abortRegistry.abortAll()`；4.4 收官 R3 已把兼容 barrel `electron/main/ipc/index.ts` 整删（原 `@test-only` re-export，测试断言改指真实模块），4.3 登记的「barrel 测试依赖」随之清零。新代码不得再依赖 host→plugin 值导出（类型可 type-only）。
 
 **已登记的门禁边界**（2026-11-02 G10 复核接受，B8 有断言锁住）：① 模板字符串 `${}` 内的动态 `import`/`require` 暂被视为模板内容、检不出；② `if (cond) /re/` 这种 `)` 后的正则字面量不识别（补 `)` 会带来除法误判，权衡后保留）。修这两条时同步改 `test/boundary.accept.mjs` 的 B8 断言。
 
