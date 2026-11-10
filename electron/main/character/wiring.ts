@@ -829,26 +829,26 @@ async function registerCharacterInternal(
       // 群聊独立 workspace 的 AGENTS 也随群聊开关更新
       writeGroupAgentFiles(deps.dataDir, settings)
     })
-    // 启动时自动建群聊 agent + qqbot peer=group:* 通配绑定（用户不用手工加群 ID）
-    void manager
-      .getSettings()
-      .then((settings) =>
-        ensureGroupAgent({
+    // 启动时自动建群聊 agent + qqbot peer=group:* 通配绑定（用户不用手工加群 ID）。
+    // 必须在 bootstrap 之后跑：两者都走 config patch，并发会撞锁。
+    const syncGroupAgent = async (): Promise<void> => {
+      try {
+        await ensureGroupAgent({
           runner,
           tmpDir,
           dataDir: deps.dataDir,
-          settings,
+          settings: await manager.getSettings(),
           logger
         })
-      )
-      .catch((error) => {
+      } catch (error) {
         logger(`[character] 群聊 agent 初始化失败: ${(error as Error)?.message ?? String(error)}`)
-      })
+      }
+    }
 
     // 引导接线：官方 CLI 写 agent 条目；人格文件走受管写入
     removeAgentEntryFn = () => removeAgentEntry({ runner, tmpDir, agentId: CHARACTER_AGENT_ID })
-    manager.setBootstrapRunner(() =>
-      runBootstrap({
+    manager.setBootstrapRunner(async () => {
+      const report = await runBootstrap({
         workspaceDir,
         personaSourceDir: deps.personaSourceDir,
         getSettings: () => manager.getSettings(),
@@ -864,7 +864,9 @@ async function registerCharacterInternal(
         logger,
         now: deps.now
       })
-    )
+      await syncGroupAgent()
+      return report
+    })
 
     let proactiveTimer: NodeJS.Timeout | null = null
     const stopProactive = (): void => {
