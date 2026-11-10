@@ -305,6 +305,11 @@ packaged.smoke       7/7（但 release/ 产物仍是 4.1.0；发布前需按 4.2
 
 ### 4.3 欠账清单（登记；4.3 计划文件尚未建立）
 
+> **2026-11-10 收官更新**：本清单的 `ipc/index.ts` barrel、`character/stt.ts`、撤销同意 UI 入口
+> 已在 4.4 收官批处理完成（含 terminal-sessions 6 条、ui U26/U27 验收）；J1 回退（index.ts 涨到
+> 1,813 行）已修回 1,753。剩余项与 4.4 功能边界统一登记到
+> `doc/PROGRESS-4.0.md` 文末「4.5 欠账清单」，以该表为准。
+
 - **P45**：env / claw / terminal / config 宿主通道行为级测试（4.1 结转）；
 - **J2**：5 个非 index 单文件 >1,500 行（clawManager / downloadManager / configManager /
   marketing-ui store / VoicePage），`index.ts` 由 J1 约束；

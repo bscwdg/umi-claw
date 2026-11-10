@@ -6,9 +6,9 @@
 
 ---
 
-## [4.4]（未发布，4.3 之后）— 2026-11-08
+## [4.4]（未发布，4.3 之后）— 2026-11-10
 
-> 主题：**大肥鱼内容质量、表情包与跨机迁移**；同时补齐外接 TTS 与界面一致性。真机验收仍由用户执行。
+> 主题：**大肥鱼内容质量、表情包、跨机迁移与 QQ 群聊**；同时补齐本地 TTS 与界面一致性。真机验收仍由用户执行。
 
 ### 新增
 - **主动消息内容引擎**：每轮 2–10 条候选（生活三卡 + 20 个话题 + 约 100 句台词 + 关系试探），
@@ -24,6 +24,17 @@
 - **外部 TTS**：`/models` 404/405 时按“可达待试听”处理（weak 橙色提示，不判失败）；
   新增 Voicebox 原生 `17493` 支持（`/profiles` + `/generate/stream`，自动取 `preset_engine`、固定 WAV）。
 - **界面统一**：保存按钮按主题色统一，修复大肥鱼设置页子组件保存按钮显示灰色的问题。
+- **QQ 群聊**：启动/设置变更时自动创建独立的 `feiyu-group` agent 与 workspace，通配绑定所有 QQ 群
+  （私聊仍走原角色，无需手工填群 ID）；角色设置新增「群聊」组——群聊回复开关（默认开）、
+  群聊语音开关（默认关）、每天语音条上限（0–20，默认 2）；群聊只用群昵称/「你」称呼、
+  不写私聊日记与长期记忆，并可参考最近聊天选择接话话题；群聊策略作为受管段写入 AGENTS.md，保存即生效。
+- **主动消息质量与渠道**：主动消息改发已绑定渠道、QQ 主动文本直发；话题库从 20 张扩到 40 张并按时段过滤，
+  发送前参考最近聊天选话题；生活卡不再硬拼动作旁白；每 6 小时重置后真正开启新一轮，不再复读语料碎片。
+- **本地 TTS 表单**：实例可保存、可测试（必填校验、草稿探活、协议补全），按本机适配器在线状态预填默认值；
+  原「外部 TTS」统一更名为「本地 TTS」。
+- **撤销用户协议入口**：工作设置页「用户协议」卡与宿主「关于」页均在已同意时提供「撤销同意」，
+  二次确认后走宿主 `consent:revoke` 单源通道；宿主入口不依赖 work 插件（停用后仍可撤销/查看）。
+  撤销后 OpenClaw 无法启动、本地数据不删除，随时可重新同意恢复。
 
 ### 修复
 - 记忆日记 tags 归一化，修复 `frontmatter.tags 缺少 大肥鱼/日记` 导致写不进 Obsidian；已有 11-07/11-08 日记回填。
@@ -31,11 +42,35 @@
 - 备份 zip bomb：拒绝 `declared=0` 且带压缩数据的条目，并校验实际解包大小。
 - 备份导入后 manager 旧内存态覆盖恢复数据；导入后 `reloadFromStore()` 重载 settings/state。
 - 表情包自动配图情绪映射中英文不一致导致永远匹配不到；统一为 happy/shy/angry/sad/surprised/miss/sleepy。
+- OpenClaw 启动卡在 preparing：插件隔离副本先摘 junction 再改名/删除，整段清理带超时，慢盘/安全软件环境不再挂死。
+- QQ 扫码登录前先确保渠道插件已安装并启用，失败不再空跑登录流程。
+- 网关 `npm install` 的缓存落到便携 `.npmrc`，不再写用户级 npm 缓存（规避 EPERM）。
+- 聊天渠道保存不再把 Vue 代理对象传给 IPC（DataCloneError）。
+- 群聊 agent 改在网关 bootstrap 之后创建，避免并发 config patch 撞锁；话题 hook 按陈述/问句补标点；
+  解冻被冻结的主动消息调度。
 
 ### 测试
-- `accept:character` 100/100；`accept:sticker` 12/12；`accept:external-tts` 10/10；`accept:ui` 25/25；
-  `typecheck:node/web` 0 错；`build` 成功；`check:boundary` 全 0。
-- 全量 `npm run accept` 仍受本机 `db-worker readonly database` 环境问题影响（单独复现，与代码无关）。
+- `accept:character` 100/100；`accept:sticker` 12/12；`accept:external-tts` 10/10；`accept:ui` 27/27；
+  新增 `accept:terminal-sessions` 6/6；`typecheck:node/web` 0 错；`build` 成功；`check:boundary` 全 0。
+- 2026-11-10 全量复测：36 套（accept×34 + e2e + smoke）共 678 条断言，677 通过；唯一失败是
+  `claw-maintenance` 的 `ghost-node-cleanup`——本机 WMI/CIM 被系统拒绝访问（`Get-CimInstance` 返回
+  0x80041003），进程清理查询在该机器上不可用，代码本身按 best-effort 兜底（查询失败只告警不阻断启动），
+  属环境问题而非代码回退；同套件的 junction 用例在非沙箱环境通过（沙箱内另计 1 条环境失败）。
+
+### 重构与清理
+- 终端/PTY 会话注册表从主进程入口抽到 `electron/main/terminalSessions.ts`（纯 Node 工厂），
+  `index.ts` 从 1,813 行降回 1,753 行，重新满足 J1（≤1,800）判据。
+- 删除死代码 `character/stt.ts`（生产零引用）与 `ipc/index.ts` 兼容 barrel（生产依赖 4.2 已归零），
+  相关验收断言改指真实模块。
+
+### 已知残差（登记 4.5，不阻塞发版）
+- J2 五个单文件 >1,500 行未拆：`clawManager.ts` 2,543 / `downloadManager.ts` 2,084 /
+  `configManager.ts` 2,116 / marketing `store.ts` 2,001 / `VoicePage.vue` 2,418。
+- P45 宿主通道行为级测试仍缺（env/claw/terminal IPC/config）；本次只补了终端注册表一块。
+- consent 历史撤销判定无墓碑可据，需产品定复核策略；启动迁移/委托分支仍只有静态断言
+  （渲染端撤销流程已由 U26/U27 行为级覆盖）。
+- 4.4 功能边界（MCP 无 tag 检索软约束、桌宠接线推迟、批量删除非事务、群聊硬拦截待渠道层等）
+  详见 `doc/PROGRESS-4.0.md` 的 4.4「已知边界」与 4.5 欠账清单。
 
 ---
 

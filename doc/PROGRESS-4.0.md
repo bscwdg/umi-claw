@@ -1918,3 +1918,118 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
   `NPM_CONFIG_CACHE` 可绕过首版修复、Windows `Path` 可能丢失，均属实→已修并补断言。
 - 验证：双 typecheck 0/0；boundary 0/0/0；build 通过；全量 accept
   **34 套（accept×32 + e2e + smoke）/ 0 失败**。
+
+## 2026-11-06 ~ 11-10 · 4.4 大肥鱼内容质量 / 表情包 / 备份 / 本地 TTS / QQ 群聊
+
+> 版本口径：仍在 `release/4.0` 分支未发版，`package.json` 保持 4.2.0；4.4 只是 CHANGELOG 版本标签，
+> 不新建计划文件（AGENTS §11.6）。本批次共 32 个提交（11-06 重打包之后），全部在大肥鱼/语音/启动链路上。
+
+### 批次归并（提交 → 主题）
+
+| 主题 | 提交 | 落点 |
+| --- | --- | --- |
+| 主动消息渠道化 | `e1b5f38` `01383c0` `00159f3` | 改发已绑定渠道、QQ 主动文本直发、渠道保存解 Vue 代理（DataCloneError） |
+| 主动消息内容质量 | `fbcb52a` `bdc7f8b` `027422c` `de945cb` `b56979f` `b1f41d4` `e4e1b37` | 频率/每日上限、内容引擎、6h 重置、话题 20→40、按时段过滤、读最近聊天选话题、生活卡去硬拼、hook 标点 |
+| 表情包 | `bdc7f8b` | `stickerStore.ts` / `stickerSender.ts`，导入/情绪标/QQ 发图/约 20% 配图，`sticker.accept` 12/12 |
+| 单文件备份 | `bdc7f8b` | `backupBundle.ts`，zip 导出导入 + zip-slip/zip-bomb 防护 + 失败回滚 |
+| 本地 TTS | `6a34bee` `5eff32b` `0f93ccc` `03524a8` `e16ab11` `1a17e9f` `437546b` `159772f` | 命名统一、表单可保存可测试、/models 404 软失败、Voicebox 17493、语音条文档收口 |
+| 启动/渠道稳定性 | `6e498e8` `69ffab2` `9c5e0a1` | npm 缓存落 .npmrc、QQ 扫码先装插件、隔离副本先摘 junction + 超时（修 preparing 卡死） |
+| 记忆修复 | `77f05fa` | 日记 tags 归一化，回填 11-07/11-08 日记 |
+| QQ 群聊 | `3224f00` `80f50b6` `2187ec4` `6c5d1e8` `0535bb9` `204e19e` | 自动建 `feiyu-group` agent/workspace、通配绑定、群聊回复/语音开关与语音条上限、称呼/记忆隔离、AGENTS 受管段、bootstrap 后建 agent 防撞锁 |
+| 文档/UI | `34c0d44` `a5c5059` `a67d39b` `9299a5f` | 功能说明、资料库调研、README 对齐、保存按钮主题色 |
+
+### 已知边界（登记 4.5，本节为功能边界，不是缺陷）
+
+- MCP 工具级无 tag 检索仍可命中全库非归档笔记，目前靠 AGENTS 指令 + tag 软约束（4.3 P1 遗留）。
+- 记忆召回只在 recall 类问句注入；单文件 >256KB 跳过；界面无「最近记忆来源/命中」展示。
+- 记忆/关系管理：关系只读、日记编辑只改本地 memory、Obsidian 原件不同步、归档不自动清理、列表固定 30 天。
+- 桌宠窗口「恢复接线」按用户要求推迟；自定义桌宠形象不随单文件备份迁移；不支持 SVG/Live2D/精灵表。
+- 批量删除仍是「先 store.reset 再 CLI 清理」，CLI 失败只回 warning，非事务。
+- 真实 QQ/企微/微信入站未用真实凭据发包验收；只自动接管单账号，多账号需 OpenClaw 原生逐账号绑定；
+  渠道级绑定无法只接管私聊；群聊是否触发仍由渠道白名单/@ 规则决定。
+- 群聊策略靠 AGENTS 提示词约束 OpenClaw 行为，真正按群硬拦截需渠道层能力。
+
+## 2026-11-10 · 4.4 收官：J1 回退修复 / 死代码与 barrel 清理 / consent 撤销入口 / 文档补齐
+
+### R1 · J1 回退修复：终端会话注册表抽出（index.ts 1813 → 1753）
+
+- 新增 `electron/main/terminalSessions.ts`：纯 Node 工厂 `createTerminalSessionRegistry()`，
+  收纳原 `index.ts` 的会话 Map、`killTerminalSession`（SIGTERM + 2s SIGKILL 兜底）、`killAllTerminalSessions`，
+  对外暴露 `sessions`（size/has/get/set/delete/firstKey）+ `killSession` + `killAll`，形状与
+  `ipc/host/terminal.ts` 的 `TerminalIpcDeps` 结构化对齐。
+- `index.ts` 删除内联接口/Map/两个函数与 `ChildProcessWithoutNullStreams` 导入，三处退出清理
+  （`quitApp` / 窗口 `closed` / `runQuitCleanup`）与 term IPC 装配统一走 registry；J1 判据 ≤1,800 重新达标。
+- 新增 `test/terminal-sessions.accept.mjs`（T1–T6，6 条）并注册进 `run-all-accept.mjs` 与 package.json。
+  本机父进程不回收子进程退出事件（OS 层 tasklist 已验证进程被收掉、child.exitCode 恒 null，
+  WMI 同样 0x80041003 拒绝访问），终止类断言以确定性的 `killed` 标志为准，exitCode 仅 best-effort 观测。
+
+### R2 · 删除死代码 `character/stt.ts`（65 行）
+
+- 生产 0 import（只有验收单测引用）；删除文件并移除 `character.core.accept.mjs` 的 sttMod 导入与 C56
+  （断言对象消失，C57 的 `recordSttInbound` 入站事件记账覆盖保留）。character 套件 101 → 100。
+
+### R3 · 删除 `ipc/index.ts` 兼容 barrel（78 行）
+
+- 4.2 B3 后生产依赖已归零，仅剩 5 个验收脚本读它的源码断言 re-export。
+- `gateway` 改断言真实 `ipc/gateway.ts`；`business`/`knowledge.marketing`/`scan` 删除重复 barrel 断言
+  （同一符号已对真实模块断言）；`content` 删除只声明未使用的 `indexSrc` 死局部变量。barrel 整删。
+
+### R4 · consent 撤销同意 UI 入口（4.3 登记欠账）
+
+- `plugins/shared/hostBridge.ts` 新增 `consentApi()`（插件 UI 仍只经 hostBridge 访问宿主，不直接摸 window.api）。
+- work 设置页「用户协议」卡：已同意时出现「撤销同意」危险按钮 → 统一 `ConfirmDialog` 二次确认 →
+  `consent:revoke` 宿主单源通道 → `syncConsent(false, null)` 同步闸门；未同意无入口；失败 toast 按 code 报错。
+- `ui.accept` 新增 U26：确认前零调用 / 确认后只调一次 / 撤销后入口消失 / 未同意不渲染。ui 套件 25 → 26。
+- 对抗审查 P3（属实→已修）：首版撤销入口只在 work 插件页，work 停用后宿主侧无路可撤。
+  补宿主级入口——`src/views/About.vue` 新增「用户协议与隐私」卡（状态反显 + 查看协议 + 撤销同意），
+  该页是宿主路由、不随插件卸载；`ui.accept` 再增 U27 覆盖宿主页撤销全链路，ui 套件 26 → 27。
+  `hostBridge` 注释按事实改为「不影响通道，宿主页『关于』始终保留撤销入口」。
+
+### R5 · 文档与杂项
+
+- CHANGELOG 4.4 补齐 11-09/10 的话题质量与群聊功能、本地 TTS 表单、稳定性修复，测试段按本次复测重写。
+- `.gitignore` 增加 `/.npm-cache/`（本机 npm ci 用项目内缓存的副产物，不入库）。
+
+### 验收基线（2026-11-10 复测，工作区未提交状态）
+
+- 双 typecheck 0 错；`npm run build` 通过；`check:boundary` 0/0/0。
+- 36 套（accept×34 + e2e + smoke）共 678 条断言：除 `claw-maintenance` 的 `ghost-node-cleanup` 外全绿
+  （677/678）。该失败为本机 WMI/CIM 拒绝访问（`Get-CimInstance` 0x80041003）导致的环境问题，
+  代码按 best-effort 兜底（查询失败只告警不阻断启动）；沙箱内同套件 junction 用例另受 1 条沙箱限制，
+  提权后通过。该环境限制与本次改动无关，基线复跑表现一致。
+  注：678 为 Recorder 口径；`openclaw-config-writer` 走 node:test（21 条断言）不计入该口径。
+
+### 对抗审查
+
+- 只读子代理 `01a1c47d-8535-7d11-8853-539c7b410faa` 按 A–F 六组独立读仓复核，结论「可进入提交，无阻断缺陷」。
+- A 行为等价性：终端注册表 kill 逻辑与旧实现逐字同构、三处退出清理点无残留、类型结构化兼容——前提不成立（无回退）。
+- B 残留扫描：stt/barrel/旧标识符全仓 0 命中，仅 2 处历史注释提到旧 barrel（允许的说明文字）——前提不成立。
+- C 断言未改松：barrel 断言均有真实模块等价承接，U26 用真 preload 桥 + 真 ConfirmDialog 无假绿，T1–T6 以确定性 `killed` 为判据——前提不成立。
+- D 边界规范：新文件无分号/单引号/文件头齐全、不碰 electron，boundary 0/0/0；**P3 属实→已修**（见 R4，宿主关于页补撤销入口 + U27 + 注释订正）。
+- E 契约风险：revoke 通道/墓碑/grant 清墓碑链路自洽，撤销后可经复核弹窗或重启阻断弹窗重新同意，无死路——前提不成立。
+- F 文档数字：行数、套件数、J2 五个文件行数、话题库 40 条等逐项实测一致；677 口径差额（node:test 21 条）已解释——前提不成立。
+- 流程观察已处置：本审查记录即补入 PROGRESS（满足 AGENTS §12.1/12.4）；PROGRESS 文件 CRLF 由 `.gitattributes` 提交时归一为 LF。
+
+#### 第二轮：P3 增量独立对抗复核（互不可见，子代理 `01a1c4a1-1f11-75f0-a3c5-36521472bc1e`）
+
+- 范围：只审 P3 修复增量（About.vue / U27 / 注释订正）与全部文档数字，结论「P3 修复可随本批提交，无阻断缺陷」。
+- A 挂载器与单例串扰：preload 真实暴露 `app:getVersion` 与 `consent:status/grant/revoke`，U27 经真 preload 桥而非手写 mock；两次 mount 产出独立 bundle、按模块 URL 隔离，结构上不可能共享 gate 态——前提不成立。
+- B U27 假绿排查：按钮选择器精确相等、ConfirmDialog 走真 SFC 编译管线、mock 通道名与 preload 逐字一致，用例整体不假绿；**P4 属实（非阻断）**——`test/ui.accept.mjs` 的 `html.includes('同意用户协议')` 在已同意/未同意两态均命中，单条不具区分度（同块受 `v-if` 控制的按钮断言才是状态真证据）。处置：按 §11.3/§9.10 不在本批夹带改断言，登记 4.5 欠账第 10 条单独加固。
+- C 风格规范：新增 script 零行尾分号、跟随 About.vue 既有风格；无 `window.confirm`/`message.includes`，5 个增量文件不可见字符扫描干净——前提不成立。
+- D 撤销后自洽：两处撤销同引 `useAgreementGate` 单例，App 闸门读同一 ref，主进程另有 `assertConsent()` 硬闸门（撤销后网关真起不来）；经复核弹窗重新同意无死路——前提不成立。
+- E 文档数字：ui 27/27 复跑一致；678 = Recorder 链路 662 + db-worker 子进程 16，node:test 21 条不计入；J2 六组行数与各套件 JSON 逐项实测一致——前提不成立。
+
+## 4.5 欠账清单（2026-11-10 重新登记，替代 PLAN-4.2 的 4.3 清单）
+
+| # | 欠账 | 状态变化 | 说明 |
+| --- | --- | --- | --- |
+| 1 | J2 五个 >1,500 行单文件治理 | 未做，继续登记 | clawManager 2543 / downloadManager 2084 / configManager 2116 / marketing store 2001 / VoicePage 2418；一次拆一个、每拆跑全量，不打包大提交 |
+| 2 | P45 宿主通道行为级测试 | 部分缓解 | 本次新增 terminal-sessions 6 条覆盖 term 注册表；env/claw/terminal IPC/config 的行为级测试仍缺 |
+| 3 | consent 历史撤销判定 | 未做（需产品决策） | 3.0 升级且 4.0 期间撤销过的用户无墓碑可判，需定复核策略 |
+| 4 | consent 接线行为测试 | 部分缓解 | U26/U27 覆盖两端渲染撤销流程；启动迁移/委托分支仍只有静态 C10 |
+| 5 | 4.4 功能边界 | 新增登记 | 见上节「已知边界」7 条 |
+| 6 | ~~J1 index.ts ≤1800~~ | 本次完成 | 1813 → 1753，新增终端注册表套件锁回迁 |
+| 7 | ~~ipc/index.ts barrel~~ | 本次完成 | 测试依赖清完后整删 |
+| 8 | ~~character/stt.ts 死代码~~ | 本次完成 | 已删，C56 同步移除 |
+| 9 | ~~consent 撤销 UI 入口~~ | 本次完成 | 设置页 ConfirmDialog + U26；对抗审查 P3 后补宿主「关于」页入口 + U27（work 停用仍可撤销） |
+| 10 | U27 文本断言区分度收紧（P4） | 新增登记 | `test/ui.accept.mjs` 的 `includes('同意用户协议')` 两态均命中；收紧为已同意态独有文案（如 `你已于`），按 §11.3 单独 `test` 提交，不夹带业务改动 |
