@@ -24,7 +24,8 @@ import { OFFICIAL_MODEL_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv, toPosix, GATEWAY_TOKEN } from './openClawPaths'
 import { shouldSpeakInApp } from './fish/voice/core/openclawTts'
 import { readFileSync, existsSync, readdirSync, mkdirSync, appendFileSync } from 'fs'
-import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process'
+import { spawn, execFile } from 'child_process'
+import { createTerminalSessionRegistry } from './terminalSessions'
 
 // ── 4.0 插件内核（Phase 0/1）──────────────────────────────────────────────────
 import { createPluginRuntime, type PluginRuntime } from './services/pluginRuntime'
@@ -81,12 +82,6 @@ import { AppError, ERROR_CODES } from './services/errors'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
 
-// 类型定义
-interface TerminalSession {
-  process: ChildProcessWithoutNullStreams
-  id: string
-}
-
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let clawManager: ClawManager
@@ -127,8 +122,8 @@ export function getMarketingGatewayClient(): GatewayClient {
   return workGatewayClient
 }
 
-// 使用 Map 管理活跃的终端进程，避免 global 污染和内存泄漏
-const activeTerminalSessions = new Map<string, TerminalSession>()
+// 终端/PTY 会话注册表（J1：实现细节抽到 terminalSessions.ts，index.ts 只保留装配）
+const terminalSessions = createTerminalSessionRegistry()
 
 /**
  * 获取 OpenClaw 运行所需的环境变量和路径配置
@@ -845,50 +840,6 @@ async function listPushTargetOptions(
   })
 }
 
-/**
- * 安全地终止并清理指定的终端会话
- */
-function killTerminalSession(sessionId: string): boolean {
-  const session = activeTerminalSessions.get(sessionId)
-  if (!session) {
-    // 兼容旧逻辑：如果没有 sessionId，尝试清理全局遗留（如果有）
-    // 这里主要依赖 Map 管理，如果传入特定 ID 找不到，视为已清理
-    return false
-  }
-
-  try {
-    const proc = session.process
-    if (!proc.killed) {
-      // 优先发送 SIGTERM 允许优雅退出
-      proc.kill('SIGTERM')
-
-      // 设置超时，如果未退出则强制杀死
-      setTimeout(() => {
-        if (!proc.killed && proc.pid) {
-          try {
-            proc.kill('SIGKILL')
-          } catch (e) {
-            // 忽略进程已退出的错误
-          }
-        }
-      }, 2000)
-    }
-  } catch (err) {
-    console.error(`[PTY] 终止会话 ${sessionId} 时出错:`, err)
-  } finally {
-    activeTerminalSessions.delete(sessionId)
-    return true
-  }
-}
-
-/**
- * 清理所有活跃的终端会话（用于应用退出时）
- */
-function killAllTerminalSessions() {
-  const sessionIds = Array.from(activeTerminalSessions.keys())
-  sessionIds.forEach(id => killTerminalSession(id))
-}
-
 // 标记：关闭确认对话框是否正在等待用户选择，避免重复弹出
 let closeConfirmPending = false
 
@@ -905,7 +856,7 @@ const UPDATE_IN_PROGRESS_ERROR = 'OpenClaw 正在更新，请等待更新完成�
  */
 function quitApp(): void {
   ;(app as any).isQuiting = true
-  killAllTerminalSessions()
+  terminalSessions.killAll()
   // 按设置决定「停止网关」还是「保留网关后台运行」（保留时下次启动直接复用，跳过冷启动）
   clawManager.handleAppQuit().finally(() => app.quit())
 }
@@ -1015,7 +966,7 @@ function createWindow(): void {
 
   // 窗口完全关闭时，清理资源
   mainWindow.on('closed', () => {
-    killAllTerminalSessions()
+    terminalSessions.killAll()
     mainWindow = null
   })
 
@@ -1220,20 +1171,9 @@ function registerIpcHandlers(): void {
     getRuntimeConfig: () => getOpenClawRuntimeConfig(),
     resolveRuntime: (runtime) =>
       resolveTerminalRuntime(runtime as TerminalRuntime | undefined),
-    sessions: {
-      size: () => activeTerminalSessions.size,
-      has: (id) => activeTerminalSessions.has(id),
-      get: (id) => activeTerminalSessions.get(id),
-      set: (id, session) => {
-        activeTerminalSessions.set(id, session)
-      },
-      delete: (id) => {
-        activeTerminalSessions.delete(id)
-      },
-      firstKey: () => activeTerminalSessions.keys().next().value
-    },
-    killSession: (id) => killTerminalSession(id),
-    killAll: () => killAllTerminalSessions(),
+    sessions: terminalSessions.sessions,
+    killSession: id => terminalSessions.killSession(id),
+    killAll: () => terminalSessions.killAll(),
     send: (channel, payload) => {
       mainWindow?.webContents.send(channel, payload as never)
     },
@@ -1769,7 +1709,7 @@ async function runQuitCleanup(): Promise<void> {
   await step('插件配置落盘', () => pluginRuntime?.flushConfig(), 2000)
   await step('关闭插件库', () => pluginRuntime?.disposeDb(), 3000)
   // 确保在退出前杀死所有子进程，防止孤儿进程
-  killAllTerminalSessions()
+  terminalSessions.killAll()
   // 4.2 B3：中止所有插件的在途后台任务（流式生成 / 扫描识别 / 热点采集）。
   // 由插件 activate 时自注册（services.abort），宿主不再直接引用插件内部函数——
   // 那曾是一条「宿主反向依赖插件实现」的隐性越界（门禁只扫插件→宿主，扫不到）。

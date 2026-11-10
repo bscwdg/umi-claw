@@ -23,6 +23,7 @@ const ACCEPT = [
   ['gateway', 'test/gateway.accept.mjs'],
   ['node-runtime', 'test/node-runtime.accept.mjs'],
   ['maintenance', 'test/claw-maintenance.accept.mjs'],
+  ['terminal-sessions', 'test/terminal-sessions.accept.mjs'],
   ['config-writer', 'test/openclaw-config-writer.accept.mjs'],
   ['work', 'test/work.accept.mjs'],
   ['record', 'test/record.accept.mjs'],
