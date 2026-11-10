@@ -1665,6 +1665,7 @@ build               通过
   （`e88b235` 提交体已声明）。
 - **P45**（env/claw/terminal/config 宿主通道行为级测试，4.1 结转 4.2）仍未做，已登记 4.3
   （CHANGELOG 4.2「已知残差」、PLAN-4.2「发布状态与待办」）。
+  **2026-11-10 已补**：`test/host-ipc.accept.mjs` 31 条，见文末「4.5 复核补充」。
 
 ### 2026-11-03 · 4.2 复核补修 · 服务注入闭包（abort / consent）
 
@@ -1990,14 +1991,18 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 - CHANGELOG 4.4 补齐 11-09/10 的话题质量与群聊功能、本地 TTS 表单、稳定性修复，测试段按本次复测重写。
 - `.gitignore` 增加 `/.npm-cache/`（本机 npm ci 用项目内缓存的副产物，不入库）。
 
-### 验收基线（2026-11-10 复测，工作区未提交状态）
+### 验收基线（2026-11-10 21:58 最终轮，工作区未提交状态）
 
 - 双 typecheck 0 错；`npm run build` 通过；`check:boundary` 0/0/0。
-- 36 套（accept×34 + e2e + smoke）共 678 条断言：除 `claw-maintenance` 的 `ghost-node-cleanup` 外全绿
-  （677/678）。该失败为本机 WMI/CIM 拒绝访问（`Get-CimInstance` 0x80041003）导致的环境问题，
-  代码按 best-effort 兜底（查询失败只告警不阻断启动）；沙箱内同套件 junction 用例另受 1 条沙箱限制，
-  提权后通过。该环境限制与本次改动无关，基线复跑表现一致。
-  注：678 为 Recorder 口径；`openclaw-config-writer` 走 node:test（21 条断言）不计入该口径。
+- 全量 **37 套（accept×35 + e2e + smoke）**、Recorder 口径 **709 条断言 / 0 失败**（2026-11-10 21:58
+  最终轮）；本批新增 `test/host-ipc.accept.mjs` **31 条**（P45），`test/*.accept.mjs` 共 36 个、
+  run-all `ACCEPT` 35 项。注：709 为 Recorder 口径；`openclaw-config-writer` 走 node:test
+  （21 条断言）不计入该口径。
+- **此前「677/678、本机 WMI/junction 环境失败」的叙述已更正**：`claw-maintenance` 的失败实为
+  `test/claw-maintenance.accept.mjs` 的**断言写错**——原断言 `!existsSync(rename 后的新目标路径)`，
+  但目标目录随整棵树 rename 后在新位置必然存在，junction 可用时结构性必红；已改为断言原目标
+  `built.target` 不存在。修复后首次真正执行「悬空 junction 的 `.stale-` 副本清理」路径
+  （生产侧 222ms 通过），`claw-maintenance` 现 **30/30**。
 
 ### 对抗审查
 
@@ -2019,6 +2024,9 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 - D 撤销后自洽：两处撤销同引 `useAgreementGate` 单例，App 闸门读同一 ref，主进程另有 `assertConsent()` 硬闸门（撤销后网关真起不来）；经复核弹窗重新同意无死路——前提不成立。
 - E 文档数字：ui 27/27 复跑一致；678 = Recorder 链路 662 + db-worker 子进程 16，node:test 21 条不计入；J2 六组行数与各套件 JSON 逐项实测一致——前提不成立。
 
+> **2026-11-10 更正（本批最终轮）**：上文 E/F 引用的「677/678、环境失败」口径作废——
+> `claw-maintenance` 的失败实为断言缺陷（已修，见上「验收基线」），最终 **37 套 / 709 条 / 0 失败**。
+
 ### R6 · P4 断言加固（U27 文本区分度，独立 test 提交）
 
 - 原断言错在哪：U27 的 `res.html.includes('同意用户协议')` 同时是已同意文案（`✅ 你已于 … 同意用户协议`）与未同意文案（`⚠️ 尚未同意用户协议…`）的公共子串，两态都命中，单条不具状态区分度（第二轮对抗复核 P4）。
@@ -2029,9 +2037,9 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 
 | # | 欠账 | 状态变化 | 说明 |
 | --- | --- | --- | --- |
-| 1 | J2 五个 >1,500 行单文件治理 | 未做，继续登记 | clawManager 2543 / downloadManager 2084 / configManager 2116 / marketing store 2001 / VoicePage 2418；一次拆一个、每拆跑全量，不打包大提交 |
-| 2 | P45 宿主通道行为级测试 | 部分缓解 | 本次新增 terminal-sessions 6 条覆盖 term 注册表；env/claw/terminal IPC/config 的行为级测试仍缺 |
-| 3 | consent 历史撤销判定 | 未做（需产品决策） | 3.0 升级且 4.0 期间撤销过的用户无墓碑可判，需定复核策略 |
+| 1 | J2 剩余 5 个 >1,500 行单文件治理 | 部分推进（本批 clawManager 已拆） | clawManager **2,543 → 1,484**（≤1,500；新增 `electron/main/claw/` 13 个模块，行为零变化）；剩余 downloadManager 2084 / configManager 2116 / marketing store 2001 / VoicePage 2418 / CharacterPage 1970（总行数，CharacterPage 非空 1,874）。CharacterPage 自 11-04 `bf84d1f` 起越线（该提交总行 1,613 / 非空 1,530，此前漏计）；一次拆一个、每拆跑全量，不打包大提交 |
+| 2 | P45 宿主通道行为级测试 | 本次完成 | 新增 `test/host-ipc.accept.mjs` **31 条**（env/claw/terminal/config 行为级），已注册 run-all `ACCEPT` 与 `accept:host-ipc`；残留盲区 2 项（边界门禁不扫 `electron/main/claw/**`；`getStatus` 的 getConfig 两次调用合并为一次、判定等价）已接受 |
+| 3 | consent 历史撤销判定 | 已知边界（已降级） | v4.1.0 前渲染端无撤销入口（`7b940cc` 才引入「撤销同意」UI），`work:wizard:revokeConsent` 通道也无 UI 调用方，故不存在 UI 可产生的历史撤销；且「撤销过」与「从未同意」行为后果一致——`services/consent.ts` 无 granted 时 `migrateFromPluginDb` 返回 `no-source`（`status().consent=false`、`ensure()` 同样抛「请先同意用户协议」）。不产生「撤销被复活」错误，不再占产品决策欠账 |
 | 4 | consent 接线行为测试 | 部分缓解 | U26/U27 覆盖两端渲染撤销流程；启动迁移/委托分支仍只有静态 C10 |
 | 5 | 4.4 功能边界 | 新增登记 | 见上节「已知边界」7 条 |
 | 6 | ~~J1 index.ts ≤1800~~ | 本次完成 | 1813 → 1753，新增终端注册表套件锁回迁 |
@@ -2039,3 +2047,30 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 | 8 | ~~character/stt.ts 死代码~~ | 本次完成 | 已删，C56 同步移除 |
 | 9 | ~~consent 撤销 UI 入口~~ | 本次完成 | 设置页 ConfirmDialog + U26；对抗审查 P3 后补宿主「关于」页入口 + U27（work 停用仍可撤销） |
 | 10 | ~~U27 文本断言区分度收紧（P4）~~ | 本次完成 | 已同意态断言收紧为 `你已于`、未同意态补镜像反向断言；变异探针验证有咬劲，单独 `test(ui)` 提交 |
+
+### 4.5 复核补充（2026-11-10 复核与最终轮，只登记事实）
+
+- **仓库卫生清理**：删除 `test/hotscore.real-smoke.mjs`、`test/shooting.real-smoke.mjs`（均 0 字节，`doc/PLAN-4.1-DEBT.md` 已登记清理）、`test/find-locker.ps1`、`test/phase1-e2e.mjs`、`test/packaged-smoke.mjs`、`test/packaged-gateway.smoke.mjs`、`test/e2e-run.log`、`test/e2e-screenshots/` 19 张 JPEG（约 1.27 MB，共 26 个文件）。删前逐文件全仓 grep：以上均不在 `scripts/run-all-accept.mjs` / `package.json` / `.github` 引用；**历史文档仍保留旧路径/旧命令引用，已不可执行**（`PLAN-2.0.md:532,1099,1239` 的复现命令、`PLAN-4.1-DEBT.md:479,584` 对 real-smoke 的登记、`docs/ui-coverage-gap.md:7` 对 phase1-e2e 的引用）；`test/p0-sync-selftest.mjs`、`test/commit01-guard.test.mjs` **保留**（本文件与 `PLAN-2.0.md` 有历史引用）。
+- **遗留已处置**：`docs/phase1-e2e-report.md` 与 `docs/SELF-TEST.md` 仍以相对路径引用上述截图、`test/phase1-e2e.mjs` 与 `test/e2e-run.log`；已按 Lead 决策在两份 2.0 时代报告顶部各加一行注记（「已随 4.x 仓库卫生清理删除；留存记录见本文件 4.5 复核补充」），历史内容未改。
+- **`ctx.kv` / `ctx.secrets`**：`test/plugin.accept.mjs` 的 P7 覆盖 kv/secrets **注入 + 命名空间隔离 + 加密不可用拒绝**，P8 另覆盖 **kv 并发写不丢键**（不含 secrets）；但生产 **0 消费方**（`ctx.kv`/`ctx.secrets` 全仓 0 命中）。契约可用，消费待真实需求。
+- **`contributes.settings` / `commands`**：`electron/main/kernel/manifest.ts` 只校验形状（字符串数组）；`contributes.routes` **有消费**（`src/views/PluginManager.vue:84`、`src/renderer/pluginAdmin.ts:29,39,77`），但 `settings`/`commands` **0 消费**（全仓 0 命中），补实现或移除校验仍待判断。
+- **`markSaved` 保存途中回填**：`CharacterSettings.markSaved()`（`src/character/CharacterSettings.vue:351`）在父组件 `refresh()` 之后无条件 `applySettings(props.settings)` 并复位 `dirty`；保存途中用户若继续编辑，回填会覆盖这批改动（窗口为一次 IPC 往返）。记为已知边界，本批不改。
+- **旧撤销通道无 UI 调用**：`work:wizard:revokeConsent`（`plugins/work/main/ipc/work.ts:139`，preload 于 `electron/preload/index.ts:610` 暴露）无渲染端调用方；撤销统一走宿主 `consent:revoke` 单源通道（U26/U27），该旧通道只被 `wizard.accept` 用作行为断言。
+- **本批完成（2026-11-10 最终轮，全部已定稿并验收）**：仓库卫生清理 26 个文件（见上）；J2 第一步
+  `electron/main/clawManager.ts` **2,543 → 1,484 行**（新增 `electron/main/claw/` 13 个模块，行为零变化，
+  契约/源码断言全保留）；P45 `test/host-ipc.accept.mjs` **31 条**；`claw-maintenance` 断言缺陷修复
+  （原断言错在哪见「验收基线」）；最终全量 **37 套（accept×35 + e2e + smoke）/ 709 条 / 0 失败**。
+- **决策留痕（P45 审查发现「现状被锁成契约」，本批不改代码，登记为已知边界）**：
+  - `electron/main/ipc/host/terminal.ts:86-97`：`term:pty-start` 先 `killAll()` 旧会话再 `resolveRuntime`，
+    解析失败会先杀掉用户在跑的终端；
+  - `electron/main/ipc/host/env.ts:200-212`：`env:update` 回滚快照不可用（`restoreOpenClawBackup()` 返回
+    `restored=false`）时仍 `success:true`，`Setup.vue` 会显示「更新成功」；
+  - `electron/main/ipc/host/config.ts:46-56`：`config:save` / `config:reset` 落盘失败（`appConfigSavedOk=false`）
+    仍调用 `applyLoginItemSettings`，UI 报保存失败但开机自启已改；
+  - 次要：未知 `sessionId` 回落到第一个会话；`claw:get-token` 会读 `<dataDir>/openclaw/openclaw.json` 旧变体。
+- **P45 残留盲区（本批已接受并留痕）**：边界门禁 `scripts/check-boundaries.mjs` 的扫描根是 `plugins/**`
+  与 `plugins/<id>/domain`，**不扫 `electron/main/claw/**`**；`getStatus` 的 `getConfig` 由两次调用合并为
+  一次（判定等价）。
+- **数字同步（2026-11-10）**：`AGENTS.md` §0/§7.1/§10 与 `CHANGELOG.md` 4.4 测试段、本节「验收基线」的
+  套件/断言数统一为 **37 套（accept×35 + e2e + smoke）/ 709 条 / 36 个 `.accept.mjs` / ACCEPT 35 项**；
+  历史「34 套 / 648」「36 套 / 678」为旧口径，678 那轮的失败真因是断言缺陷（已修）。

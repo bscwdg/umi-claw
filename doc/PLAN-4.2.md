@@ -141,7 +141,7 @@ gateway{parts,stream,types} / dbTypes / abortRegistry）+ `ipc/host/*` 七个文
 ### 超尺寸文件实测（P1 的依据）
 
 如果采纳 P1（改判据为「单文件 ≤1500 行」），需要治理的文件实测如下
-（全部 ts/vue 共 224 个文件，>1500 行 6 个，1000–1500 行 5 个）：
+（2026-11-03 实测：全部 ts/vue 共 224 个文件，>1500 行 6 个，1000–1500 行 5 个；**2026-11-10 更新**：clawManager 已拆到 1,484 行，当前 >1,500 行 **5 个**，见 §四 #7）：
 
 | 文件 | 行数 | 层 |
 | --- | --- | --- |
@@ -169,13 +169,13 @@ gateway{parts,stream,types} / dbTypes / abortRegistry）+ `ipc/host/*` 七个文
 | # | 判据 | 当前实测 | 状态 |
 | --- | --- | --- | --- |
 | J1 | `electron/main/index.ts` ≤ 1,800 行 | **1,800** | ✅（B2 后曾涨到 1,801，已压回） |
-| J2 | 单文件 ≤ 1,500 行（`index.ts` 由 J1 单独约束，不计入 J2） | **5 个非 index 文件超标**（含 index 共 6 个 >1,500） | ⚠️ 待治理（不阻塞发布） |
+| J2 | 单文件 ≤ 1,500 行（`index.ts` 由 J1 单独约束，不计入 J2） | **当前 5 个非 index 文件超标**（clawManager 已拆 2543→1484；含 index 共 6 个 >1,500） | ⚠️ 待治理（不阻塞发布） |
 | J3 | 插件边界 `pluginHostBoundary=0` / `pluginHostTypeOnly=0` / `managerElectron=0` | 0 / 0 / 0 | ✅ |
 | J4 | 全量 accept 全绿 | **33 套 / 619 PASS / 0 FAIL**（2026-11-03 复核补修后复测） | ✅ |
 
-#### J2 待治理清单（单文件 >1,500 行；`index.ts` 由 J1 单独约束）
+#### J2 待治理清单（2026-11-03 快照 · 4.2 收尾；当前状态见 §四 #7；`index.ts` 由 J1 单独约束）
 
-| 文件 | 行数（2026-11-03 收尾实测） | 超出 | 拆分方向 |
+| 文件 | 行数（2026-11-03 收尾快照） | 超出 | 拆分方向 |
 | --- | --- | --- | --- |
 | `electron/main/clawManager.ts` | 2,321 | +821 | 进程管理 / 就绪探测 / 日志 tail / adopt 复用 → 可拆 3–4 个 |
 | `electron/main/downloadManager.ts` | 2,043 | +543 | 环境下载 / Node 版本 / 受管安装 → 可拆 2–3 个 |
@@ -206,7 +206,7 @@ gateway{parts,stream,types} / dbTypes / abortRegistry）+ `ipc/host/*` 七个文
 
 | 选项 | 做法 | 能否达 ≤26,000 | 代价 |
 | --- | --- | --- | --- |
-| **P1 改目标定义** | 放弃「总行数」指标，改用结构性指标：单文件 ≤1500 行（现存 5 个超标的：clawManager 2321 / downloadManager 2043 / configManager 2024 / marketing store 2001 / VoicePage 1842）+ index ≤1800（已达成） | 不适用 | 低；承认「总量」不是有效度量 |
+| **P1 改目标定义** | 放弃「总行数」指标，改用结构性指标：单文件 ≤1500 行（现存 5 个超标的：clawManager 2321 / downloadManager 2043 / configManager 2024 / marketing store 2001 / VoicePage 1842）+ index ≤1800（已达成）（2026-11-03 口径；**2026-11-10 更新**：clawManager 已拆 2543→1484，当前 5 个＝downloadManager 2084 / configManager 2116 / marketing store 2001 / VoicePage 2418 / CharacterPage 1970） | 不适用 | 低；承认「总量」不是有效度量 |
 | **P2 外置 character/fish** | 把 `character/`(5357) 与 `fish/`(3567) 移出 `electron/main`（如 `electron/modules/`） | 是（29,115-9,450=19,665） | 中；但 **总代码量不变**，只是换目录——违反 G12 精神 |
 | **P3 真删功能** | 合并 / 删除壳能力中的冗余实现（需先找出确实冗余的部分） | 待评估 | 高；需逐项确认无行为回退 |
 
@@ -262,7 +262,7 @@ WP7-P5 的 GUI 部分延后至此。核心（检测 + 日志告警）已在 4.0.
 | --- | --- | --- | --- |
 | B4 | ✅ 完成（`b7c5166`） | type-only **14 → 0**；门禁新增 `pluginHostTypeOnly` 分级计数；boundary.accept 9/9 | 4.2.0 |
 | B3 | ✅ 完成（`1d0728d`；⚠️ 复核补修：inject 曾漏 `abort`，注册被静默跳过，已补并加 P58 锁住） | 生产 barrel 依赖 **3 → 0**；宿主直调插件 abort **4 → 0**；abort 注册表 + 两插件自注册（补 inject 后真实生效）；barrel 标 @test-only | 4.2.0 |
-| B1 | ✅ **已拍板 P1**（`e276db5` + `94e87f0`） | 判据改为结构性：J1 `index` ≤1800 **已达成(1800)**；J2 非 index 单文件（**5 个待治理**）；J3 边界 0/0/0 ✓；J4 33 套 / 619 / 0 ✓ | 4.2.0 |
+| B1 | ✅ **已拍板 P1**（`e276db5` + `94e87f0`） | 判据改为结构性：J1 `index` ≤1800 **已达成(1800)**；J2 非 index 单文件（**5 个待治理**；2026-11-10 现状：clawManager 已拆，仍 5 个但名单变为 downloadManager / configManager / marketing store / VoicePage / CharacterPage）；J3 边界 0/0/0 ✓；J4 33 套 / 619 / 0 ✓（4.2 时点） | 4.2.0 |
 | B2 | ✅ 完成（`5ddd44f`） | `env:runtimeProbe`（第 8 个 env 通道）+ App 横幅/一键重装；P44 通道 7→8、handler 63→64 | 4.2.0 |
 | consent（4.1.0 tag 内含 `f120ef7`） | ✅ 完成（⚠️ 复核补修：work inject 曾漏 `consent`，宿主单源回落插件库；启动迁移曾只挂 afterEnable，已补） | 宿主单源 `consent:status/grant/revoke` + 完全委托 + P1–P5；启动时迁移（P1-1）；consent.accept 10/10、plugin.accept P58 锁注入 | 4.1.0（已在 tag 内） |
 
@@ -294,14 +294,14 @@ packaged.smoke       7/7（但 release/ 产物仍是 4.1.0；发布前需按 4.2
 
 | # | 事项 | 状态 / 证据 |
 | --- | --- | --- |
-| 1 | 4.2.0 重新打包（win-unpacked + 安装器） | ⏳ 待做。当前 `release/latest.yml version: 4.1.0`、`Umi Claw.exe 4.1.0`、`Umi Claw Setup 4.1.0.exe`；`e88b235` 的提交体也明确「改版本号之前打的包……发布 4.2.0 需重新打包一次」 |
-| 2 | packaged.smoke 在 4.2.0 产物上重跑 | ⏳ 待做（7/7 目前验的是 4.1.0 产物；S6/S7 不断言版本号） |
-| 3 | NSIS 安装器 + Windows 真机安装 7 步（RUNBOOK §6） | ⏳ 待人工；`release-nsis/` 不存在 |
+| 1 | 4.2.0 重新打包（win-unpacked + 安装器） | ✅ 已完成（2026-11-10 19:09–19:10 实测）：`release/win-unpacked/Umi Claw.exe` FileVersion **4.2.0**（19:09:30）、`release/Umi Claw Setup 4.2.0.exe` **95,190,135 B**（19:10:12）、`release/latest.yml` `version: 4.2.0` |
+| 2 | packaged.smoke 在 4.2.0 产物上重跑 | ✅ 已完成：本批最终验证轮 packaged.smoke **7/7、0 失败**（`test/accept-result-smoke.json` 是 gitignore 的最近一轮，会被后续轮覆盖，不作为固定时间戳证据）；S1–S7 全绿；S6/S7 默认取 `release/win-unpacked`（候选顺序实现见 `test/packaged.smoke.mjs`，结果 json 未记录所用路径） |
+| 3 | NSIS 安装器 + Windows 真机安装 7 步（RUNBOOK §6） | ⚠️ 安装器已产出（`release/Umi Claw Setup 4.2.0.exe`，95,190,135 B）；Windows 真机 7 步待人工；`release-nsis/` 不存在（构建输出在 `release/`） |
 | 4 | tag `v4.2.0` 创建 + push | ⏳ 待用户确认；本地仅 `v1.0.0` / `v4.1.0` |
 | 5 | 4.2 版本级两轮独立复核入档 | ✅ 已补跑，见 `doc/PROGRESS-4.0.md`「4.2 版本级收尾复核」 |
-| 6 | P45（env/claw/terminal/config 宿主通道行为级测试，4.1 结转） | ⚠️ 未做，登记 4.3（见 CHANGELOG 4.2 已知残差） |
-| 7 | J2 单文件治理 / `ipc/index.ts` barrel 测试依赖 / `character/stt.ts` 死代码 | ⚠️ 登记 4.3（不阻塞 4.2 发布） |
-| 8 | 安装器文件名与 updater URL 对齐 | ⚠️ 当前 `release/latest.yml` 的 url 是连字符名、磁盘是带空格名（build 未设 `artifactName`）；重打 4.2.0 时必须对齐，否则自动更新 404 |
+| 6 | P45（env/claw/terminal/config 宿主通道行为级测试，4.1 结转） | ✅ 已补（2026-11-10）：新增 `test/host-ipc.accept.mjs` **31 条 check**，已注册 run-all `ACCEPT` 与 `accept:host-ipc`；残留盲区见 `doc/PROGRESS-4.0.md`「4.5 复核补充」 |
+| 7 | J2 单文件治理 / `ipc/index.ts` barrel 测试依赖 / `character/stt.ts` 死代码 | ⚠️ **J2 剩余 5 个**（clawManager 已拆 2543→1484；剩 downloadManager 2084 / configManager 2116 / marketing store 2001 / VoicePage 2418 / CharacterPage 1970）；barrel/stt 已完成（4.4 收官 R3/R2） |
+| 8 | 安装器文件名与 updater URL 对齐 | ⚠️ **发布通道确认项**（不是已确认的 404）。仓库**无 `electron-updater` 依赖、无 `autoUpdater` 调用**（`package.json` / `electron` / `src` / `plugins` 全 0 命中），`release/latest.yml` 只是 electron-builder 产出的构建产物（url 是连字符安全名 `Umi-Claw-Setup-4.2.0.exe`，磁盘文件名带空格）。若走 GitHub release，上传资产本就按 electron-builder 的安全名（连字符），两者一致；若改自建 feed（`build.publish` 指向自有地址），需设 `artifactName` 把磁盘名对齐到 feed 名。发布通道拍板后按该口径验收 |
 
 ### 4.3 欠账清单（登记；4.3 计划文件尚未建立）
 
@@ -310,12 +310,15 @@ packaged.smoke       7/7（但 release/ 产物仍是 4.1.0；发布前需按 4.2
 > 1,813 行）已修回 1,753。剩余项与 4.4 功能边界统一登记到
 > `doc/PROGRESS-4.0.md` 文末「4.5 欠账清单」，以该表为准。
 
-- **P45**：env / claw / terminal / config 宿主通道行为级测试（4.1 结转）；
-- **J2**：5 个非 index 单文件 >1,500 行（clawManager / downloadManager / configManager /
-  marketing-ui store / VoicePage），`index.ts` 由 J1 约束；
-- `electron/main/ipc/index.ts`（78 行，`@test-only`）：清测试依赖后删；
-- `electron/main/character/stt.ts`（65 行）：删或写明保留理由；
-- **consent 历史撤销判定**：3.0 升级且 4.0 期间撤销过的用户无法自动区分（宿主持有历史
-  granted、无墓碑），需产品决策（例如强制复核一次）；
-- **撤销同意入口**：`api.consent.revoke` 已暴露但无 UI 入口（设置页「复核用户协议」只读）；
+- ~~**P45**：env / claw / terminal / config 宿主通道行为级测试（4.1 结转）~~ ✅ 已完成（2026-11-10：
+  `test/host-ipc.accept.mjs` **31 条**，注册 run-all `ACCEPT` 与 `accept:host-ipc`）；残留盲区见 PROGRESS「4.5 复核补充」；
+- **J2**：剩余 5 个非 index 单文件 >1,500 行（downloadManager 2,084 / configManager 2,116 /
+  marketing-ui store 2,001 / VoicePage 2,418 / `src/character/CharacterPage.vue` 1,970；clawManager 已拆
+  2,543→1,484），`index.ts` 1,753 由 J1 约束；
+- ~~`electron/main/ipc/index.ts`（78 行，`@test-only`）：清测试依赖后删~~ ✅ 已完成（4.4 收官 R3 整删）；
+- ~~`electron/main/character/stt.ts`（65 行）：删或写明保留理由~~ ✅ 已完成（4.4 收官 R2 已删，C56 同步移除）；
+- **consent 历史撤销判定**：已降级为「已知边界」——v4.1.0 前无撤销 UI、旧 wizard 通道无调用方，
+  且无 granted 时按 `no-source` 处理，不产生「撤销被复活」错误（依据见 `doc/PROGRESS-4.0.md` 4.5 第 3 条）；
+- ~~**撤销同意入口**：`api.consent.revoke` 已暴露但无 UI 入口（设置页「复核用户协议」只读）~~
+  ✅ 已完成（4.4 收官 R4：work 设置页 + 宿主「关于」页，U26/U27 行为级覆盖）；
 - **consent 接线行为测试**：C10 是静态核对；启动迁移、委托分支、渲染端行为级用例待补。

@@ -1,5 +1,7 @@
 # Umi Claw 2.0 自测报告
 
+> 注（2026-11-10）：本报告引用的 e2e 截图（`test/e2e-screenshots/*.jpg`）、`test/phase1-e2e.mjs`、`test/e2e-run.log` 已随 4.x 仓库卫生清理删除；留存记录见 `doc/PROGRESS-4.0.md`「4.5 复核补充（2026-11-10）」。
+
 > 分支：`release/2.0` ｜ 应用版本：package.json 1.1.0 ｜ 自测时间：2026-09-21（GMT+8）
 > 执行人：小北（AI 自测）
 
@@ -72,7 +74,7 @@
 
 ### 上一轮（2026-09-19）完整结果
 - 同一脚本 **19/19 全通过**，总耗时 505s；渲染端错误 0、主进程错误行 0。
-- 证据：`docs/phase1-e2e-report.md`、`test/e2e-result.json`、19 张截图（该套截图已在仓库保留）。
+- 证据：`docs/phase1-e2e-report.md`、`test/e2e-result.json`、19 张截图（**已于 4.x 仓库卫生清理删除**，见文首注记）。
 
 ---
 

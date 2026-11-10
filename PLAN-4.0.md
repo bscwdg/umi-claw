@@ -499,22 +499,22 @@ Phase 0.5 / 0 / 1 / 2 / 3 / 4 全部完成；此外有**三块计划外已落地
 | --- | --- | --- |
 | knowledge / context 下沉为宿主服务（§〇.8、§十七 第 4 条） | **已收敛**：解析器单一实现 `services/knowledge/parsers`、取舍循环 `services/context/assemble`（WP1/WP2，2026-11-02）；域侧只保留预算占比与测量回调，`computeBudget` 于 2026-11-03 接入两域 | 已完成（口径差异见 PLAN-4.1 WP2） |
 | 类型化 IPC 生成（§5.3、WP3） | 未做；实际用 `manifest.channels` 租约 + 手写 preload | 明确延后（不阻塞后续） |
-| `ctx.secrets`（§4.2 / §8.2） | `SERVICE_NAMES` 已含 `secrets`/`kv`（WP4 `e050910`）；但 **0 消费方 / 0 accept 断言**（2026-11-03 复核 P2-1） | 接口已补；消费与断言归 4.1 |
-| `contributes.settings` / `commands`（§7） | manifest 校验了，但无消费方 | 补实现或移除校验 |
-| 插件只经 `ctx`（§十七 第 2 条） | 门禁 `scripts/check-boundaries.mjs` 已上线（accept 首套 + CI）；域代码已迁 `plugins/<id>/domain/`；插件 `main.ts` 仍有 9 条 ipc 越界 | 越界清零归 WP6 |
-| 停用即中止在途 SSE（PROGRESS 记录） | marketing 已修；**work 未修**（只 `reminder.stop()`） | 4.0.x 修 |
-| 旧库导入失败可见 + 重试（PROGRESS 记录） | 只有 `ctx.logger`，插件管理页无入口 | 4.0.x 修 |
-| work 知识库原件写全局 `<dataDir>/knowledge` | 未迁移；RUNBOOK 未登记该目录 | 4.0.x 或文档登记 |
+| `ctx.secrets`（§4.2 / §8.2） | `SERVICE_NAMES` 已含 `secrets`/`kv`；**accept 断言已有**：`test/plugin.accept.mjs` 的 P7 覆盖 kv/secrets **注入 + 命名空间隔离 + 加密不可用拒绝**，P8 另覆盖 **kv 并发写不丢键**（不含 secrets）；但生产 **0 消费方**（`ctx.kv`/`ctx.secrets` 全仓 0 命中，2026-11-10 复核） | 断言已完成；消费待真实需求，不再占欠账 |
+| `contributes.settings` / `commands`（§7） | `electron/main/kernel/manifest.ts` 只校验形状（字符串数组）；`contributes.routes` **有消费**（`src/views/PluginManager.vue:84`、`src/renderer/pluginAdmin.ts:29,39,77`），但 `settings`/`commands` **0 消费**（全仓 0 命中，2026-11-10 复核） | 补实现或移除校验；登记 4.5，不阻塞发布 |
+| 插件只经 `ctx`（§十七 第 2 条） | 门禁 `scripts/check-boundaries.mjs` 已上线（accept 首套 + CI）；域代码已迁 `plugins/<id>/domain/`；**ipc 越界已清零**：2026-11-10 实测 `pluginHostBoundary=0 / pluginHostTypeOnly=0 / managerElectron=0`（扫描 2 个域目录） | 已完成（4.2 B3/B4 + WP6） |
+| 停用即中止在途 SSE（PROGRESS 记录） | **已修**：正常停用走 `plugins/work/main.ts:189-194` 的 activate cleanup→`stopBackgroundWork(runtime)`（`qa`/`tools`/`reports`/`openclawSummary` 全部 `abortAll()` + `reminder.stop()`），`:196-207` 的 `deactivate` 兜底「激活超时/异常后被停用」路径；`:125-141` 另向宿主 `ctx.services.abort.register('work', …)` 注册兜底，该注册只在宿主退出统一 `abortAll()` 时触发 | 已完成（4.2 B3） |
+| 旧库导入失败可见 + 重试（PROGRESS 记录） | **已实现**（4.0.2 P2）：`electron/main/ipc/host/importStatus.ts` 提供状态查询与重试通道；`src/App.vue` 全局横幅显示「旧数据导入失败（插件）：原因 + 重试导入」，成功后自动消失。**可见窗口有限**：`src/App.vue:325-339` 在启动后每 2s 轮询一次、最多 8 次（16s），之后不再自动检查（也没有手动入口），启动 16s 后才失败则本次不显示 | 已完成（窗口限制为已知边界） |
+| work 知识库原件写全局 `<dataDir>/knowledge` | **新写入已迁** `plugins/work/knowledge`（4.0.2 P3；`plugins/work/domain/runtime.ts` 传 `originalsSubdir`，`knowledge_manager` 的 `source_path` 也随之落插件目录）；旧全局 `knowledge/` 仅历史数据；RUNBOOK 仍未登记这两个目录（2026-11-10 复核） | 迁移已完成；RUNBOOK 目录登记待补 |
 
 ### 18.4 发布工程清单（打 tag 前必须完成）
 
 1. 版本元数据对齐：`package.json` / `package-lock.json` / `CHANGELOG.md`（本次已完成 4.0.0）。
 2. 未提交文件入库：`PLAN-FISH-CHARACTER.md`、`doc/FEASIBILITY-FISH.md`、`doc/research/`、`resources/character/`（本次已完成）。
-3. 重新打包：`npm run build` → `electron-builder --win` 产出 **NSIS Setup**，并刷新 `release/win-unpacked`（否则 `packaged.smoke` S6 校验的是旧产物）。
-4. 四件套留档（结果必须晚于 HEAD）：双 typecheck / build / `npm run accept`（28 + e2e + smoke）/ `shooting` 复验。
+3. 重新打包：`npm run build` → `electron-builder --win` 产出 **NSIS Setup**，并刷新 `release/win-unpacked`（否则 `packaged.smoke` S6 校验的是旧产物）。✅ 2026-11-10 已完成：`release/win-unpacked/Umi Claw.exe` FileVersion **4.2.0**、`release/Umi Claw Setup 4.2.0.exe` **95,190,135 B**、`release/latest.yml` `version: 4.2.0`。
+4. 四件套留档（结果必须晚于 HEAD）：双 typecheck / build / `npm run accept`（当前 **37 套** = accept×35 + e2e + smoke，Recorder **709 条**，node:test 21 条另计）/ `shooting` 复验。留档口径：**typecheck/build 以本轮终端输出为准**（没有带时间戳的落盘产物）；`npm run accept` 与 packaged smoke 有 json 留档（gitignore，会被后续轮覆盖）。2026-11-10 最终轮：37 套 / 709 条 / 0 失败、smoke 7/7。
 5. Windows NSIS 真机 7 步：干净目录安装、首启、启停插件、覆盖升级、卸载残留（`RUNBOOK-4.0.md` §6）。
 6. 文档同步：RUNBOOK 数字与「能力中心」措辞、README 4.0 章节、本文件 §十三/§十四。
-7. CI 门禁：`.github/workflows/release.yml` 目前只有 `npm ci` + build，**须补 typecheck + accept**，否则打 tag 无门禁。
+7. CI 门禁：`.github/workflows/release.yml` 已有 `verify` job（`windows-latest`）：`npm ci` → `typecheck:node` → `typecheck:web` → `check:boundary` → `build` → `accept`（`UMI_ALLOW_PACKAGE_SKIP=1` 跳过无安装包的 S6/S7），PR 与 `release/**` push 都会跑；`build` job 依赖 `verify`。
 
 ### 18.5 新增风险（并入 §十四）
 

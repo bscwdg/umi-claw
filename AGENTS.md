@@ -13,7 +13,7 @@
 cd D:\work2026\umi-claw
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 34 套验收（accept×32 + e2e + smoke，648 条断言；hot 见 §10 注）
+npm run accept         # 37 套验收（accept×35 + e2e + smoke，709 条断言；node:test 21 条另计）
 npm run build          # 构建（含 plugin:gen）
 ```
 
@@ -108,7 +108,7 @@ doc/                 # 计划、施工日志、运维手册、调研
 
 **规则**：`plugins/<id>/domain/**/*Manager.ts` 与 `contextEngine.ts` **禁止** `import ... from 'electron'`（WP3 起域代码住在 `plugins/<id>/domain/`；宿主 `electron/main/{work,marketing}` 已删除）。
 
-**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 33 套验收能在纯 Node 里跑真源码的前提。
+**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 37 套验收能在纯 Node 里跑真源码的前提。
 
 **写法**：工厂函数 + 显式 options，不 `new`、不单例、不从全局推。
 
@@ -241,7 +241,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 - 验收脚本**零 npm 依赖**，只用 `node:` 内置 + `test/_lib.mjs`
 - 断言打**真源码**：`bundleEntry('electron/main/work/todoManager.ts', 'todo-todo.mjs')` 后 `import()`，不 mock 被测逻辑
 
-**现状证据**：32 个 `.accept.mjs`；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。
+**现状证据**：36 个 `.accept.mjs`、run-all `ACCEPT` 35 项；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。
 
 ### 7.2 `_lib.mjs` 提供的工具
 
@@ -334,7 +334,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 34 套（accept×32 + e2e + smoke，648 条断言）
+# ② 全量验收 37 套（accept×35 + e2e + smoke，709 条断言；node:test 21 条另计）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）

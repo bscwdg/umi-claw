@@ -51,23 +51,33 @@
 
 ### 测试
 - `accept:character` 100/100；`accept:sticker` 12/12；`accept:external-tts` 10/10；`accept:ui` 27/27；
-  新增 `accept:terminal-sessions` 6/6；`typecheck:node/web` 0 错；`build` 成功；`check:boundary` 全 0。
-- 2026-11-10 全量复测：36 套（accept×34 + e2e + smoke）共 678 条断言，677 通过；唯一失败是
-  `claw-maintenance` 的 `ghost-node-cleanup`——本机 WMI/CIM 被系统拒绝访问（`Get-CimInstance` 返回
-  0x80041003），进程清理查询在该机器上不可用，代码本身按 best-effort 兜底（查询失败只告警不阻断启动），
-  属环境问题而非代码回退；同套件的 junction 用例在非沙箱环境通过（沙箱内另计 1 条环境失败）。
+  `accept:terminal-sessions` 6/6；新增 `accept:host-ipc` 31/31（env/claw/terminal/config 宿主通道行为级，
+  即 P45）；`typecheck:node/web` 0 错；`build` 成功；`check:boundary` 全 0。
+- 2026-11-10 最终轮全量复测：**37 套（accept×35 + e2e + smoke）709 条断言 / 0 失败**
+  （Recorder 口径；`openclaw-config-writer` 的 21 条 node:test 另计），packaged smoke 7/7。
+- 此前一轮的 `claw-maintenance` 失败**不是环境问题，而是测试断言写错了**：原断言
+  `!existsSync(rename 后的新目标路径)`，但目标目录随整棵树 rename 后必然存在于新位置、junction 可用时
+  结构性必红；已改为断言原目标 `built.target` 不存在。修复后首次真正执行「悬空 junction 的 `.stale-`
+  副本清理」路径（生产侧 222ms 通过），`accept:maintenance` 现 30/30。
 
 ### 重构与清理
 - 终端/PTY 会话注册表从主进程入口抽到 `electron/main/terminalSessions.ts`（纯 Node 工厂），
   `index.ts` 从 1,813 行降回 1,753 行，重新满足 J1（≤1,800）判据。
 - 删除死代码 `character/stt.ts`（生产零引用）与 `ipc/index.ts` 兼容 barrel（生产依赖 4.2 已归零），
   相关验收断言改指真实模块。
+- `clawManager.ts` 2,543 → **1,484 行**：抽出 `electron/main/claw/` 13 个模块（deps/status/probe/
+  timeout/spawnEnv/gatewayRuntime/schema/migrations/skills/doctor/reclaim/rollback/types），
+  行为零变化，契约与源码断言全保留。
 
 ### 已知残差（登记 4.5，不阻塞发版）
-- J2 五个单文件 >1,500 行未拆：`clawManager.ts` 2,543 / `downloadManager.ts` 2,084 /
-  `configManager.ts` 2,116 / marketing `store.ts` 2,001 / `VoicePage.vue` 2,418。
-- P45 宿主通道行为级测试仍缺（env/claw/terminal IPC/config）；本次只补了终端注册表一块。
-- consent 历史撤销判定无墓碑可据，需产品定复核策略；启动迁移/委托分支仍只有静态断言
+- J2 剩余 5 个单文件 >1,500 行未拆（`clawManager.ts` 已拆 2,543 → 1,484，退出名单）：
+  `downloadManager.ts` 2,084 / `configManager.ts` 2,116 / marketing `store.ts` 2,001 /
+  `VoicePage.vue` 2,418 / `src/character/CharacterPage.vue` 1,970（11-04 `bf84d1f` 起越线）。
+- P45 已补 `accept:host-ipc` 31 条（env/claw/terminal/config 行为级）；残留盲区 2 项
+  （边界门禁不扫 `electron/main/claw/**`、`getStatus` 的 getConfig 合并判定）登记 4.5。
+- consent 历史撤销判定已降级为「已知边界」：v4.1.0 前无撤销 UI、`work:wizard:revokeConsent`
+  旧通道无调用方，且 `services/consent.ts` 无 granted 时按 `no-source` 处理，不会产生「撤销被复活」
+  错误（详见 `doc/PROGRESS-4.0.md` 4.5 第 3 条）；启动迁移/委托分支仍只有静态断言
   （渲染端撤销流程已由 U26/U27 行为级覆盖）。
 - 4.4 功能边界（MCP 无 tag 检索软约束、桌宠接线推迟、批量删除非事务、群聊硬拦截待渠道层等）
   详见 `doc/PROGRESS-4.0.md` 的 4.4「已知边界」与 4.5 欠账清单。
@@ -203,7 +213,8 @@
 - `electron/main/ipc/index.ts` 仍 re-export 插件 registrar（host→plugin 兼容依赖，无环）
   → 4.2 B3 已拆除生产依赖并标 `@test-only`，测试依赖清理登记 4.3；
 - 14 处 type-only 宿主类型引用（门禁口径「非 type 越界 0」）→ 4.2 B4 已清零（`pluginHostTypeOnly=0`）；
-- 拆分后 env/claw/terminal/config 等宿主通道的行为级测试仍待补（P45）→ 4.2 未做，登记 4.3。
+- 拆分后 env/claw/terminal/config 等宿主通道的行为级测试仍待补（P45）→ 4.2 未做，登记 4.3
+  （2026-11-10 已补：`accept:host-ipc` 31 条）。
 
 ---
 

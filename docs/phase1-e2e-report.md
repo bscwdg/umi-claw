@@ -1,5 +1,7 @@
 # 一期整体测试报告（Commit 00–12）
 
+> 注（2026-11-10）：本报告引用的 e2e 截图（`test/e2e-screenshots/*.jpg`）、`test/phase1-e2e.mjs`、`test/e2e-run.log` 已随 4.x 仓库卫生清理删除；留存记录见 `doc/PROGRESS-4.0.md`「4.5 复核补充（2026-11-10）」。
+
 > 结论：**通过，可以继续交付演示/试用包。**
 >
 > 本轮用真 Electron GUI、真数据库 Worker、真网关和真 SSE 模型请求走完整老板每日动线；GUI E2E **19/19 通过**，专项验收 **214/214 通过**，TypeScript 类型检查通过，渲染端与主进程均未发现错误日志。
