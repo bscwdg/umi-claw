@@ -5,7 +5,7 @@
         <h2>大肥鱼</h2>
         <p class="page-sub">住在 Umi Claw 里的鱼。默认关闭；启用后她会带着自己的生活和记忆陪你。</p>
       </div>
-      <button class="btn" :class="status.enabled ? 'btn-ghost' : 'btn-primary'" :disabled="busy" @click="toggleEnabled">
+      <button class="btn" :class="status.enabled ? 'btn-danger' : 'btn-primary'" :disabled="busy" @click="toggleEnabled">
         {{ status.enabled ? '停用她' : '启用她' }}
       </button>
     </header>
