@@ -59,7 +59,7 @@
         </li>
       </ul>
       <div v-if="failedFlags.length" class="row flex-wrap mt-3">
-        <button v-for="f in failedFlags" :key="f.key" class="btn btn-ghost" @click="go(f.to)">
+        <button v-for="f in failedFlags" :key="f.key" class="btn btn-outline" @click="go(f.to)">
           {{ f.label }}未就绪 · 去配置
         </button>
       </div>
