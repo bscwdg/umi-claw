@@ -374,7 +374,7 @@
               <button class="btn" :disabled="busy || stickersBusy || !st.enabled" @click="sendSticker(st)">
                 发送测试
               </button>
-              <button class="btn btn-ghost" :disabled="busy || stickersBusy" @click="removeSticker(st)">删除</button>
+              <button class="btn btn-danger" :disabled="busy || stickersBusy" @click="removeSticker(st)">删除</button>
               <span class="hint">{{ st.format.toUpperCase() }} · {{ formatBytes(st.size) }} · 已用 {{ st.use }} 次</span>
             </div>
           </div>
@@ -435,7 +435,7 @@
         <li v-for="d in memoryDiaries" :key="d.date" class="memo-item">
           <button class="memo-open" @click="openMemory('diary', d.date)">{{ d.date }}</button>
           <span class="hint">{{ d.excerpt }}</span>
-          <button class="btn btn-ghost" :disabled="busy" @click="deleteMemoryEntry('diary', d.date)">删除</button>
+          <button class="btn btn-danger" :disabled="busy" @click="deleteMemoryEntry('diary', d.date)">删除</button>
         </li>
       </ul>
       <p v-if="!memoryDiaries.length" class="hint">还没有日记；可以点上面「现在写一篇」。</p>
@@ -444,7 +444,7 @@
         <li v-for="r in memoryRelations" :key="r.id" class="memo-item">
           <button class="memo-open" @click="openMemory('relation', r.id)">{{ r.id }}</button>
           <span class="hint">{{ r.excerpt }}</span>
-          <button class="btn btn-ghost" :disabled="busy" @click="deleteMemoryEntry('relation', r.id)">删除</button>
+          <button class="btn btn-danger" :disabled="busy" @click="deleteMemoryEntry('relation', r.id)">删除</button>
         </li>
       </ul>
       <p v-if="!memoryRelations.length" class="hint">还没有约定/大事记；可先在「知识」导入，或让她在聊天里记下约定。</p>
@@ -465,8 +465,8 @@
       </label>
       <div class="row mt-3">
         <button class="btn" :disabled="busy" @click="exportData">导出她的档案</button>
-        <button class="btn btn-ghost" :disabled="busy" @click="deleteMemory">删除日记与关系</button>
-        <button class="btn btn-ghost" :disabled="busy" @click="deleteAll">删除全部</button>
+        <button class="btn btn-danger" :disabled="busy" @click="deleteMemory">删除日记与关系</button>
+        <button class="btn btn-danger" :disabled="busy" @click="deleteAll">删除全部</button>
       </div>
       <p class="hint">导出不含密钥；日记会归档到本机 `memory-archive/` 与 Obsidian 的「大肥鱼/归档」，不会直接删除你的笔记。</p>
     </section>
