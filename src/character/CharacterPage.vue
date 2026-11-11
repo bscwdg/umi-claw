@@ -559,7 +559,7 @@
     <section class="card">
       <h3>数据</h3>
       <div class="row">
-        <button class="btn btn-ghost" :disabled="busy" @click="resetValues">重置数值</button>
+        <button class="btn" :disabled="busy" @click="resetValues">重置数值</button>
       </div>
       <p class="hint">只清角色数值；记忆与日记在 C07/C09 提供更细的删除与导出。</p>
     </section>
