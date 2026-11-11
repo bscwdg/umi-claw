@@ -13,7 +13,7 @@
 cd D:\work2026\umi-claw
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 40 套验收（accept×38 + e2e + smoke，772 条断言；node:test 21 条另计）
+npm run accept         # 40 套验收（accept×38 + e2e + smoke，773 条断言；node:test 21 条另计）
 npm run build          # 构建（含 plugin:gen）
 ```
 
@@ -221,6 +221,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 
 - **fail-open 红线**：私聊、非 qqbot 渠道、会话类型判不出、配置版本≠1 → 一律放行；状态文件读失败按空状态、写失败保留进程内计数（语音上限仍按内存判定），状态异常不得影响私聊或宿主启动。
 - **策略唯一真源**是宿主 `GroupPolicy`（`electron/main/character/groupPolicy.ts`）→ `services/characterGroupConfig.ts` 编译进 `plugins.entries["feiyu-guard"].config`；插件内 `api.pluginConfig` 只读，不得另立配置真源。
+- **群策略写盘**在 `openClawConfigWriter` 的同一路径串行队列里直接读改写 `openclaw.json`（临时文件 + rename），**不走 `config patch` CLI**（网关运行时 CLI 会等配置锁）；写后需重启网关生效，patch 形状由 accept 的真实 dry-run + zod schema 校验兜底。
 - 新增群策略字段要同步五处：`groupPolicy.ts`（模型/默认值/夹紧）、`types.ts` 的 `GROUP_PATCH_KEYS`（否则 UI 保存的局部补丁不生效）、`src/character/CharacterSettings.vue`（draft 默认值/回填/保存列表）、`characterGroupConfig.ts`（编译进 OpenClaw 配置）、插件 `policy.mjs`（读取/执行）；manifest `configSchema` 的对象层保持 `additionalProperties: true`，避免扩字段时整份配置校验失败。
 - 新 hook 必须先在 `test/guard-plugin.accept.mjs` 有 fake-api 行为断言（零 npm 依赖），并保持 `MUTATION` 可红。
 
@@ -349,7 +350,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 40 套（accept×38 + e2e + smoke，772 条断言；node:test 21 条另计）
+# ② 全量验收 40 套（accept×38 + e2e + smoke，773 条断言；node:test 21 条另计）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）

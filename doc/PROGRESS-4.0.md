@@ -2115,8 +2115,10 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
   渠道绑定、保留其它 agent/用户手工绑定；bindings **直接读 openclaw.json 全量**（保留 ACP/comment，
   不用 CLI——冷启动约 19s 会超时、只列 route、且带 schema 不收的 `description`）；拿不到 bindings
   时不删 agent 条目（防旧绑定引用已删 agent 让 schema 整单拒绝）；既有 `groupPolicy=allowlist` 在
-  开启群回复时保留，不强改 `open`。写盘走 `openClawConfigWriter` 官方 config patch（串行，
-  `--replace-path` 由原/目标 diff 计算）。
+  开启群回复时保留，不强改 `open`。写盘**不走 `config patch` CLI**：网关运行时该命令会等配置锁
+  （实测 >300s 超时，群策略永远落不了盘）；改为在 `openClawConfigWriter` 的同一路径串行队列里
+  直接读改写 openclaw.json（临时文件 + rename 原子替换），写后重启网关生效；patch 形状仍由 accept
+  里的真实 `config patch --dry-run` + OpenClaw zod schema 校验兜底。
 - **wiring**：bootstrap 与 settings 变更各同步一次，串行队列；bootstrap 在途时挂起，避免与
   runBootstrap 的 config patch 并发（4.4 撞锁教训）；失败只记日志。`configManager._syncOpenClawConfig`
   在检测到角色管理的 `channels.qqbot.groups["*"]` 后不再用 app.json 旧表单覆盖
@@ -2138,14 +2140,17 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 - 新增 accept：`group-policy` **11**、`group-config` **13**、`guard-plugin` **36**（含 MUTATION 7 条）；
   `character.core` **103/103**（+C98 迁移 / +C99 单 agent 接线 / +C100 遗留清理）；
   双 typecheck 0 错、build 通过、`check:boundary` 0/0/0。
-- 全量 accept（2026-11-11 01:46 单轮）：**40 套（accept×38 + e2e + smoke）/ 772 条 / 0 失败**
+- 全量 accept（2026-11-11 09:47 单轮）：**40 套（accept×38 + e2e + smoke）/ 773 条 / 0 失败**
   （40 个套件 result 求和，不含 `accept-result.json` 汇总与 config-writer 的 node:test 21 条）。
 - 真实配置校验：官方 `openclaw config patch --stdin --dry-run --json --replace-path bindings
   --replace-path plugins.load.paths` 在真实 `data/config/.openclaw/openclaw.json` 上 dry-run 通过
-  （`ok=true`、22 个操作、schema/resolvability true）。bindings 取自 openclaw.json 全量；曾实测
-  CLI 输出带 `description` 被 schema 拒（G5/G11 锁剥离）、CLI 冷启动 19s 会超时（已改读配置文件）。
+  （`ok=true`、22 个操作、schema/resolvability true），用于锁 patch 形状；**运行时不再调用该 CLI**。
+  bindings 取自 openclaw.json 全量；曾实测 CLI 输出带 `description` 被 schema 拒（G5/G11 锁剥离）、
+  CLI 冷启动 19s（已改读配置文件）、网关运行时 config patch >300s 超时（已改直接写）。
   新增 G12（缺失 bindings 按空数组仍补 feiyu 绑定）、G13（既有 allowlist 不被 `open` 覆盖）、
+  G14（apply 行为级：不 spawn CLI，真实读改写 + 凭证保留 + 无配置安全失败）、
   guard G18（attachments-only 语音）、G19/G20（replyEnabled=false 覆盖 reply/tool 路径）。
+  真实迁移后配置用 OpenClaw 自身 zod schema（`zod-schema-*.mjs` 的根 schema）校验 `safeParse=true`。
 - 插件真实加载：临时 `HOME=<dataDir>/config` + `OPENCLAW_CONFIG_DIR=<dataDir>/config/.openclaw` +
   `OPENCLAW_DATA_DIR=<dataDir>/data`（网关同款环境）下 `plugins inspect feiyu-guard --json` =
   loaded/activated、configSchema 通过；`--runtime` 因本机 OpenClaw loader 的 `plugin-captures`
@@ -2161,9 +2166,11 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
   原生 `groups["*"]` 配置执行。
 - guard 计数跨进程无文件锁（单 Gateway 进程内「同步判定+占位」保证并发正确）；同 payload 幂等，
   跨重启重放会再计一次。
-- 迁移 patch 的 bindings 来源是 `openclaw.json`（不是 CLI）；读取与写盘之间仍有一个极小并发窗口
-  （与 configManager 同时改 bindings 时可能 lost update），已接受并登记。配置解析失败（含 JSON5
+- 迁移 patch 的 bindings 来源是 `openclaw.json`（不是 CLI）；写盘在 `openClawConfigWriter` 的同一
+  串行队列里直接读改写，已消除与 configManager 并发 patch 的 lost update。配置解析失败（含 JSON5
   注释等非严格 JSON）时整单跳过、群策略静默不落盘，只有 logger，已接受为已知边界。
+- 配置写盘后要**重启 OpenClaw 网关**才会被运行中的网关加载（宿主 UI 立即显示新设置，进程内路由仍旧）；
+  这是有意的：避免在网关运行中热改配置导致状态不一致。
 - guard 没有 agentId 作用域：同一 qqbot 账户下其它 agent 的群会话也会被群策略（词/语音/记忆）约束；
   当前产品语义是「整个 qqbot 群聊统一由大肥鱼策略管」，若未来多 agent 共用渠道需按 session agent 收窄。
 - `plugins.load.paths` 里的 feiyu-guard 配置/条目与 `channels.qqbot.groups["*"]` 属于「配置」而非
@@ -2187,7 +2194,7 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
     带 `description` 被拒（sanitize + G5/G11）；③ attachments-only 语音可绕过（policy + G18）；
     ④ replyEnabled=false 未覆盖 reply/tool 路径（guard + G19/G20）。前提不成立 0 项；B 项
     （ACP/comment 保留、JSON5、agentId 作用域、双真源 marker 等）已逐条登记为已知边界。
-  - `7a49a99c`（文档/数字）：属实→已统一 40 套/772/group-config 13；RUNBOOK inspect 命令补环境变量
+  - `7a49a99c`（文档/数字）：属实→已统一 40 套/773/group-config 14；RUNBOOK inspect 命令补环境变量
     与随包 Node、`--runtime` EPERM 警告；allowlist 行为改为「保留既有 allowlist」并写文档。
   - `04f7350d`（代码复审）：A1 缺失 bindings 视为空数组（G12 正向锁）；A2/A3 同上；A4 数字/提交
     状态已在本轮收口；B 项（ACP/comment 保留、JSON5 解析、agentId 作用域、双真源 marker、accountId

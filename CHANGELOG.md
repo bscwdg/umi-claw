@@ -34,6 +34,8 @@
   （`message_sending` 词过滤/回复取消、`reply_payload_sending` 渠道语音、`before_tool_call`
   群语音上传与记忆写入），私聊/未知会话一律放行。群聊称呼仍只用群昵称/「你」，不写私聊日记与长期记忆。
   开启群回复会保留既有 `groupPolicy=allowlist`（不会静默放开所有群，只有原本非白名单才写 `open`）。
+  群策略配置由宿主直接读改写 `openclaw.json`（不进 config patch CLI 队列，网关运行时也不会卡配置锁），
+  保存后重启网关生效。
 - **主动消息质量与渠道**：主动消息改发已绑定渠道、QQ 主动文本直发；话题库从 20 张扩到 40 张并按时段过滤，
   发送前参考最近聊天选话题；生活卡不再硬拼动作旁白；每 6 小时重置后真正开启新一轮，不再复读语料碎片。
 - **本地 TTS 表单**：实例可保存、可测试（必填校验、草稿探活、协议补全），按本机适配器在线状态预填默认值；
@@ -58,9 +60,9 @@
 ### 测试
 - `accept:character` 103/103；`accept:sticker` 12/12；`accept:external-tts` 10/10；`accept:ui` 27/27；
   `accept:terminal-sessions` 6/6；新增 `accept:host-ipc` 31/31（env/claw/terminal/config 宿主通道行为级，
-  即 P45）、`accept:group-policy` 11/11、`accept:group-config` 13/13、`accept:guard-plugin` 36/36；
+  即 P45）、`accept:group-policy` 11/11、`accept:group-config` 14/14、`accept:guard-plugin` 36/36；
   `typecheck:node/web` 0 错；`build` 成功；`check:boundary` 全 0。
-- 2026-11-11 最终轮全量复测：**40 套（accept×38 + e2e + smoke）772 条断言 / 0 失败**
+- 2026-11-11 最终轮全量复测：**40 套（accept×38 + e2e + smoke）773 条断言 / 0 失败**
   （Recorder 口径：40 个套件 result 求和，不含汇总文件 `accept-result.json` 与 `openclaw-config-writer`
   的 21 条 node:test），packaged smoke 7/7；群聊 patch 另用 `openclaw config patch --dry-run` 在真实
   配置上验过（schema ok、22 个操作；bindings 取自 openclaw.json 全量，保留 ACP/comment）。

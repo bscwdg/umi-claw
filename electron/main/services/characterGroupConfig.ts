@@ -11,10 +11,10 @@
 // GROUP_PATCH_KEYS（否则 UI 局部补丁不生效）、src/character/CharacterSettings.vue 的
 // draft/保存列表、插件 policy.mjs 的读取/执行。写盘一律走 openClawConfigWriter 的串行队列。
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { applyOpenClawConfigPatch, collectLossyIdArrayReplacePaths } from '../openClawConfigWriter'
+import { runSerializedOpenClawConfigWrite } from '../openClawConfigWriter'
 import { openClawPaths } from '../openClawPaths'
 import { buildGroupPrompt, type GroupSettings } from '../character/groupPolicy'
 
@@ -189,46 +189,56 @@ function loadPathsOf(cfg: Record<string, unknown> | null): string[] {
 
 /**
  * 把群聊策略应用到 openclaw.json（settings 变更 / bootstrap 时调用）。
- * 幂等：内容没变时 config patch 不产生实质变更；失败只返回错误，由调用方记日志，不阻塞启动。
+ *
+ * 不用 `openclaw config patch` CLI：网关运行时该命令会等配置锁，实测 >300s 超时（启动早期也可能
+ * 与网关启动竞态），导致群策略永远落不到盘。改为在官方串行队列里直接读改写 openclaw.json：
+ * - 与 configManager / 官方 patch 共用同一路径队列，不会 lost update；
+ * - 写文件后网关重启才生效（RUNBOOK 已写明），不阻塞当前运行；
+ * - patch 形状由 accept 里的真实 `config patch --dry-run` 校验兜底。
  */
 export async function applyCharacterGroupPolicy(
   input: GroupConfigSyncInput
 ): Promise<GroupConfigSyncResult> {
-  const before = readOpenClawConfig(input.dataDir)
-  // 配置读不出时不猜：整单跳过（尤其不能在没有 bindings 的情况下删 feiyu-group agent 条目，
-  // 否则旧绑定仍引用它 → 官方 schema 拒绝整份 patch，群策略永远不会落盘）。
-  if (!before) {
-    return { ok: false, error: 'openclaw.json 不存在或无法解析，跳过群聊策略同步' }
-  }
-  const bindings = readConfigBindings(before)
-  const qqbotRaw = before.channels && typeof before.channels === 'object'
-    ? (before.channels as Record<string, unknown>).qqbot
-    : undefined
-  const qqbot = qqbotRaw && typeof qqbotRaw === 'object' ? (qqbotRaw as Record<string, unknown>) : undefined
-  const qqbotConfigured = Boolean(qqbot)
-  const { patch, replacePaths } = buildGroupOpenClawPatch(
-    { ...input, qqbotConfigured },
-    {
-      loadPaths: loadPathsOf(before),
-      bindings,
-      groupPolicy: typeof qqbot?.groupPolicy === 'string' ? qqbot.groupPolicy : undefined
+  const configPath = openClawPaths.openClawConfig(input.dataDir)
+  return runSerializedOpenClawConfigWrite(configPath, () => {
+    try {
+      const before = readOpenClawConfig(input.dataDir)
+      // 配置读不出时不猜：整单跳过（尤其不能在没有 bindings 的情况下删 feiyu-group agent 条目，
+      // 否则旧绑定仍引用它 → 官方 schema 拒绝整份 patch，群策略永远不会落盘）。
+      if (!before) {
+        return { ok: false, error: 'openclaw.json 不存在或无法解析，跳过群聊策略同步' }
+      }
+      const bindings = readConfigBindings(before)
+      const qqbotRaw = before.channels && typeof before.channels === 'object'
+        ? (before.channels as Record<string, unknown>).qqbot
+        : undefined
+      const qqbot = qqbotRaw && typeof qqbotRaw === 'object' ? (qqbotRaw as Record<string, unknown>) : undefined
+      const qqbotConfigured = Boolean(qqbot)
+      const { patch } = buildGroupOpenClawPatch(
+        { ...input, qqbotConfigured },
+        {
+          loadPaths: loadPathsOf(before),
+          bindings,
+          groupPolicy: typeof qqbot?.groupPolicy === 'string' ? qqbot.groupPolicy : undefined
+        }
+      )
+      const desired = applyMergePatch(before, patch)
+      if (!desired || typeof desired !== 'object') {
+        return { ok: false, error: '群聊策略合并结果非法，跳过写盘' }
+      }
+      writeOpenClawConfigAtomic(configPath, desired as Record<string, unknown>)
+      return { ok: true, patch }
+    } catch (error) {
+      return { ok: false, error: `群聊策略写盘失败: ${(error as Error)?.message ?? String(error)}` }
     }
-  )
-
-  // 官方 CLI 对「按 id 的数组会移除既有条目」要求显式 replace-path；用原配置+局部合并
-  // 算出真正会损失的路径，避免给老版本传未知参数。
-  const desired = applyMergePatch(before ?? {}, patch) as Record<string, unknown>
-  const extraReplace = collectLossyIdArrayReplacePaths(before ?? {}, desired)
-  const allReplace = [...new Set([...replacePaths, ...extraReplace])]
-
-  const result = await applyOpenClawConfigPatch(input.dataDir, patch, {
-    replacePaths: allReplace
   })
-  return {
-    ok: result.ok,
-    error: result.ok ? undefined : result.error || 'openclaw config patch 失败',
-    patch
-  }
+}
+
+/** 同目录临时文件 + rename，避免半截 JSON 被网关/其它读者看到 */
+function writeOpenClawConfigAtomic(configPath: string, config: Record<string, unknown>): void {
+  const tmpPath = `${configPath}.group-policy-${process.pid}-${Date.now()}.tmp`
+  writeFileSync(tmpPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+  renameSync(tmpPath, configPath)
 }
 
 /** JSON merge patch 的本地实现（只为算 replacePaths，不用于写盘） */

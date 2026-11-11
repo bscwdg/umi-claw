@@ -7,7 +7,7 @@
 //   保留其它 agent/用户手工绑定。
 // 不 spawn CLI、不写盘（applyCharacterGroupPolicy 的落盘路径由真实验收/运行验证）。
 
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -18,6 +18,7 @@ import {
   assertEq,
   bundleEntry,
   printResult,
+  tmpDir,
   writeJson
 } from './_lib.mjs'
 
@@ -26,6 +27,7 @@ const modPath = bundleEntry(
   'group-config.mjs'
 )
 const {
+  applyCharacterGroupPolicy,
   buildGroupOpenClawPatch,
   buildGuardConfig,
   desiredBindings,
@@ -250,6 +252,49 @@ await r.check('G13', '既有 allowlist 保留：开启群回复不静默放开�
   )
   assertEq(open.patch.channels.qqbot.groupPolicy, 'open', '原 disabled 且开启 → open')
   return '白名单不被静默改写'
+})
+
+await r.check('G14', 'applyCharacterGroupPolicy 行为级：不 spawn CLI，直接迁移 openclaw.json（含凭证保留/失败安全）', async () => {
+  const root = mkdtempSync(join(tmpDir, 'group-config-apply-'))
+  const cfgDir = join(root, 'config', '.openclaw')
+  mkdirSync(cfgDir, { recursive: true })
+  const cfgPath = join(cfgDir, 'openclaw.json')
+  writeFileSync(
+    cfgPath,
+    JSON.stringify({
+      agents: { entries: { feiyu: { workspace: 'w' }, 'feiyu-group': { workspace: 'wg' } } },
+      bindings: [
+        { type: 'route', agentId: 'feiyu-group', match: { channel: 'qqbot', peer: { kind: 'group', id: '*' } } },
+        { type: 'route', agentId: 'feiyu', match: { channel: 'qqbot' } }
+      ],
+      channels: { qqbot: { enabled: true, appId: 'app-1', clientSecretFile: 's.json' } },
+      plugins: { load: { paths: ['existing/path'] } }
+    }),
+    'utf8'
+  )
+  const res = await applyCharacterGroupPolicy({
+    dataDir: root,
+    pluginsRoot,
+    group: defaultGroup(),
+    timezone: 'Asia/Shanghai'
+  })
+  assertEq(res.ok, true, 'apply 成功（无 runtime/无 CLI 也可）')
+  const after = JSON.parse(readFileSync(cfgPath, 'utf8'))
+  assertEq(after.agents?.entries?.['feiyu-group'], undefined, 'feiyu-group agent 条目已删')
+  assertEq(after.bindings.length, 1, 'bindings 只剩 feiyu 一条')
+  assertEq(after.bindings[0].agentId, 'feiyu', '保留 feiyu qqbot 绑定')
+  assertEq(after.channels.qqbot.groups['*'].requireMention, true, 'groups["*"] 写入')
+  assertEq(after.channels.qqbot.groupPolicy, 'open', '群回复开 → groupPolicy=open')
+  assertEq(after.channels.qqbot.appId, 'app-1', '既有 appId 保留')
+  assertEq(after.channels.qqbot.clientSecretFile, 's.json', '既有凭证引用保留')
+  assert(after.plugins.load.paths.includes(guardPluginDir(pluginsRoot)), 'guard load path 追加')
+  assertEq(after.plugins.entries['feiyu-guard'].enabled, true, 'guard 条目启用')
+  assertEq(after.plugins.entries['feiyu-guard'].config.version, 1, 'guard config version=1')
+  // 安全失败：没有 openclaw.json 时返回 ok:false 且不抛
+  const empty = mkdtempSync(join(tmpDir, 'group-config-empty-'))
+  const emptyRes = await applyCharacterGroupPolicy({ dataDir: empty, pluginsRoot, group: defaultGroup() })
+  assertEq(emptyRes.ok, false, '无 openclaw.json → 安全失败')
+  return '真实读改写行为 + 凭证保留 + 安全失败'
 })
 
 const result = r.toJSON()
