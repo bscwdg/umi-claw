@@ -1918,6 +1918,48 @@ await recorder.check('C42d', 'manager：内容引擎接线（试探→换话题�
   return '试探/换话题/backoff/回复重置/跨天/旧 kv 兼容 均正确'
 })
 
+await recorder.check('C42g', '用户语料变更后 invalidateContentDeck 让引擎重新加载内容包', async () => {
+  const kv = memoryKv()
+  let now = new Date(2026, 10, 10, 10, 0, 0).getTime()
+  let loaderCalls = 0
+  let currentDeck = contentDeck
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    loadLifeDeck: async () => lifeDeck,
+    loadContentDeck: async () => {
+      loaderCalls += 1
+      return currentDeck
+    },
+    sendProactive: async () => true
+  })
+  await manager.init()
+  await manager.updateSettings({
+    enabled: true,
+    safety: { ageConfirmed: true },
+    relationship: { mode: 'companion', address: '你' },
+    proactive: {
+      enabled: true,
+      silenceDays: 0,
+      dailyCap: 10,
+      quietFrom: '00:00',
+      quietTo: '00:00',
+      intervalMinutes: 1
+    }
+  })
+  await manager.runProactiveTick()
+  assertEq(loaderCalls, 1, '首轮 tick 加载一次内容包并缓存')
+  now += 2 * 60_000
+  await manager.runProactiveTick()
+  assertEq(loaderCalls, 1, '缓存命中，不重复加载')
+  // 模拟用户导入/删除语料：换一份内容包并失效缓存
+  currentDeck = { topics: { ...contentDeck.topics, topics: [] }, lines: contentDeck.lines }
+  manager.invalidateContentDeck()
+  now += 2 * 60_000
+  await manager.runProactiveTick()
+  assertEq(loaderCalls, 2, '失效后下一轮 tick 重新加载内容包')
+})
+
 await recorder.check('C42e', '主动消息补表情包：仅外发成功后按概率补图', async () => {
   const kv = memoryKv()
   const now = new Date(2026, 10, 9, 10, 0, 0).getTime()

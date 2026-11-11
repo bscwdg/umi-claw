@@ -326,6 +326,14 @@ export class CharacterManager {
     this.emit({ type: 'state', payload: clone(this.state), at: this.now() })
   }
 
+  /**
+   * 语料库（话题/台词）被用户导入或删除后调用：丢弃进程内内容包缓存，
+   * 下一次主动消息 tick 经 loadContentDeck 重新合并内置 + 用户语料，避免「已导入但要重启才生效」。
+   */
+  invalidateContentDeck(): void {
+    this.contentDeckCache = null
+  }
+
   async updateSettings(patch: unknown): Promise<CharacterSettings> {
     return this.withMutation(() => this.updateSettingsImpl(patch))
   }

@@ -14,7 +14,7 @@ import { createProactiveSender } from './proactiveSender'
 import { CHARACTER_AGENT_ID, CHARACTER_AGENT_MODEL, readAgentEntry } from './agentConfig'
 import { loadPersonaTemplates, runBootstrap } from './bootstrap'
 import { parseLifeDeck } from './contentCards'
-import { createEmptyContentDeck, parseContentDeck } from './contentEngine'
+import { createEmptyContentDeck, parseContentDeck, type ContentDeck } from './contentEngine'
 import { deliverVoice, type QqBotCreds } from './qqVoice'
 import { sendQqProactiveText, parseQqC2cOpenid } from './qqProactiveText'
 import { readRecentChat } from './recentChat'
@@ -40,6 +40,7 @@ import {
 import { PetWindowController, type PetMenuAction } from './petWindow'
 import { CharacterChatService, type CharacterChatFn } from './chat'
 import { createStickerStore, type StickerImportInput, type StickerUpdatePatch } from './stickerStore'
+import { createContentStore } from './contentStore'
 import { sendSticker } from './stickerSender'
 import { createBackupBundle } from './backupBundle'
 import {
@@ -196,6 +197,26 @@ async function registerCharacterInternal(
     // 4.4 表情包：图片落 <dataDir>/character/stickers/，元数据 stickers.json；
     // 发送复用 qqVoice 的 token/multipart 栈（credential 只读 openclaw.json）
     const stickerStore = createStickerStore({ dataDir: deps.dataDir, now: deps.now })
+    // 用户主动消息语料：内置 resources 只读 + 用户文件合并（contentStore 纯 Node，可被验收打真源码）
+    const loadBuiltinContentDeck = async (): Promise<ContentDeck> => {
+      try {
+        const dir = join(dirname(deps.personaSourceDir), 'cards')
+        return parseContentDeck({
+          topics: JSON.parse(readFileSync(join(dir, 'topics.v1.json'), 'utf8')),
+          lines: JSON.parse(readFileSync(join(dir, 'lines.v1.json'), 'utf8'))
+        })
+      } catch (error) {
+        logger(
+          `[character] 内置话题/台词内容包加载失败，退回空包: ${(error as Error)?.message ?? String(error)}`
+        )
+        return createEmptyContentDeck()
+      }
+    }
+    const contentStore = createContentStore({
+      dataDir: deps.dataDir,
+      loadBuiltin: loadBuiltinContentDeck,
+      logger
+    })
     // 4.4 单文件备份：zip 内含 manifest + kv(settings/state/day) + 人格 + workspace 日记 + 表情包，
     // 不含密钥/token/截图/日志；kvBulk 缺省时降级为「未接线」，不影响角色其它功能
     const backupBundle = deps.kvBulk
@@ -327,19 +348,8 @@ async function registerCharacterInternal(
         const file = join(dirname(deps.personaSourceDir), 'cards', 'life-cards.v1.json')
         return parseLifeDeck(JSON.parse(readFileSync(file, 'utf8')))
       },
-      // 话题/台词内容包：随 resources 打包；缺失时退回空包，不阻断主动消息
-      loadContentDeck: async () => {
-        try {
-          const dir = join(dirname(deps.personaSourceDir), 'cards')
-          return parseContentDeck({
-            topics: JSON.parse(readFileSync(join(dir, 'topics.v1.json'), 'utf8')),
-            lines: JSON.parse(readFileSync(join(dir, 'lines.v1.json'), 'utf8'))
-          })
-        } catch (error) {
-          logger(`[character] 话题/台词内容包加载失败，退回生活卡: ${(error as Error)?.message ?? String(error)}`)
-          return createEmptyContentDeck()
-        }
-      },
+      // 话题/台词内容包：内置 resources 只读语料 + 用户语料合并；用户文件缺失/损坏由 contentStore 回落，不阻断主动消息
+      loadContentDeck: async () => contentStore.mergeForEngine(),
       writeLifeDoc: async (text) => {
         writeFileSync(join(workspaceDir, 'fish', 'LIFE.md'), text, 'utf8')
       },
@@ -832,6 +842,37 @@ async function registerCharacterInternal(
           if (result.ok) await stickerStore.markUsed(record.id)
           return { ...result, id: record.id, name: record.name }
         }
+      },
+      // 用户主动消息语料库：查看/导入/删除（内置只读，用户语料独立落盘）
+      content: {
+        overview: () => contentStore.overview(),
+        // 任何用户语料变更都让 manager 的进程内内容包缓存失效，下一轮主动消息立即读到新合并结果
+        importTopics: async (raw: unknown) => {
+          const result = await contentStore.importTopics(raw)
+          manager.invalidateContentDeck()
+          return result
+        },
+        importLines: async (raw: unknown) => {
+          const result = await contentStore.importLines(raw)
+          manager.invalidateContentDeck()
+          return result
+        },
+        deleteTopic: async (id: string) => {
+          const changed = await contentStore.deleteUserTopic(id)
+          if (changed) manager.invalidateContentDeck()
+          return changed
+        },
+        deleteLine: async (group: string, index: number) => {
+          const changed = await contentStore.deleteUserLine(group, index)
+          if (changed) manager.invalidateContentDeck()
+          return changed
+        },
+        reset: async (kind: 'topics' | 'lines' | 'all') => {
+          const result = await contentStore.resetUser(kind)
+          if (result.topics > 0 || result.lines > 0) manager.invalidateContentDeck()
+          return result
+        },
+        exportMerged: () => contentStore.exportMerged()
       },
       // 4.4 单文件备份：export/import 的路径由 IPC 层弹框选择，这里只做打包/恢复
       ...(backupBundle

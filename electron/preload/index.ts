@@ -41,6 +41,8 @@ import type {
 import type { BootstrapReport } from '../main/character/bootstrap'
 import type { CharacterChatStreamEvent } from '../main/character/chat'
 import type { StickerImportResult, StickerRecord } from '../main/character/stickerStore'
+import type { ContentOverview } from '../main/character/contentStore'
+import type { ContentDeck } from '../main/character/contentEngine'
 import type { BackupExportResult, BackupImportResult } from '../main/character/backupBundle'
 console.log('✅ preload loaded')
 
@@ -849,6 +851,26 @@ const api = {
           name?: string
           messageId?: string
         }>('character:stickers:send', target)
+    },
+    // 用户主动消息语料库：内置只读 + 用户语料查看/导入/删除
+    content: {
+      overview: () => call<ContentOverview>('character:content:overview'),
+      importTopics: (raw: unknown) =>
+        call<{ added: number; updated: number; total: number }>(
+          'character:content:import-topics',
+          raw
+        ),
+      importLines: (raw: unknown) =>
+        call<{ groupsAdded: number; linesAdded: number; totalLines: number }>(
+          'character:content:import-lines',
+          raw
+        ),
+      deleteTopic: (id: string) => call<boolean>('character:content:delete-topic', { id }),
+      deleteLine: (group: string, index: number) =>
+        call<boolean>('character:content:delete-line', { group, index }),
+      reset: (kind: 'topics' | 'lines' | 'all') =>
+        call<{ topics: number; lines: number }>('character:content:reset', { kind }),
+      exportMerged: () => call<ContentDeck>('character:content:export')
     },
     backup: {
       export: () => call<BackupExportResult | { canceled: true }>('character:backup:export', {}),

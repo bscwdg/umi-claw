@@ -17,6 +17,7 @@ import {
 } from './types'
 import { CHARACTER_STICKER_CHANNELS } from './stickerStore'
 import { CHARACTER_BACKUP_CHANNELS } from './backupBundle'
+import { CHARACTER_CONTENT_CHANNELS } from './contentStore'
 import type { CharacterManager } from './manager'
 import type { PetWindowController } from './petWindow'
 import type { CharacterChatService } from './chat'
@@ -76,6 +77,16 @@ export interface CharacterIpcDeps {
     defaultExportPath: () => string
     export: (path?: string) => Promise<unknown>
     import: (path: string) => Promise<unknown>
+  }
+  /** 用户主动消息语料库（话题/台词查看/导入/删除；内置只读，用户语料独立落盘） */
+  content?: {
+    overview: () => Promise<unknown>
+    importTopics: (raw: unknown) => Promise<unknown>
+    importLines: (raw: unknown) => Promise<unknown>
+    deleteTopic: (id: string) => Promise<unknown>
+    deleteLine: (group: string, index: number) => Promise<unknown>
+    reset: (kind: 'topics' | 'lines' | 'all') => Promise<unknown>
+    exportMerged: () => Promise<unknown>
   }
 }
 
@@ -415,6 +426,41 @@ export function registerCharacterIpc(
     return requireStickers().delete(id)
   })
   handle(CHARACTER_STICKER_CHANNELS.send, (payload) => requireStickers().send(payload ?? {}))
+
+  // ── 用户主动消息语料库：内置只读 + 用户语料查看/导入/删除 ──
+  const requireContent = () => {
+    if (!deps.content) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '语料库功能未接线')
+    }
+    return deps.content
+  }
+  handle(CHARACTER_CONTENT_CHANNELS.overview, () => requireContent().overview())
+  handle(CHARACTER_CONTENT_CHANNELS.importTopics, (raw) => requireContent().importTopics(raw))
+  handle(CHARACTER_CONTENT_CHANNELS.importLines, (raw) => requireContent().importLines(raw))
+  handle(CHARACTER_CONTENT_CHANNELS.deleteTopic, (payload) => {
+    const id = (payload as { id?: unknown } | undefined)?.id
+    if (typeof id !== 'string' || !id) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '缺少话题 id')
+    }
+    return requireContent().deleteTopic(id)
+  })
+  handle(CHARACTER_CONTENT_CHANNELS.deleteLine, (payload) => {
+    const p = payload as { group?: unknown; index?: unknown } | undefined
+    const group = typeof p?.group === 'string' ? p.group : ''
+    const index = typeof p?.index === 'number' ? p.index : Number.NaN
+    if (!group || !Number.isInteger(index) || index < 0) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '缺少台词组名或合法下标')
+    }
+    return requireContent().deleteLine(group, index)
+  })
+  handle(CHARACTER_CONTENT_CHANNELS.reset, (payload) => {
+    const kind = (payload as { kind?: unknown } | undefined)?.kind
+    if (kind !== 'topics' && kind !== 'lines' && kind !== 'all') {
+      throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '非法重置范围')
+    }
+    return requireContent().reset(kind)
+  })
+  handle(CHARACTER_CONTENT_CHANNELS.exportMerged, () => requireContent().exportMerged())
 
   // ── 4.4 单文件备份（zip）：导出/导入都不把路径交给渲染端拼，选择框在宿主侧 ──
   const requireBackup = () => {
