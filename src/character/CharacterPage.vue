@@ -268,7 +268,7 @@
           发送
         </button>
         <button class="btn" :disabled="!streaming" @click="stopStreaming">停止</button>
-        <button class="btn btn-ghost" @click="clearChat">清空</button>
+        <button class="btn" @click="clearChat">清空</button>
       </div>
       <p class="hint">
         清空只轮换会话上下文；日记与关系记忆不受影响。首次或隔很久的回复可能要几十秒（网关/模型冷启动），
@@ -284,8 +284,8 @@
         <button class="btn" :disabled="busy || !status.enabled" @click="toggleProactive">
           {{ proactiveEnabled ? '关闭主动消息' : '开启主动消息' }}
         </button>
-        <button class="btn btn-ghost" :disabled="busy || !status.enabled" @click="quietDays">安静三天</button>
-        <button class="btn btn-ghost" :disabled="busy || !status.enabled" @click="cancelQuiet">取消安静</button>
+        <button class="btn" :disabled="busy || !status.enabled" @click="quietDays">安静三天</button>
+        <button class="btn" :disabled="busy || !status.enabled" @click="cancelQuiet">取消安静</button>
       </div>
       <p class="hint">安静期间不发主动消息，不影响聊天与好感；免打扰时段与每日上限在设置里改。</p>
     </section>
