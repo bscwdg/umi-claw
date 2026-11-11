@@ -145,27 +145,27 @@
       <div class="grid-3 stat-grid">
         <div>
           <span class="k">agent</span><span class="v">{{ flag(status.agentReady) }}</span>
-          <button v-if="!status.agentReady" class="link" @click="go('/config')">去配置</button>
+          <button v-if="!status.agentReady" class="btn btn-sm btn-outline" @click="go('/config')">去配置</button>
         </div>
         <div>
           <span class="k">网关</span><span class="v">{{ flag(status.gatewayReady) }}</span>
-          <button v-if="!status.gatewayReady" class="link" @click="go('/dashboard')">去查看</button>
+          <button v-if="!status.gatewayReady" class="btn btn-sm btn-outline" @click="go('/dashboard')">去查看</button>
         </div>
         <div>
           <span class="k">Obsidian</span><span class="v">{{ flag(status.obsidianReady) }}</span>
-          <button v-if="!status.obsidianReady" class="link" @click="go('/obsidian')">去配置</button>
+          <button v-if="!status.obsidianReady" class="btn btn-sm btn-outline" @click="go('/obsidian')">去配置</button>
         </div>
         <div>
           <span class="k">外部渠道</span><span class="v">{{ flag(status.qqReady) }}</span>
-          <button v-if="!status.qqReady" class="link" @click="go('/channelsPage')">去配置</button>
+          <button v-if="!status.qqReady" class="btn btn-sm btn-outline" @click="go('/channelsPage')">去配置</button>
         </div>
         <div>
           <span class="k">TTS</span><span class="v">{{ flag(status.ttsReady) }}</span>
-          <button v-if="!status.ttsReady" class="link" @click="go('/voice')">去配置</button>
+          <button v-if="!status.ttsReady" class="btn btn-sm btn-outline" @click="go('/voice')">去配置</button>
         </div>
         <div>
           <span class="k">记忆检索</span><span class="v">{{ flag(status.memorySearchReady) }}</span>
-          <button v-if="!status.memorySearchReady" class="link" @click="go('/obsidian')">去配置</button>
+          <button v-if="!status.memorySearchReady" class="btn btn-sm btn-outline" @click="go('/obsidian')">去配置</button>
         </div>
       </div>
       <p class="hint">
@@ -184,10 +184,12 @@
         当前已停用：可以先「断开聊天渠道」，或重新启用后再勾选保存。
       </p>
       <p v-if="chatChannelsError" class="alert alert-danger">{{ chatChannelsError }}</p>
-      <p v-else-if="!chatChannels.length" class="hint">
-        还没有已配置的聊天渠道。
-        <button class="link" @click="go('/channelsPage')">去渠道接入</button>
-      </p>
+      <div v-else-if="!chatChannels.length">
+        <p class="hint">还没有已配置的聊天渠道。</p>
+        <div class="row">
+          <button class="btn btn-outline" @click="go('/channelsPage')">去渠道接入</button>
+        </div>
+      </div>
       <div v-else class="channel-list">
         <label v-for="ch in chatChannels" :key="ch.id" class="check-row">
           <input
@@ -229,7 +231,7 @@
           {{ chatChannelsBusy ? '保存中…' : '保存聊天渠道' }}
         </button>
         <button
-          class="btn btn-ghost"
+          class="btn btn-outline"
           :disabled="
             chatChannelsBusy ||
             !chatChannels.some((c) => c.boundTo === 'feiyu')
@@ -516,18 +518,18 @@
       <h4 class="memo-title">日记（最近 30 天）</h4>
       <ul class="memo-list">
         <li v-for="d in memoryDiaries" :key="d.date" class="memo-item">
-          <button class="memo-open" @click="openMemory('diary', d.date)">{{ d.date }}</button>
+          <button class="btn btn-sm btn-ghost" @click="openMemory('diary', d.date)">{{ d.date }}</button>
           <span class="hint">{{ d.excerpt }}</span>
-          <button class="btn btn-danger" :disabled="busy" @click="deleteMemoryEntry('diary', d.date)">删除</button>
+          <button class="btn btn-sm btn-danger" :disabled="busy" @click="deleteMemoryEntry('diary', d.date)">删除</button>
         </li>
       </ul>
       <p v-if="!memoryDiaries.length" class="hint">还没有日记；可以点上面「现在写一篇」。</p>
       <h4 class="memo-title">约定 / 大事记</h4>
       <ul class="memo-list">
         <li v-for="r in memoryRelations" :key="r.id" class="memo-item">
-          <button class="memo-open" @click="openMemory('relation', r.id)">{{ r.id }}</button>
+          <button class="btn btn-sm btn-ghost" @click="openMemory('relation', r.id)">{{ r.id }}</button>
           <span class="hint">{{ r.excerpt }}</span>
-          <button class="btn btn-danger" :disabled="busy" @click="deleteMemoryEntry('relation', r.id)">删除</button>
+          <button class="btn btn-sm btn-danger" :disabled="busy" @click="deleteMemoryEntry('relation', r.id)">删除</button>
         </li>
       </ul>
       <p v-if="!memoryRelations.length" class="hint">还没有约定/大事记；可先在「知识」导入，或让她在聊天里记下约定。</p>
@@ -2010,20 +2012,6 @@ h3 + .hint {
   width: 16px;
   height: 16px;
 }
-/* 文字链接按钮：类名保留（模板改动最小化），颜色收编 info 语义色 */
-.link {
-  margin-left: var(--space-2);
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--info);
-  font-size: var(--text-xs);
-  cursor: pointer;
-  text-decoration: underline;
-}
-.link:hover {
-  color: var(--info-hover);
-}
 .steps {
   margin: var(--space-3) 0 0;
   padding: 0;
@@ -2106,19 +2094,6 @@ h3 + .hint {
 .memo-title { margin: var(--space-4) 0 var(--space-2); font-size: var(--text-sm); }
 .memo-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
 .memo-item { display: flex; align-items: center; gap: var(--space-3); }
-.memo-open {
-  background: none;
-  border: none;
-  color: var(--info);
-  cursor: pointer;
-  font: inherit;
-  padding: 0;
-  text-decoration: underline;
-  flex: 0 0 auto;
-}
-.memo-open:hover {
-  color: var(--info-hover);
-}
 .memo-item .hint { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; }
 .memo-readonly { white-space: pre-wrap; max-height: 240px; overflow: auto; margin: var(--space-2) 0 0; }
 
