@@ -31,6 +31,25 @@ const INTENT_ORDER: ProactiveIntent[] = ['life', 'topic', 'line', 'nudge']
 export type TopicSlot = 'morning' | 'noon' | 'afternoon' | 'evening' | 'night'
 const TOPIC_SLOTS: TopicSlot[] = ['morning', 'noon', 'afternoon', 'evening', 'night']
 
+export type Season = 'spring' | 'summer' | 'autumn' | 'winter'
+const SEASONS: Season[] = ['spring', 'summer', 'autumn', 'winter']
+
+/**
+ * 月份（1–12）→ 北半球季节：3–5 春、6–8 夏、9–11 秋、12–2 冬。
+ * 纯函数（只吃月份），验收可固定月份复现，避免「冬天还在问夏天热不热」这类跨年语料错位。
+ */
+export function seasonForMonth(month: number): Season {
+  if (month >= 3 && month <= 5) return 'spring'
+  if (month >= 6 && month <= 8) return 'summer'
+  if (month >= 9 && month <= 11) return 'autumn'
+  return 'winter'
+}
+
+/** 时间戳 → 当前季节（与 slotForHour 同口径，从注入的 now 取本地月份） */
+export function seasonForNow(now: number): Season {
+  return seasonForMonth(new Date(now).getMonth() + 1)
+}
+
 export interface TopicCard {
   id: string
   title: string
@@ -41,6 +60,8 @@ export interface TopicCard {
   sample: string
   /** 允许出现的时段；空 = 任意时段 */
   slots: TopicSlot[]
+  /** 允许出现的季节；空 = 任意季节（老卡不带此字段即全年可用，向后兼容） */
+  seasons: Season[]
 }
 
 export interface TopicDeck {
@@ -104,6 +125,12 @@ function parseTopicCard(raw: unknown): TopicCard | null {
       ? src.slots.filter(
           (slot): slot is TopicSlot =>
             typeof slot === 'string' && TOPIC_SLOTS.includes(slot as TopicSlot)
+        )
+      : [],
+    seasons: Array.isArray(src.seasons)
+      ? src.seasons.filter(
+          (season): season is Season =>
+            typeof season === 'string' && SEASONS.includes(season as Season)
         )
       : []
   }
@@ -571,7 +598,8 @@ export function generateProactiveContent(options: ContentEngineOptions): Proacti
       address,
       recentTopics,
       slotForHour(options.now),
-      options.recentChat ?? ''
+      options.recentChat ?? '',
+      seasonForNow(options.now)
     ),
     ...buildLineCandidates(deck.lines, address, options.now, rng, options.lineGroups)
   ]
@@ -745,13 +773,16 @@ function buildTopicCandidates(
   address: string,
   recentTopics: string[],
   slot: TopicSlot,
-  recentChat: string
+  recentChat: string,
+  season: Season
 ): ProactiveCandidate[] {
   const recent = new Set(recentTopics)
   const chat = recentChat.trim()
   const out: ProactiveCandidate[] = []
   for (const topic of deck?.topics ?? []) {
     if (topic.slots.length > 0 && !topic.slots.includes(slot)) continue
+    // 季节受限的卡（如夏天话题）在非当季直接跳过；seasons 为空的老卡全年可用
+    if (topic.seasons.length > 0 && !topic.seasons.includes(season)) continue
     // 同一 topic 7 天窗口内尽量不重复：直接用最近使用过的 id 排除
     if (recent.has(topic.id)) continue
     const keywords = TOPIC_KEYWORDS[topic.id] ?? [topic.title]

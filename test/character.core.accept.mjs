@@ -90,6 +90,8 @@ const {
   mergeRecentTimes,
   messageHash,
   parseContentDeck,
+  seasonForMonth,
+  seasonForNow,
   resolveUnansweredCount,
   sanitizeProactiveDay
 } = contentEngineMod
@@ -1460,7 +1462,12 @@ await recorder.check('C42c', '内容引擎：候选池 2–10 + 去重 + 未回�
           : topic.slots.includes('noon')
             ? 12
             : 9
-    const topicNow = new Date(2026, 10, 5, hour, 0, 0).getTime()
+    // 季节受限的话题用它声明的当季月份来测（Date 月份 0-based）；无 seasons 的老卡沿用 11 月，全年可用
+    const seasonMonth =
+      topic.seasons && topic.seasons.length > 0
+        ? { winter: 11, spring: 3, summer: 6, autumn: 9 }[topic.seasons[0]]
+        : 10
+    const topicNow = new Date(2026, seasonMonth, 5, hour, 0, 0).getTime()
     const candidates = generateProactiveContent({
       ...base,
       now: topicNow,
@@ -1535,6 +1542,77 @@ await recorder.check('C42c', '内容引擎：候选池 2–10 + 去重 + 未回�
     }
   }
   assertEq(contentDeck.topics.topics.length >= 40, true, '话题库已扩到至少 40 张')
+  // ── 季节维度：夏季话题冬天不发、当季才发；无 seasons 的老卡全年可用 ──
+  assertEq(seasonForMonth(12), 'winter', '12 月入冬')
+  assertEq(seasonForMonth(1), 'winter', '1 月仍冬')
+  assertEq(seasonForMonth(2), 'winter', '2 月仍冬')
+  assertEq(seasonForMonth(3), 'spring', '3 月入春')
+  assertEq(seasonForMonth(5), 'spring', '5 月仍春')
+  assertEq(seasonForMonth(6), 'summer', '6 月入夏')
+  assertEq(seasonForMonth(8), 'summer', '8 月仍夏')
+  assertEq(seasonForMonth(9), 'autumn', '9 月入秋')
+  assertEq(seasonForMonth(11), 'autumn', '11 月仍秋')
+  assertEq(
+    seasonForNow(new Date(2026, 11, 21, 12).getTime()),
+    'winter',
+    'seasonForNow 从时间戳取本地月份'
+  )
+  // 解析：seasons 走白名单、非法值丢弃；缺字段回落空数组（全年可用）
+  const parsedSeasons = parseContentDeck({
+    topics: { topics: [{ id: 't-summer', sample: 'x', seasons: ['summer', 'bogus', 'winter'] }, { id: 't-all', sample: 'y' }] },
+    lines: {}
+  }).topics.topics
+  assertDeepEq(
+    parsedSeasons.find((t) => t.id === 't-summer').seasons,
+    ['summer', 'winter'],
+    'seasons 非法值被白名单过滤'
+  )
+  assertDeepEq(parsedSeasons.find((t) => t.id === 't-all').seasons, [], '无 seasons 字段回落空数组')
+
+  // 夏季话题（slots=afternoon）：冬天 0 候选、夏天有候选
+  const summerTopic = contentDeck.topics.topics.find((t) => t.id === 'topic-hot')
+  const summerDeck = {
+    ...contentDeck,
+    topics: { ...contentDeck.topics, topics: summerTopic ? [summerTopic] : [] }
+  }
+  const winterAfternoon = new Date(2026, 11, 15, 15, 0, 0).getTime()
+  const summerAfternoon = new Date(2026, 6, 15, 15, 0, 0).getTime()
+  const winterSummerCard = generateProactiveContent({
+    ...base,
+    now: winterAfternoon,
+    deck: summerDeck,
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] }
+  }).candidates.filter((c) => c.sourceId === 'topic-hot')
+  assertEq(winterSummerCard.length, 0, '冬天不发夏季话题（热与空调）')
+  const summerSummerCard = generateProactiveContent({
+    ...base,
+    now: summerAfternoon,
+    deck: summerDeck,
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] }
+  }).candidates.filter((c) => c.sourceId === 'topic-hot')
+  assertEq(summerSummerCard.length > 0, true, '夏天正常发夏季话题')
+
+  // 无 seasons 的通用话题（吃白饭，slots 含 noon）冬夏都应有候选，验证向后兼容
+  const foodTopic = contentDeck.topics.topics.find((t) => t.id === 'topic-food')
+  const foodDeck = {
+    ...contentDeck,
+    topics: { ...contentDeck.topics, topics: foodTopic ? [foodTopic] : [] }
+  }
+  for (const [label, at] of [
+    ['冬', new Date(2026, 11, 15, 12, 0, 0).getTime()],
+    ['夏', new Date(2026, 6, 15, 12, 0, 0).getTime()]
+  ]) {
+    const foodCandidates = generateProactiveContent({
+      ...base,
+      now: at,
+      deck: foodDeck,
+      cards: [],
+      day: { recentTopics: [], recentSentTexts: [] }
+    }).candidates.filter((c) => c.sourceId === 'topic-food')
+    assertEq(foodCandidates.length > 0, true, `通用话题「吃白饭」${label}天仍可发`)
+  }
   const nightTopic = contentDeck.topics.topics.find((topic) => topic.id === 'topic-night')
   assertEq(Boolean(nightTopic), true, '存在深夜话题')
   const noonNightCandidates = generateProactiveContent({
