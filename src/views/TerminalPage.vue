@@ -11,21 +11,21 @@
       <button
         v-for="cmd in QUICK_CMDS"
         :key="cmd.label"
-        class="q-btn"
+        class="btn btn-sm"
         :disabled="isRunning || isInteractive"
         @click="runCmd(cmd.args)"
       >
         {{ cmd.label }}
       </button>
       <button
-        class="q-btn q-btn-weixin"
+        class="btn btn-sm btn-weixin"
         :disabled="isRunning || isInteractive"
         @click="wechatLogin"
       >
         💚 微信登录 (扫码)
       </button>
       <button
-        class="q-btn q-btn-wecom"
+        class="btn btn-sm btn-wecom"
         :disabled="isRunning || isInteractive"
         @click="wecomInstall"
         title="运行企微官方安装向导：安装插件、扫码接入、一键创建机器人"
@@ -33,7 +33,7 @@
         💼 企微扫码接入
       </button>
       <button
-        class="q-btn q-btn-stop"
+        class="btn btn-sm btn-danger"
         :disabled="!isInteractive"
         @click="stopInteractive"
       >
@@ -54,7 +54,7 @@
         @keydown.enter="handleEnter"
       />
       <button
-        class="send-btn"
+        class="btn btn-primary"
         :disabled="isRunning || isInteractive || !input.trim()"
         @click="handleEnter"
       >
@@ -354,6 +354,7 @@ onUnmounted(() => {
 
 
 <style scoped>
+/* 终端为恒定深色表面（与 xterm.js JS 主题同源），不随主题变浅，见 --terminal-bg/--terminal-text */
 :deep(.xterm-screen div) {
   user-select: auto !important;
   -webkit-user-select: auto !important;
@@ -368,20 +369,20 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  padding: 20px;
+  padding: var(--space-5);
   box-sizing: border-box;
   background: var(--bg-base);
 }
 .page-header {
-  margin-bottom: 15px;
+  margin-bottom: var(--space-4);
 }
 .page-header h2 {
-  font-size: 1.2rem;
-  margin: 0 0 4px;
+  font-size: var(--text-title);
+  margin: 0 0 var(--space-1);
   color: var(--text-primary);
 }
 .page-sub {
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   margin: 0;
   color: var(--text-secondary);
 }
@@ -389,59 +390,17 @@ onUnmounted(() => {
 .quick-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.q-btn {
-  padding: 6px 14px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-surface);
-  color: var(--text-primary);
-  font-size: 0.8rem;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-.q-btn:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--bg-elevated);
-}
-.q-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.q-btn-weixin {
-  border-color: #10b981;
-  color: #10b981;
-  font-weight: 600;
-}
-.q-btn-weixin:hover:not(:disabled) {
-  background: rgba(16, 185, 129, 0.1);
-}
-/* 企微品牌蓝 #0082f0 */
-.q-btn-wecom {
-  border-color: #0082f0;
-  color: #0082f0;
-  font-weight: 600;
-}
-.q-btn-wecom:hover:not(:disabled) {
-  background: rgba(0, 130, 240, 0.1);
-}
-.q-btn-stop {
-  border-color: var(--red);
-  color: var(--red);
-}
-.q-btn-stop:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.1);
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 
 .xterm-box {
   flex: 1;
   min-height: 0;
   border: 1px solid var(--border);
-  border-radius: 8px 8px 0 0;
-  background: #0a0d14;
-  padding: 10px;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  background: var(--terminal-bg);
+  padding: var(--space-3);
   user-select: auto !important;
 }
 :deep(.xterm) {
@@ -451,42 +410,30 @@ onUnmounted(() => {
 .input-line {
   display: flex;
   align-items: center;
-  gap: 10px;
-  background: #0a0d14;
+  gap: var(--space-3);
+  background: var(--terminal-bg);
   border: 1px solid var(--border);
   border-top: none;
-  border-radius: 0 0 8px 8px;
-  padding: 12px 16px;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  padding: var(--space-3) var(--space-4);
 }
 .prefix {
   font-family: monospace;
-  color: #10b981;
+  color: var(--brand-weixin);
   font-weight: bold;
-  font-size: 0.9rem;
+  font-size: var(--text-base);
 }
+/* 终端输入框融入恒定深色表面，保留透明无边框特例，不挂 .form-input */
 .input-line input {
   flex: 1;
   background: transparent;
   border: none;
   outline: none;
-  color: #fff;
+  color: var(--terminal-text);
   font-family: monospace;
-  font-size: 0.9rem;
+  font-size: var(--text-base);
 }
 .input-line input:disabled {
   opacity: 0.5;
-}
-.send-btn {
-  background: var(--accent);
-  color: white;
-  border: none;
-  padding: 6px 16px;
-  border-radius: 4px;
-  font-size: 0.8rem;
-  cursor: pointer;
-}
-.send-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 </style>

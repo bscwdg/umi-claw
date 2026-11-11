@@ -1,5 +1,5 @@
 <template>
-  <div class="logs-page">
+  <div class="page-container logs-page">
     <div class="page-header">
       <div>
         <h1>运行日志</h1>
@@ -45,7 +45,7 @@
         <span class="log-content">{{ entry.line }}</span>
       </div>
       <div v-if="!filteredLogs.length" class="empty-state">
-        <div style="font-size:32px">📋</div>
+        <div style="font-size:var(--text-hero)">📋</div>
         <p class="text-muted">暂无日志，启动 OpenClaw 后日志将在此显示</p>
       </div>
     </div>
@@ -114,10 +114,10 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.logs-page { display: flex; flex-direction: column; gap: 16px; height: 100%; }
+.logs-page { display: flex; flex-direction: column; gap: var(--space-4); height: 100%; }
 .page-header { display: flex; align-items: flex-start; justify-content: space-between; flex-shrink: 0; }
-.toggle-wrap { display: flex; align-items: center; gap: 8px; }
-.stats-bar { display: flex; gap: 8px; flex-shrink: 0; }
+.toggle-wrap { display: flex; align-items: center; gap: var(--space-2); }
+.stats-bar { display: flex; gap: var(--space-2); flex-shrink: 0; }
 
 .log-viewer {
   flex: 1;
@@ -127,56 +127,57 @@ onMounted(async () => {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
 }
 
 .log-entry {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  padding: 3px 16px;
+  gap: var(--space-3);
+  padding: 3px var(--space-4);
   border-bottom: 1px solid var(--border-muted);
-  transition: background 0.1s;
+  transition: background var(--duration-fast);
 }
 .log-entry:hover { background: var(--bg-elevated); }
-.log-entry.stderr { background: rgba(248,81,73,0.04); }
-.log-entry.system { background: rgba(210,153,34,0.04); }
+.log-entry.stderr { background: var(--danger-muted); }
+.log-entry.system { background: var(--warning-muted); }
 
 .log-num {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   width: 36px;
   text-align: right;
   flex-shrink: 0;
 }
 .log-ts {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   flex-shrink: 0;
   white-space: nowrap;
 }
 .log-type-badge {
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 700;
-  padding: 1px 5px;
-  border-radius: 3px;
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-xs);
   flex-shrink: 0;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.type-stdout { background: rgba(88,166,255,0.15); color: var(--blue); }
-.type-stderr { background: rgba(248,81,73,0.15); color: var(--red); }
-.type-system { background: rgba(210,153,34,0.15); color: var(--yellow); }
+.type-stdout { background: var(--info-muted); color: var(--info); }
+.type-stderr { background: var(--danger-muted); color: var(--danger); }
+.type-system { background: var(--warning-muted); color: var(--warning); }
 .log-content { color: var(--text-primary); flex: 1; word-break: break-all; }
-.log-entry.stderr .log-content { color: #ff8080; }
+.log-entry.stderr .log-content { color: var(--danger); }
 
 .empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 60px 20px;
+  gap: var(--space-3);
+  /* 纵向留白刻意大于最大间距档（--space-10=40px），保留空状态的呼吸感 */
+  padding: 60px var(--space-5);
   text-align: center;
 }
 </style>

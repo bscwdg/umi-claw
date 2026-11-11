@@ -1,5 +1,5 @@
 <template>
-  <div class="obsidian-page">
+  <div class="page-container obsidian-page">
     <div class="page-header">
       <div>
         <h1>知识库</h1>
@@ -33,7 +33,7 @@
           <input class="form-input" v-model="cfg.vaultPath" placeholder="选择 Obsidian 笔记库根目录" />
           <button class="btn" @click="selectVault">📁 选择文件夹</button>
         </div>
-        <div v-if="cfg.vaultPath && !cfg.enabled" class="text-sm" style="color: var(--yellow); margin-top: 6px">
+        <div v-if="cfg.vaultPath && !cfg.enabled" class="text-sm" style="color: var(--warning); margin-top: 6px">
           ⚠ 已配置 vault 但未启用集成，开启后才会注入到 openclaw.json 的 mcp.servers.obsidian
         </div>
       </div>
@@ -82,7 +82,7 @@
             {{ testing ? '测试中...' : '🔌 测试连通' }}
           </button>
         </div>
-        <div v-if="embeddingTestResult" class="text-sm" :style="{ color: embeddingTestResult.success ? 'var(--green)' : 'var(--red)' }">
+        <div v-if="embeddingTestResult" class="text-sm" :style="{ color: embeddingTestResult.success ? 'var(--success)' : 'var(--danger)' }">
           {{ embeddingTestResult.success ? `✓ 连通，维度 ${embeddingTestResult.dim}` : `✗ ${embeddingTestResult.error}` }}
         </div>
         <div v-if="unavailableProviders.length" class="text-muted text-sm unavailable-tip">
@@ -105,13 +105,13 @@
             {{ testing ? '测试中...' : '🔌 测试连通' }}
           </button>
         </div>
-        <div class="custom-grid">
+        <div class="grid-2">
           <input class="form-input" v-model="cfg.customEmbedding!.baseUrl" placeholder="Base URL，如 https://api.mistral.ai/v1" />
           <input class="form-input" v-model="cfg.customEmbedding!.model" placeholder="模型 id，如 mistral-embed" />
           <input class="form-input" type="password" v-model="cfg.customEmbedding!.apiKey" placeholder="API Key" />
           <input class="form-input" type="number" v-model.number="cfg.customEmbedding!.dim" placeholder="向量维度，如 1024" />
         </div>
-        <div v-if="embeddingTestResult" class="text-sm" :style="{ color: embeddingTestResult.success ? 'var(--green)' : 'var(--red)' }">
+        <div v-if="embeddingTestResult" class="text-sm" :style="{ color: embeddingTestResult.success ? 'var(--success)' : 'var(--danger)' }">
           {{ embeddingTestResult.success ? `✓ 连通，维度 ${embeddingTestResult.dim}` : `✗ ${embeddingTestResult.error}` }}
         </div>
         <span class="text-muted text-sm">
@@ -133,7 +133,7 @@
           </button>
         </div>
       </div>
-      <div class="stats-grid">
+      <div class="grid-4">
         <div class="stat">
           <div class="stat-num">{{ status.noteCount }}</div>
           <div class="stat-label">笔记</div>
@@ -155,11 +155,11 @@
         最后索引：{{ status.lastIndexedAt ? formatTime(status.lastIndexedAt) : '尚未索引' }}
         <span v-if="status.vaultPath"> · {{ status.vaultPath }}</span>
       </div>
-      <div v-if="status.lastError" class="text-sm" style="color: var(--red); margin-top: 6px">
+      <div v-if="status.lastError" class="text-sm" style="color: var(--danger); margin-top: 6px">
         ⚠ {{ status.lastError }}
       </div>
       <div v-if="truncatedFiles.length" class="truncated-tip">
-        <div class="text-sm" style="color: var(--yellow); margin-bottom: 4px">
+        <div class="text-sm" style="color: var(--warning); margin-bottom: 4px">
           ⚠ {{ truncatedFiles.length }} 篇笔记超出切块上限被截断（仅索引前 {{ cfg.maxChunksPerNote || 50 }} 块）
         </div>
         <div class="text-muted text-sm truncated-list">
@@ -167,7 +167,7 @@
         </div>
       </div>
       <div v-if="embedErrorFiles.length" class="truncated-tip">
-        <div class="text-sm" style="color: var(--red); margin-bottom: 4px">
+        <div class="text-sm" style="color: var(--danger); margin-bottom: 4px">
           ⚠ {{ embedErrorFiles.length }} 篇笔记 embedding 失败（这些笔记只有文本索引，语义检索搜不到）
         </div>
         <div class="text-muted text-sm truncated-list">
@@ -215,7 +215,7 @@
         </button>
       </div>
 
-      <div v-if="searchError" class="text-sm" style="color: var(--red); margin-top: 8px">
+      <div v-if="searchError" class="text-sm" style="color: var(--danger); margin-top: 8px">
         ⚠ {{ searchError }}
       </div>
 
@@ -249,7 +249,9 @@
     </div>
 
     <transition name="slide">
-      <div v-if="toast" class="toast" :class="toast.type">{{ toast.msg }}</div>
+      <div v-if="toast" class="toast-container">
+        <div class="toast" :class="toast.type">{{ toast.msg }}</div>
+      </div>
     </transition>
   </div>
 </template>
@@ -649,7 +651,7 @@ onUnmounted(() => {
 .obsidian-page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-4);
   width: 100%;
 }
 .page-header {
@@ -660,82 +662,61 @@ onUnmounted(() => {
 .section {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 .row {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--space-4);
 }
 .label {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
 }
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
+/* .grid-4 吃全局网格（含 1100/720px 断点降级），.stat 只保留卡片外观 */
 .stat {
   background: var(--bg-base);
   border: 1px solid var(--border-muted);
   border-radius: var(--radius-sm);
-  padding: 14px;
+  padding: var(--space-4);
   text-align: center;
 }
 .stat-num {
-  font-size: 20px;
+  font-size: var(--text-title);
   font-weight: 700;
   color: var(--accent);
 }
 .stat-label {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   margin-top: 2px;
 }
 .progress-wrap {
-  margin-top: 14px;
+  margin-top: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 .progress-bar {
   height: 6px;
   background: var(--bg-overlay);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
 }
 .progress-fill {
   height: 100%;
   background: var(--accent);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   transition: width 0.3s ease;
 }
 .steps {
-  padding-left: 20px;
+  padding-left: var(--space-5);
   line-height: 1.9;
   color: var(--text-secondary);
 }
-.toast {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  padding: 10px 18px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 500;
-  z-index: 999;
-}
-.toast.success {
-  background: rgba(63, 185, 80, 0.9);
-  color: #fff;
-}
-.toast.error {
-  background: rgba(248, 81, 73, 0.9);
-  color: #fff;
-}
+/* Toast 收编全局 .toast-container/.toast（含 z-index 与语义底色），本页不再自定义 */
 .source-tabs {
   display: flex;
   gap: 0;
@@ -746,41 +727,37 @@ onUnmounted(() => {
 }
 .source-tab {
   flex: 1;
-  padding: 6px 14px;
+  padding: var(--space-2) var(--space-4);
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--duration-fast);
 }
 .source-tab.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--text-on-accent);
 }
 .source-tab:not(.active):hover {
   background: var(--bg-elevated);
   color: var(--text-primary);
 }
-.custom-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-}
+/* 两列表单网格吃全局 .grid-2（含断点降级） */
 .unavailable-tip {
-  padding: 6px 10px;
-  background: rgba(210, 153, 34, 0.08);
-  border: 1px solid rgba(210, 153, 34, 0.25);
+  padding: var(--space-2) var(--space-3);
+  background: var(--warning-muted);
+  border: 1px solid var(--warning-border);
   border-radius: var(--radius-sm);
-  color: var(--yellow) !important;
+  color: var(--warning) !important;
 }
 .truncated-tip {
-  margin-top: 8px;
-  padding: 8px 10px;
-  background: rgba(210, 153, 34, 0.08);
-  border: 1px solid rgba(210, 153, 34, 0.25);
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--warning-muted);
+  border: 1px solid var(--warning-border);
   border-radius: var(--radius-sm);
 }
 .truncated-list {
@@ -792,66 +769,66 @@ onUnmounted(() => {
 /* ── 检索测试 ── */
 .search-bar {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
 }
 .search-bar .form-input {
   flex: 1;
 }
 .search-meta {
-  margin-top: 10px;
+  margin-top: var(--space-3);
 }
 .hit-list {
-  margin-top: 8px;
+  margin-top: var(--space-2);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .hit {
   border: 1px solid var(--border-muted);
   border-radius: var(--radius-sm);
-  padding: 10px 12px;
+  padding: var(--space-3) var(--space-4);
 }
 .hit-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 .hit-score {
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 700;
   color: var(--accent);
-  background: var(--accent-muted, rgba(56, 139, 253, 0.12));
-  padding: 1px 8px;
-  border-radius: 4px;
+  background: var(--accent-muted);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
 }
 .hit-path {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text-primary);
   word-break: break-all;
 }
 .tag-chip {
-  font-size: 11px;
-  color: var(--text-secondary, var(--text-muted));
-  background: var(--bg-overlay, rgba(127, 127, 127, 0.15));
-  padding: 1px 6px;
-  border-radius: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  background: var(--bg-overlay);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
 }
 .hit-score-bar {
   height: 3px;
   background: var(--bg-overlay);
-  border-radius: 2px;
-  margin: 6px 0;
+  border-radius: var(--radius-xs);
+  margin: var(--space-2) 0;
   overflow: hidden;
 }
 .hit-score-fill {
   height: 100%;
   background: var(--accent);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
 }
 .hit-content {
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
   line-height: 1.7;
   white-space: pre-wrap;

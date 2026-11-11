@@ -1,21 +1,21 @@
 <template>
-  <div class="character-page">
+  <div class="page-container">
     <header class="page-head">
       <div>
         <h2>大肥鱼</h2>
-        <p class="sub">住在 Umi Claw 里的鱼。默认关闭；启用后她会带着自己的生活和记忆陪你。</p>
+        <p class="page-sub">住在 Umi Claw 里的鱼。默认关闭；启用后她会带着自己的生活和记忆陪你。</p>
       </div>
-      <button class="btn" :class="status.enabled ? 'ghost' : 'primary'" :disabled="busy" @click="toggleEnabled">
+      <button class="btn" :class="status.enabled ? 'btn-ghost' : 'btn-primary'" :disabled="busy" @click="toggleEnabled">
         {{ status.enabled ? '停用她' : '启用她' }}
       </button>
     </header>
 
-    <p v-if="error" class="err">{{ error }}</p>
-    <p v-if="toast" class="toast">{{ toast }}</p>
+    <p v-if="error" class="alert alert-danger">{{ error }}</p>
+    <p v-if="toast" class="alert alert-success">{{ toast }}</p>
 
     <section class="card">
       <h3>当前状态</h3>
-      <div class="grid">
+      <div class="grid-3 stat-grid">
         <div><span class="k">功能</span><span class="v">{{ status.enabled ? '已启用' : '未启用' }}</span></div>
         <div><span class="k">模块</span><span class="v">{{ status.storeReady ? '已就绪' : '未就绪' }}</span></div>
         <div><span class="k">阶段</span><span class="v">{{ stageLabel }}</span></div>
@@ -23,7 +23,7 @@
         <div><span class="k">亲密度</span><span class="v">{{ state.intimacy }} / 100</span></div>
         <div><span class="k">心情</span><span class="v">{{ state.mood || '平静' }}</span></div>
       </div>
-      <div class="row" style="margin-top: 10px">
+      <div class="row mt-3">
         <span class="hint">桌宠暂时下线（形象重做后再放出）</span>
       </div>
     </section>
@@ -32,11 +32,11 @@
       <h3>首启三问</h3>
       <div class="row">
         <label class="lab">怎么称呼你</label>
-        <input v-model="addressDraft" maxlength="40" placeholder="默认「你」" />
+        <input v-model="addressDraft" class="form-input" maxlength="40" placeholder="默认「你」" />
       </div>
       <div class="row">
         <label class="lab">关系模式</label>
-        <select v-model="modeDraft">
+        <select v-model="modeDraft" class="form-select">
           <option value="companion">朋友（搭子）</option>
           <option value="sister">妹妹</option>
           <option value="lover">恋人未满</option>
@@ -44,11 +44,11 @@
       </div>
       <div class="row">
         <label class="lab">不能叫的称呼</label>
-        <input v-model="tabooDraft" placeholder="逗号分隔；留空 = 不限制任何称呼" />
+        <input v-model="tabooDraft" class="form-input" placeholder="逗号分隔；留空 = 不限制任何称呼" />
       </div>
       <p class="hint">称呼只来自你；答「没有」或留空 = 空列表 = 什么都能叫（建议项不默认生效）。</p>
-      <div class="row">
-        <button class="btn primary" :disabled="busy || !status.enabled" @click="saveOnboarding">保存引导设置</button>
+      <div class="row actions-row">
+        <button class="btn btn-primary" :disabled="busy || !status.enabled" @click="saveOnboarding">保存引导设置</button>
         <button class="btn" :disabled="busy || !status.enabled" @click="runBootstrap">一键初始化</button>
       </div>
       <ul v-if="bootstrapReport" class="steps">
@@ -58,8 +58,8 @@
           <span class="detail">{{ step.detail }}</span>
         </li>
       </ul>
-      <div v-if="failedFlags.length" class="row" style="flex-wrap: wrap; margin-top: 10px">
-        <button v-for="f in failedFlags" :key="f.key" class="btn ghost" @click="go(f.to)">
+      <div v-if="failedFlags.length" class="row flex-wrap mt-3">
+        <button v-for="f in failedFlags" :key="f.key" class="btn btn-ghost" @click="go(f.to)">
           {{ f.label }}未就绪 · 去配置
         </button>
       </div>
@@ -71,14 +71,14 @@
         人格 = SOUL / IDENTITY / AGENTS / USER 四个文件。导出可备份或换到别的机器；导入会先备份旧人格，
         导入后这些文件视为你手写的内容，不会再被模板覆盖。
       </p>
-      <div class="row">
+      <div class="row actions-row">
         <button class="btn" :disabled="busy" @click="exportPersona">导出人格包</button>
         <button class="btn" :disabled="busy" @click="pickPersonaFile">导入人格包</button>
         <input
           ref="personaFileInput"
           type="file"
           accept="application/json,.json"
-          style="display: none"
+          class="hidden"
           @change="onPersonaFilePicked"
         />
       </div>
@@ -94,23 +94,23 @@
       </p>
       <div class="row">
         <label class="lab">类别</label>
-        <select v-model="knowledgeCategory">
+        <select v-model="knowledgeCategory" class="form-select">
           <option value="世界书">世界书</option>
           <option value="角色卡">角色卡</option>
           <option value="关系/约定">关系 / 约定</option>
         </select>
         <button class="btn" :disabled="busy" @click="pickKnowledgeFiles">选择文件并导入</button>
-        <button class="btn ghost" :disabled="busy" @click="rebuildKnowledgeIndex">重建索引</button>
+        <button class="btn btn-ghost" :disabled="busy" @click="rebuildKnowledgeIndex">重建索引</button>
         <input
           ref="knowledgeFileInput"
           type="file"
           accept=".md,.txt,text/markdown,text/plain"
           multiple
-          style="display: none"
+          class="hidden"
           @change="onKnowledgeFilesPicked"
         />
       </div>
-      <div class="grid health" style="margin-top: 10px">
+      <div class="grid-3 stat-grid health mt-3">
         <div>
           <span class="k">vault</span>
           <span class="v">{{ knowledgeHealth ? (knowledgeHealth.vaultExists ? '✓ 已配置' : '× 未配置/不存在') : '…' }}</span>
@@ -128,11 +128,11 @@
           <span class="v">{{ knowledgeHealth ? knowledgeHealth.characterNotes + (knowledgeHealth.characterNotes >= 500 ? '+ 篇' : ' 篇') : '…' }}</span>
         </div>
       </div>
-      <p v-if="knowledgeHealth && !knowledgeHealth.searchable" class="hint" style="color: var(--text-secondary)">
+      <p v-if="knowledgeHealth && !knowledgeHealth.searchable" class="hint">
         她当前还检索不到这些知识：{{ knowledgeReasonText }}。按提示处理后点「重新检查」。
       </p>
       <div class="row">
-        <button class="btn ghost" :disabled="busy" @click="refreshKnowledgeHealth">重新检查</button>
+        <button class="btn btn-ghost" :disabled="busy" @click="refreshKnowledgeHealth">重新检查</button>
       </div>
       <p v-if="knowledgeHealth && knowledgeHealth.warnings && knowledgeHealth.warnings.length" class="hint">
         提示：{{ knowledgeWarningText }}（旧索引通常仍可用）
@@ -142,7 +142,7 @@
 
     <section class="card">
       <h3>连接自检</h3>
-      <div class="grid">
+      <div class="grid-3 stat-grid">
         <div>
           <span class="k">agent</span><span class="v">{{ flag(status.agentReady) }}</span>
           <button v-if="!status.agentReady" class="link" @click="go('/config')">去配置</button>
@@ -183,12 +183,12 @@
       <p v-if="!status.enabled" class="hint">
         当前已停用：可以先「断开聊天渠道」，或重新启用后再勾选保存。
       </p>
-      <p v-if="chatChannelsError" class="err">{{ chatChannelsError }}</p>
+      <p v-if="chatChannelsError" class="alert alert-danger">{{ chatChannelsError }}</p>
       <p v-else-if="!chatChannels.length" class="hint">
         还没有已配置的聊天渠道。
         <button class="link" @click="go('/channelsPage')">去渠道接入</button>
       </p>
-      <div v-else class="row" style="flex-direction: column; align-items: flex-start; gap: 6px">
+      <div v-else class="channel-list">
         <label v-for="ch in chatChannels" :key="ch.id" class="check-row">
           <input
             v-model="chatChannelSelection"
@@ -214,9 +214,9 @@
           </span>
         </label>
       </div>
-      <div class="row" style="margin-top: 10px">
+      <div class="row actions-row">
         <button
-          class="btn primary"
+          class="btn btn-primary"
           :disabled="
             chatChannelsBusy ||
             !status.enabled ||
@@ -229,7 +229,7 @@
           {{ chatChannelsBusy ? '保存中…' : '保存聊天渠道' }}
         </button>
         <button
-          class="btn ghost"
+          class="btn btn-ghost"
           :disabled="
             chatChannelsBusy ||
             !chatChannels.some((c) => c.boundTo === 'feiyu')
@@ -238,7 +238,7 @@
         >
           断开聊天渠道
         </button>
-        <button class="btn ghost" :disabled="chatChannelsBusy" @click="refreshChatChannels">
+        <button class="btn btn-ghost" :disabled="chatChannelsBusy" @click="refreshChatChannels">
           重新检查
         </button>
       </div>
@@ -257,15 +257,16 @@
       <div class="row">
         <input
           v-model="draft"
+          class="form-input"
           :disabled="streaming"
           placeholder="跟她说点什么（Enter 发送）"
           @keydown.enter="sendMessage"
         />
-        <button class="btn primary" :disabled="!draft.trim() || streaming || !status.enabled" @click="sendMessage">
+        <button class="btn btn-primary" :disabled="!draft.trim() || streaming || !status.enabled" @click="sendMessage">
           发送
         </button>
         <button class="btn" :disabled="!streaming" @click="stopStreaming">停止</button>
-        <button class="btn ghost" @click="clearChat">清空</button>
+        <button class="btn btn-ghost" @click="clearChat">清空</button>
       </div>
       <p class="hint">
         清空只轮换会话上下文；日记与关系记忆不受影响。首次或隔很久的回复可能要几十秒（网关/模型冷启动），
@@ -277,12 +278,12 @@
       <h3>她的一天</h3>
       <pre v-if="lifeDoc" class="life-doc">{{ lifeDoc }}</pre>
       <p v-else class="hint">还没生成。启用后她会每天写自己的一天。</p>
-      <div class="row" style="margin-top: 10px">
+      <div class="row mt-3">
         <button class="btn" :disabled="busy || !status.enabled" @click="toggleProactive">
           {{ proactiveEnabled ? '关闭主动消息' : '开启主动消息' }}
         </button>
-        <button class="btn ghost" :disabled="busy || !status.enabled" @click="quietDays">安静三天</button>
-        <button class="btn ghost" :disabled="busy || !status.enabled" @click="cancelQuiet">取消安静</button>
+        <button class="btn btn-ghost" :disabled="busy || !status.enabled" @click="quietDays">安静三天</button>
+        <button class="btn btn-ghost" :disabled="busy || !status.enabled" @click="cancelQuiet">取消安静</button>
       </div>
       <p class="hint">安静期间不发主动消息，不影响聊天与好感；免打扰时段与每日上限在设置里改。</p>
     </section>
@@ -316,7 +317,7 @@
         <button class="btn" :disabled="busy" @click="pickPetAppearance">导入图片</button>
         <button
           v-if="petAppearance && petAppearance.kind === 'image'"
-          class="btn ghost"
+          class="btn btn-ghost"
           :disabled="busy"
           @click="clearPetAppearance"
         >
@@ -326,7 +327,7 @@
           ref="petAppearanceInput"
           type="file"
           accept="image/png,image/jpeg,image/webp,image/gif"
-          style="display: none"
+          class="hidden"
           @change="onPetAppearancePicked"
         />
       </div>
@@ -358,22 +359,22 @@
           <div v-else class="sticker-thumb sticker-thumb-empty">🐟</div>
           <div class="sticker-body">
             <div class="row">
-              <input v-model="st.name" class="sticker-name" maxlength="40" placeholder="名称" />
+              <input v-model="st.name" class="form-input sticker-name" maxlength="40" placeholder="名称" />
               <label class="check-row">
                 <input v-model="st.enabled" type="checkbox" @change="saveSticker(st)" />
                 <span>启用</span>
               </label>
             </div>
             <div class="row">
-              <input v-model="st.emotion" maxlength="20" placeholder="情绪（如 happy / shy / angry）" />
-              <input v-model="st.tagsText" maxlength="200" placeholder="标签（逗号分隔）" />
+              <input v-model="st.emotion" class="form-input" maxlength="20" placeholder="情绪（如 happy / shy / angry）" />
+              <input v-model="st.tagsText" class="form-input" maxlength="200" placeholder="标签（逗号分隔）" />
             </div>
             <div class="row">
-              <button class="btn ghost" :disabled="busy || stickersBusy" @click="saveSticker(st)">保存</button>
+              <button class="btn btn-ghost" :disabled="busy || stickersBusy" @click="saveSticker(st)">保存</button>
               <button class="btn" :disabled="busy || stickersBusy || !st.enabled" @click="sendSticker(st)">
                 发送测试
               </button>
-              <button class="btn ghost" :disabled="busy || stickersBusy" @click="removeSticker(st)">删除</button>
+              <button class="btn btn-ghost" :disabled="busy || stickersBusy" @click="removeSticker(st)">删除</button>
               <span class="hint">{{ st.format.toUpperCase() }} · {{ formatBytes(st.size) }} · 已用 {{ st.use }} 次</span>
             </div>
           </div>
@@ -392,7 +393,7 @@
       </p>
       <div class="row">
         <button class="btn" :disabled="busy || backupBusy" @click="exportBackup">导出备份</button>
-        <button class="btn ghost" :disabled="busy || backupBusy" @click="importBackup">导入备份</button>
+        <button class="btn btn-ghost" :disabled="busy || backupBusy" @click="importBackup">导入备份</button>
         <span class="hint">{{ backupBusy ? '处理中…' : '默认保存到 data/backups/character-<时间>.zip' }}</span>
       </div>
       <p v-if="backupHint" class="hint">{{ backupHint }}</p>
@@ -415,17 +416,17 @@
         日记保存只改本地记忆（她召回用），Obsidian 原始日记不动。
       </p>
       <div class="row">
-        <button class="btn ghost" :disabled="busy" @click="refreshMemoriesGuarded">刷新列表</button>
+        <button class="btn btn-ghost" :disabled="busy" @click="refreshMemoriesGuarded">刷新列表</button>
         <span class="hint">关系：{{ relationshipSummary }}</span>
       </div>
       <div v-if="memoryEditor" class="memo-editor">
         <div class="row">
           <strong>{{ memoryEditor.kind === 'diary' ? memoryEditor.id + ' 的日记' : memoryEditor.id }}</strong>
-          <button v-if="memoryEditor.kind === 'diary'" class="btn primary" :disabled="busy || !memoryEditorDirty" @click="saveMemoryEntry">保存</button>
+          <button v-if="memoryEditor.kind === 'diary'" class="btn btn-primary" :disabled="busy || !memoryEditorDirty" @click="saveMemoryEntry">保存</button>
           <span v-if="memoryEditor.kind === 'diary' && memoryEditorDirty" class="hint">未保存</span>
-          <button class="btn ghost" :disabled="busy" @click="confirmDiscardEdit(() => { memoryEditor = null })">关闭</button>
+          <button class="btn btn-ghost" :disabled="busy" @click="confirmDiscardEdit(() => { memoryEditor = null })">关闭</button>
         </div>
-        <textarea v-if="memoryEditor.kind === 'diary'" v-model="memoryEditor.content" rows="8" class="memo-text"></textarea>
+        <textarea v-if="memoryEditor.kind === 'diary'" v-model="memoryEditor.content" rows="8" class="form-textarea memo-text"></textarea>
         <pre v-else class="memo-text memo-readonly">{{ memoryEditor.content }}</pre>
         <p v-if="memoryEditor.kind === 'relation'" class="hint">关系笔记在 Obsidian 里编辑（这里只读）；删除会归档。</p>
       </div>
@@ -434,7 +435,7 @@
         <li v-for="d in memoryDiaries" :key="d.date" class="memo-item">
           <button class="memo-open" @click="openMemory('diary', d.date)">{{ d.date }}</button>
           <span class="hint">{{ d.excerpt }}</span>
-          <button class="btn ghost" :disabled="busy" @click="deleteMemoryEntry('diary', d.date)">删除</button>
+          <button class="btn btn-ghost" :disabled="busy" @click="deleteMemoryEntry('diary', d.date)">删除</button>
         </li>
       </ul>
       <p v-if="!memoryDiaries.length" class="hint">还没有日记；可以点上面「现在写一篇」。</p>
@@ -443,7 +444,7 @@
         <li v-for="r in memoryRelations" :key="r.id" class="memo-item">
           <button class="memo-open" @click="openMemory('relation', r.id)">{{ r.id }}</button>
           <span class="hint">{{ r.excerpt }}</span>
-          <button class="btn ghost" :disabled="busy" @click="deleteMemoryEntry('relation', r.id)">删除</button>
+          <button class="btn btn-ghost" :disabled="busy" @click="deleteMemoryEntry('relation', r.id)">删除</button>
         </li>
       </ul>
       <p v-if="!memoryRelations.length" class="hint">还没有约定/大事记；可先在「知识」导入，或让她在聊天里记下约定。</p>
@@ -462,10 +463,10 @@
         <input v-model="ageConfirmed" type="checkbox" @change="saveAgeConfirm" />
         <span>我已满 18 岁（未确认前她不会主动发消息）</span>
       </label>
-      <div class="row" style="margin-top: 10px">
+      <div class="row mt-3">
         <button class="btn" :disabled="busy" @click="exportData">导出她的档案</button>
-        <button class="btn ghost" :disabled="busy" @click="deleteMemory">删除日记与关系</button>
-        <button class="btn ghost" :disabled="busy" @click="deleteAll">删除全部</button>
+        <button class="btn btn-ghost" :disabled="busy" @click="deleteMemory">删除日记与关系</button>
+        <button class="btn btn-ghost" :disabled="busy" @click="deleteAll">删除全部</button>
       </div>
       <p class="hint">导出不含密钥；日记会归档到本机 `memory-archive/` 与 Obsidian 的「大肥鱼/归档」，不会直接删除你的笔记。</p>
     </section>
@@ -473,7 +474,7 @@
     <section class="card">
       <h3>数据</h3>
       <div class="row">
-        <button class="btn ghost" :disabled="busy" @click="resetValues">重置数值</button>
+        <button class="btn btn-ghost" :disabled="busy" @click="resetValues">重置数值</button>
       </div>
       <p class="hint">只清角色数值；记忆与日记在 C07/C09 提供更细的删除与导出。</p>
     </section>
@@ -1674,176 +1675,124 @@ async function run(fn: () => Promise<void>): Promise<void> {
 </script>
 
 <style scoped>
-.character-page {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 20px 24px 40px;
-}
-.page-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 18px;
-}
-h2 {
-  margin: 0 0 6px;
-  font-size: 20px;
-  color: var(--text-primary, #e8ecf4);
-}
-.sub {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-secondary, #9aa4b8);
-}
-.card {
-  border: 1px solid var(--border-color, #2a3244);
-  border-radius: 10px;
-  background: var(--bg-secondary, #141a26);
-  padding: 16px 18px;
-  margin-bottom: 14px;
-}
-.card h3 {
-  margin: 0 0 12px;
-  font-size: 14px;
-  color: var(--text-primary, #e8ecf4);
-}
-.grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px 16px;
-}
-.grid > div {
+/* 页面骨架/卡片/按钮/表单吃全局类（page-container/card/btn 修饰符/form 控件），
+   这里只保留大肥鱼页独有的布局类，颜色/圆角/字号一律引 token（规范 docs/ui-style-guide.md） */
+.stat-grid > div {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
-  font-size: 13px;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+/* 卡片垂直节奏：标题 12px 下间距；相邻 hint 不再重复加距；卡片末尾不留 row 尾距 */
+h3 {
+  margin: 0 0 var(--space-3);
+}
+h3 + .hint {
+  margin-top: 0;
+}
+.hint + .row {
+  margin-top: var(--space-3);
+}
+.row:last-child {
+  margin-bottom: 0;
 }
 .k {
-  color: var(--text-secondary, #9aa4b8);
+  color: var(--text-secondary);
 }
 .v {
-  color: var(--text-primary, #e8ecf4);
+  color: var(--text-primary);
 }
 .row {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-2);
+}
+/* 操作栏统一 12px 上间距；底部交给卡片 padding，避免和下方 hint/steps 的 margin 叠加 */
+.actions-row {
+  flex-wrap: wrap;
+  margin: var(--space-3) 0 0;
+}
+/* 渠道列表不能复用 .row：scoped .row 的 align-items:center 会压掉全局 items-start，
+   导致整列渠道被水平居中（2026-11 样式迁移实测） */
+.channel-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
 }
 .lab {
   width: 120px;
   flex: 0 0 120px;
-  font-size: 13px;
-  color: var(--text-secondary, #9aa4b8);
-}
-input,
-select {
-  flex: 1;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border-color, #2a3244);
-  background: var(--bg-primary, #0d121c);
-  color: var(--text-primary, #e8ecf4);
-}
-.btn {
-  padding: 8px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--border-color, #2a3244);
-  background: var(--bg-primary, #0d121c);
-  color: var(--text-primary, #e8ecf4);
-  cursor: pointer;
-}
-.btn.primary {
-  border-color: var(--accent, #4c8dff);
-  background: var(--accent, #4c8dff);
-  color: #fff;
-}
-.btn.ghost {
-  background: transparent;
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 .hint {
-  margin: 10px 0 0;
-  font-size: 12px;
-  color: var(--text-secondary, #9aa4b8);
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
 }
 .life-doc {
   margin: 0;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--bg-primary, #0d121c);
-  color: var(--text-primary, #e8ecf4);
-  font-size: 12px;
-  line-height: 1.7;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  line-height: var(--leading-relaxed);
   white-space: pre-wrap;
   word-break: break-word;
 }
 .check-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
-  font-size: 13px;
-  color: var(--text-primary, #e8ecf4);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
 }
 .check-row input {
   flex: 0 0 auto;
   width: 16px;
   height: 16px;
 }
-.err {
-  margin: 0 0 12px;
-  color: #ff6b6b;
-  font-size: 13px;
-}
-.toast {
-  position: sticky;
-  top: 8px;
-  z-index: 20;
-  margin: 0 0 12px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: rgba(46, 160, 67, 0.16);
-  border: 1px solid rgba(46, 160, 67, 0.45);
-  color: #7ee2a8;
-  font-size: 13px;
-}
+/* 文字链接按钮：类名保留（模板改动最小化），颜色收编 info 语义色 */
 .link {
-  margin-left: 8px;
+  margin-left: var(--space-2);
   padding: 0;
   border: 0;
   background: transparent;
-  color: #7aa2ff;
-  font-size: 12px;
+  color: var(--info);
+  font-size: var(--text-xs);
   cursor: pointer;
   text-decoration: underline;
 }
+.link:hover {
+  color: var(--info-hover);
+}
 .steps {
-  margin: 12px 0 0;
+  margin: var(--space-3) 0 0;
   padding: 0;
   list-style: none;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .steps li {
   display: flex;
-  gap: 8px;
-  padding: 4px 0;
-  color: var(--text-primary, #e8ecf4);
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  color: var(--text-primary);
 }
 .steps li.bad .dot,
 .steps li.bad .detail {
-  color: #ff6b6b;
+  color: var(--danger);
 }
 .steps .dot {
   width: 14px;
-  color: #4cd07d;
+  color: var(--success);
 }
 .steps .name {
   flex: 0 0 240px;
-  color: var(--text-secondary, #9aa4b8);
+  color: var(--text-secondary);
 }
 .steps .detail {
   flex: 1;
@@ -1854,24 +1803,24 @@ select {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 .msg {
   display: flex;
-  gap: 8px;
-  font-size: 13px;
-  line-height: 1.6;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
 }
 .msg .who {
   flex: 0 0 34px;
-  color: var(--text-secondary, #9aa4b8);
+  color: var(--text-secondary);
 }
 .msg.user .text {
-  color: #cfe0ff;
+  color: var(--text-primary);
 }
 .msg.assistant .text {
-  color: var(--text-primary, #e8ecf4);
+  color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1884,33 +1833,45 @@ select {
   }
 }
 .memo-editor {
-  margin: 10px 0;
-  padding: 10px;
-  border: 1px solid var(--border, #333);
-  border-radius: 8px;
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
 }
 .memo-text {
   width: 100%;
-  margin-top: 8px;
-  padding: 8px;
+  margin-top: var(--space-2);
+  padding: var(--space-2);
   background: transparent;
   color: inherit;
-  border: 1px solid var(--border, #333);
-  border-radius: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   font: inherit;
   resize: vertical;
 }
-.memo-title { margin: 14px 0 6px; font-size: 13px; }
-.memo-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.memo-item { display: flex; align-items: center; gap: 10px; }
-.memo-open { background: none; border: none; color: inherit; cursor: pointer; font: inherit; padding: 0; text-decoration: underline; flex: 0 0 auto; }
+.memo-title { margin: var(--space-4) 0 var(--space-2); font-size: var(--text-sm); }
+.memo-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.memo-item { display: flex; align-items: center; gap: var(--space-3); }
+.memo-open {
+  background: none;
+  border: none;
+  color: var(--info);
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+  flex: 0 0 auto;
+}
+.memo-open:hover {
+  color: var(--info-hover);
+}
 .memo-item .hint { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; }
-.memo-readonly { white-space: pre-wrap; max-height: 240px; overflow: auto; margin: 8px 0 0; }
+.memo-readonly { white-space: pre-wrap; max-height: 240px; overflow: auto; margin: var(--space-2) 0 0; }
 
 .pet-preview {
   width: 160px;
   height: 176px;
-  margin: 8px auto;
+  margin: var(--space-2) auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1927,34 +1888,34 @@ select {
 
 .sticker-list {
   list-style: none;
-  margin: 10px 0 0;
+  margin: var(--space-3) 0 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .sticker-item {
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
   align-items: flex-start;
-  padding: 10px;
-  border: 1px solid var(--border-color, #2a3244);
-  border-radius: 8px;
-  background: var(--bg-primary, #0d121c);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
 }
 .sticker-thumb {
   flex: 0 0 72px;
   width: 72px;
   height: 72px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   object-fit: contain;
-  background: var(--bg-secondary, #141a26);
+  background: var(--bg-surface);
 }
 .sticker-thumb-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 24px;
+  font-size: var(--text-title);
   opacity: 0.6;
 }
 .sticker-body {
@@ -1962,7 +1923,7 @@ select {
   min-width: 0;
 }
 .sticker-body .row {
-  margin-bottom: 6px;
+  margin-bottom: var(--space-2);
 }
 .sticker-name {
   max-width: 220px;

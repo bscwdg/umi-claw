@@ -1527,10 +1527,11 @@ await r.check('U21', '二次确认弹窗统一：插件管理/角色页不再用
 await r.check('U22', '环境初始化/更新完成后顶部版本状态会刷新：绿色「已更新至最新版本」', async () => {
   const setupSrc = readFileSync(join(repoRoot, 'src', 'views', 'Setup.vue'), 'utf-8')
 
-  // 顶部「已更新至最新版本」必须是绿色（黄色只留给「有新版本」）
+  // 顶部「已更新至最新版本」必须是成功色（警告色只留给「有新版本」）
+  // 样式 token 迁移后 --green/--yellow 别名已收口为 --success/--warning 语义色
   assert(
-    /color: updateInfo\.hasUpdate \? 'var\(--yellow\)' : 'var\(--green\)'/.test(setupSrc),
-    '已最新状态必须用绿色，有新版本才用黄色'
+    /color: updateInfo\.hasUpdate \? 'var\(--warning\)' : 'var\(--success\)'/.test(setupSrc),
+    '已最新状态必须用 --success，有新版本才用 --warning'
   )
   assert(/已更新至最新版本/.test(setupSrc), '已最新文案要是「已更新至最新版本」')
 

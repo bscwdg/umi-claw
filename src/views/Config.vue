@@ -1,5 +1,5 @@
 <template>
-  <div class="config-page">
+  <div class="page-container config-page">
     <div class="page-header">
       <div>
         <h1>模型配置</h1>
@@ -43,7 +43,7 @@
         <p class="text-sm text-muted" style="margin: -6px 0 12px">
           💡 保存后可在 OpenClaw 聊天里输入 /model 随时切换当前服务商的模型，无需重启；如需更换服务商，点选上方卡片后保存即可
         </p>
-        <div class="provider-grid">
+        <div class="grid-auto-narrow">
           <div
             v-for="p in config.providers"
             :key="p.id"
@@ -335,7 +335,9 @@
 
     <!-- Toast -->
     <transition name="slide">
-      <div v-if="toast" class="toast" :class="toast.type">{{ toast.msg }}</div>
+      <div v-if="toast" class="toast-container">
+        <div class="toast" :class="toast.type">{{ toast.msg }}</div>
+      </div>
     </transition>
   </div>
 </template>
@@ -541,7 +543,7 @@ async function testConnection() {
 .config-page {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: var(--space-5);
   width: 100%;
 }
 .page-header {
@@ -549,32 +551,25 @@ async function testConnection() {
   align-items: flex-start;
   justify-content: space-between;
 }
-.section {
-}
 .section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 .head-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
-/* Provider Grid */
-.provider-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 10px;
-}
+/* Provider 网格吃全局 .grid-auto-narrow（auto-fill minmax(160px)，含断点） */
 .provider-card {
-  padding: 12px;
+  padding: var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--duration-fast);
   background: var(--bg-elevated);
 }
 .provider-card:hover {
@@ -585,49 +580,49 @@ async function testConnection() {
   background: var(--accent-muted);
 }
 .provider-name {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   margin-bottom: 2px;
 }
 .provider-status {
-  margin-top: 8px;
+  margin-top: var(--space-2);
 }
 
 /* Form */
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: var(--space-4);
 }
 .span-2 {
   grid-column: span 2;
 }
 .input-with-action {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
 }
 /* 表单 label 里的提示图标：鼠标悬停显示 title 说明 */
 .field-hint {
   cursor: help;
-  margin-left: 4px;
+  margin-left: var(--space-1);
   opacity: 0.65;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 /* All Providers */
 .all-providers {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .provider-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-3);
 }
 .provider-row-name {
   width: 160px;
-  font-size: 13px;
+  font-size: var(--text-sm);
   flex-shrink: 0;
 }
 
@@ -641,58 +636,36 @@ async function testConnection() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 0;
+  padding: var(--space-4) 0;
   border-bottom: 1px solid var(--border-muted);
 }
 .setting-row:last-child {
   border-bottom: none;
 }
 .setting-name {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 500;
   margin-bottom: 2px;
 }
 
-/* Toast */
-.toast {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  padding: 10px 18px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 500;
-  z-index: 999;
-}
-.toast.success {
-  background: rgba(63, 185, 80, 0.9);
-  color: #fff;
-}
-.toast.error {
-  background: rgba(248, 81, 73, 0.9);
-  color: #fff;
-}
-.toast.warning {
-  background: rgba(230, 162, 60, 0.95);
-  color: #fff;
-}
+/* Toast 收编全局 .toast-container/.toast，本页不再自定义 */
 
 /* Theme picker */
 .theme-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 10px;
+  gap: var(--space-3);
 }
 .theme-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--duration-fast);
   text-align: left;
   outline: none;
 }
@@ -703,13 +676,14 @@ async function testConnection() {
 .theme-card.active {
   box-shadow: 0 0 0 2px var(--accent);
 }
+/* 预览卡底色是动态主题 base 色，difference 混合保证任意底色可读；白色为混合模式固定输入 */
 .theme-swatch {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  font-size: 15px;
+  gap: var(--space-2);
+  font-size: var(--text-md);
   font-weight: 600;
-  color: #fff;
+  color: var(--text-on-accent);
   mix-blend-mode: difference;
 }
 .theme-dot {
@@ -719,15 +693,15 @@ async function testConnection() {
   flex-shrink: 0;
 }
 .theme-card-name {
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 500;
-  color: #fff;
+  color: var(--text-on-accent);
   mix-blend-mode: difference;
 }
 .custom-theme {
   display: flex;
-  gap: 16px;
-  margin-top: 16px;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
   flex-wrap: wrap;
 }
 .custom-theme .form-group {
@@ -737,7 +711,7 @@ async function testConnection() {
 .color-field {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .color-field input[type="color"] {
   width: 40px;

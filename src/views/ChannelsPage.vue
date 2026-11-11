@@ -1,5 +1,5 @@
 <template>
-  <div class="page channels-page">
+  <div class="page-container channels-page">
     <div class="page-header">
       <h2>渠道接入</h2>
       <p class="page-sub">配置聊天平台，让 AI 助手接入你的消息渠道</p>
@@ -75,19 +75,19 @@
             </p>
           </div>
           <div class="docs-row">
-            <button class="docs-btn" @click="openExternalUrl(ch.docsUrl)">
+            <button class="btn btn-ghost btn-sm" @click="openExternalUrl(ch.docsUrl)">
               📖 查看接入文档
             </button>
             <button
               v-if="ch.key === 'feishu'"
-              class="docs-btn"
+              class="btn btn-ghost btn-sm"
               @click="goToFeishuPairing"
             >
               🔗 前往终端配对审批
             </button>
             <button
               v-if="ch.key === 'qqbot'"
-              class="docs-btn"
+              class="btn btn-ghost btn-sm"
               :disabled="qqbotBusy"
               @click="goToQQBotLogin"
             >
@@ -116,7 +116,7 @@
       <span v-if="savedMsg" class="save-msg">{{ savedMsg }}</span>
     </div>
 
-    <div class="tip-card">
+    <div class="alert alert-info channels-tip">
       <p>
         💻 其他渠道（Telegram、Slack
         等）可在<strong>终端</strong>页面通过
@@ -135,7 +135,7 @@
         </div>
         <span v-if="statusConfigured('weixin')" class="ch-badge">已配置</span>
         <button
-          class="docs-btn"
+          class="btn btn-ghost btn-sm"
           @click="
             openExternalUrl(
               'https://www.npmjs.com/package/@tencent-weixin/openclaw-weixin'
@@ -153,7 +153,7 @@
             <div class="step-desc">
               切换到「终端」页面，执行登录命令，用手机扫码授权
             </div>
-            <button class="btn btn-outline-sm" @click="goToWeixinLogin">
+            <button class="btn btn-outline btn-sm" @click="goToWeixinLogin">
               📱 微信扫码登录
             </button>
           </div>
@@ -180,7 +180,7 @@
         </div>
         <span v-if="statusConfigured('wecom')" class="ch-badge">已配置</span>
         <button
-          class="docs-btn"
+          class="btn btn-ghost btn-sm"
           @click="
             openExternalUrl('https://www.npmjs.com/package/@wecom/wecom-openclaw-cli')
           "
@@ -196,7 +196,7 @@
             <div class="step-desc">
               切换到「终端」页面运行官方安装向导，按提示用企业微信扫码接入、一键创建机器人
             </div>
-            <button class="btn btn-outline-sm wecom-outline" @click="goToWecomLogin">
+            <button class="btn btn-sm btn-wecom" @click="goToWecomLogin">
               💼 企微扫码接入
             </button>
           </div>
@@ -718,89 +718,89 @@ async function save() {
   gap: 0;
 }
 .page-header {
-  margin-bottom: 20px;
+  margin-bottom: var(--space-5);
 }
 .page-header h2 {
-  font-size: 1.1rem;
+  font-size: var(--text-xl);
   font-weight: 700;
   color: var(--text-primary);
   margin-bottom: 2px;
 }
 .page-sub {
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
 }
 .channels-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-bottom: 20px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
 }
 /* 顶部「已接入渠道」总览：判定依据是网关真实配置，不是表单内存值 */
 .configured-summary {
-  border: 1px solid color-mix(in srgb, var(--green) 30%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--green) 6%, var(--bg-surface));
-  padding: 12px 16px;
-  margin-bottom: 16px;
+  border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--success) 6%, var(--bg-surface));
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
 }
 .cs-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
 }
 .cs-title {
-  font-size: 0.85rem;
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--text-primary);
 }
 .cs-count {
-  font-size: 0.7rem;
-  padding: 1px 8px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--green) 15%, transparent);
-  color: var(--green);
+  font-size: var(--text-xs);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  color: var(--success);
 }
 .cs-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .cs-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 14px;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  font-size: 0.78rem;
+  font-size: var(--text-xs);
   color: var(--text-primary);
 }
 .cs-chip-icon {
-  font-size: 0.9rem;
+  font-size: var(--text-base);
 }
 .cs-chip-label {
   font-weight: 500;
 }
 .cs-chip-detail {
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   color: var(--text-secondary);
 }
 .cs-empty {
-  font-size: 0.78rem;
+  font-size: var(--text-xs);
   color: var(--text-secondary);
 }
 .channel-card {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--bg-surface);
   overflow: hidden;
-  transition: border-color 0.15s;
+  transition: border-color var(--duration-fast);
 }
 .channel-card.configured {
-  border-color: var(--green);
+  border-color: var(--success);
 }
 .channel-card.expanded {
   border-color: var(--accent);
@@ -808,8 +808,8 @@ async function save() {
 .channel-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: var(--space-3);
+  padding: var(--space-4);
   cursor: pointer;
   user-select: none;
 }
@@ -817,7 +817,7 @@ async function save() {
   background: var(--bg-elevated);
 }
 .ch-icon {
-  font-size: 1.3rem;
+  font-size: var(--text-title);
   flex-shrink: 0;
 }
 .ch-info {
@@ -827,64 +827,47 @@ async function save() {
 .ch-label {
   display: block;
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: var(--text-base);
   color: var(--text-primary);
 }
 .ch-desc {
   display: block;
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
   color: var(--text-secondary);
   margin-top: 1px;
 }
 .ch-badge {
-  font-size: 0.7rem;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--green) 15%, transparent);
-  color: var(--green);
+  font-size: var(--text-xs);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+  color: var(--success);
   flex-shrink: 0;
 }
 .ch-arrow {
-  font-size: 0.7rem;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   flex-shrink: 0;
 }
 .channel-form {
-  padding: 0 16px 16px;
+  padding: 0 var(--space-4) var(--space-4);
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding-top: 14px;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
 }
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
+/* .form-group/.form-input/.form-hint 吃全局类，这里只补裸 label 的字号 */
 .form-group label {
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
   font-weight: 500;
-}
-.form-input {
-  padding: 9px 12px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  color: var(--text-primary);
-  font-size: 0.85rem;
-  outline: none;
-  transition: border-color 0.15s;
-}
-.form-input:focus {
-  border-color: var(--accent);
 }
 .form-check {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.85rem;
+  gap: var(--space-2);
+  font-size: var(--text-base);
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -892,10 +875,6 @@ async function save() {
   width: 15px;
   height: 15px;
   accent-color: var(--accent);
-}
-.form-hint {
-  font-size: 0.75rem;
-  color: var(--text-secondary);
 }
 .hint-link {
   background: none;
@@ -913,62 +892,24 @@ async function save() {
   display: flex;
   justify-content: flex-end;
 }
-.docs-btn {
-  background: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 5px 12px;
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.docs-btn:hover {
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-  border-color: var(--accent);
-}
 .save-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
-  padding: 0 4px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+  padding: 0 var(--space-1);
 }
 .save-msg {
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   color: var(--text-primary);
   font-weight: 500;
 }
-.btn {
-  padding: 9px 20px;
-  border-radius: 8px;
-  font-size: 0.85rem;
-  font-weight: 500;
-  cursor: pointer;
-  border: 1px solid transparent;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  transition: all 0.15s;
-}
-.btn-primary {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
-}
-.btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-.btn-primary:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
+/* 保存按钮内的加载圈：currentColor 跟随按钮文字色（accent 底上即 --text-on-accent），零硬编码色 */
 .spinner {
-  width: 12px;
-  height: 12px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #fff;
+  width: var(--space-3);
+  height: var(--space-3);
+  border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-top-color: currentColor;
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
   display: inline-block;
@@ -978,69 +919,51 @@ async function save() {
     transform: rotate(360deg);
   }
 }
-.tip-card {
-  background: color-mix(in srgb, var(--blue) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--blue) 25%, transparent);
-  border-radius: 8px;
-  padding: 12px 16px;
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  line-height: 1.6;
-  margin-bottom: 16px;
-}
-.tip-card strong {
-  color: var(--text-primary);
-}
-.tip-card code {
+/* 提示条/步骤描述里的行内代码：只挂本页修饰类，不重定义全局 .alert */
+.channels-tip code,
+.step-desc code {
   background: var(--bg-elevated);
-  padding: 1px 5px;
-  border-radius: 4px;
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-xs);
   font-size: 0.85em;
   color: var(--accent);
   font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
 }
 .weixin-card {
-  border: 1px solid color-mix(in srgb, #10b981 40%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, #10b981 5%, var(--bg-surface));
-  padding: 16px;
-  margin-top: 4px;
+  border: 1px solid color-mix(in srgb, var(--brand-weixin) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--brand-weixin) 5%, var(--bg-surface));
+  padding: var(--space-4);
+  margin-top: var(--space-1);
 }
 /* 企微品牌蓝卡片 */
 .wecom-card {
-  border-color: color-mix(in srgb, #0082f0 40%, transparent);
-  background: color-mix(in srgb, #0082f0 5%, var(--bg-surface));
-}
-.wecom-outline {
-  border-color: #0082f0;
-  color: #0082f0;
-}
-.wecom-outline:hover:not(:disabled) {
-  background: color-mix(in srgb, #0082f0 10%, transparent);
+  border-color: color-mix(in srgb, var(--brand-wecom) 40%, transparent);
+  background: color-mix(in srgb, var(--brand-wecom) 5%, var(--bg-surface));
 }
 .weixin-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 .weixin-steps {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .weixin-step {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .step-num {
-  width: 24px;
-  height: 24px;
+  width: var(--space-6);
+  height: var(--space-6);
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
-  font-size: 0.75rem;
+  color: var(--text-on-accent);
+  font-size: var(--text-xs);
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -1052,50 +975,22 @@ async function save() {
   flex: 1;
 }
 .step-title {
-  font-size: 0.88rem;
+  font-size: var(--text-base);
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 2px;
 }
 .step-desc {
-  font-size: 0.78rem;
+  font-size: var(--text-xs);
   color: var(--text-secondary);
-  margin-bottom: 8px;
-}
-.step-desc code {
-  background: var(--bg-elevated);
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 0.85em;
-  color: var(--accent);
-}
-.btn-outline-sm {
-  padding: 5px 12px;
-  border-radius: 6px;
-  font-size: 0.78rem;
-  font-weight: 500;
-  cursor: pointer;
-  border: 1px solid var(--accent);
-  color: var(--accent);
-  background: transparent;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  transition: all 0.15s;
-}
-.btn-outline-sm:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-.btn-outline-sm:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
+  margin-bottom: var(--space-2);
 }
 .weixin-msg {
-  margin-top: 12px;
-  font-size: 0.82rem;
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
   color: var(--text-secondary);
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   background: var(--bg-elevated);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 </style>

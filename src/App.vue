@@ -24,11 +24,11 @@
     </div>
 
     <!-- 4.0.2 P2：旧库导入失败横幅（可见 + 一键重试；成功后自动消失） -->
-    <div v-for="f in importFailures" :key="f.pluginId" class="import-banner">
+    <div v-for="f in importFailures" :key="f.pluginId" class="alert alert-warning app-banner">
       <span class="import-banner-text">
         旧数据导入失败（{{ f.pluginId }}）：{{ f.error || '未知错误' }}
       </span>
-      <button class="import-banner-retry" :disabled="importRetrying === f.pluginId" @click="retryImport(f.pluginId)">
+      <button class="btn btn-sm" :disabled="importRetrying === f.pluginId" @click="retryImport(f.pluginId)">
         {{ importRetrying === f.pluginId ? '重试中…' : '重试导入' }}
       </button>
     </div>
@@ -96,12 +96,12 @@
     />
 
     <!-- 4.2 B2：便携 Node 写入探针失败横幅（低完整性/目录只读时数据库会写不进去 -->
-    <div v-if="runtimeProbeBanner" class="import-banner">
+    <div v-if="runtimeProbeBanner" class="alert alert-warning app-banner">
       <span class="import-banner-text">
         {{ runtimeProbeBanner.message }}
       </span>
       <button
-        class="import-banner-retry"
+        class="btn btn-sm"
         :disabled="runtimeReinstalling"
         @click="reinstallRuntime"
       >
@@ -477,15 +477,16 @@ async function onAgreementAgreed(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 12px;
+  padding: 0 var(--space-3);
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-muted);
   flex-shrink: 0;
 }
-.titlebar-left { display: flex; align-items: center; gap: 8px; }
-.app-logo { font-size: 16px; }
-.app-name { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.titlebar-left { display: flex; align-items: center; gap: var(--space-2); }
+.app-logo { font-size: var(--text-lg); }
+.app-name { font-size: var(--text-sm); font-weight: 600; color: var(--text-secondary); }
 .titlebar-right { display: flex; align-items: center; gap: 2px; }
+/* 标题栏窗口控制钮属全局 .btn 体系之外的特例，保留 .title-btn 类名 */
 .title-btn {
   width: 32px; height: 28px;
   display: flex; align-items: center; justify-content: center;
@@ -493,10 +494,10 @@ async function onAgreementAgreed(): Promise<void> {
   color: var(--text-muted);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all var(--duration-fast);
 }
 .title-btn:hover { background: var(--bg-elevated); color: var(--text-primary); }
-.close-btn:hover { background: var(--red); color: #fff; }
+.close-btn:hover { background: var(--danger); color: var(--text-on-accent); }
 
 /* Body */
 .app-body {
@@ -512,8 +513,8 @@ async function onAgreementAgreed(): Promise<void> {
   border-right: 1px solid var(--border-muted);
   display: flex;
   flex-direction: column;
-  padding: 16px 12px;
-  gap: 16px;
+  padding: var(--space-4) var(--space-3);
+  gap: var(--space-4);
   flex-shrink: 0;
   /* 让内部 .nav 自己滚，状态胶囊与底部按钮固定可见 */
   overflow: hidden;
@@ -521,30 +522,30 @@ async function onAgreementAgreed(): Promise<void> {
 .status-pill {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--text-secondary);
   border: 1px solid var(--border-muted);
-  transition: all 0.3s;
+  transition: all var(--duration-normal);
 }
 .status-pill.active {
-  background: rgba(63,185,80,0.08);
-  border-color: rgba(63,185,80,0.3);
-  color: var(--green);
+  background: var(--success-muted);
+  border-color: var(--success-border);
+  color: var(--success);
 }
 .status-dot {
   width: 7px; height: 7px;
   border-radius: 50%;
   background: var(--text-muted);
   flex-shrink: 0;
-  transition: all 0.3s;
+  transition: all var(--duration-normal);
 }
 .status-pill.active .status-dot {
-  background: var(--green);
-  box-shadow: 0 0 6px var(--green);
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
   animation: pulse 2s infinite;
 }
 @keyframes pulse {
@@ -567,20 +568,20 @@ async function onAgreementAgreed(): Promise<void> {
   scrollbar-gutter: stable;
 }
 .nav-group-label {
-  font-size: 11px; color: var(--text-muted); text-transform: uppercase;
-  letter-spacing: 0.06em; padding: 10px 12px 4px;
+  font-size: var(--text-xs); color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.06em; padding: var(--space-3) var(--space-3) var(--space-1);
 }
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
+  gap: var(--space-3);
+  padding: 9px var(--space-3);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   text-decoration: none;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
-  transition: all 0.15s;
+  transition: all var(--duration-fast);
 }
 .nav-item:hover {
   background: var(--bg-elevated);
@@ -590,10 +591,10 @@ async function onAgreementAgreed(): Promise<void> {
   background: var(--accent-muted);
   color: var(--accent);
 }
-.nav-icon { font-size: 15px; width: 20px; text-align: center; }
+.nav-icon { font-size: var(--text-md); width: 20px; text-align: center; }
 
 .sidebar-footer {
-  padding-top: 8px;
+  padding-top: var(--space-2);
   border-top: 1px solid var(--border-muted);
   display: flex;
   justify-content: space-between;
@@ -603,48 +604,27 @@ async function onAgreementAgreed(): Promise<void> {
 .content {
   flex: 1;
   overflow-y: auto;
-  padding: 24px;
+  padding: var(--space-6);
 }
 
-/* 4.0.2 P2：旧库导入失败横幅 */
-.import-banner {
-  display: flex;
-  align-items: center;
+/* 4.0.2 P2：全局横幅吃 .alert.alert-warning；.app-banner 仅补「贴边全宽、无圆角」形态 */
+.app-banner {
+  border-radius: 0;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 16px;
-  background: rgba(245, 158, 11, 0.12);
-  border-bottom: 1px solid rgba(245, 158, 11, 0.35);
-  color: var(--text-primary);
-  font-size: 13px;
 }
 .import-banner-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.import-banner-retry {
-  flex: 0 0 auto;
-  padding: 4px 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid rgba(245, 158, 11, 0.55);
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  font-size: 12px;
-}
-.import-banner-retry:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
 
 /* 关闭确认对话框：记住选择 */
 .close-remember {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-  font-size: 13px;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
   color: var(--text-muted);
   cursor: pointer;
   user-select: none;

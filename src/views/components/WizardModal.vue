@@ -1,7 +1,7 @@
 <template>
   <transition name="fade">
-    <div v-if="visible" class="wizard-overlay">
-      <div class="wizard-card card">
+    <div v-if="visible" class="modal-overlay wizard-overlay">
+      <div class="modal-card modal-lg wizard-card">
         <!-- 步骤指示 -->
         <div class="steps">
           <div
@@ -157,9 +157,11 @@
         <div v-if="error" class="error-box">{{ error }}</div>
       </div>
 
-      <div v-if="toast" class="toast" :class="toast.type">
-        {{ toast.msg }}
-      </div>
+      <transition name="slide">
+        <div v-if="toast" class="toast-container">
+          <div class="toast" :class="toast.type">{{ toast.msg }}</div>
+        </div>
+      </transition>
     </div>
   </transition>
 </template>
@@ -389,100 +391,85 @@ watch(
 </script>
 
 <style scoped>
-/* 遮罩从标题栏下方开始：保证窗口最小化/关闭按钮始终可用（用户必须能退出） */
+/* 遮罩骨架吃全局 .modal-overlay；本修饰类只补向导两个特例：
+   ① 从标题栏下方开始，保证窗口最小化/关闭按钮始终可用（用户必须能退出）；
+   ② 层级取 --z-banner(1900)，低于 ModelPicker(--z-modal 2000) 与 ConfirmDialog(--z-toast 2100)，
+   否则「关闭 Umi Claw」确认框会被本遮罩盖住、用户无法退出 */
 .wizard-overlay {
-  position: fixed;
   top: var(--titlebar-h, 0);
-  left: 0;
-  right: 0;
-  bottom: 0;
-  /* 层级：低于 ModelPicker(2000) 与关闭提示弹窗 ConfirmDialog(2100)，
-     否则「关闭 Umi Claw」确认框会被本遮罩盖住、用户无法退出 */
-  z-index: 1900;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
+  z-index: var(--z-banner);
+  /* 全局遮罩默认不滚动；向导五步内容可能高于视口，恢复遮罩自身滚动 */
   overflow-y: auto;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(2px);
 }
 
+/* 卡片骨架吃全局 .modal-card.modal-lg（原 660px 归并到全局 lg=720 档）；
+   向导内容无 modal-body 包裹，这里补内边距与纵向节奏；
+   内容超高时由遮罩自身滚动（margin:auto 保证顶部不被裁切），故解除全局 max-height/overflow 裁切 */
 .wizard-card {
-  width: 660px;
-  max-width: 100%;
-  /* margin:auto 而非仅靠 align-items：内容比视口高时可正常滚动，不会被顶部裁切 */
+  max-height: none;
+  overflow: visible;
   margin: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+  padding: var(--space-5);
+  gap: var(--space-5);
 }
 
-.steps { display: flex; gap: 8px; flex-wrap: wrap; }
+.steps { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .step-dot {
-  display: flex; align-items: center; gap: 6px; padding: 4px 10px;
-  border-radius: 20px; background: var(--bg-base); border: 1px solid var(--border-muted);
-  font-size: 12px; color: var(--text-muted);
+  display: flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-pill); background: var(--bg-base); border: 1px solid var(--border-muted);
+  font-size: var(--text-xs); color: var(--text-muted);
 }
 .step-dot.active { border-color: var(--accent); color: var(--accent); }
-.step-dot.done { border-color: var(--green); color: var(--green); }
+.step-dot.done { border-color: var(--success); color: var(--success); }
 .dot-num {
   width: 16px; height: 16px; border-radius: 50%; background: var(--bg-overlay);
-  display: inline-flex; align-items: center; justify-content: center; font-size: 10px;
+  display: inline-flex; align-items: center; justify-content: center; font-size: var(--text-xs);
 }
 
-.step-body { display: flex; flex-direction: column; gap: 14px; }
-.hint { font-size: 13px; color: var(--text-secondary); line-height: 1.7; }
+.step-body { display: flex; flex-direction: column; gap: var(--space-4); }
+.hint { font-size: var(--text-sm); color: var(--text-secondary); line-height: var(--leading-relaxed); }
 
 .notice {
   background: var(--bg-base); border: 1px solid var(--border);
   border-left: 3px solid var(--accent); border-radius: var(--radius-sm);
-  padding: 14px 16px; font-size: 13px; line-height: 1.8;
+  padding: var(--space-4); font-size: var(--text-sm); line-height: var(--leading-relaxed);
 }
-.notice-list { margin: 10px 0 0 18px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 4px; }
-.agree { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.notice-list { margin: var(--space-3) 0 0 var(--space-4); color: var(--text-secondary); display: flex; flex-direction: column; gap: var(--space-1); }
+.agree { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); cursor: pointer; }
 
-.branch-list { display: flex; flex-direction: column; gap: 8px; }
+.branch-list { display: flex; flex-direction: column; gap: var(--space-2); }
 .branch {
-  display: flex; flex-direction: column; gap: 5px; text-align: left;
-  padding: 12px 14px; background: var(--bg-base); border: 1px solid var(--border-muted);
+  display: flex; flex-direction: column; gap: var(--space-1); text-align: left;
+  padding: var(--space-3) var(--space-4); background: var(--bg-base); border: 1px solid var(--border-muted);
   border-radius: var(--radius-sm); cursor: pointer; color: var(--text-primary);
 }
 .branch.active { border-color: var(--accent); background: var(--accent-muted); }
-.branch-title { font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
-.branch-desc { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+.branch-title { font-size: var(--text-sm); font-weight: 500; display: flex; align-items: center; gap: var(--space-2); }
+.branch-desc { font-size: var(--text-xs); color: var(--text-secondary); line-height: var(--leading-normal); }
 
 .mapping {
   background: var(--bg-base); border: 1px dashed var(--border);
-  border-radius: var(--radius-sm); padding: 12px 14px; font-size: 13px;
+  border-radius: var(--radius-sm); padding: var(--space-3) var(--space-4); font-size: var(--text-sm);
 }
-.mapping-title { color: var(--text-secondary); margin-bottom: 8px; }
-.mapping-list { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.mapping-title { color: var(--text-secondary); margin-bottom: var(--space-2); }
+.mapping-list { list-style: none; display: flex; flex-direction: column; gap: var(--space-1); }
 
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 
-.kb-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.kb-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .info-box {
-  font-size: 13px; color: var(--blue); background: rgba(88,166,250,0.08);
-  border: 1px solid rgba(88,166,250,0.3); border-radius: var(--radius-sm); padding: 10px 12px;
+  font-size: var(--text-sm); color: var(--info); background: var(--info-muted);
+  border: 1px solid var(--info-border); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3);
 }
 
 .todo-input { display: flex; }
 
-.actions { display: flex; justify-content: flex-end; gap: 8px; }
-.done-body { align-items: center; text-align: center; padding: 20px 0; }
-.done-icon { font-size: 44px; }
+.actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.done-body { align-items: center; text-align: center; padding: var(--space-5) 0; }
+.done-icon { font-size: var(--text-hero); }
 .error-box {
-  color: var(--red); font-size: 13px; padding: 8px;
-  border: 1px solid var(--red); border-radius: var(--radius-sm);
+  color: var(--danger); font-size: var(--text-sm); padding: var(--space-2);
+  border: 1px solid var(--danger); border-radius: var(--radius-sm);
 }
-
-.toast {
-  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-  padding: 10px 20px; border-radius: var(--radius-sm); font-size: 13px;
-  background: var(--bg-elevated); border: 1px solid var(--border); z-index: 300;
-}
-.toast.success { border-color: var(--green); color: var(--green); }
-.toast.error { border-color: var(--red); color: var(--red); }
-.toast.warning { border-color: var(--yellow); color: var(--yellow); }
+/* Toast 收编全局 .toast-container/.toast，本组件不再自定义 */
 </style>

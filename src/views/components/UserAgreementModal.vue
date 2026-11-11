@@ -1,10 +1,10 @@
 <template>
   <transition name="fade">
-    <div v-if="visible" class="agreement-overlay" @click.self="onOverlayClick">
-      <div class="agreement-card card">
+    <div v-if="visible" class="modal-overlay agreement-overlay" @click.self="onOverlayClick">
+      <div class="modal-card modal-md agreement-card">
         <div class="agreement-head">
           <h2>{{ reviewMode ? '用户协议' : '开始前，先说清楚资料怎么用' }}</h2>
-          <button v-if="!blocking" class="head-close" title="关闭" @click="close">✕</button>
+          <button v-if="!blocking" class="btn btn-icon btn-sm" title="关闭" @click="close">✕</button>
         </div>
 
         <div class="notice">
@@ -130,93 +130,75 @@ async function submit(): Promise<void> {
 </script>
 
 <style scoped>
-/* 遮罩从标题栏下方开始：保证窗口最小化/关闭按钮始终可用（用户必须能退出） */
+/* 遮罩骨架吃全局 .modal-overlay；本修饰类只补两个特例：
+   ① 从标题栏下方开始，保证窗口最小化/关闭按钮始终可用（用户必须能退出）；
+   ② 层级取 --z-banner(1900)，低于 ModelPicker(--z-modal 2000) 与 ConfirmDialog(--z-toast 2100) */
 .agreement-overlay {
-  position: fixed;
   top: var(--titlebar-h, 0);
-  left: 0;
-  right: 0;
-  bottom: 0;
-  /* 层级：低于关闭提示弹窗 ConfirmDialog(2100)，否则用户无法退出应用 */
-  z-index: 1950;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  overflow-y: auto;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(2px);
+  z-index: var(--z-banner);
 }
+
+/* 卡片骨架吃全局 .modal-card.modal-md（宽度 560px / max-width 92vw 与原值一致）；
+   协议正文可能超高，保留卡片内部滚动并补内边距（全局 modal-card 默认 overflow:hidden、无 padding） */
 .agreement-card {
-  width: min(560px, 92vw);
-  max-height: 86vh;
   overflow-y: auto;
-  padding: 22px 24px;
-  /* 居中且内容超高时不裁切顶部 */
-  margin: auto;
+  padding: var(--space-6);
 }
 .agreement-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .agreement-head h2 {
-  margin: 0 0 14px;
-  font-size: 17px;
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-xl);
 }
-.head-close {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 15px;
-  cursor: pointer;
-  padding: 2px 6px;
-}
+/* 关闭钮吃全局 .btn.btn-icon.btn-sm，不再自定义 */
 .notice {
-  background: var(--bg-elevated, rgba(127, 127, 127, 0.08));
-  border-radius: 8px;
-  padding: 12px 14px;
-  margin-bottom: 14px;
+  background: var(--bg-base);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
 }
 .notice p {
-  margin: 0 0 8px;
-  font-size: 13px;
-  line-height: 1.7;
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
 }
 .notice-list {
   margin: 0;
-  padding-left: 18px;
-  font-size: 13px;
-  line-height: 1.8;
+  padding-left: var(--space-4);
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
   color: var(--text-muted);
 }
 .agreed-note {
-  font-size: 13px;
-  color: var(--green);
-  margin: 0 0 10px;
+  font-size: var(--text-sm);
+  color: var(--success);
+  margin: 0 0 var(--space-3);
 }
 .agree {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  margin-bottom: 14px;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-4);
   cursor: pointer;
 }
 .agree-error {
-  color: var(--red);
-  font-size: 13px;
-  margin: 0 0 10px;
+  color: var(--danger);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--space-3);
 }
 .actions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
+  gap: var(--space-2);
 }
 .blocked-note {
-  margin: 10px 0 0;
-  font-size: 12px;
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   text-align: right;
 }

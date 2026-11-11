@@ -1,5 +1,5 @@
 <template>
-  <div class="dashboard">
+  <div class="page-container dashboard">
     <!-- Header -->
     <div class="page-header">
       <div>
@@ -57,7 +57,7 @@
         </div>
       </div>
 
-      <div class="status-actions flex gap-2">
+      <div class="status-actions flex flex-wrap gap-2">
         <button
         v-if="!clawStore.running"
         class="btn btn-success btn-lg"
@@ -81,7 +81,7 @@
     </div>
 
     <!-- Error Message -->
-    <div v-if="errorMsg" class="error-banner">
+    <div v-if="errorMsg" class="alert alert-danger">
       ⚠️ {{ errorMsg }}
     </div>
 
@@ -91,7 +91,7 @@
     </template>
 
     <!-- Stats Grid -->
-    <div class="stats-grid">
+    <div class="grid-4">
       <div class="stat-card card">
         <div class="stat-icon">🤖</div>
         <div class="stat-value">{{ activeProviderName }}</div>
@@ -137,7 +137,7 @@
     </div>
 
     <!-- Quick Links -->
-    <div class="quick-links">
+    <div class="grid-4">
       <a class="quick-link card" @click="openWeb()">
         <span>🌐</span><span>Web 控制台</span>
       </a>
@@ -153,7 +153,9 @@
     </div>
     <!-- Toast -->
     <transition name="slide">
-      <div v-if="toast" class="toast" :class="toast.type">{{ toast.msg }}</div>
+      <div v-if="toast" class="toast-container">
+        <div class="toast" :class="toast.type">{{ toast.msg }}</div>
+      </div>
     </transition>
   </div>
 </template>
@@ -321,7 +323,7 @@ window.api.skills.getInstalledSkills().then((s) => (skillCount.value = s.length)
 </script>
 
 <style scoped>
-.dashboard { display: flex; flex-direction: column; gap: 20px; width: 100%; }
+.dashboard { display: flex; flex-direction: column; gap: var(--space-5); width: 100%; }
 
 .page-header {
   display: flex;
@@ -334,49 +336,37 @@ window.api.skills.getInstalledSkills().then((s) => (skillCount.value = s.length)
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 24px;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-6);
   border-radius: var(--radius-lg);
   background: var(--bg-surface);
   border: 1px solid var(--border);
-  transition: all 0.3s;
+  transition: all var(--duration-normal);
 }
 .status-card.running {
-  border-color: rgba(63,185,80,0.35);
-  background: linear-gradient(135deg, rgba(63,185,80,0.06) 0%, var(--bg-surface) 60%);
+  border-color: var(--success-border);
+  background: linear-gradient(135deg, var(--success-muted) 0%, var(--bg-surface) 60%);
 }
-.status-main { display: flex; align-items: center; gap: 16px; }
-.status-icon { font-size: 36px; }
-.status-title { font-size: 18px; font-weight: 600; }
+.status-main { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
+.status-icon { font-size: var(--text-hero); }
+.status-title { font-size: var(--text-xl); font-weight: 600; }
 
-/* Error */
-.error-banner {
-  padding: 10px 16px;
-  background: rgba(248,81,73,0.1);
-  border: 1px solid rgba(248,81,73,0.3);
-  border-radius: var(--radius-sm);
-  color: var(--red);
-  font-size: 13px;
-}
+/* 错误提示吃全局 .alert.alert-danger */
 
-/* Stats */
-
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
+/* Stats：网格吃全局 .grid-4（含 1100/720px 断点降级），.stat-card 只补卡片内容布局 */
 .stat-card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 16px;
+  gap: var(--space-2);
+  padding: var(--space-4);
   text-align: center;
-  transition: all 0.15s;
+  transition: all var(--duration-fast);
 }
 .stat-card:hover { border-color: var(--accent); }
-.stat-icon { font-size: 20px; }
-.stat-value { font-size: 16px; font-weight: 600; }
+.stat-icon { font-size: var(--text-title); }
+.stat-value { font-size: var(--text-lg); font-weight: 600; }
 
 /* Log Preview */
 .log-preview {
@@ -386,34 +376,29 @@ window.api.skills.getInstalledSkills().then((s) => (skillCount.value = s.length)
   height: 160px;
   overflow-y: auto;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 .log-line {
   display: flex;
-  gap: 10px;
-  padding: 3px 12px;
+  gap: var(--space-3);
+  padding: 3px var(--space-3);
   border-bottom: 1px solid var(--border-muted);
 }
 .log-line:last-child { border-bottom: none; }
-.log-line.stderr .log-text { color: var(--red); }
-.log-line.system .log-text { color: var(--yellow); }
+.log-line.stderr .log-text { color: var(--danger); }
+.log-line.system .log-text { color: var(--warning); }
 .log-time { color: var(--text-muted); flex-shrink: 0; }
 .log-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Quick Links */
-.quick-links {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
+/* Quick Links：网格吃全局 .grid-4，.quick-link 只补卡片内容布局 */
 .quick-link {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px;
+  gap: var(--space-3);
+  padding: var(--space-4);
   cursor: pointer;
-  font-size: 13px;
-  transition: all 0.15s;
+  font-size: var(--text-sm);
+  transition: all var(--duration-fast);
   font-weight: 500;
   text-decoration: none;
   color: var(--text-primary);
@@ -422,18 +407,5 @@ window.api.skills.getInstalledSkills().then((s) => (skillCount.value = s.length)
   border-color: var(--accent);
   background: var(--accent-muted);
 }
-/* Toast */
-.toast {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  padding: 10px 18px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 500;
-  z-index: 999;
-}
-.toast.success { background: rgba(63,185,80,0.9); color: #fff; }
-.toast.error   { background: rgba(248,81,73,0.9); color: #fff; }
-.toast.warning { background: rgba(230,162,60,0.95); color: #fff; }
+/* Toast 收编全局 .toast-container/.toast，本页不再自定义 */
 </style>

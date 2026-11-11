@@ -1,5 +1,5 @@
 <template>
-  <div class="setup-page">
+  <div class="page-container setup-page">
     <div class="page-header">
       <div>
         <h1>环境初始化</h1>
@@ -30,7 +30,7 @@
             <div
               v-if="envInfo?.nodeVersion && !isNodeCompatible(envInfo.nodeVersion)"
               class="text-sm"
-              style="margin-top: 2px; color: var(--red)"
+              style="margin-top: 2px; color: var(--danger)"
             >
               ⚠️ 版本过低，新版 OpenClaw 需要 Node v24.22.1+ / v26.12.1+，请更新
             </div>
@@ -66,7 +66,7 @@
             <div
               v-if="updateInfo && !updateInfo.error"
               class="text-sm"
-              :style="{ marginTop: '2px', color: updateInfo.hasUpdate ? 'var(--yellow)' : 'var(--green)' }"
+              :style="{ marginTop: '2px', color: updateInfo.hasUpdate ? 'var(--warning)' : 'var(--success)' }"
             >
               {{
                 updateInfo.hasUpdate
@@ -77,7 +77,7 @@
             <div
               v-else-if="updateInfo?.error"
               class="text-sm"
-              style="margin-top: 2px; color: var(--red)"
+              style="margin-top: 2px; color: var(--danger)"
             >
               检查更新失败：{{ updateInfo.error }}
             </div>
@@ -182,7 +182,7 @@
       <div
         v-if="nodeVersionsError"
         class="text-sm"
-        style="margin-top: 8px; color: var(--red)"
+        style="margin-top: 8px; color: var(--danger)"
       >
         {{ nodeVersionsError }}，可选择「自定义版本」直接填写，例如 v24.22.1。
       </div>
@@ -197,7 +197,7 @@
       "
       class="card success-card"
     >
-      <div style="font-size: 32px">🎉</div>
+      <div style="font-size: var(--text-hero)">🎉</div>
       <h3>环境已就绪！</h3>
       <p class="text-muted text-sm">
         所有运行时核心及基础渠道插件包均已内置安装完成
@@ -658,15 +658,14 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-/* 保持原有优秀样式百分百兼容不变 */
 .setup-page {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: var(--space-5);
   width: 100%;
 }
 .node-update-card {
-  margin-top: -8px;
+  margin-top: calc(var(--space-2) * -1);
 }
 .page-header {
   display: flex;
@@ -676,12 +675,12 @@ onMounted(async () => {
 .env-items {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .env-item {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: var(--space-4);
 }
 .env-check {
   width: 32px;
@@ -689,22 +688,22 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
+  font-size: var(--text-xl);
   flex-shrink: 0;
 }
 .env-name {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 500;
 }
 .success-card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
   text-align: center;
-  padding: 32px;
-  border-color: rgba(63, 185, 80, 0.3);
-  background: rgba(63, 185, 80, 0.05);
+  padding: var(--space-8);
+  border-color: var(--success-border);
+  background: var(--success-muted);
 }
 .settings-list {
   display: flex;
@@ -714,7 +713,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 0;
+  padding: var(--space-3) 0;
   border-bottom: 1px solid var(--border-muted);
 }
 .setting-row:last-child {
@@ -727,31 +726,32 @@ onMounted(async () => {
   width: 100%;
   height: 6px;
   background: var(--bg-elevated);
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
 }
 .progress-bar {
   height: 100%;
   background: linear-gradient(90deg, var(--accent), var(--accent-hover));
-  border-radius: 3px;
+  border-radius: var(--radius-xs);
+  /* 进度条需要肉眼可感知的推进感，0.4s 慢于通用 --duration-* 档位，属刻意保留 */
   transition: width 0.4s ease;
 }
 .step-log {
-  margin-top: 16px;
+  margin-top: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
   max-height: 200px;
   overflow-y: auto;
-  padding: 12px;
+  padding: var(--space-3);
   background: var(--bg-base);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-muted);
 }
 .step-entry {
   display: flex;
-  gap: 8px;
-  font-size: 12px;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
   font-family: var(--font-mono);
   color: var(--text-muted);
 }
@@ -762,23 +762,23 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 .error-msg {
-  margin-top: 16px;
-  padding: 12px;
-  background: rgba(248, 81, 73, 0.1);
-  border: 1px solid rgba(248, 81, 73, 0.3);
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  background: var(--danger-muted);
+  border: 1px solid var(--danger-border);
   border-radius: var(--radius-sm);
-  color: var(--red);
-  font-size: 13px;
+  color: var(--danger);
+  font-size: var(--text-sm);
   display: flex;
   flex-direction: column;
 }
 .version-compare {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 14px;
-  font-family: var(--font-mono, monospace);
-  font-size: 13px;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
 }
 .ver-old {
   color: var(--text-muted);
@@ -787,7 +787,7 @@ onMounted(async () => {
   color: var(--text-muted);
 }
 .ver-new {
-  color: var(--green);
+  color: var(--success);
   font-weight: 600;
 }
 </style>

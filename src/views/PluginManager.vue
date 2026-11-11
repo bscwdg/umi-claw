@@ -1,5 +1,5 @@
 <template>
-  <div class="page">
+  <div class="page-container">
     <header class="page-head">
       <div>
         <h1>插件管理</h1>
@@ -371,72 +371,70 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* .page-head 布局吃全局类，这里只补本页标题与卡片的间距 */
 .page-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 .plugin-card {
-  border: 1px solid var(--border, #e5e7eb);
-  border-radius: 10px;
-  padding: 14px 16px;
-  margin-bottom: 12px;
-  background: var(--card-bg, #fff);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-bottom: var(--space-3);
+  background: var(--bg-surface);
 }
 .card-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .titles {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .meta {
-  margin: 6px 0 10px;
-  color: var(--text-muted, #6b7280);
-  font-size: 13px;
+  margin: var(--space-2) 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
 }
+/* 状态徽标与全局 .badge 同构；保留 state-* 动态类名（取值来自插件生命周期），色值吃语义 token */
 .state {
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: #eef2ff;
-  color: #4338ca;
+  font-size: var(--text-xs);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--info-muted);
+  color: var(--info);
 }
 .state-failed {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: var(--danger-muted);
+  color: var(--danger);
 }
 .state-activated {
-  background: #ecfdf5;
-  color: #047857;
+  background: var(--success-muted);
+  color: var(--success);
 }
 .error-line {
-  color: #b91c1c;
-  font-size: 13px;
-  margin: 0 0 10px;
+  color: var(--danger);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--space-3);
 }
 .error-banner {
-  color: #b91c1c;
-  margin-bottom: 12px;
+  color: var(--danger);
+  margin-bottom: var(--space-3);
 }
 .empty {
-  color: var(--text-muted, #6b7280);
-  padding: 24px 0;
+  color: var(--text-muted);
+  padding: var(--space-6) 0;
 }
 .actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .section-title {
-  margin: 18px 0 10px;
-  font-size: 15px;
-  color: var(--text-muted, #6b7280);
+  margin: var(--space-4) 0 var(--space-3);
+  font-size: var(--text-md);
+  color: var(--text-muted);
   font-weight: 600;
 }
 .host-module-card {

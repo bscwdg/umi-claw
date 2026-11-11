@@ -1,0 +1,19 @@
+{
+  "src": {
+    "hardColor": 0,
+    "rem": 0,
+    "badVarName": 0,
+    "globalOverride": 0,
+    "bareRadius": 0,
+    "bareFontSize": 0
+  },
+  "plugins": {
+    "hardColor": 32,
+    "rem": 0,
+    "badVarName": 0,
+    "globalOverride": 35,
+    "bareRadius": 10,
+    "bareFontSize": 114
+  },
+  "_note": "样式 token 门禁基线（scripts/check-style-tokens.mjs）：只准降不准升。2026-11 四批迁移收口后 src 组六项全部归零：白名单（FishState 插画 / PetWindow 透明桌宠 / style.css 与 themes.ts token 定义）由门禁整体豁免不计；TerminalPage xterm JS 主题与 Config 取色器默认值位于 <script>，门禁只扫 <style> 块同样不计。plugins 组冻结不重构，维持初始高水位。新增违规会被棘轮拦截，修复后用 --update 重写本文件。"
+}

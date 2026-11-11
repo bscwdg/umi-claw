@@ -3,6 +3,14 @@
  * 并根据背景明度自动选择可读的字体颜色，避免深色字配深色底等问题。
  */
 
+/** 语义色键名：基础色 + 三个衍生（hover / 半透明底 / 描边） */
+type SemanticKey = 'success' | 'danger' | 'warning' | 'info'
+type SemanticThemeKeys =
+  | `--${SemanticKey}`
+  | `--${SemanticKey}-hover`
+  | `--${SemanticKey}-muted`
+  | `--${SemanticKey}-border`
+
 export interface ThemeVars {
   '--bg-base': string
   '--bg-surface': string
@@ -18,6 +26,23 @@ export interface ThemeVars {
   '--accent-muted': string
   '--shadow': string
   '--shadow-sm': string
+  /** 语义色：浅/深主题各一套基础色，与品牌 accent 解耦（红恒为危险、绿恒为成功） */
+  '--success': string
+  '--success-hover': string
+  '--success-muted': string
+  '--success-border': string
+  '--danger': string
+  '--danger-hover': string
+  '--danger-muted': string
+  '--danger-border': string
+  '--warning': string
+  '--warning-hover': string
+  '--warning-muted': string
+  '--warning-border': string
+  '--info': string
+  '--info-hover': string
+  '--info-muted': string
+  '--info-border': string
 }
 
 export interface ThemePreset {
@@ -100,6 +125,34 @@ function withAlpha(rgb: Rgb, alpha: number): string {
 }
 
 /**
+ * 语义色基础值：深/浅主题两套。浅色主题下压暗以保证白底对比度；
+ * 不随 accent 色相变化——语义颜色承担固定含义（危险/成功/警告/信息）。
+ */
+const SEMANTIC_BASES: Record<SemanticKey, { dark: string; light: string }> = {
+  success: { dark: '#3fb950', light: '#1a7f37' },
+  danger: { dark: '#f85149', light: '#cf222e' },
+  warning: { dark: '#d29922', light: '#9a6700' },
+  info: { dark: '#58a6ff', light: '#0969da' }
+}
+
+/**
+ * 派生一组语义色变量（每组 4 个）。
+ * muted/border 的 alpha 浅深两套：浅底上同透明度视觉偏淡，整体上调。
+ */
+function buildSemanticVars(isLight: boolean): Pick<ThemeVars, SemanticThemeKeys> {
+  const out: Record<string, string> = {}
+  for (const key of Object.keys(SEMANTIC_BASES) as SemanticKey[]) {
+    const baseRgb = hexToRgb(isLight ? SEMANTIC_BASES[key].light : SEMANTIC_BASES[key].dark)
+    const hoverRgb = mix(baseRgb, isLight ? -0.15 : 0.18)
+    out[`--${key}`] = rgbToHex(baseRgb)
+    out[`--${key}-hover`] = rgbToHex(hoverRgb)
+    out[`--${key}-muted`] = withAlpha(baseRgb, isLight ? 0.12 : 0.15)
+    out[`--${key}-border`] = withAlpha(baseRgb, isLight ? 0.35 : 0.4)
+  }
+  return out as Pick<ThemeVars, SemanticThemeKeys>
+}
+
+/**
  * 根据背景色与强调色派生整套主题变量。
  * 关键点：字体颜色依据背景明度自适应（深底用浅字，浅底用深字）。
  */
@@ -140,7 +193,8 @@ export function buildThemeVars(base: string, accent: string): ThemeVars {
     '--accent-hover': rgbToHex(accentHover),
     '--accent-muted': withAlpha(accentRgb, 0.15),
     '--shadow': `0 4px 24px rgba(0,0,0,${shadowStrength})`,
-    '--shadow-sm': `0 2px 8px rgba(0,0,0,${shadowStrengthSm})`
+    '--shadow-sm': `0 2px 8px rgba(0,0,0,${shadowStrengthSm})`,
+    ...buildSemanticVars(isLight)
   }
 }
 

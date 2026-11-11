@@ -15,13 +15,13 @@
         </label>
         <div class="row">
           <label class="lab">静默几天后才可以主动</label>
-          <input v-model.number="draft.proactive.silenceDays" type="number" min="0" max="14" />
+          <input v-model.number="draft.proactive.silenceDays" class="form-input" type="number" min="0" max="14" />
           <label class="lab">每天上限</label>
-          <input v-model.number="draft.proactive.dailyCap" type="number" min="0" max="60" />
+          <input v-model.number="draft.proactive.dailyCap" class="form-input" type="number" min="0" max="60" />
         </div>
         <div class="row">
           <label class="lab">发送间隔</label>
-          <select v-model="draft.proactive.intervalMode">
+          <select v-model="draft.proactive.intervalMode" class="form-select">
             <option value="fixed">固定间隔</option>
             <option value="range">随机区间</option>
           </select>
@@ -29,6 +29,7 @@
             <label class="lab">间隔（分钟）</label>
             <input
               v-model.number="draft.proactive.intervalMinutes"
+              class="form-input"
               type="number"
               min="1"
               max="720"
@@ -42,6 +43,7 @@
             <label class="lab">最短（分钟）</label>
             <input
               v-model.number="draft.proactive.intervalMinMinutes"
+              class="form-input"
               type="number"
               min="1"
               max="720"
@@ -50,6 +52,7 @@
             <label class="lab">最长（分钟）</label>
             <input
               v-model.number="draft.proactive.intervalMaxMinutes"
+              class="form-input"
               type="number"
               min="1"
               max="720"
@@ -68,13 +71,13 @@
         </p>
         <div class="row">
           <label class="lab">免打扰从</label>
-          <input v-model="draft.proactive.quietFrom" type="time" />
+          <input v-model="draft.proactive.quietFrom" class="form-input" type="time" />
           <label class="lab">到</label>
-          <input v-model="draft.proactive.quietTo" type="time" />
+          <input v-model="draft.proactive.quietTo" class="form-input" type="time" />
         </div>
         <div class="row">
           <label class="lab">渠道</label>
-          <select v-model="draft.proactive.channel">
+          <select v-model="draft.proactive.channel" class="form-select">
             <option value="external">外部渠道（优先最近聊天）</option>
             <option value="app">应用内</option>
           </select>
@@ -106,7 +109,7 @@
         </label>
         <div class="row">
           <label class="lab">每天语音条上限</label>
-          <input v-model.number="draft.voice.dailyCap" type="number" min="0" max="100" />
+          <input v-model.number="draft.voice.dailyCap" class="form-input" type="number" min="0" max="100" />
         </div>
       </div>
 
@@ -126,9 +129,9 @@
         </label>
         <div class="row">
           <label class="lab">每个群每天语音上限</label>
-          <input v-model.number="draft.group.dailyVoiceCap" type="number" min="0" max="20" />
+          <input v-model.number="draft.group.dailyVoiceCap" class="form-input" type="number" min="0" max="20" />
           <label class="lab">群历史缓存条数</label>
-          <input v-model.number="draft.group.historyLimit" type="number" min="0" max="50" />
+          <input v-model.number="draft.group.historyLimit" class="form-input" type="number" min="0" max="50" />
         </div>
         <label class="check-row">
           <input v-model="draft.group.memoryIsolated" type="checkbox" />
@@ -136,14 +139,14 @@
         </label>
         <div class="row">
           <label class="lab">亲密词过滤</label>
-          <select v-model="draft.group.words.action" :disabled="!draft.group.words.enabled">
+          <select v-model="draft.group.words.action" class="form-select" :disabled="!draft.group.words.enabled">
             <option value="replace">替换</option>
             <option value="block">整条拦截</option>
           </select>
           <input
             v-if="draft.group.words.action === 'replace'"
             v-model="draft.group.words.replaceWith"
-            class="short"
+            class="form-input short"
             :disabled="!draft.group.words.enabled"
             placeholder="替换成"
           />
@@ -156,7 +159,7 @@
           <label class="lab">亲密词列表（逗号/换行分隔，只在群聊生效）</label>
           <textarea
             v-model="wordsText"
-            class="words"
+            class="form-textarea words"
             :disabled="!draft.group.words.enabled"
             rows="3"
             placeholder="宝宝，宝贝，亲爱的，老公，老婆，主人"
@@ -164,7 +167,7 @@
         </div>
         <div class="row column">
           <label class="lab">额外群聊提示词（可选，≤1000 字）</label>
-          <textarea v-model="draft.group.extraPrompt" rows="3" maxlength="1000" />
+          <textarea v-model="draft.group.extraPrompt" class="form-textarea" rows="3" maxlength="1000" />
         </div>
         <p class="hint">群聊称呼只用群昵称/「你」；过滤、语音上限、记忆隔离只对群聊生效，私聊不受影响。</p>
       </div>
@@ -190,7 +193,7 @@
         </label>
         <div class="row">
           <label class="lab">尺寸</label>
-          <select v-model="draft.pet.size" disabled>
+          <select v-model="draft.pet.size" class="form-select" disabled>
             <option value="small">小</option>
             <option value="medium">中</option>
             <option value="large">大</option>
@@ -206,7 +209,7 @@
         <h4>关系</h4>
         <div class="row">
           <label class="lab">关系模式</label>
-          <select v-model="draft.relationship.mode">
+          <select v-model="draft.relationship.mode" class="form-select">
             <option value="companion">朋友（搭子）</option>
             <option value="sister">妹妹</option>
             <option value="lover">恋人未满</option>
@@ -214,15 +217,15 @@
         </div>
         <div class="row">
           <label class="lab">你的名字（可选）</label>
-          <input v-model="draft.relationship.userName" maxlength="40" placeholder="留空 = 不称呼名字" />
+          <input v-model="draft.relationship.userName" class="form-input" maxlength="40" placeholder="留空 = 不称呼名字" />
         </div>
         <div class="row">
           <label class="lab">她怎么称呼你</label>
-          <input v-model="draft.relationship.address" maxlength="40" placeholder="默认「你」" />
+          <input v-model="draft.relationship.address" class="form-input" maxlength="40" placeholder="默认「你」" />
         </div>
         <div class="row">
           <label class="lab">不能叫的称呼</label>
-          <input v-model="tabooText" maxlength="200" placeholder="逗号分隔；留空 = 不限制" />
+          <input v-model="tabooText" class="form-input" maxlength="200" placeholder="逗号分隔；留空 = 不限制" />
         </div>
       </div>
 
@@ -475,46 +478,67 @@ defineExpose({ setSaving, markSaved, dirty })
 </script>
 
 <style scoped>
+/* 表单控件吃全局 .form-input/.form-select/.form-textarea；这里只留设置页布局节奏 */
+.settings h3 {
+  margin: 0 0 var(--space-2);
+}
+.settings .hint {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.settings h3 + .hint,
+.settings h4 + .hint,
+.settings .row .hint {
+  margin-top: 0;
+}
+.settings-body {
+  margin-top: var(--space-4);
+}
 .settings .group {
   border-top: 1px solid var(--border-muted);
-  padding-top: 12px;
-  margin-top: 12px;
+  padding-top: var(--space-3);
+  margin-top: var(--space-3);
 }
 .settings .group:first-of-type {
   border-top: 0;
   margin-top: 0;
 }
 .settings h4 {
-  margin: 0 0 8px;
-  font-size: 13px;
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
   color: var(--text-secondary);
+}
+.settings .group > h4 + .check-row,
+.settings .group > h4 + .row {
+  margin-top: 0;
 }
 .settings .row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 8px;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
   flex-wrap: wrap;
 }
 .settings .row.wrap {
   align-items: flex-start;
 }
 .settings .lab {
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
   min-width: 0;
 }
 .settings .check-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  font-size: 13px;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
   color: var(--text-primary);
 }
 .settings .check-row.inline {
   margin-top: 0;
-  margin-right: 12px;
+  margin-right: var(--space-3);
 }
 .settings .check-row.disabled {
   opacity: 0.65;
@@ -523,27 +547,20 @@ defineExpose({ setSaving, markSaved, dirty })
 .settings .row.column {
   align-items: stretch;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 .settings .row .short {
   width: 96px;
 }
+/* 全局 form-textarea min-height 96px，本页紧凑场景压到 56px */
 .settings textarea {
-  width: 100%;
   min-height: 56px;
-  padding: 6px 8px;
-  border: 1px solid var(--border-color, #3a3a3a);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 12px;
-  resize: vertical;
+  font-size: var(--text-xs);
 }
 .settings .actions {
-  margin-top: 16px;
+  margin-top: var(--space-4);
 }
 .settings code {
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 </style>

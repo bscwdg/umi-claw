@@ -1,15 +1,15 @@
 <template>
   <div v-if="visible" class="modal-overlay" @click.self="requestClose">
-    <div class="modal-card">
+    <div class="modal-card modal-md">
       <div class="modal-header">
         <div class="title-group">
           <span>🧩</span>
           <h4>{{ provider?.name }} 模型管理</h4>
         </div>
-        <span class="close-btn" @click="requestClose">✕</span>
+        <button type="button" class="btn btn-icon" @click="requestClose">✕</button>
       </div>
 
-      <div class="modal-body">
+      <div class="modal-body picker-body">
         <div class="add-panel">
           <div class="add-head" @click="showAddForm = !showAddForm">
             <span>{{ editingId ? `✏️ 编辑模型：${editingId}` : `➕ ${showAddForm ? "收起" : "新增自定义模型"}` }}</span>
@@ -69,7 +69,7 @@
           </button>
         </div>
 
-        <div v-if="error" class="error-box">❌ {{ error }}</div>
+        <div v-if="error" class="alert alert-danger">❌ {{ error }}</div>
 
         <div class="model-list">
           <div
@@ -518,100 +518,59 @@ function requestClose() {
 </script>
 
 <style scoped>
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(20, 22, 26, 0.5);
-  backdrop-filter: blur(5px);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 2000;
-}
-.modal-card {
-  background: var(--bg-elevated, #fff);
-  border: 1px solid var(--border, #eef0f2);
-  border-radius: var(--radius, 12px);
-  width: 580px;
-  max-width: 94vw;
-  max-height: 88vh;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25);
-  overflow: hidden;
+/* 弹窗骨架吃全局 modal-* / btn-* / alert；这里只留模型选择器独有样式，颜色全部走 token。
+   modal-header/modal-footer 不在全局保留类清单内，本页仅补回 space-between 布局。 */
+.picker-body {
   display: flex;
   flex-direction: column;
+  gap: 12px;
 }
 .modal-header {
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--border, #edeef0);
-  display: flex;
   justify-content: space-between;
-  align-items: center;
-  flex-shrink: 0;
+}
+.modal-footer {
+  justify-content: space-between;
 }
 .title-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .title-group h4 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--text-md);
   font-weight: 600;
-}
-.close-btn {
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: 16px;
-}
-.close-btn:hover {
-  color: var(--text-primary);
-}
-.modal-body {
-  padding: 16px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
-  min-height: 0;
-  flex: 1 1 auto;
 }
 .toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-.error-box {
-  padding: 8px 12px;
-  border-radius: var(--radius-sm, 6px);
-  background: rgba(248, 81, 73, 0.12);
-  color: #f85149;
-  font-size: 13px;
-}
 .model-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  border: 1px solid var(--border-muted, #edeef0);
-  border-radius: var(--radius-sm, 6px);
-  padding: 8px;
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
   flex-shrink: 0;
 }
 .model-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-2);
   padding: 8px 10px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   border: 1px solid transparent;
 }
 .model-item:hover {
-  background: var(--bg-hover, rgba(127, 127, 127, 0.08));
+  background: var(--hover-overlay);
 }
 .model-item.selected {
   border-color: var(--accent);
-  background: var(--accent-muted, rgba(56, 139, 253, 0.1));
+  background: var(--accent-muted);
 }
 .model-main {
   min-width: 0;
@@ -620,123 +579,122 @@ function requestClose() {
 .model-line {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 .model-id {
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 500;
   word-break: break-all;
 }
 .model-name {
-  font-size: 12px;
-  color: var(--text-secondary, var(--text-muted));
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
 }
 .model-meta {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
+  margin-top: var(--space-1);
   flex-wrap: wrap;
 }
 .model-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
+/* 带文字标签的小药丸操作钮（::after 注入「编辑/删除」），保留本地类，颜色收编 info/danger 语义色 */
 .icon-btn {
-  border: 1px solid rgba(248, 81, 73, 0.4);
-  background: rgba(248, 81, 73, 0.12);
-  color: #ff6b64;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-muted);
+  color: var(--danger);
   cursor: pointer;
-  font-size: 12px;
+  font-family: inherit;
+  font-size: var(--text-xs);
   line-height: 1;
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: 4px var(--space-2);
+  border-radius: var(--radius-xs);
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 .icon-btn.danger::after {
   content: "删除";
 }
 .icon-btn:hover {
-  background: rgba(248, 81, 73, 0.22);
-  border-color: #f85149;
-  color: #ff8781;
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
+  border-color: var(--danger);
+  color: var(--danger-hover);
 }
-/* 编辑按钮：中性蓝色调，与删除（红色）区分 */
+/* 编辑按钮：info 蓝与删除（danger 红）区分 */
 .icon-btn.edit {
-  border-color: rgba(56, 139, 253, 0.4);
-  background: rgba(56, 139, 253, 0.12);
-  color: #388bfd;
+  border-color: var(--info-border);
+  background: var(--info-muted);
+  color: var(--info);
 }
 .icon-btn.edit::after {
   content: "编辑";
 }
 .icon-btn.edit:hover {
-  background: rgba(56, 139, 253, 0.22);
-  border-color: #388bfd;
-  color: #58a6ff;
+  background: color-mix(in srgb, var(--info) 22%, transparent);
+  border-color: var(--info);
+  color: var(--info-hover);
 }
 .tag {
-  font-size: 11px;
-  color: var(--text-secondary, var(--text-muted));
-  background: var(--bg-overlay, rgba(127, 127, 127, 0.15));
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  background: var(--bg-overlay);
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
-.badge-blue {
-  background: rgba(56, 139, 253, 0.15);
-  color: #388bfd;
-}
+/* 分类徽标：badge-blue 吃全局 info 样式；orange/gray/purple 是本页分类，走 token */
 .badge-gray {
-  background: rgba(127, 127, 127, 0.15);
+  background: var(--surface-2);
   color: var(--text-muted);
 }
 .badge-orange {
-  background: rgba(219, 109, 40, 0.15);
-  color: #db6d28;
+  background: var(--warning-muted);
+  color: var(--warning);
 }
 .badge-purple {
-  background: rgba(163, 113, 247, 0.15);
-  color: #a371f7;
+  background: color-mix(in srgb, var(--purple) 15%, transparent);
+  color: var(--purple);
 }
 .empty {
   text-align: center;
-  padding: 16px 0;
+  padding: var(--space-4) 0;
 }
 .add-panel {
-  border: 1px solid var(--accent, #388bfd);
-  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
   overflow: hidden;
   flex-shrink: 0;
-  background: var(--accent-muted, rgba(56, 139, 253, 0.06));
+  background: var(--accent-muted);
 }
 .add-head {
-  padding: 10px 12px;
+  padding: 10px var(--space-3);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 600;
-  color: var(--accent, #388bfd);
+  color: var(--accent);
   user-select: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-2);
 }
 /* 表单头部的提示图标：悬停弹出说明气泡 */
 .hint-icon {
   position: relative;
   cursor: help;
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 400;
-  color: var(--text-muted, #8b949e);
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 .hint-icon:hover {
-  color: var(--accent, #388bfd);
+  color: var(--accent);
 }
 .hint-pop {
   display: none;
@@ -744,15 +702,15 @@ function requestClose() {
   top: calc(100% + 6px);
   right: 0;
   width: 250px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--bg-elevated, #22272e);
-  border: 1px solid var(--border, #eef0f2);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-  color: var(--text-primary, #e6edf3);
-  font-size: 12px;
+  padding: var(--space-2) 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
   font-weight: 400;
-  line-height: 1.5;
+  line-height: var(--leading-normal);
   white-space: normal;
   text-align: left;
   z-index: 10;
@@ -762,69 +720,60 @@ function requestClose() {
   display: block;
 }
 .add-head:hover {
-  background: var(--bg-hover, rgba(127, 127, 127, 0.08));
+  background: var(--hover-overlay);
 }
 .add-form {
-  padding: 4px 12px 12px;
+  padding: var(--space-1) var(--space-3) var(--space-3);
   display: flex;
   flex-direction: column;
   gap: 10px;
-  border-top: 1px solid var(--border-muted, #edeef0);
+  border-top: 1px solid var(--border-muted);
 }
 .add-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 .add-row label {
-  font-size: 12px;
-  color: var(--text-secondary, var(--text-muted));
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
 }
 .unit {
-  color: var(--text-secondary, #8b949e);
+  color: var(--text-secondary);
   font-weight: 400;
 }
 .converted-hint {
-  font-size: 12px;
-  color: var(--accent, #388bfd);
+  font-size: var(--text-xs);
+  color: var(--accent);
 }
 .req {
-  color: #f85149;
+  color: var(--danger);
   margin-left: 2px;
 }
 .add-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .checks {
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 .chk {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--text-primary, var(--text-secondary));
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
   cursor: pointer;
 }
 .add-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-}
-.modal-footer {
-  padding: 12px 18px;
-  border-top: 1px solid var(--border, #edeef0);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-shrink: 0;
+  gap: var(--space-2);
 }
 .footer-hint {
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 </style>

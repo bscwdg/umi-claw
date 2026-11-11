@@ -1,5 +1,5 @@
 <template>
-  <div class="voice-page">
+  <div class="page-container">
     <header class="page-head">
       <div>
         <h1>🔊 语音设置</h1>
@@ -1859,13 +1859,8 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.voice-page {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  width: 100%;
-}
-
+/* 布局类保留在本页；颜色/圆角/字号/遮罩全部走 design token（docs/ui-style-guide.md）。
+   白叠加用 --surface-*（深主题=白叠加、浅主题=黑叠加），语义状态用 --success/--warning/--danger/--info。 */
 .page-head,
 .section-head,
 .key-row,
@@ -1886,49 +1881,49 @@ onBeforeUnmount(() => {
 .field-hint,
 .stat-hint {
   margin: 4px 0 0;
-  color: var(--text-muted, #7d8590);
-  font-size: 13px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
 }
 
 .field-hint.warning {
-  color: #ffb86b;
+  color: var(--warning);
 }
 
 .state-pill,
 .key-state {
   padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-muted, #7d8590);
-  font-size: 13px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
   white-space: nowrap;
 }
 
 .state-pill.ready {
-  color: #5ee29a;
-  background: rgba(45, 190, 110, 0.12);
+  color: var(--success);
+  background: var(--success-muted);
 }
 
 .tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--surface-2);
   padding-bottom: 10px;
 }
 
 .tab {
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-muted, #7d8590);
+  color: var(--text-muted);
   cursor: pointer;
   padding: 8px 14px;
 }
 
 .tab.active {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  background: var(--surface-3);
 }
 
 .tab-panel {
@@ -1951,12 +1946,12 @@ onBeforeUnmount(() => {
 }
 
 .stat-label {
-  color: var(--text-muted, #7d8590);
-  font-size: 13px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
 }
 
 .stat-card strong {
-  font-size: 22px;
+  font-size: var(--text-title);
 }
 
 .notice {
@@ -1965,9 +1960,10 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 10px;
   padding: 10px 14px;
-  border-radius: 8px;
-  background: rgba(78, 158, 255, 0.12);
-  color: #8ec5ff;
+  border-radius: var(--radius-sm);
+  background: var(--info-muted);
+  border: 1px solid var(--info-border);
+  color: var(--info);
 }
 
 .notice-close {
@@ -1976,11 +1972,11 @@ onBeforeUnmount(() => {
   height: 20px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: inherit;
   opacity: 0.65;
-  font-size: 15px;
+  font-size: var(--text-md);
   line-height: 1;
   cursor: pointer;
 }
@@ -1990,15 +1986,16 @@ onBeforeUnmount(() => {
 }
 
 .notice-error {
-  background: rgba(255, 86, 86, 0.12);
-  color: #ff8d8d;
+  background: var(--danger-muted);
+  border-color: var(--danger-border);
+  color: var(--danger);
 }
 
 /* 克隆向导内的提示条：与弹窗内容同宽、不参与页面级提示的布局 */
 .clone-inline-notice {
   margin: 12px 0 0;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
 }
 
 .text-area {
@@ -2020,8 +2017,8 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 6px;
   padding: 14px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
 }
 
 .route-grid code {
@@ -2029,7 +2026,7 @@ onBeforeUnmount(() => {
 }
 
 .route-grid small {
-  color: var(--text-muted, #7d8590);
+  color: var(--text-muted);
 }
 
 .key-card {
@@ -2073,43 +2070,43 @@ onBeforeUnmount(() => {
   gap: 16px;
   margin-top: 16px;
   padding: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
 }
 
 .external-form-result {
   grid-column: 1 / -1;
   margin: 0;
   padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(120, 220, 160, 0.35);
-  background: rgba(120, 220, 160, 0.10);
-  color: #9fe7bd;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--success-border);
+  background: var(--success-muted);
+  color: var(--success);
+  font-size: var(--text-sm);
 }
 
 .external-form-result.warn {
-  border-color: rgba(255, 200, 120, 0.4);
-  background: rgba(255, 200, 120, 0.10);
-  color: #ffd79a;
+  border-color: var(--warning-border);
+  background: var(--warning-muted);
+  color: var(--warning);
 }
 
 .external-status {
   margin: 12px 0 0;
   padding: 8px 10px;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
 }
 .external-status.ok {
-  border: 1px solid rgba(120, 220, 160, 0.35);
-  background: rgba(120, 220, 160, 0.10);
-  color: #9fe7bd;
+  border: 1px solid var(--success-border);
+  background: var(--success-muted);
+  color: var(--success);
 }
 .external-status.warn {
-  border: 1px solid rgba(255, 200, 120, 0.4);
-  background: rgba(255, 200, 120, 0.10);
-  color: #ffd79a;
+  border: 1px solid var(--warning-border);
+  background: var(--warning-muted);
+  color: var(--warning);
 }
 
 .external-form-error {
@@ -2117,15 +2114,15 @@ onBeforeUnmount(() => {
   grid-column: 1 / -1;
   margin: 0;
   padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 107, 107, 0.45);
-  background: rgba(255, 107, 107, 0.12);
-  color: #ff9d9d;
-  font-size: 13px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--danger-border);
+  background: var(--danger-muted);
+  color: var(--danger);
+  font-size: var(--text-sm);
 }
 
 .external-form-actions {
-  /* .form-group 默认是 column，这里要恢复成一行并占满整行，
+  /* form-group 默认是 column，这里要恢复成一行并占满整行，
      否则「取消 / 测试连接 / 保存实例」会被拉成竖排且左右不对齐 */
   grid-column: 1 / -1;
   display: flex;
@@ -2152,9 +2149,9 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 16px;
   padding: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
 }
 
 .range {
@@ -2190,9 +2187,9 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 16px;
   padding: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
 }
 
 .clone-main {
@@ -2211,53 +2208,53 @@ onBeforeUnmount(() => {
 
 .clone-status {
   padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  font-size: 12px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  font-size: var(--text-xs);
 }
 
 .clone-status.training {
-  color: #ffd479;
+  color: var(--warning);
 }
 
 .clone-status.success,
 .clone-status.active {
-  color: #5ee29a;
+  color: var(--success);
 }
 
 .clone-status.failed {
-  color: #ff8d8d;
+  color: var(--danger);
 }
 
 .clone-meta,
 .empty-clone {
-  color: var(--text-muted, #7d8590);
-  font-size: 13px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
   overflow-wrap: anywhere;
 }
 
 .clone-error {
-  color: #ff8d8d;
-  font-size: 13px;
+  color: var(--danger);
+  font-size: var(--text-sm);
 }
 
 /* 对账结论：按判定结果着色，一眼看出哪条和远端不一致 */
 .clone-reconcile {
-  font-size: 13px;
-  color: var(--text-muted, #7d8590);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
 }
 
 .clone-reconcile.remote-ok {
-  color: #5ee29a;
+  color: var(--success);
 }
 
 .clone-reconcile.remote-missing,
 .clone-reconcile.remote-failed {
-  color: #ff8d8d;
+  color: var(--danger);
 }
 
 .clone-reconcile.remote-changed {
-  color: #ffd479;
+  color: var(--warning);
 }
 
 /* 卡片标题右侧的动作组 */
@@ -2279,20 +2276,20 @@ onBeforeUnmount(() => {
 .empty-clone {
   margin-top: 14px;
   padding: 24px;
-  border: 1px dashed rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
   text-align: center;
 }
 
 .modal-mask {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(4, 6, 14, 0.72);
+  background: var(--overlay-dim);
   backdrop-filter: blur(6px);
 }
 
@@ -2301,10 +2298,10 @@ onBeforeUnmount(() => {
   max-height: min(86vh, 900px);
   overflow: auto;
   padding: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-  background: #151923;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
 }
 
 .modal-head,
@@ -2328,8 +2325,8 @@ onBeforeUnmount(() => {
 
 .modal-head p {
   margin: 5px 0 0;
-  color: var(--text-muted, #7d8590);
-  font-size: 13px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
 }
 
 .clone-form {
@@ -2349,8 +2346,8 @@ onBeforeUnmount(() => {
   justify-content: flex-start;
   margin-top: 14px;
   padding: 12px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
 }
 
 .sample-box {
@@ -2365,13 +2362,13 @@ onBeforeUnmount(() => {
 }
 
 .sample-box span {
-  color: var(--text-muted, #7d8590);
-  font-size: 13px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
 }
 
 .consent-row {
   align-items: flex-start;
-  line-height: 1.5;
+  line-height: var(--leading-normal);
 }
 
 .wizard-status {

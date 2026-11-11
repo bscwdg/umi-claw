@@ -1,5 +1,5 @@
 <template>
-  <div class="about-page">
+  <div class="page-container about-page">
     <div class="hero card">
       <div class="hero-icon">🦞</div>
       <h1>Umi Claw</h1>
@@ -11,7 +11,7 @@
       </div>
     </div>
 
-    <div class="info-grid">
+    <div class="grid-2">
       <div class="card info-card">
         <h3>🚀 核心特性</h3>
         <ul class="feature-list">
@@ -38,23 +38,23 @@
 
     <div class="card links-card">
       <h3 style="margin-bottom:14px">🔗 相关链接</h3>
-      <div class="links-grid">
-        <button class="link-btn" @click="open('https://github.com/openclaw/openclaw')">
+      <div class="grid-3">
+        <button class="btn" @click="open('https://github.com/openclaw/openclaw')">
           <span>📦</span> OpenClaw 项目
         </button>
-        <button class="link-btn" @click="open('https://github.com/uxiaohan/vh-claw')">
+        <button class="btn" @click="open('https://github.com/uxiaohan/vh-claw')">
           <span>🦞</span> VH-Claw 原项目
         </button>
-        <button class="link-btn" @click="open('https://github.com/dongsheng123132/u-claw')">
+        <button class="btn" @click="open('https://github.com/dongsheng123132/u-claw')">
           <span>💾</span> U-Claw 原项目
         </button>
-        <button class="link-btn" @click="open('https://electronjs.org')">
+        <button class="btn" @click="open('https://electronjs.org')">
           <span>⚡</span> Electron
         </button>
-        <button class="link-btn" @click="open('https://vuejs.org')">
+        <button class="btn" @click="open('https://vuejs.org')">
           <span>💚</span> Vue 3
         </button>
-        <button class="link-btn" @click="open('https://vitejs.dev')">
+        <button class="btn" @click="open('https://vitejs.dev')">
           <span>⚡</span> Vite
         </button>
       </div>
@@ -71,12 +71,12 @@
         </template>
       </p>
       <div class="consent-actions">
-        <button class="link-btn" @click="openAgreementReview">
+        <button class="btn" @click="openAgreementReview">
           <span>📄</span> 查看用户协议
         </button>
         <button
           v-if="consentGranted"
-          class="link-btn link-btn-danger"
+          class="btn btn-danger"
           :disabled="revoking"
           @click="revokeConfirmVisible = true"
         >
@@ -94,7 +94,7 @@
       />
     </div>
 
-    <div class="card" style="text-align:center; padding:20px; color:var(--text-muted); font-size:13px">
+    <div class="card" style="text-align:center; padding:var(--space-5); color:var(--text-muted); font-size:var(--text-sm)">
       MIT License · 基于 OpenClaw 开源项目重构 · Made with 🦞
     </div>
   </div>
@@ -166,63 +166,38 @@ function open(url: string) {
 </script>
 
 <style scoped>
-.about-page { display: flex; flex-direction: column; gap: 20px; width: 100%; }
+.about-page { display: flex; flex-direction: column; gap: var(--space-5); width: 100%; }
 
 .hero {
   display: flex; flex-direction: column; align-items: center;
-  gap: 10px; text-align: center; padding: 40px;
+  gap: var(--space-3); text-align: center; padding: var(--space-10);
 }
-.hero-icon { font-size: 52px; }
-.version-badges { display: flex; gap: 8px; margin-top: 4px; }
-.badge-purple { background: rgba(188,140,255,0.15); color: var(--purple); }
+.hero-icon { font-size: var(--text-hero); }
+.version-badges { display: flex; gap: var(--space-2); margin-top: var(--space-1); }
+/* 紫色为品牌点缀色（静态 token --purple），muted 底用 color-mix 派生以随浅深主题适配 */
+.badge-purple { background: color-mix(in srgb, var(--purple) 15%, transparent); color: var(--purple); }
 
-.info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-.info-card h3 { margin-bottom: 14px; }
+/* 两列网格吃全局 .grid-2（含 1100/720px 断点降级），.info-card 只补标题间距 */
+.info-card h3 { margin-bottom: var(--space-4); }
 
 .feature-list {
   list-style: none;
-  display: flex; flex-direction: column; gap: 8px;
+  display: flex; flex-direction: column; gap: var(--space-2);
 }
 .feature-list li {
-  font-size: 13px; color: var(--text-secondary);
-  padding-left: 16px; position: relative;
+  font-size: var(--text-sm); color: var(--text-secondary);
+  padding-left: var(--space-4); position: relative;
 }
 .feature-list li::before {
   content: '›'; position: absolute; left: 0;
   color: var(--accent); font-weight: 700;
 }
 
-.tech-list { display: flex; flex-direction: column; gap: 10px; }
+.tech-list { display: flex; flex-direction: column; gap: var(--space-3); }
 .tech-row { display: flex; justify-content: space-between; align-items: center; }
-.tech-name { font-size: 13px; font-weight: 500; }
+.tech-name { font-size: var(--text-sm); font-weight: 500; }
 
-.links-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
-}
-.consent-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-.consent-status { margin: 0 0 12px; font-size: 13px; color: var(--text-secondary); }
-.link-btn-danger {
-  border-color: var(--red);
-  color: var(--red);
-}
-.link-btn-danger:hover {
-  border-color: var(--red);
-  background: rgba(255, 80, 80, 0.1);
-}
-.link-btn {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
-  color: var(--text-secondary);
-  font-size: 13px; cursor: pointer;
-  transition: all 0.15s;
-  text-align: left;
-}
-.link-btn:hover {
-  border-color: var(--accent);
-  color: var(--text-primary);
-  background: var(--accent-muted);
-}
+/* 三列网格吃全局 .grid-3（含断点降级），链接按钮吃全局 .btn/.btn-danger，本页不再自定义 */
+.consent-actions { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+.consent-status { margin: 0 0 var(--space-3); font-size: var(--text-sm); color: var(--text-secondary); }
 </style>

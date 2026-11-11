@@ -1,5 +1,5 @@
 <template>
-  <div class="skills-page">
+  <div class="page-container skills-page">
     <div class="page-header">
       <div>
         <h1>技能管理</h1>
@@ -153,7 +153,7 @@
         class="modal-overlay"
         @click.self="cancelInstall"
       >
-        <div class="modal-card">
+        <div class="modal-card modal-md">
           <div class="modal-header">
             <span class="modal-icon">☁️</span>
             <h4>选择要导入的云端技能</h4>
@@ -189,7 +189,7 @@
                   <button
                     v-if="s.usage"
                     type="button"
-                    class="help-btn"
+                    class="btn btn-icon btn-sm"
                     :class="{ open: usageOpen[s.id] }"
                     title="查看用途说明"
                     @click.prevent.stop="toggleUsage(s.id)"
@@ -224,7 +224,9 @@
     </transition>
 
     <transition name="slide">
-      <div v-if="toast" class="toast" :class="toast.type">{{ toast.msg }}</div>
+      <div v-if="toast" class="toast-container">
+        <div class="toast" :class="toast.type">{{ toast.msg }}</div>
+      </div>
     </transition>
   </div>
 </template>
@@ -610,7 +612,7 @@ onMounted(async () => {
 .skills-page {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: var(--space-5);
   width: 100%;
 }
 .page-header {
@@ -622,14 +624,14 @@ onMounted(async () => {
 .skills-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 14px;
+  gap: var(--space-4);
 }
 .skill-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 16px;
-  transition: all 0.15s;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  transition: all var(--duration-fast);
 }
 .skill-card:hover {
   border-color: var(--accent);
@@ -640,7 +642,7 @@ onMounted(async () => {
   justify-content: space-between;
 }
 .skill-name {
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 600;
 }
 .skill-desc {
@@ -651,59 +653,41 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 4px;
+  margin-top: var(--space-1);
 }
 
 /* 云端可更新技能勾选面板 */
 .update-panel {
-  padding: 16px;
+  padding: var(--space-4);
 }
 .update-list {
-  margin-top: 10px;
+  margin-top: var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 .update-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   cursor: pointer;
 }
 .update-id {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
-/* 版本后面的「?」用途按钮 */
-.help-btn {
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex: none;
-}
-.help-btn:hover,
-.help-btn.open {
+/* 用途「?」按钮收编全局 .btn-icon，仅补展开态的 accent 描边 */
+.btn-icon.open {
   border-color: var(--accent);
   color: var(--accent);
 }
 
 /* 点 ? 后展开的用途说明块 */
 .usage-box {
-  margin: 2px 0 8px 24px;
-  padding: 8px 10px;
-  font-size: 12px;
+  margin: 2px 0 var(--space-2) var(--space-6);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
   line-height: 1.55;
   color: var(--text-muted);
   background: var(--accent-muted);
@@ -711,85 +695,6 @@ onMounted(async () => {
   border-radius: var(--radius-sm);
 }
 
-.toast {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  padding: 10px 18px;
-  border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 500;
-  z-index: 999;
-}
-.toast.success {
-  background: rgba(63, 185, 80, 0.9);
-  color: #fff;
-}
-.toast.error {
-  background: rgba(248, 81, 73, 0.9);
-  color: #fff;
-}
-.toast.warning {
-  background: rgba(245, 158, 11, 0.9);
-  color: #fff;
-}
-
-/* 云端新技能勾选弹窗（视觉口径对齐 ConfirmDialog） */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(20, 22, 26, 0.5);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2100;
-}
-.modal-card {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  width: 460px;
-  max-width: 90vw;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.35);
-  overflow: hidden;
-}
-.modal-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 16px 18px;
-  border-bottom: 1px solid var(--border);
-}
-.modal-header h4 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 600;
-}
-.modal-icon {
-  font-size: 18px;
-}
-.modal-body {
-  padding: 16px 18px;
-  font-size: 14px;
-  overflow-y: auto;
-}
-.modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 18px;
-  border-top: 1px solid var(--border);
-}
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.15s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
+/* Toast 收编全局 .toast-container/.toast；云端技能弹窗收编全局 .modal-*（含 .modal-md 尺寸）；
+   fade/slide 过渡吃全局过渡类，本页不再重定义 */
 </style>
