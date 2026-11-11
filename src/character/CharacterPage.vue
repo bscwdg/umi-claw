@@ -289,6 +289,89 @@
     </section>
 
     <section class="card">
+      <h3>主动消息语料</h3>
+      <p class="hint">
+        内置 {{ contentOverview?.builtinTopicCount ?? 0 }} 张话题、{{ contentOverview?.lineGroups.length ?? 0 }}
+        个台词组只读；可导入自己的 JSON 语料。话题按 id 接管内置卡（删除后回落内置），台词按组追加去重。
+      </p>
+      <div class="row actions-row">
+        <button class="btn" :disabled="contentBusy" @click="pickTopicsFile">导入话题</button>
+        <button class="btn" :disabled="contentBusy" @click="pickLinesFile">导入台词</button>
+        <button class="btn btn-ghost" :disabled="contentBusy" @click="exportContentDeck">导出当前语料</button>
+        <button
+          class="btn btn-danger"
+          :disabled="contentBusy || !hasUserContent"
+          @click="resetAllContent"
+        >
+          清空我的语料
+        </button>
+        <input
+          ref="topicsFileInput"
+          type="file"
+          accept="application/json,.json"
+          class="hidden"
+          @change="onTopicsFilePicked"
+        />
+        <input
+          ref="linesFileInput"
+          type="file"
+          accept="application/json,.json"
+          class="hidden"
+          @change="onLinesFilePicked"
+        />
+      </div>
+      <p v-if="contentHint" class="hint">{{ contentHint }}</p>
+
+      <h4 class="memo-title">话题（{{ contentOverview?.topics.length ?? 0 }} 张）</h4>
+      <ul class="corpus-list">
+        <li v-for="topic in contentOverview?.topics ?? []" :key="topic.id" class="corpus-item">
+          <span class="corpus-name">{{ topic.title }}</span>
+          <span class="corpus-meta">
+            {{ topic.id }}<template v-if="topic.seasons.length"> · {{ topic.seasons.join('、') }}</template>
+          </span>
+          <span :class="['badge', topic.source === 'user' ? 'badge-success' : 'badge-info']">
+            {{ topic.source === 'user' ? '我的' : '内置' }}
+          </span>
+          <button
+            v-if="topic.source === 'user'"
+            class="btn btn-sm btn-danger"
+            :disabled="contentBusy"
+            @click="removeTopic(topic.id)"
+          >
+            删除
+          </button>
+          <span v-else class="corpus-locked">只读</span>
+        </li>
+      </ul>
+
+      <h4 class="memo-title">台词组（{{ contentOverview?.lineGroups.length ?? 0 }} 组）</h4>
+      <div v-for="group in contentOverview?.lineGroups ?? []" :key="group.name" class="corpus-group">
+        <div class="corpus-group-head">
+          <span class="corpus-name">{{ group.name }}</span>
+          <span class="corpus-meta">内置 {{ group.builtinLines.length }} 句 · 我的 {{ group.userLines.length }} 句</span>
+        </div>
+        <ul v-if="group.userLines.length" class="corpus-list">
+          <li
+            v-for="(line, index) in group.userLines"
+            :key="`${group.name}-${index}`"
+            class="corpus-item"
+          >
+            <span class="corpus-line">{{ line }}</span>
+            <span class="badge badge-success">我的</span>
+            <button
+              class="btn btn-sm btn-danger"
+              :disabled="contentBusy"
+              @click="removeLine(group.name, index)"
+            >
+              删除
+            </button>
+          </li>
+        </ul>
+        <p v-else class="hint">该组暂无你的自定义句（内置 {{ group.builtinLines.length }} 句只读）</p>
+      </div>
+    </section>
+
+    <section class="card">
       <h3>互动</h3>
       <div class="row">
         <button class="btn" :disabled="busy || !status.enabled" @click="interact('pat')">摸摸头</button>
@@ -504,6 +587,7 @@ import FishState from './art/FishState.vue'
 import type { BootstrapReport } from '../../electron/main/character/bootstrap'
 import type { CharacterChatStreamEvent } from '../../electron/main/character/chat'
 import type { CharacterSettings as CharacterSettingsShape, CharacterSettingsPatch } from '../../electron/main/character/types'
+import type { ContentOverview } from '../../electron/main/character/contentStore'
 
 interface ChatBubble {
   role: 'user' | 'assistant'
@@ -538,6 +622,14 @@ const settingsRaw = ref<CharacterSettingsShape | null>(null)
 const settingsRef = ref<InstanceType<typeof CharacterSettings> | null>(null)
 const personaFileInput = ref<HTMLInputElement | null>(null)
 const personaHint = ref('')
+const topicsFileInput = ref<HTMLInputElement | null>(null)
+const linesFileInput = ref<HTMLInputElement | null>(null)
+const contentOverview = ref<ContentOverview | null>(null)
+const contentBusy = ref(false)
+const contentHint = ref('')
+const hasUserContent = computed(
+  () => (contentOverview.value?.userTopicCount ?? 0) > 0 || (contentOverview.value?.userLineCount ?? 0) > 0
+)
 const knowledgeFileInput = ref<HTMLInputElement | null>(null)
 const knowledgeCategory = ref<'世界书' | '角色卡' | '关系/约定'>('世界书')
 const knowledgeHint = ref('')
@@ -747,6 +839,7 @@ onMounted(async () => {
   void refreshPetAppearance()
   void refreshStickers()
   void refreshChatChannels()
+  void refreshContent()
 })
 
 onBeforeUnmount(() => {
@@ -1661,6 +1754,167 @@ async function resetValues(): Promise<void> {
   })
 }
 
+// ── 主动消息语料库：内置只读，用户话题/台词可查看、导入、删除（宿主已做合并与缓存失效） ──
+async function refreshContent(): Promise<void> {
+  try {
+    contentOverview.value = await window.api.character.content.overview()
+  } catch (e) {
+    error.value = (e as Error)?.message || '读取语料库失败'
+  }
+}
+
+async function runContent(fn: () => Promise<void>): Promise<void> {
+  contentBusy.value = true
+  error.value = ''
+  try {
+    await fn()
+  } catch (e) {
+    error.value = (e as Error)?.message || '语料操作失败'
+  } finally {
+    contentBusy.value = false
+  }
+}
+
+function pickTopicsFile(): void {
+  contentHint.value = ''
+  topicsFileInput.value?.click()
+}
+
+function pickLinesFile(): void {
+  contentHint.value = ''
+  linesFileInput.value?.click()
+}
+
+/** 渲染端只做体积/JSON 预检；结构、白名单、上限校验在宿主 contentStore */
+async function parsePickedJson(event: Event): Promise<unknown | null> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return null
+  if (file.size > 16 * 1024 * 1024) {
+    error.value = '语料文件过大（上限 16MB）'
+    return null
+  }
+  try {
+    return JSON.parse(await file.text())
+  } catch {
+    error.value = '语料文件不是合法 JSON'
+    return null
+  }
+}
+
+async function onTopicsFilePicked(event: Event): Promise<void> {
+  const raw = await parsePickedJson(event)
+  if (!raw) return
+  askConfirm(
+    {
+      title: '导入话题语料',
+      message:
+        '同 id 话题会接管内置卡（删除你的版本后回落内置）。语料会成为她主动发起的话题：' +
+        '请只导入你信任的来源。确定导入？',
+      confirmText: '导入'
+    },
+    () =>
+      runContent(async () => {
+        const result = await window.api.character.content.importTopics(raw)
+        contentHint.value = `新增 ${result.added} 张、更新 ${result.updated} 张，共 ${result.total} 张自定义话题`
+        await refreshContent()
+        showToast('话题语料已导入')
+      })
+  )
+}
+
+async function onLinesFilePicked(event: Event): Promise<void> {
+  const raw = await parsePickedJson(event)
+  if (!raw) return
+  askConfirm(
+    {
+      title: '导入台词语料',
+      message:
+        '台词按组追加到同名内置组（内置句保留、重复句自动去重），新组单独建立。' +
+        '语料会成为她主动消息与兜底回复：请只导入你信任的来源。确定导入？',
+      confirmText: '导入'
+    },
+    () =>
+      runContent(async () => {
+        const result = await window.api.character.content.importLines(raw)
+        contentHint.value =
+          `新增 ${result.groupsAdded} 个组、${result.linesAdded} 句，用户台词共 ${result.totalLines} 句`
+        await refreshContent()
+        showToast('台词语料已导入')
+      })
+  )
+}
+
+function removeTopic(id: string): void {
+  askConfirm(
+    {
+      title: '删除自定义话题',
+      message: '删除后若该 id 接管了内置卡，会回落到内置版本；纯自定义卡直接移除。确定删除？',
+      confirmText: '删除'
+    },
+    () =>
+      runContent(async () => {
+        const changed = await window.api.character.content.deleteTopic(id)
+        if (!changed) throw new Error('该话题不存在或为内置只读卡')
+        contentHint.value = '已删除自定义话题'
+        await refreshContent()
+        showToast('话题已删除')
+      })
+  )
+}
+
+function removeLine(group: string, index: number): void {
+  askConfirm(
+    {
+      title: '删除自定义台词',
+      message: `删除台词组「${group}」里的这句自定义台词（内置句不受影响）。确定删除？`,
+      confirmText: '删除'
+    },
+    () =>
+      runContent(async () => {
+        const changed = await window.api.character.content.deleteLine(group, index)
+        if (!changed) throw new Error('该台词不存在或已被删除')
+        contentHint.value = '已删除自定义台词'
+        await refreshContent()
+        showToast('台词已删除')
+      })
+  )
+}
+
+function resetAllContent(): void {
+  const topics = contentOverview.value?.userTopicCount ?? 0
+  const lines = contentOverview.value?.userLineCount ?? 0
+  askConfirm(
+    {
+      title: '清空我的语料',
+      message: `将删除全部自定义话题（${topics} 张）与自定义台词（${lines} 句），内置语料不受影响。确定清空？`,
+      confirmText: '清空'
+    },
+    () =>
+      runContent(async () => {
+        const result = await window.api.character.content.reset('all')
+        contentHint.value = `已清空自定义语料（话题 ${result.topics} 张、台词 ${result.lines} 句）`
+        await refreshContent()
+        showToast('我的语料已清空')
+      })
+  )
+}
+
+async function exportContentDeck(): Promise<void> {
+  await runContent(async () => {
+    const deck = await window.api.character.content.exportMerged()
+    const blob = new Blob([JSON.stringify(deck, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `fish-content-${new Date().toISOString().slice(0, 10)}.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
+    showToast('当前语料已导出')
+  })
+}
+
 async function run(fn: () => Promise<void>): Promise<void> {
   busy.value = true
   error.value = ''
@@ -1867,6 +2121,30 @@ h3 + .hint {
 }
 .memo-item .hint { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; }
 .memo-readonly { white-space: pre-wrap; max-height: 240px; overflow: auto; margin: var(--space-2) 0 0; }
+
+/* 主动消息语料库：内置/我的两来源列表，徽标复用全局 .badge，删除钮复用 .btn-sm.btn-danger */
+.corpus-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.corpus-item { display: flex; align-items: center; gap: var(--space-3); }
+.corpus-group { margin: var(--space-3) 0 0; }
+.corpus-group-head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-2); }
+.corpus-name { font-size: var(--text-sm); font-weight: 500; color: var(--text-primary); flex: 0 0 auto; }
+.corpus-meta {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.corpus-line {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.corpus-locked { font-size: var(--text-xs); color: var(--text-muted); flex: 0 0 auto; }
 
 .pet-preview {
   width: 160px;
