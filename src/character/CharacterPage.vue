@@ -297,7 +297,7 @@
       <div class="row actions-row">
         <button class="btn" :disabled="contentBusy" @click="pickTopicsFile">导入话题</button>
         <button class="btn" :disabled="contentBusy" @click="pickLinesFile">导入台词</button>
-        <button class="btn btn-ghost" :disabled="contentBusy" @click="exportContentDeck">导出当前语料</button>
+        <button class="btn" :disabled="contentBusy" @click="exportContentDeck">导出当前语料</button>
         <button
           class="btn btn-danger"
           :disabled="contentBusy || !hasUserContent"
@@ -453,7 +453,7 @@
               <input v-model="st.tagsText" class="form-input" maxlength="200" placeholder="标签（逗号分隔）" />
             </div>
             <div class="row">
-              <button class="btn btn-ghost" :disabled="busy || stickersBusy" @click="saveSticker(st)">保存</button>
+              <button class="btn" :disabled="busy || stickersBusy" @click="saveSticker(st)">保存</button>
               <button class="btn" :disabled="busy || stickersBusy || !st.enabled" @click="sendSticker(st)">
                 发送测试
               </button>
@@ -476,7 +476,7 @@
       </p>
       <div class="row">
         <button class="btn" :disabled="busy || backupBusy" @click="exportBackup">导出备份</button>
-        <button class="btn btn-ghost" :disabled="busy || backupBusy" @click="importBackup">导入备份</button>
+        <button class="btn" :disabled="busy || backupBusy" @click="importBackup">导入备份</button>
         <span class="hint">{{ backupBusy ? '处理中…' : '默认保存到 data/backups/character-<时间>.zip' }}</span>
       </div>
       <p v-if="backupHint" class="hint">{{ backupHint }}</p>
