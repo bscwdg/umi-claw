@@ -41,9 +41,15 @@ import {
   ExternalAvailabilityTracker,
   createExternalAvailabilityTracker
 } from '../external/availability'
-import { createOpenAISpeechProvider, normalizeExternalBaseUrl } from '../external/openaiSpeech'
+import {
+  createOpenAISpeechProvider,
+  normalizeExternalBaseUrl,
+  normalizeProfilesPath
+} from '../external/openaiSpeech'
 import type {
   ExternalTtsDraftProbeInput,
+  ExternalTtsProfilesQueryInput,
+  ExternalTtsProfilesResult,
   ExternalTtsProbeResult,
   ExternalTtsService,
   ExternalTtsServiceInput,
@@ -335,6 +341,42 @@ export class VoiceManager {
       updatedAt: 0
     }
     return this.externalProvider(draft, key).probe()
+  }
+
+  /**
+   * 设置页「查询音色」：用表单草稿直接查询，不保存实例、不写 Key。
+   * 查询地址留空走默认 {根}/profiles；跨主机查询由适配器剥离 Key，避免凭据外发。
+   */
+  async queryExternalProfiles(
+    input: ExternalTtsProfilesQueryInput
+  ): Promise<ExternalTtsProfilesResult> {
+    const baseUrl = normalizeExternalBaseUrl(input?.baseUrl)
+    const profilesPath = normalizeProfilesPath(input?.profilesPath) || undefined
+    let key =
+      typeof input?.apiKey === 'string' && input.apiKey.trim() ? input.apiKey.trim() : null
+    if (key && key.length > 2048) {
+      throw new VoiceError(VOICE_ERROR_CODES.INVALID_INPUT, 'API Key 过长（上限 2048 字符）')
+    }
+    // 与草稿探活同一把尺子：编辑已有实例且地址未变时复用已存 Key，地址变了绝不外发旧凭据。
+    if (!key && isExternalServiceId(input?.id) && this.externalSecrets) {
+      const existing = await this.externalServices?.get(input.id)
+      if (existing && existing.baseUrl === baseUrl) {
+        key = await this.externalSecrets.get(input.id)
+      }
+    }
+    const draft: ExternalTtsService = {
+      id: 'ext:00000000-0000-4000-8000-000000000000',
+      kind: 'openai-speech',
+      label: 'draft',
+      baseUrl,
+      model: '',
+      voice: '',
+      responseFormat: 'mp3',
+      ...(profilesPath ? { profilesPath } : {}),
+      createdAt: 0,
+      updatedAt: 0
+    }
+    return this.externalProvider(draft, key).listProfiles(profilesPath)
   }
 
   async testExternalService(id: string): Promise<ExternalTtsTestResult> {

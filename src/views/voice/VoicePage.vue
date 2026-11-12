@@ -395,12 +395,62 @@
             <input
               v-model="externalForm.baseUrl"
               class="form-input"
+              @input="staleExternalProfiles"
               placeholder="http://192.168.1.20:7860"
             />
             <p class="field-hint">
               填主机和端口即可（会自动补 http:// 与 /v1）；只支持 http/https。
               <span v-if="externalEditingId">修改服务地址会自动清除原 Key。</span>
             </p>
+          </div>
+          <div class="form-group external-form-wide">
+            <label class="form-label">音色查询接口（可空）</label>
+            <div class="profiles-query-row">
+              <input
+                v-model="externalForm.profilesPath"
+                class="form-input"
+                maxlength="512"
+                @input="staleExternalProfiles"
+                placeholder="留空默认 {服务根地址}/profiles；可填 /profiles 或完整 http(s) 地址"
+              />
+              <button
+                class="btn btn-sm"
+                type="button"
+                :disabled="busy || externalProfilesQuerying || !externalForm.baseUrl.trim()"
+                @click="queryExternalProfiles"
+              >
+                {{ externalProfilesQuerying ? '查询中…' : '查询音色' }}
+              </button>
+            </div>
+            <p class="field-hint">
+              换模型服务时改成它的音色列表地址即可；不查询也能在「音色」里手填。
+              跨主机查询不会发送该实例的 API Key。
+              注意跨主机地址只用于查询音色，实际合成仍发往上面的服务地址。
+            </p>
+            <p v-if="externalProfilesError" class="external-form-error">{{ externalProfilesError }}</p>
+            <div v-if="externalProfiles.length" class="profiles-result">
+              <p class="profiles-result-head">
+                查询到 {{ externalProfiles.length }} 个音色<span v-if="externalProfilesSource">（{{ externalProfilesSource }}）</span>，点击可用音色直接填入
+              </p>
+              <div class="profiles-grid">
+                <button
+                  v-for="(profile, profileIndex) in externalProfiles"
+                  :key="`${profile.id}-${profileIndex}`"
+                  type="button"
+                  class="profile-chip"
+                  :class="{ disabled: !profile.usable, picked: externalForm.voice === profile.id }"
+                  :disabled="!profile.usable"
+                  :title="profile.usable ? `使用音色 ${profile.name}` : profile.unavailableReason"
+                  @click="pickExternalProfile(profile)"
+                >
+                  <span class="profile-name">{{ profile.name }}</span>
+                  <span class="profile-meta">
+                    {{ voiceTypeLabel(profile.voiceType) }}<template v-if="profile.language"> · {{ profile.language }}</template>
+                  </span>
+                  <span v-if="!profile.usable" class="profile-unusable">{{ profile.unavailableReason }}</span>
+                </button>
+              </div>
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">模型名 *</label>
@@ -790,6 +840,7 @@ import type {
   VoiceOpenClawStatus
 } from '../../../electron/main/fish/voice/core/types'
 import type {
+  ExternalTtsVoiceProfile,
   ExternalTtsServiceInput,
   ExternalTtsServiceView
 } from '../../../electron/main/fish/voice/external/types'
@@ -844,12 +895,19 @@ const externalDraftProbing = ref(false)
 const externalForm = reactive({
   label: '',
   baseUrl: '',
+  profilesPath: '',
   model: '',
   voice: '',
   responseFormat: 'mp3' as 'mp3' | 'wav',
   apiKey: '',
   clearKey: false
 })
+const externalProfilesQuerying = ref(false)
+const externalProfiles = ref<ExternalTtsVoiceProfile[]>([])
+const externalProfilesSource = ref('')
+const externalProfilesError = ref('')
+/** 查询序号：地址/查询路径一变或表单关闭就递增，在途回包序号不符直接丢弃，防止旧主机音色回填 */
+let externalProfilesSeq = 0
 const cloneRecords = ref<VoiceCloneRecord[]>([])
 /** 最近一次远端对账结果，按 speakerId 索引。 */
 const reconcileItems = ref<VoiceReconcileItem[]>([])
@@ -1143,12 +1201,14 @@ function openExternalForm(service?: ExternalTtsServiceView): void {
   // 新实例先留空；本机适配器在线时 detectLocalAdapterDefaults() 会异步填入默认值，
   // 用户一旦开始输入就不再覆盖（externalFormTouched）。
   externalForm.baseUrl = service?.baseUrl ?? ''
+  externalForm.profilesPath = service?.profilesPath ?? ''
   externalForm.model = service?.model ?? ''
   externalForm.voice = service?.voice ?? ''
   externalForm.responseFormat = service?.responseFormat ?? 'mp3'
   externalFormTouched.value = false
   externalForm.apiKey = ''
   externalForm.clearKey = false
+  staleExternalProfiles()
   externalFormOpen.value = true
   if (!service) void detectLocalAdapterDefaults()
 }
@@ -1184,6 +1244,62 @@ function closeExternalForm(): void {
   externalEditingId.value = ''
   externalFormError.value = ''
   externalFormNotice.value = ''
+  staleExternalProfiles()
+}
+
+/** 服务地址或查询地址一变，上次的查询结果就失效，避免把旧主机的音色填进新表单。 */
+function staleExternalProfiles(): void {
+  externalProfilesSeq += 1
+  externalProfilesQuerying.value = false
+  externalProfiles.value = []
+  externalProfilesSource.value = ''
+  externalProfilesError.value = ''
+}
+
+function voiceTypeLabel(type: ExternalTtsVoiceProfile['voiceType']): string {
+  if (type === 'preset') return '预设'
+  if (type === 'cloned') return '克隆'
+  if (type === 'designed') return '设计'
+  return '未知'
+}
+
+async function queryExternalProfiles(): Promise<void> {
+  if (!externalForm.baseUrl.trim()) {
+    externalProfilesError.value = '请先填写服务地址'
+    return
+  }
+  externalProfilesError.value = ''
+  const seq = ++externalProfilesSeq
+  externalProfilesQuerying.value = true
+  try {
+    const result = await api.external.queryProfiles({
+      baseUrl: externalForm.baseUrl,
+      profilesPath: externalForm.profilesPath,
+      apiKey: externalForm.clearKey ? '' : externalForm.apiKey,
+      // 与测试连接同一把尺子：clearKey 时不复用旧 Key，避免反馈与保存后的行为不一致
+      id: externalForm.clearKey ? undefined : externalEditingId.value || undefined
+    })
+    // 查询在途时用户可能改了地址或关了表单：迟到回包一律丢弃，不能把旧主机音色回填
+    if (seq !== externalProfilesSeq) return
+    externalProfiles.value = result.profiles
+    externalProfilesSource.value = result.crossHost
+      ? `跨主机 · ${result.sourceUrl}`
+      : result.sourceUrl
+  } catch (e) {
+    if (seq !== externalProfilesSeq) return
+    externalProfiles.value = []
+    externalProfilesSource.value = ''
+    externalProfilesError.value = errorMessageOf(e)
+  } finally {
+    if (seq === externalProfilesSeq) externalProfilesQuerying.value = false
+  }
+}
+
+function pickExternalProfile(profile: ExternalTtsVoiceProfile): void {
+  if (!profile.usable) return
+  externalForm.voice = profile.id
+  externalFormTouched.value = true
+  showNotice(`已填入音色「${profile.name}」（${profile.id}）`)
 }
 
 /** 输入变化时清掉上一次的测试结果/错误，避免旧提示误导；同时标记用户已动过表单。 */
@@ -1255,6 +1371,7 @@ async function saveExternalService(): Promise<void> {
       id: externalEditingId.value || undefined,
       label: externalForm.label,
       baseUrl: externalForm.baseUrl,
+      profilesPath: externalForm.profilesPath.trim(),
       model: externalForm.model,
       voice: externalForm.voice,
       responseFormat: externalForm.responseFormat
@@ -2134,6 +2251,87 @@ onBeforeUnmount(() => {
 
 .external-form-actions .btn {
   min-width: 96px;
+}
+
+.external-form-wide {
+  /* 查询接口那一组要占满整行，给输入框+按钮+结果列表留足宽度 */
+  grid-column: 1 / -1;
+}
+
+.profiles-query-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.profiles-query-row .form-input {
+  flex: 1;
+}
+
+.profiles-query-row .btn {
+  flex: none;
+}
+
+.profiles-result {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.profiles-result-head {
+  margin: 0 0 8px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.profiles-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+.profile-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.profile-chip:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.profile-chip.picked {
+  border-color: var(--accent);
+}
+
+.profile-chip.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.profile-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.profile-meta {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.profile-unusable {
+  font-size: var(--text-xs);
+  color: var(--warning);
 }
 
 .external-list {

@@ -5,10 +5,13 @@
 
 import { VOICE_ERROR_CODES, VoiceError } from '../core/errors'
 import type {
+  ExternalTtsProfilesResult,
   ExternalTtsProbeResult,
   ExternalTtsService,
   ExternalTtsSynthesisInput,
-  ExternalTtsSynthesisResult
+  ExternalTtsSynthesisResult,
+  ExternalTtsVoiceProfile,
+  ExternalTtsVoiceType
 } from './types'
 
 type FetchLike = typeof fetch
@@ -83,33 +86,176 @@ function nativeGenerateUrl(baseUrl: string): string {
   return `${nativeRoot(baseUrl)}/generate/stream`
 }
 
-interface VoiceboxProfile {
-  id: string
-  name: string
-  language?: string
-  preset_engine?: string
+/**
+ * 归一化用户填写的音色查询地址：
+ * - 空 → ''（调用方回落默认 {根}/profiles）
+ * - 以 / 开头 → 同主机路径
+ * - 其余必须是完整 http(s) URL（允许跨主机；跨主机请求不带 Key）
+ */
+export function normalizeProfilesPath(value: unknown): string {
+  if (value === undefined || value === null) return ''
+  if (typeof value !== 'string') throw invalid('音色查询地址必须是字符串')
+  const raw = value.trim()
+  if (!raw) return ''
+  if (raw.length > 512) throw invalid('音色查询地址过长（上限 512 字符）')
+  if (raw.startsWith('/')) {
+    if (raw.startsWith('//')) {
+      throw invalid('音色查询路径不能以 // 开头；跨主机请填完整 http(s) 地址')
+    }
+    return raw
+  }
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw invalid('音色查询地址需是以 / 开头的路径，或完整 http(s) URL')
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw invalid('音色查询地址只支持 http:// 或 https://')
+  }
+  if (url.username || url.password) {
+    throw invalid('音色查询地址不能包含用户名或密码')
+  }
+  return url.toString()
 }
 
-function parseVoiceboxProfiles(raw: unknown): VoiceboxProfile[] {
-  if (!Array.isArray(raw)) return []
-  const out: VoiceboxProfile[] = []
-  for (const item of raw) {
+/** 解析实际查询 URL，并判断是否跨主机（跨主机不携带实例 Key） */
+export function resolveProfilesUrl(
+  baseUrl: string,
+  profilesPath: unknown
+): { url: string; crossHost: boolean } {
+  const normalized = normalizeProfilesPath(profilesPath)
+  if (!normalized) return { url: nativeProfilesUrl(baseUrl), crossHost: false }
+  if (normalized.startsWith('/')) {
+    return { url: `${nativeRoot(baseUrl)}${normalized}`, crossHost: false }
+  }
+  const target = new URL(normalized)
+  const instance = new URL(nativeRoot(baseUrl))
+  return { url: target.toString(), crossHost: target.origin !== instance.origin }
+}
+
+interface ResolvedVoiceProfile {
+  id: string
+  name: string
+  voiceType: ExternalTtsVoiceType
+  language?: string
+  presetEngine?: string
+  defaultEngine?: string
+  sampleCount?: number
+  usable: boolean
+  unavailableReason?: string
+}
+
+function trimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function pickFirstString(src: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = trimmedString(src[key])
+    if (value) return value
+  }
+  return ''
+}
+
+function normalizeVoiceType(value: unknown): ExternalTtsVoiceType {
+  const type = trimmedString(value).toLowerCase()
+  if (type === 'preset' || type === 'cloned' || type === 'designed') return type
+  return 'unknown'
+}
+
+/** 从不同后端返回里抽取音色数组：裸数组 / {data} / {voices} / {profiles} / {models} / {items} */
+function extractProfileArray(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw
+  if (raw && typeof raw === 'object') {
+    const src = raw as Record<string, unknown>
+    for (const key of ['data', 'voices', 'profiles', 'models', 'items']) {
+      if (Array.isArray(src[key])) return src[key] as unknown[]
+    }
+  }
+  return []
+}
+
+function parseVoiceProfiles(raw: unknown): ResolvedVoiceProfile[] {
+  const out: ResolvedVoiceProfile[] = []
+  for (const item of extractProfileArray(raw)) {
     if (!item || typeof item !== 'object') continue
     const src = item as Record<string, unknown>
-    const id = typeof src.id === 'string' ? src.id.trim() : ''
-    const name = typeof src.name === 'string' ? src.name.trim() : ''
+    const id = pickFirstString(src, ['id', 'voice_id', 'voiceId', 'model', 'name'])
     if (!id) continue
+    const name = pickFirstString(src, ['name', 'display_name', 'displayName', 'title', 'id']) || id
+    const voiceType = normalizeVoiceType(src.voice_type ?? src.voiceType)
+    const presetEngine = trimmedString(src.preset_engine) || undefined
+    const defaultEngine = trimmedString(src.default_engine) || undefined
+    const language = trimmedString(src.language) || undefined
+    let sampleCount: number | undefined
+    if (typeof src.sample_count === 'number' && Number.isFinite(src.sample_count)) {
+      sampleCount = src.sample_count
+    }
+    let usable = true
+    let unavailableReason: string | undefined
+    // 口径：只把数值 0 视为「没传参考音频」。字段缺失（undefined）按可用处理——
+    // 文档契约里 sample_count 恒存在，缺字段属于服务端契约外的脏数据，fail-closed
+    // 会让正常服务偶发漏字段时整个克隆列表不可选；字符串 "0" 等非数值同样不拦。
+    if ((voiceType === 'cloned' || voiceType === 'designed') && sampleCount === 0) {
+      usable = false
+      unavailableReason = '该克隆音色还没上传参考音频（sample_count=0），暂不可用'
+    }
     out.push({
       id,
-      name: name || id,
-      language: typeof src.language === 'string' ? src.language : undefined,
-      preset_engine: typeof src.preset_engine === 'string' ? src.preset_engine : undefined
+      name,
+      voiceType,
+      language,
+      presetEngine,
+      defaultEngine,
+      sampleCount,
+      usable,
+      unavailableReason
     })
   }
   return out
 }
 
-function pickVoiceboxProfile(profiles: VoiceboxProfile[], voice: string): VoiceboxProfile | null {
+/** 按文档规则派生合成引擎：preset→qwen_custom_voice；cloned/designed→qwen + 1.7B */
+function deriveVoiceboxEngine(
+  profile: ResolvedVoiceProfile
+): { engine: string; modelSize?: string } | null {
+  if (profile.voiceType === 'preset') {
+    return { engine: profile.presetEngine || 'qwen_custom_voice' }
+  }
+  if (profile.voiceType === 'cloned' || profile.voiceType === 'designed') {
+    const engine = profile.defaultEngine || 'qwen'
+    return engine === 'qwen' ? { engine, modelSize: '1.7B' } : { engine }
+  }
+  // unknown：优先信任服务端给的引擎字段，保证只有 preset_engine 的老数据不回归
+  if (profile.presetEngine) return { engine: profile.presetEngine }
+  if (profile.defaultEngine) {
+    return profile.defaultEngine === 'qwen'
+      ? { engine: 'qwen', modelSize: '1.7B' }
+      : { engine: profile.defaultEngine }
+  }
+  return null
+}
+
+function toExternalProfile(profile: ResolvedVoiceProfile): ExternalTtsVoiceProfile {
+  const derived = deriveVoiceboxEngine(profile)
+  return {
+    id: profile.id,
+    name: profile.name,
+    voiceType: profile.voiceType,
+    ...(profile.language ? { language: profile.language } : {}),
+    ...(derived?.engine ? { engine: derived.engine } : {}),
+    ...(derived?.modelSize ? { modelSize: derived.modelSize } : {}),
+    ...(typeof profile.sampleCount === 'number' ? { sampleCount: profile.sampleCount } : {}),
+    usable: profile.usable,
+    ...(profile.unavailableReason ? { unavailableReason: profile.unavailableReason } : {})
+  }
+}
+
+function pickVoiceboxProfile(
+  profiles: ResolvedVoiceProfile[],
+  voice: string
+): ResolvedVoiceProfile | null {
   const target = voice.trim().toLowerCase()
   if (!target) return null
   const exact = profiles.find((p) => p.id.toLowerCase() === target || p.name.toLowerCase() === target)
@@ -293,7 +439,7 @@ export class OpenAISpeechProvider {
               throw mapHttpError(native.status, await responseDetail(native))
             }
           }
-          const profiles = native.ok ? parseVoiceboxProfiles(await native.json().catch(() => null)) : []
+          const profiles = native.ok ? parseVoiceProfiles(await native.json().catch(() => null)) : []
           if (profiles.length > 0) {
             return {
               ok: true,
@@ -428,8 +574,59 @@ export class OpenAISpeechProvider {
   }
 
   /**
+   * 查询音色列表（设置页「查询音色」）：走实例配置的查询地址，跨主机不带 Key。
+   * 兼容裸数组与 {data|voices|profiles|models|items} 等包裹结构。
+   */
+  async listProfiles(
+    profilesPath: string | undefined,
+    signal?: AbortSignal
+  ): Promise<ExternalTtsProfilesResult> {
+    const resolved = resolveProfilesUrl(this.service.baseUrl, profilesPath)
+    const timeout = withTimeout(signal, 10_000)
+    try {
+      const headers: Record<string, string> = resolved.crossHost ? {} : this.authHeaders()
+      const response = await this.fetchImpl(resolved.url, {
+        method: 'GET',
+        headers,
+        signal: timeout.signal
+      })
+      if (!response.ok) {
+        const httpError = mapHttpError(response.status, await responseDetail(response))
+        // 跨主机查询刻意不带实例 Key；此时 401/403 不是本机 Key 错了，别误导用户
+        if (resolved.crossHost && (response.status === 401 || response.status === 403)) {
+          throw new VoiceError(
+            httpError.code,
+            `跨主机音色查询被拒绝（HTTP ${response.status}）；该查询不会携带本机实例的 API Key，请确认查询地址是否需要单独授权`
+          )
+        }
+        throw httpError
+      }
+      const profiles = parseVoiceProfiles(await response.json().catch(() => null)).map(
+        toExternalProfile
+      )
+      if (profiles.length === 0) {
+        throw new VoiceError(
+          VOICE_ERROR_CODES.EXTERNAL_BAD_RESPONSE,
+          '音色查询接口没有返回可用音色，请检查查询地址或返回结构'
+        )
+      }
+      return {
+        profiles,
+        detail: `查询到 ${profiles.length} 个音色`,
+        sourceUrl: resolved.url,
+        crossHost: resolved.crossHost
+      }
+    } catch (error) {
+      if (error instanceof VoiceError) throw error
+      throw mapFetchError(error, timeout.timedOut, signal)
+    } finally {
+      timeout.cleanup()
+    }
+  }
+
+  /**
    * Voicebox 原生 /generate/stream：/v1/audio/speech 不存在时兜底。
-   * 音色填 profile id 或名称；engine 从 /profiles 的 preset_engine 原样取。
+   * 音色填 profile id 或名称；preset 走 qwen_custom_voice，克隆/设计走 qwen + 1.7B。
    */
   private async synthesizeVoicebox(
     text: string,
@@ -438,14 +635,16 @@ export class OpenAISpeechProvider {
   ): Promise<ExternalTtsSynthesisResult> {
     const timeout = withTimeout(signal, 120_000)
     try {
-      const profilesResponse = await this.fetchImpl(nativeProfilesUrl(this.service.baseUrl), {
+      const profilesTarget = resolveProfilesUrl(this.service.baseUrl, this.service.profilesPath)
+      const profilesResponse = await this.fetchImpl(profilesTarget.url, {
         method: 'GET',
+        headers: profilesTarget.crossHost ? {} : this.authHeaders(),
         signal: timeout.signal
       })
       if (!profilesResponse.ok) {
         throw mapHttpError(profilesResponse.status, await responseDetail(profilesResponse))
       }
-      const profiles = parseVoiceboxProfiles(await profilesResponse.json().catch(() => null))
+      const profiles = parseVoiceProfiles(await profilesResponse.json().catch(() => null))
       if (profiles.length === 0) {
         throw new VoiceError(
           VOICE_ERROR_CODES.EXTERNAL_BAD_RESPONSE,
@@ -458,18 +657,26 @@ export class OpenAISpeechProvider {
           `Voicebox 里找不到唯一音色「${voice}」；可用：${profiles.map((p) => p.name).join('、')}`
         )
       }
-      if (!profile.preset_engine) {
-        throw invalid(`Voicebox 音色「${profile.name}」缺少 preset_engine，无法判断引擎`)
+      if (!profile.usable) {
+        throw invalid(profile.unavailableReason || `Voicebox 音色「${profile.name}」当前不可用`)
       }
+      const derived = deriveVoiceboxEngine(profile)
+      if (!derived) {
+        throw invalid(
+          `Voicebox 音色「${profile.name}」缺少引擎信息（preset_engine/default_engine），无法合成`
+        )
+      }
+      const body: Record<string, unknown> = {
+        profile_id: profile.id,
+        text,
+        language: profile.language || 'zh',
+        engine: derived.engine
+      }
+      if (derived.modelSize) body.model_size = derived.modelSize
       const response = await this.fetchImpl(nativeGenerateUrl(this.service.baseUrl), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          profile_id: profile.id,
-          text,
-          language: profile.language || 'zh',
-          engine: profile.preset_engine
-        }),
+        body: JSON.stringify(body),
         signal: timeout.signal
       })
       if (!response.ok) throw mapHttpError(response.status, await responseDetail(response))

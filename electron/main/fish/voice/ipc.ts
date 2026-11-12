@@ -14,7 +14,11 @@ import type {
 } from './core/types'
 import type { VoiceManager } from './core/manager'
 import type { VoiceCloneManager } from './core/cloneManager'
-import type { ExternalTtsDraftProbeInput, ExternalTtsServiceInput } from './external/types'
+import type {
+  ExternalTtsDraftProbeInput,
+  ExternalTtsProfilesQueryInput,
+  ExternalTtsServiceInput
+} from './external/types'
 
 export const VOICE_CHANNELS = {
   settingsGet: 'fish:voice:settings:get',
@@ -45,6 +49,7 @@ export const VOICE_CHANNELS = {
   externalRemove: 'fish:voice:external:remove',
   externalProbe: 'fish:voice:external:probe',
   externalProbeDraft: 'fish:voice:external:probeDraft',
+  externalProfilesQuery: 'fish:voice:external:profilesQuery',
   externalTest: 'fish:voice:external:test'
 } as const
 
@@ -155,6 +160,9 @@ export function registerVoiceIpc(manager: VoiceManager, clone: VoiceCloneManager
   )
   handle(VOICE_CHANNELS.externalProbeDraft, (input: ExternalTtsDraftProbeInput) =>
     wrap(() => manager.probeExternalDraft(input ?? {}))
+  )
+  handle(VOICE_CHANNELS.externalProfilesQuery, (input: ExternalTtsProfilesQueryInput) =>
+    wrap(() => manager.queryExternalProfiles(input ?? {}))
   )
   handle(VOICE_CHANNELS.externalTest, (id: string) =>
     wrap(() => manager.testExternalService(String(id ?? '')))

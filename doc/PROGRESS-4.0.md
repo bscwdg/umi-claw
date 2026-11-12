@@ -2186,6 +2186,61 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
   失败只记日志（不阻塞保存/启动），已接受为已知边界；后续可收窄为「仅 group 变化时同步」。
 - 真实 QQ 群全链路仍需用户配好凭据后手工验收。
 
+### 2026-11-12 · 本地 TTS 音色查询接口（可自定义查询地址 + 克隆音色可选可合成）
+
+**改了什么**
+
+- `external/types.ts`：实例新增可选 `profilesPath`；新增 `ExternalTtsVoiceProfile` /
+  `ExternalTtsProfilesResult` / `ExternalTtsProfilesQueryInput`，音色带 voiceType、派生
+  engine/modelSize、usable 与不可用原因。
+- `external/openaiSpeech.ts`：`normalizeProfilesPath`（空/同主机路径/完整 URL，拒绝 `//`、
+  非 http(s)、URL userinfo）、`resolveProfilesUrl`（跨主机判定）、`parseVoiceProfiles`
+  （兼容裸数组与 data/voices/profiles/models/items 包裹）、`deriveVoiceboxEngine`
+  （preset→qwen_custom_voice；cloned/designed→qwen+1.7B；unknown 信任服务端引擎字段）、
+  `listProfiles`；voicebox 原生合成按 voice_type 派生引擎与 model_size，sample_count=0
+  拒绝合成；跨主机查询与合成前 profiles 预取均剥离 Key，跨主机 401/403 给专属文案。
+- `external/externalServiceStore.ts`：profilesPath 持久化，undefined 保留/空串清除/非法抛错。
+- `core/manager.ts`：`queryExternalProfiles` 草稿查询（不落盘、不写 Key），复用 probeDraft
+  的 Key 规则：仅 baseUrl 未变才复用已存 Key。
+- `ipc.ts` / `preload/index.ts`：新通道 `fish:voice:external:profilesQuery` 与
+  `external.queryProfiles`。
+- `src/views/voice/VoicePage.vue`：表单新增「音色查询接口（可空）」输入框 + 「查询音色」按钮 +
+  结果 chip（点击填入音色 id，不可用音色禁用并展示原因），手填音色不受影响；查询序号守卫
+  （地址变化/关表单使在途回包作废）；跨主机只查询不合成的边界文案。
+- `test/external-tts.accept.mjs`：E6 扩装配/序号守卫断言，新增 E11（归一化、解析、克隆/设计
+  音色合成、跨主机剥头、401 文案、持久化）与 E12（草稿查询不落盘、Key 复用/改地址不复用/
+  跨主机剥离），共 12/12。
+
+**验收**
+
+- 双 typecheck 0 错；`external-tts` 12/12、`voice` 21/21、`ui` 28/28；边界门禁三基线均 0；
+  `npm run build` 通过。
+- 全量 accept 有 3 个与本次改动无关的环境失败，均在干净工作区复现：db-worker 便携 Node 低
+  完整性标签只读（`UMI_ACCEPT_NODE` 指系统 Node 后 38/38）、maintenance 的 `mklink /J` 撞
+  MAX_PATH（实测等长路径系统报 "filename or extension is too long"）、hot collector 子进程
+  退出码 3221226505（stash 后干净树同样失败）。其余 35 套全绿。
+
+**对抗审查（两次独立只读子代理，互不可见）**
+
+- 对抗复核 `01a1d027-d156-72d0-9d63-bd337df52667`：属实→已修——① 查询在途无失效机制，
+  迟到回包可把旧主机音色回填（已加 `externalProfilesSeq` 序号守卫，成功/失败/finally 三处
+  校验）；② E12 缺「改地址后已存 Key 不得复用」护栏（已补对称用例，变异可红）。另采纳：
+  sample_count 口径注释、跨主机 401 文案、userinfo/unknown/合成剥头等测试缺口、store 重复
+  调用、chip key 撞键。未采纳：AbortSignal 贯通（序号已保证数据不串，仅多一次请求，登记为
+  已知边界）；probe 不读 profilesPath 与原生探活不带 auth 为改动前既有行为，不在本次范围。
+- 事实核对 `01a1d037-f7e4-7111-8208-9b060c3df71b`：需求 1–5 逐条达成并给出行号证据，
+  实跑 external-tts 12/12、双 typecheck 0 错、边界三基线 0。属实→已修——序号守卫补 E6
+  字符串级断言、designed 音色补 E11 用例、store 局部变量收口、跨主机合成边界补 UI 文案。
+  未采纳项同上。
+
+**已知边界**
+
+- 在途查询未接 AbortSignal：序号守卫保证迟到回包不写入，仅多耗一次网络请求。
+- 跨主机 profilesPath 只改音色查询地址；voicebox 原生合成的 `/generate/stream` 仍打实例根，
+  UI 已写明该边界。
+- sample_count 缺失或非数值按可用处理（fail-open）：文档契约该字段恒存在，避免服务端偶发漏
+  字段导致整个克隆列表不可选；只有数值 0 判定不可用。
+
 ### 对抗审查
 
 - 三组独立只读子代理（快照 2026-11-11 01:16–01:40）：

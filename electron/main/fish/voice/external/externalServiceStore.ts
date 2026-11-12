@@ -7,7 +7,7 @@ import { randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import { dirname } from 'path'
 import { VOICE_ERROR_CODES, VoiceError } from '../core/errors'
-import { normalizeExternalBaseUrl } from './openaiSpeech'
+import { normalizeExternalBaseUrl, normalizeProfilesPath } from './openaiSpeech'
 import type {
   ExternalTtsFormat,
   ExternalTtsService,
@@ -41,6 +41,11 @@ function formatOf(value: unknown): ExternalTtsFormat {
   throw invalid('响应格式只支持 mp3 或 wav')
 }
 
+function profilesPathOf(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  return normalizeProfilesPath(value) || undefined
+}
+
 export function isExternalServiceId(value: unknown): value is string {
   return typeof value === 'string' && EXTERNAL_ID_RE.test(value)
 }
@@ -57,6 +62,9 @@ function validateService(value: unknown): ExternalTtsService {
     model: text(src.model, '模型名', 256),
     voice: text(src.voice, '音色', 256),
     responseFormat: formatOf(src.responseFormat),
+    ...(typeof src.profilesPath === 'string' && src.profilesPath
+      ? { profilesPath: normalizeProfilesPath(src.profilesPath) }
+      : {}),
     createdAt:
       typeof src.createdAt === 'number' && Number.isFinite(src.createdAt)
         ? src.createdAt
@@ -147,6 +155,13 @@ export class ExternalServiceStore {
       const current = index >= 0 ? services[index] : null
       if (input.id !== undefined && !current) throw invalid('本地 TTS 实例不存在')
       const timestamp = this.now()
+      let nextProfilesPath = {}
+      if (input.profilesPath === undefined) {
+        if (current?.profilesPath) nextProfilesPath = { profilesPath: current.profilesPath }
+      } else {
+        const normalizedProfilesPath = profilesPathOf(input.profilesPath)
+        if (normalizedProfilesPath) nextProfilesPath = { profilesPath: normalizedProfilesPath }
+      }
       const next: ExternalTtsService = {
         id,
         kind: 'openai-speech',
@@ -160,6 +175,7 @@ export class ExternalServiceStore {
           input.responseFormat === undefined
             ? current?.responseFormat ?? 'mp3'
             : formatOf(input.responseFormat),
+        ...nextProfilesPath,
         createdAt: current?.createdAt ?? timestamp,
         updatedAt: timestamp
       }

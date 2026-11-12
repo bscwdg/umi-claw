@@ -60,7 +60,12 @@ const { VOICE_ERROR_CODES } = errorsMod
 const { DEFAULT_VOICE_SETTINGS, normalizeVoiceSettings } = settingsMod
 const { createExternalServiceStore } = storeMod
 const { createExternalVoiceSecretStore } = secretMod
-const { normalizeExternalBaseUrl, createOpenAISpeechProvider } = speechMod
+const {
+  normalizeExternalBaseUrl,
+  normalizeProfilesPath,
+  resolveProfilesUrl,
+  createOpenAISpeechProvider
+} = speechMod
 
 function memoryStore() {
   const data = new Map()
@@ -758,6 +763,29 @@ await recorder.check('E6', '语音页已接入本地实例管理、必填校验�
     preloadSrc.includes("'fish:voice:external:probeDraft'"),
     'preload 暴露 fish:voice:external:probeDraft'
   )
+  // 音色查询：可手填查询地址 + 查询按钮 + 主进程/preload 双通道装配
+  assert(vue.includes('音色查询接口（可空）'), '音色查询地址输入框')
+  assert(vue.includes('api.external.queryProfiles'), '查询音色调用')
+  assert(vue.includes('externalForm.profilesPath'), '查询地址随表单状态保存')
+  assert(
+    ipcSrc.includes("externalProfilesQuery: 'fish:voice:external:profilesQuery'"),
+    '主进程通道常量含 profilesQuery'
+  )
+  assert(
+    ipcSrc.includes('handle(VOICE_CHANNELS.externalProfilesQuery'),
+    '主进程真的注册了 profilesQuery handler（不是只声明常量）'
+  )
+  assert(
+    preloadSrc.includes("'fish:voice:external:profilesQuery'"),
+    'preload 暴露 fish:voice:external:profilesQuery'
+  )
+  // 在途查询失效守卫：地址变化/关表单使序号递增，迟到回包按序号丢弃，防止旧主机音色回填
+  assert(vue.includes('externalProfilesSeq'), '查询序号状态存在')
+  assert(vue.includes('function staleExternalProfiles'), '地址变化使在途查询失效的函数存在')
+  assert(
+    vue.includes('if (seq !== externalProfilesSeq) return'),
+    '迟到回包按序号丢弃（成功与失败两条路径都要守）'
+  )
   return 'VoicePage 本地实例操作/必填/草稿测试入口已装配'
 })
 
@@ -1028,6 +1056,396 @@ await recorder.check('E9', '删除 Key 失败时保留实例，不制造半删�
   assertEq(code, VOICE_ERROR_CODES.ENCRYPTION_UNAVAILABLE, 'Key 删除失败向上报错')
   assertEq((await manager.listExternalServices()).length, 1, 'Key 删除失败时实例仍在')
   return '删除失败不留下半删实例'
+})
+
+await recorder.check('E11', '音色查询地址归一化、listProfiles 解析与克隆音色合成', async () => {
+  // normalizeProfilesPath：空/同主机路径/完整 URL/非法形态
+  assertEq(normalizeProfilesPath(undefined), '', 'undefined 回落空串')
+  assertEq(normalizeProfilesPath('   '), '', '空白回落空串')
+  assertEq(normalizeProfilesPath('/v2/voices'), '/v2/voices', '同主机路径原样保留')
+  assertEq(
+    normalizeProfilesPath('http://192.168.1.9:9000/voices'),
+    'http://192.168.1.9:9000/voices',
+    '完整 URL 保留'
+  )
+  for (const bad of [
+    '//host/path',
+    'ftp://192.168.1.9/x',
+    '不是地址',
+    'http://user:pass@192.168.1.9/voices'
+  ]) {
+    let badCode = ''
+    try {
+      normalizeProfilesPath(bad)
+    } catch (error) {
+      badCode = error.code
+    }
+    assertEq(badCode, VOICE_ERROR_CODES.INVALID_INPUT, `非法查询地址拒绝：${bad}`)
+  }
+
+  // resolveProfilesUrl：默认 /profiles、同主机路径、跨主机标记
+  const defaultTarget = resolveProfilesUrl('http://127.0.0.1:8091/v1', undefined)
+  assertEq(defaultTarget.url, 'http://127.0.0.1:8091/profiles', '默认查询地址在服务根路径')
+  assertEq(defaultTarget.crossHost, false, '默认地址不跨主机')
+  const pathTarget = resolveProfilesUrl('http://127.0.0.1:8091/v1', '/v2/voices')
+  assertEq(pathTarget.url, 'http://127.0.0.1:8091/v2/voices', '同主机路径拼到实例根')
+  assertEq(pathTarget.crossHost, false, '同主机路径不跨主机')
+  const crossTarget = resolveProfilesUrl(
+    'http://127.0.0.1:8091/v1',
+    'http://192.168.1.9:9000/voices'
+  )
+  assertEq(crossTarget.crossHost, true, '不同 origin 标记跨主机')
+
+  const profilesService = {
+    id: 'ext:00000000-0000-4000-8000-000000000002',
+    kind: 'openai-speech',
+    label: 'query',
+    baseUrl: 'http://127.0.0.1:17493/v1',
+    model: 'voicebox',
+    voice: 'Vivian',
+    responseFormat: 'wav',
+    createdAt: 1,
+    updatedAt: 1
+  }
+  const profilesBody = {
+    profiles: [
+      {
+        id: 'preset-1',
+        name: 'Vivian 明亮女声',
+        voice_type: 'preset',
+        language: 'zh',
+        preset_engine: 'qwen_custom_voice'
+      },
+      {
+        id: 'cloned-1',
+        name: '我的克隆音色',
+        voice_type: 'cloned',
+        language: 'zh',
+        default_engine: 'qwen',
+        sample_count: 3
+      },
+      {
+        id: 'cloned-empty',
+        name: '空克隆',
+        voice_type: 'cloned',
+        default_engine: 'qwen',
+        sample_count: 0
+      },
+      {
+        id: 'designed-1',
+        name: '文字设计音色',
+        voice_type: 'designed',
+        language: 'zh',
+        default_engine: 'qwen',
+        sample_count: 1
+      }
+    ]
+  }
+  const queryCalls = []
+  const queryProvider = createOpenAISpeechProvider(
+    profilesService,
+    'query-key-12345678',
+    async (url, init) => {
+      queryCalls.push({ url: String(url), headers: init?.headers })
+      return new Response(JSON.stringify(profilesBody), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+  )
+  const result = await queryProvider.listProfiles(undefined)
+  assertEq(result.profiles.length, 4, '解析 {profiles:[]} 包裹结构')
+  assertEq(result.sourceUrl, 'http://127.0.0.1:17493/profiles', '实际查询地址回传')
+  assertEq(
+    queryCalls[0].headers.Authorization,
+    'Bearer query-key-12345678',
+    '同主机查询携带实例 Key'
+  )
+  const preset = result.profiles.find((item) => item.id === 'preset-1')
+  assertEq(preset.engine, 'qwen_custom_voice', '预设音色派生 preset 引擎')
+  assertEq(preset.usable, true, '预设音色默认可用')
+  const cloned = result.profiles.find((item) => item.id === 'cloned-1')
+  assertEq(cloned.engine, 'qwen', '克隆音色派生 qwen 引擎')
+  assertEq(cloned.modelSize, '1.7B', '克隆音色带 1.7B model_size')
+  assertEq(cloned.usable, true, '有样本的克隆音色可用')
+  const emptyClone = result.profiles.find((item) => item.id === 'cloned-empty')
+  assertEq(emptyClone.usable, false, 'sample_count=0 的克隆音色不可用')
+  assert(!!emptyClone.unavailableReason, '不可用原因非空')
+  const designed = result.profiles.find((item) => item.id === 'designed-1')
+  assertEq(designed.engine, 'qwen', '设计音色与克隆共用 qwen 引擎派生')
+  assertEq(designed.modelSize, '1.7B', '设计音色带 1.7B model_size')
+  assertEq(designed.usable, true, '有样本的设计音色可用')
+
+  // 跨主机查询：实例即使配了 Key 也不能外发
+  const crossCalls = []
+  const crossProvider = createOpenAISpeechProvider(
+    profilesService,
+    'query-key-12345678',
+    async (url, init) => {
+      crossCalls.push({ url: String(url), headers: init?.headers })
+      return new Response(JSON.stringify([{ id: 'x', name: 'X' }]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+  )
+  const crossResult = await crossProvider.listProfiles('http://192.168.1.9:9000/voices')
+  assertEq(crossResult.crossHost, true, '跨主机结果带标记')
+  assertEq(crossCalls[0].headers.Authorization, undefined, '跨主机请求不携带 Key')
+
+  // 跨主机 401/403：文案必须说明「不带 Key 被拒」，不能误导成实例 Key 错误
+  const cross401Provider = createOpenAISpeechProvider(
+    profilesService,
+    'query-key-12345678',
+    async () => new Response('forbidden', { status: 401 })
+  )
+  let cross401Message = ''
+  try {
+    await cross401Provider.listProfiles('http://192.168.1.9:9000/voices')
+  } catch (error) {
+    cross401Message = String(error.message)
+  }
+  assert(cross401Message.includes('不会携带本机实例的 API Key'), '跨主机 401 文案说明剥头原因')
+
+  // unknown 类型语义：只有 preset_engine 的老数据按该引擎合成且不带 model_size；
+  // 无任何引擎字段时不静默发请求（deriveVoiceboxEngine 返回 null，合成时报错）
+  const unknownProvider = createOpenAISpeechProvider(
+    { ...profilesService, baseUrl: 'http://127.0.0.1:17497/v1' },
+    null,
+    async (url) =>
+      new Response(
+        JSON.stringify([
+          { id: 'legacy-1', name: '老音色', preset_engine: 'qwen_custom_voice' },
+          { id: 'no-engine', name: '无引擎' }
+        ]),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+  )
+  const unknownResult = await unknownProvider.listProfiles(undefined)
+  const legacy = unknownResult.profiles.find((item) => item.id === 'legacy-1')
+  assertEq(legacy.voiceType, 'unknown', '缺 voice_type 归一为 unknown')
+  assertEq(legacy.engine, 'qwen_custom_voice', 'unknown 信任服务端 preset_engine')
+  assertEq(legacy.modelSize, undefined, 'preset 引擎不带 model_size')
+  const noEngine = unknownResult.profiles.find((item) => item.id === 'no-engine')
+  assertEq(noEngine.usable, true, 'unknown 缺 sample_count 不按不可用拦截')
+  assertEq(noEngine.engine, undefined, '无引擎字段时不臆造引擎')
+
+  // 空数组/无法识别结构 → BAD_RESPONSE，不能返回空成功
+  const emptyProvider = createOpenAISpeechProvider(
+    { ...profilesService, baseUrl: 'http://127.0.0.1:17494/v1' },
+    null,
+    async () => new Response('[]', { status: 200 })
+  )
+  let emptyCode = ''
+  try {
+    await emptyProvider.listProfiles(undefined)
+  } catch (error) {
+    emptyCode = error.code
+  }
+  assertEq(emptyCode, VOICE_ERROR_CODES.EXTERNAL_BAD_RESPONSE, '空音色列表按坏响应处理')
+
+  // 克隆音色走 Voicebox 原生合成：engine=qwen + model_size=1.7B
+  const nativeCalls = []
+  const nativeProvider = createOpenAISpeechProvider(
+    { ...profilesService, baseUrl: 'http://127.0.0.1:17495/v1' },
+    null,
+    async (url, init) => {
+      const target = String(url)
+      if (target.endsWith('/audio/speech')) {
+        return new Response('no openai face', { status: 404 })
+      }
+      if (target.endsWith('/profiles')) {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 'cloned-1',
+              name: '我的克隆音色',
+              voice_type: 'cloned',
+              language: 'zh',
+              default_engine: 'qwen',
+              sample_count: 3
+            }
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      }
+      if (target.endsWith('/generate/stream')) {
+        nativeCalls.push(JSON.parse(String(init?.body ?? '{}')))
+        return externalWav()
+      }
+      return new Response('not found', { status: 404 })
+    }
+  )
+  const clonedAudio = await nativeProvider.synthesize({ text: '用克隆声音说', voice: 'cloned-1' })
+  assertEq(clonedAudio.extension, 'wav', 'Voicebox 原生固定返回 WAV')
+  assertEq(nativeCalls.length, 1, '发起一次原生合成')
+  assertEq(nativeCalls[0].profile_id, 'cloned-1', '按 id 解析克隆 profile')
+  assertEq(nativeCalls[0].engine, 'qwen', '克隆音色 engine=qwen')
+  assertEq(nativeCalls[0].model_size, '1.7B', '克隆音色带 model_size=1.7B')
+
+  // 实例配了跨主机查询地址：原生合成前的 /profiles 拉取也必须剥掉 Key
+  const crossNativeCalls = []
+  const crossNativeProvider = createOpenAISpeechProvider(
+    {
+      ...profilesService,
+      baseUrl: 'http://127.0.0.1:17498/v1',
+      profilesPath: 'http://192.168.1.9:9000/profiles'
+    },
+    'query-key-12345678',
+    async (url, init) => {
+      const target = String(url)
+      if (target.endsWith('/audio/speech')) return new Response('x', { status: 404 })
+      if (target === 'http://192.168.1.9:9000/profiles') {
+        crossNativeCalls.push({ url: target, headers: init?.headers })
+        return new Response(
+          JSON.stringify([
+            {
+              id: 'preset-9',
+              name: '跨主机预设',
+              voice_type: 'preset',
+              preset_engine: 'qwen_custom_voice'
+            }
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      }
+      if (target.endsWith('/generate/stream')) return externalWav()
+      return new Response('not found', { status: 404 })
+    }
+  )
+  await crossNativeProvider.synthesize({ text: '你好', voice: 'preset-9' })
+  assertEq(crossNativeCalls.length, 1, '原生合成走配置的跨主机查询地址')
+  assertEq(
+    crossNativeCalls[0].headers.Authorization,
+    undefined,
+    '原生合成的跨主机 /profiles 拉取同样剥离 Key'
+  )
+
+  // 不可用的克隆音色（sample_count=0）拒绝合成
+  const unusableProvider = createOpenAISpeechProvider(
+    { ...profilesService, baseUrl: 'http://127.0.0.1:17496/v1' },
+    null,
+    async (url) => {
+      const target = String(url)
+      if (target.endsWith('/audio/speech')) return new Response('x', { status: 404 })
+      if (target.endsWith('/profiles')) {
+        return new Response(
+          JSON.stringify([
+            { id: 'cloned-empty', name: '空克隆', voice_type: 'cloned', sample_count: 0 }
+          ]),
+          { status: 200 }
+        )
+      }
+      return new Response('not found', { status: 404 })
+    }
+  )
+  let unusableCode = ''
+  let unusableMessage = ''
+  try {
+    await unusableProvider.synthesize({ text: '你好', voice: 'cloned-empty' })
+  } catch (error) {
+    unusableCode = error.code
+    unusableMessage = String(error.message)
+  }
+  // synthesize 的 OpenAI 404 fallback 会把 voicebox 内部错误统一包成 PROVIDER_ERROR，
+  // 但不可用原因必须透传给用户（与 E2 的真 404 包装行为保持一致）
+  assertEq(unusableCode, VOICE_ERROR_CODES.PROVIDER_ERROR, '不可用克隆音色合成失败')
+  assert(unusableMessage.includes('暂不可用'), '不可用原因透传到错误文案')
+
+  // 实例存储：profilesPath 随实例持久化，空串表示清除
+  const profilesStore = createExternalServiceStore(join(runDir, 'profiles-store.json'))
+  const savedWithPath = await profilesStore.save({
+    label: '自定义查询',
+    baseUrl: 'http://127.0.0.1:9200',
+    model: 'voicebox',
+    voice: 'Vivian',
+    profilesPath: '/v2/voices'
+  })
+  assertEq(savedWithPath.profilesPath, '/v2/voices', '查询地址随实例保存')
+  const cleared = await profilesStore.save({ id: savedWithPath.id, profilesPath: '' })
+  assertEq(cleared.profilesPath, undefined, '空串清除已保存的查询地址')
+  return '查询地址归一化、音色解析、克隆合成与持久化正确'
+})
+
+await recorder.check('E12', 'Manager 草稿音色查询不落盘；Key 复用与跨主机剥离', async () => {
+  const servicesPath = join(runDir, 'profiles-query-services.json')
+  const secretsPath = join(runDir, 'profiles-query-secrets.bin')
+  const calls = []
+  const manager = createVoiceManager({
+    storage: memoryStore(),
+    secrets: cloudSecrets(),
+    externalServices: createExternalServiceStore(servicesPath),
+    externalSecrets: createExternalVoiceSecretStore(secretsPath, fakeEncryption()),
+    cacheDir: join(runDir, 'profiles-query-audio'),
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), headers: init?.headers })
+      return new Response(
+        JSON.stringify({ data: [{ id: 'p1', name: '音色一', voice_type: 'preset' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    },
+    logger: () => undefined
+  })
+
+  // 纯草稿：表单 Key 只进本次请求头，不创建实例/密钥文件
+  const draft = await manager.queryExternalProfiles({
+    baseUrl: '192.168.31.36:17493',
+    apiKey: 'draft-query-key'
+  })
+  assertEq(draft.profiles[0].id, 'p1', '草稿查询返回音色')
+  assertEq(
+    calls[0].url,
+    'http://192.168.31.36:17493/profiles',
+    '省略协议补全后打默认 /profiles'
+  )
+  assertEq(calls[0].headers.Authorization, 'Bearer draft-query-key', '草稿 Key 进本次请求头')
+  assertEq((await manager.listExternalServices()).length, 0, '草稿查询不保存实例')
+  assertEq(existsSync(servicesPath), false, '草稿查询不创建实例 JSON')
+  assertEq(existsSync(secretsPath), false, '草稿查询不创建 Key 文件')
+
+  // 编辑态：地址未变复用已存 Key；自定义同主机路径拼到实例根
+  const saved = await manager.saveExternalService({
+    label: '编辑态',
+    baseUrl: 'http://127.0.0.1:9301',
+    model: 'voicebox',
+    voice: 'p1',
+    apiKey: 'stored-query-key-1234'
+  })
+  await manager.queryExternalProfiles({
+    baseUrl: '127.0.0.1:9301',
+    id: saved.id,
+    profilesPath: '/v2/voices'
+  })
+  assertEq(calls[1].url, 'http://127.0.0.1:9301/v2/voices', '自定义查询路径拼到实例根')
+  assertEq(
+    calls[1].headers.Authorization,
+    'Bearer stored-query-key-1234',
+    '同主机编辑态复用已存 Key'
+  )
+
+  // 跨主机：已存 Key 不得外发
+  await manager.queryExternalProfiles({
+    baseUrl: '127.0.0.1:9301',
+    id: saved.id,
+    profilesPath: 'http://192.168.1.9:9000/voices'
+  })
+  assertEq(calls[2].url, 'http://192.168.1.9:9000/voices', '跨主机打完整 URL')
+  assertEq(calls[2].headers.Authorization, undefined, '跨主机查询剥离 Key')
+
+  // 安全护栏：改了服务地址（即使查询地址留空、同主机判定为不跨域）也不得复用旧 Key，
+  // 否则删掉 manager 的 baseUrl 比较就会把凭据发到新主机
+  await manager.queryExternalProfiles({ baseUrl: '127.0.0.1:9302', id: saved.id })
+  assertEq(calls[3].url, 'http://127.0.0.1:9302/profiles', '改地址后打新主机默认 /profiles')
+  assertEq(calls[3].headers.Authorization, undefined, '改地址后草稿查询不复用旧 Key')
+
+  let badCode = ''
+  try {
+    await manager.queryExternalProfiles({ baseUrl: 'ftp://example.com' })
+  } catch (error) {
+    badCode = error.code
+  }
+  assertEq(badCode, VOICE_ERROR_CODES.INVALID_INPUT, '非 http(s) 地址拒绝')
+  return '草稿查询不落盘、Key 复用/剥离与非法地址拒绝正确'
 })
 
 const result = recorder.toJSON({ runDir })

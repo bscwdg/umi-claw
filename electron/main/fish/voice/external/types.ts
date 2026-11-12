@@ -7,6 +7,7 @@ import type { VoiceSpeakResult } from '../core/types'
 
 export type ExternalTtsKind = 'openai-speech'
 export type ExternalTtsFormat = 'mp3' | 'wav'
+export type ExternalTtsVoiceType = 'preset' | 'cloned' | 'designed' | 'unknown'
 
 export interface ExternalTtsService {
   id: string
@@ -16,6 +17,8 @@ export interface ExternalTtsService {
   model: string
   voice: string
   responseFormat: ExternalTtsFormat
+  /** 可选的音色查询地址：留空走默认 {根}/profiles；可填同主机路径或完整 http(s) URL */
+  profilesPath?: string
   createdAt: number
   updatedAt: number
 }
@@ -27,10 +30,48 @@ export interface ExternalTtsServiceInput {
   model?: unknown
   voice?: unknown
   responseFormat?: unknown
+  /** 音色查询地址（路径或完整 URL）；传空串表示回落默认 /profiles */
+  profilesPath?: unknown
   /** 保存时一并更新 Key；不传表示保持原样。 */
   apiKey?: unknown
   /** 显式清除该实例 Key。 */
   clearKey?: unknown
+}
+
+/** 查询回来的一条音色（兼容 voicebox /profiles 与 OpenAI /models 等不同返回形状） */
+export interface ExternalTtsVoiceProfile {
+  /** 合成时实际使用的稳定标识（voicebox 的 profile id） */
+  id: string
+  /** 界面显示名 */
+  name: string
+  voiceType: ExternalTtsVoiceType
+  language?: string
+  /** 按服务端字段派生的合成引擎，如 qwen_custom_voice / qwen */
+  engine?: string
+  /** 克隆 Base 模型需要的 model_size */
+  modelSize?: string
+  sampleCount?: number
+  /** false 表示该音色当前不可合成（如克隆音色还没上传参考音频） */
+  usable: boolean
+  unavailableReason?: string
+}
+
+export interface ExternalTtsProfilesResult {
+  profiles: ExternalTtsVoiceProfile[]
+  detail: string
+  /** 实际请求的查询地址 */
+  sourceUrl: string
+  /** true = 查询地址跨主机，本次请求不会携带实例 Key */
+  crossHost: boolean
+}
+
+/** 未保存草稿上的音色查询（设置页「查询音色」用，不落盘、默认不写 Key） */
+export interface ExternalTtsProfilesQueryInput {
+  baseUrl?: unknown
+  apiKey?: unknown
+  profilesPath?: unknown
+  /** 编辑已有实例时传 id：同主机且地址未变则复用已存 Key */
+  id?: unknown
 }
 
 /** 未保存实例的草稿探测（设置页「测试连接」用，不落盘、不写 Key）。 */

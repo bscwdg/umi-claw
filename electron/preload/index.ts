@@ -24,6 +24,8 @@ import type {
 } from '../main/fish/voice/core/types'
 import type {
   ExternalTtsDraftProbeInput,
+  ExternalTtsProfilesQueryInput,
+  ExternalTtsProfilesResult,
   ExternalTtsProbeResult,
   ExternalTtsServiceInput,
   ExternalTtsServiceView,
@@ -723,6 +725,9 @@ const api = {
         // 未保存草稿的连接测试：不落实例、不写 Key
         probeDraft: (input: ExternalTtsDraftProbeInput) =>
           call<ExternalTtsProbeResult>('fish:voice:external:probeDraft', input),
+        // 未保存草稿的音色查询：不落实例、不写 Key；跨主机时主进程不带 Key
+        queryProfiles: (input: ExternalTtsProfilesQueryInput) =>
+          call<ExternalTtsProfilesResult>('fish:voice:external:profilesQuery', input),
         test: (id: string) =>
           call<ExternalTtsTestResult>('fish:voice:external:test', id)
       },
