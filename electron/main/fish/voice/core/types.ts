@@ -8,9 +8,15 @@ export type VoiceAutoSpeak = 'off' | 'tagged' | 'always'
  * （只在收到语音消息后才回语音）。
  */
 export type OpenClawTtsAuto = 'off' | 'always' | 'inbound' | 'tagged'
-/** 对话内语音的两条通道：本地桥接（Agent Plan）或 OpenClaw 标准 provider（语音控制台）。 */
-export type OpenClawTtsChannel = 'bridge' | 'volcengine'
+/** 对话内语音的通道：火山本地桥接（Agent Plan）/ OpenClaw 标准 provider / 用户本地 TTS 实例。 */
+export type OpenClawTtsChannel = 'bridge' | 'volcengine' | 'local-external'
 export type OpenClawTtsChannelSetting = 'auto' | OpenClawTtsChannel
+/**
+ * 本地实例通道失败时的保底策略：
+ * - volcengine：交给 OpenClaw 候选链自动切到火山标准接口（语音控制台 Key）
+ * - fail：不降级，本次合成直接失败
+ */
+export type OpenClawConversationFallback = 'volcengine' | 'fail'
 export type VoiceAudioFormat = 'mp3' | 'pcm'
 
 export interface VoiceCatalogVoice {
@@ -65,6 +71,8 @@ export interface VoiceSettings {
   conversationTts: OpenClawTtsAuto
   /** 对话内语音走哪条通道；auto 按 Key 与默认音色自动选。 */
   conversationChannel: OpenClawTtsChannelSetting
+  /** 通道为本地 TTS 实例时，合成失败要不要降级到火山标准接口。 */
+  conversationFallback: OpenClawConversationFallback
   dailyCharLimit: number
   cacheLimitMB: number
   /**

@@ -932,6 +932,31 @@ try {
     )
     assertEq(offlineBase.value, '', '本机适配器离线时地址保持为空')
     assertEq(offlineBase.props.placeholder, 'http://192.168.1.20:7860', '空表单用占位符给示例地址')
+
+    // 失败保底子单选只在「本地 TTS 实例」通道出现：真实切换 v-if，而非只留字符串
+    const channelRadios = []
+    for (const node of walk(res.root)) {
+      if (node.tag === 'input' && node.props.type === 'radio') channelRadios.push(node)
+    }
+    const localRadio = channelRadios.find((n) => n.props.value === 'local-external')
+    const autoRadio = channelRadios.find((n) => n.props.value === 'auto')
+    assert(localRadio && autoRadio, '通道单选项已渲染（自动 + 本地实例）')
+    const fireRadio = (node, value) => {
+      // vModelRadio 指令的 change 回调读节点自身的 checked/value，不读 event.target
+      node.checked = true
+      node.value = value
+      const handler = node.listeners?.change?.[0] ?? node.props.onChange
+      handler({ target: node })
+    }
+    fireRadio(localRadio, 'local-external')
+    await flushTicks()
+    // res.html 是挂载时静态快照，交互后必须重新序列化实时树
+    const liveHtml = () => serialize(res.root)
+    assert(liveHtml().includes('失败保底'), '选本地实例后出现失败保底子单选')
+    assert(liveHtml().includes('不降级，直接报错'), '保底子单选含不降级选项')
+    fireRadio(autoRadio, 'auto')
+    await flushTicks()
+    assert(!liveHtml().includes('失败保底'), '切回自动后保底子单选隐藏')
     return '语音页四路加载与概览渲染 ✓'
   })
 

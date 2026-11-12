@@ -6,6 +6,8 @@ import type {
   VoiceSettings,
   VoiceSettingsView,
   OpenClawTtsAuto,
+  OpenClawTtsChannelSetting,
+  OpenClawConversationFallback,
   VoiceSpeakRoute
 } from './types'
 
@@ -55,6 +57,7 @@ export const DEFAULT_VOICE_SETTINGS: VoiceSettings = {
   externalProviderId: '',
   conversationTts: 'off',
   conversationChannel: 'auto',
+  conversationFallback: 'volcengine',
   dailyCharLimit: 0,
   cacheLimitMB: 500,
   cloneMode: 'postpaid',
@@ -104,6 +107,18 @@ function sanitizeResourceId(value: unknown, fallback: string): string {
 /** 对话内语音开关：只接受 OpenClaw `tts.auto` 的四个官方取值，其余回落 off。 */
 function normalizeOpenClawTtsAuto(value: unknown): OpenClawTtsAuto {
   return value === 'always' || value === 'inbound' || value === 'tagged' ? value : 'off'
+}
+
+/** 对话内语音通道的合法取值集中在这里，新增通道只改这一处，别在各函数里写散落判断。 */
+function normalizeConversationChannel(value: unknown): OpenClawTtsChannelSetting {
+  return value === 'bridge' || value === 'volcengine' || value === 'local-external'
+    ? value
+    : 'auto'
+}
+
+/** 保底策略默认降级火山标准接口；只有显式 fail 才不降级。 */
+function normalizeConversationFallback(value: unknown): OpenClawConversationFallback {
+  return value === 'fail' ? 'fail' : 'volcengine'
 }
 
 function normalizeSpeakRoute(value: unknown): VoiceSpeakRoute {
@@ -200,10 +215,8 @@ export function normalizeVoiceSettings(
     speakRoute: normalizeSpeakRoute(src.speakRoute),
     externalProviderId: normalizeExternalProviderId(src.externalProviderId),
     conversationTts: normalizeOpenClawTtsAuto(src.conversationTts),
-    conversationChannel:
-      src.conversationChannel === 'bridge' || src.conversationChannel === 'volcengine'
-        ? src.conversationChannel
-        : 'auto',
+    conversationChannel: normalizeConversationChannel(src.conversationChannel),
+    conversationFallback: normalizeConversationFallback(src.conversationFallback),
     dailyCharLimit: Math.floor(clampNumber(src.dailyCharLimit, 0, 10_000_000, 0)),
     cacheLimitMB: Math.floor(clampNumber(src.cacheLimitMB, 50, 5000, 500)),
     cloneMode: src.cloneMode === 'prepaid' ? 'prepaid' : 'postpaid',
@@ -278,9 +291,11 @@ export function applyVoiceSettingsPatch(
     conversationChannel:
       src.conversationChannel === undefined
         ? current.conversationChannel
-        : src.conversationChannel === 'bridge' || src.conversationChannel === 'volcengine'
-          ? src.conversationChannel
-          : 'auto',
+        : normalizeConversationChannel(src.conversationChannel),
+    conversationFallback:
+      src.conversationFallback === undefined
+        ? current.conversationFallback
+        : normalizeConversationFallback(src.conversationFallback),
     dailyCharLimit:
       src.dailyCharLimit === undefined
         ? current.dailyCharLimit

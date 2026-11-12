@@ -77,6 +77,10 @@ export interface VoiceManagerOptions {
   bridgeScriptPath?: string
   /** bridge 模式的热更设置文件（音色/资源 ID 写这里，bridge 每次合成时读）。 */
   bridgeSettingsPath?: string
+  /** local-external 模式下 local-tts-bridge.mjs 的绝对路径。 */
+  localBridgeScriptPath?: string
+  /** local-external 模式的热更设置文件（实例连接信息写这里，脚本每次合成时读）。 */
+  localBridgeSettingsPath?: string
   /** 本地 TTS 实例与独立密钥；缺省时仅保留火山云能力。 */
   externalServices?: ExternalServiceStore
   externalSecrets?: ExternalVoiceSecretStore
@@ -129,6 +133,8 @@ export class VoiceManager {
   private readonly onProgress: (event: import('./types').VoiceProgressEvent) => void
   private readonly bridgeScriptPath: string | undefined
   private readonly bridgeSettingsPath: string | undefined
+  private readonly localBridgeScriptPath: string | undefined
+  private readonly localBridgeSettingsPath: string | undefined
   private readonly externalServices: ExternalServiceStore | undefined
   private readonly externalSecrets: ExternalVoiceSecretStore | undefined
   private readonly externalAvailability: ExternalAvailabilityTracker
@@ -143,6 +149,8 @@ export class VoiceManager {
     settings: VoiceSettings
     hasTtsKey: boolean
     hasCloneKey: boolean
+    /** 对话内语音选中的本地实例；未选/已删除时为 null。 */
+    externalService: ExternalTtsService | null
   } | null = null
   private readonly onSettingsChanged: () => void
   private readonly inflight = new Map<string, Promise<VoiceSpeakResult>>()
@@ -167,6 +175,8 @@ export class VoiceManager {
     this.onSettingsChanged = options.onSettingsChanged ?? (() => undefined)
     this.bridgeScriptPath = options.bridgeScriptPath
     this.bridgeSettingsPath = options.bridgeSettingsPath
+    this.localBridgeScriptPath = options.localBridgeScriptPath
+    this.localBridgeSettingsPath = options.localBridgeSettingsPath
     this.externalServices = options.externalServices
     this.externalSecrets = options.externalSecrets
     this.externalAvailability =
@@ -263,6 +273,9 @@ export class VoiceManager {
       }
       throw error
     }
+    // 实例编辑（地址/音色/格式）可能正是对话内语音的当前通道：刷新快照，
+    // 让热更文件与 openclaw.json 的 tts 块立即跟随，不必等下次改语音设置。
+    await this.refreshOpenClawTtsSnapshot(await this.loadSettings(), true)
     return this.externalServiceView(service)
   }
 
@@ -294,12 +307,14 @@ export class VoiceManager {
     if (settings.externalProviderId === id) {
       const next = applyVoiceSettingsPatch(
         settings,
-        { speakRoute: 'cloud', externalProviderId: '' },
+        // 实例没了，对话通道不能停在 local-external（会违反保存校验不变量）：
+        // 退回 auto，让候选清单自动改选火山通道；同时立即重写 openclaw.json 摘掉陈旧 tts 块
+        { speakRoute: 'cloud', externalProviderId: '', conversationChannel: 'auto' },
         this.catalog
       )
       this.settingsCache = next
       await this.storage.set(SETTINGS_KEY, JSON.stringify(next))
-      await this.refreshOpenClawTtsSnapshot(next)
+      await this.refreshOpenClawTtsSnapshot(next, true)
     }
     return { removed: true }
   }
@@ -440,14 +455,25 @@ export class VoiceManager {
     } catch {
       hasTtsKey = false
     }
+    // 本地实例存在文件存储里，而 openclaw.json 注入器是同步回调不能临时去读：
+    // 实例信息在这里一并快照，作为同步注入时的唯一数据源。
+    let externalService: ExternalTtsService | null = null
+    if (this.externalServices && settings.externalProviderId) {
+      externalService = (await this.externalServices.get(settings.externalProviderId)) ?? null
+    }
     const previous = this.openClawTtsSnapshot
-    this.openClawTtsSnapshot = { settings, hasTtsKey, hasCloneKey }
-    // 只有真正会走 bridge 的配置才需要热更文件；其它情况清掉，避免留下误导性的陈旧音色
-    const hotResolved = this.resolveConversationChannel({ settings, hasTtsKey, hasCloneKey })
+    this.openClawTtsSnapshot = { settings, hasTtsKey, hasCloneKey, externalService }
+    // 哪个通道生效就维护哪个热更文件；其余清掉，避免脚本读到上一个通道的陈旧配置
+    const hotResolved = this.resolveConversationChannel(this.openClawTtsSnapshot)
     if (hotResolved.channel === 'bridge') {
       void this.writeBridgeSettingsFile(settings)
+      void this.clearLocalBridgeSettingsFile()
+    } else if (hotResolved.channel === 'local-external') {
+      void this.writeLocalBridgeSettingsFile(externalService)
+      void this.clearBridgeSettingsFile()
     } else {
       void this.clearBridgeSettingsFile()
+      void this.clearLocalBridgeSettingsFile()
     }
     if (!notify) return
     // 内容没变就不必惊动配置写入（重复 sync 会拖慢且可能撞上 CLI 争用）。
@@ -502,6 +528,53 @@ export class VoiceManager {
       /* 不存在即预期 */
     }
   }
+
+  /**
+   * 写「本地实例热更设置」：连接信息每次合成由 local-tts-bridge.mjs 重读，
+   * 改地址/音色/模型/格式不必重启网关；但实例 Key 只在网关启动时经环境变量注入，
+   * 换实例或改 Key 必须重启，否则旧 Key 会被发往新主机（Key 绝不进这个文件）。
+   * 失败只记日志；网关启动路径 buildOpenClawTtsEnv 会再写一次兜底。
+   */
+  private async writeLocalBridgeSettingsFile(
+    service: ExternalTtsService | null
+  ): Promise<void> {
+    const target = this.localBridgeSettingsPath
+    if (!target || !service) return
+    const tmp = `${target}.tmp-${process.pid}`
+    try {
+      const payload = {
+        version: 1,
+        baseUrl: service.baseUrl,
+        voice: service.voice,
+        model: service.model,
+        responseFormat: service.responseFormat,
+        profilesPath: service.profilesPath ?? '',
+        updatedAt: new Date(this.now()).toISOString()
+      }
+      await mkdir(dirname(target), { recursive: true })
+      await writeFile(tmp, JSON.stringify(payload, null, 2), { encoding: 'utf-8', mode: 0o600 })
+      await rename(tmp, target)
+    } catch (e) {
+      this.logger(`[voice] 写本地实例热更设置失败: ${(e as Error)?.message || e}`)
+    } finally {
+      try {
+        await unlink(tmp)
+      } catch {
+        /* 已不存在即预期 */
+      }
+    }
+  }
+
+  /** 当前不走本地实例：清掉热更文件，避免 local-tts-bridge.mjs 读到过期实例 */
+  private async clearLocalBridgeSettingsFile(): Promise<void> {
+    const target = this.localBridgeSettingsPath
+    if (!target) return
+    try {
+      await unlink(target)
+    } catch {
+      /* 不存在即预期 */
+    }
+  }
   /**
    * 按音色类型给出**正确的** resource。
    *
@@ -521,38 +594,83 @@ export class VoiceManager {
     }
   }
 
+  /**
+   * 对话内语音通道决策。
+   *
+   * 「活」应用原则：候选清单按当前配置动态生成，而不是写死某两条路——
+   * 本地实例 / 火山标准 / 火山桥接谁配置就绪谁入列。auto 取清单里第一个就绪项；
+   * 运行时合成失败由 OpenClaw 自己的 provider 候选链按序兜底，本层不写降级。
+   */
   private resolveConversationChannel(snap: {
     settings: VoiceSettings
     hasTtsKey: boolean
     hasCloneKey: boolean
+    externalService?: ExternalTtsService | null
   }): { channel: OpenClawTtsChannel | null; reason: string } {
     const settings = snap.settings
     if (settings.conversationTts === 'off') {
       return { channel: null, reason: '对话内语音已关闭' }
     }
     const preset = isPresetVoice(settings.defaultSpeaker)
+    const externalService = snap.externalService ?? null
+
+    // 每个候选自带就绪判定与不可用原因；以后新增通道只需在这里加一项描述。
+    const candidates: Array<{
+      channel: OpenClawTtsChannel
+      ready: boolean
+      reason: string
+      blockedReason: string
+    }> = [
+      {
+        channel: 'local-external',
+        ready: !!externalService && !!this.localBridgeScriptPath,
+        reason: '本地 TTS 实例（失败由 OpenClaw 候选链保底）',
+        blockedReason: !settings.externalProviderId
+          ? '未选择本地 TTS 实例'
+          : !externalService
+            ? '选中的本地 TTS 实例不存在'
+            : '本地 TTS 桥接脚本路径缺失'
+      },
+      {
+        channel: 'volcengine',
+        ready: snap.hasCloneKey,
+        reason: 'OpenClaw 标准接口（语音控制台 Key）',
+        blockedReason: '未配置语音控制台 Key'
+      },
+      {
+        channel: 'bridge',
+        ready: preset && snap.hasTtsKey && !!this.bridgeScriptPath,
+        reason: '本地桥接（Agent Plan Key → Plan 接口）',
+        blockedReason: !preset
+          ? '克隆音色只能走标准接口，不能走本地桥接'
+          : !snap.hasTtsKey
+            ? '未配置 Agent Plan TTS Key'
+            : '内置桥接脚本路径缺失'
+      }
+    ]
+
     const setting = settings.conversationChannel
-
-    if (setting === 'bridge') {
-      if (!preset) return { channel: null, reason: '克隆音色只能走标准接口，不能走本地桥接' }
-      if (!snap.hasTtsKey) return { channel: null, reason: '未配置 Agent Plan TTS Key' }
-      if (!this.bridgeScriptPath) return { channel: null, reason: '内置桥接脚本路径缺失' }
-      return { channel: 'bridge', reason: '本地桥接（Agent Plan Key → Plan 接口）' }
+    if (setting !== 'auto') {
+      const picked = candidates.find((item) => item.channel === setting)
+      if (!picked) return { channel: null, reason: '未知的对话内语音通道' }
+      return picked.ready
+        ? { channel: picked.channel, reason: picked.reason }
+        : { channel: null, reason: picked.blockedReason }
     }
 
-    if (setting === 'volcengine') {
-      if (!snap.hasCloneKey) return { channel: null, reason: '未配置语音控制台 Key' }
-      return { channel: 'volcengine', reason: 'OpenClaw 标准接口（语音控制台 Key）' }
+    const firstReady = candidates.find((item) => item.ready)
+    if (firstReady) {
+      return {
+        channel: firstReady.channel,
+        reason: `自动选择：${firstReady.reason}；候选顺序 ${candidates
+          .map((item) => item.channel)
+          .join(' → ')}`
+      }
     }
-
-    // auto：有语音控制台 Key 时优先官方标准接口；否则预设音色才允许走 bridge。
-    if (snap.hasCloneKey) {
-      return { channel: 'volcengine', reason: '自动选择：标准接口（已配置语音控制台 Key）' }
+    return {
+      channel: null,
+      reason: `没有可用通道：${candidates.map((item) => item.blockedReason).join('；')}`
     }
-    if (preset && snap.hasTtsKey && this.bridgeScriptPath) {
-      return { channel: 'bridge', reason: '自动选择：本地桥接（仅有 Agent Plan Key）' }
-    }
-    return { channel: null, reason: '没有可用 Key：需要 Agent Plan Key 或语音控制台 Key' }
   }
 
   /**
@@ -567,6 +685,24 @@ export class VoiceManager {
     const resolved = this.resolveConversationChannel(snap)
     if (!resolved.channel) return null
     try {
+      if (resolved.channel === 'local-external') {
+        const service = snap.externalService
+        if (!service || !this.localBridgeScriptPath) return null
+        return buildOpenClawTtsBlock({
+          conversationTts: snap.settings.conversationTts,
+          channel: 'local-external',
+          resourceId: this.resolveResourceFor(snap.settings.defaultSpeaker),
+          speakerVoice: snap.settings.defaultSpeaker,
+          localExternal: {
+            bridgeScriptPath: this.localBridgeScriptPath,
+            bridgeSettingsPath: this.localBridgeSettingsPath,
+            responseFormat: service.responseFormat,
+            fallback: snap.settings.conversationFallback,
+            fallbackResourceId: this.resolveResourceFor(snap.settings.defaultSpeaker),
+            fallbackSpeakerVoice: snap.settings.defaultSpeaker
+          }
+        }) as unknown as Record<string, unknown>
+      }
       return buildOpenClawTtsBlock({
         conversationTts: snap.settings.conversationTts,
         channel: resolved.channel,
@@ -583,18 +719,57 @@ export class VoiceManager {
   async buildOpenClawTtsEnv(): Promise<Record<string, string>> {
     const settings = await this.loadSettings()
     const status = await this.secrets.status()
+    const externalService =
+      this.externalServices && settings.externalProviderId
+        ? ((await this.externalServices.get(settings.externalProviderId)) ?? null)
+        : null
     const resolved = this.resolveConversationChannel({
       settings,
       hasTtsKey: status.tts.hasKey,
-      hasCloneKey: status.clone.hasKey
+      hasCloneKey: status.clone.hasKey,
+      externalService
     })
-    // 网关启动前确保热更文件存在且是最新音色（仅 bridge 需要；其它情况清掉，避免读到过期音色）
+    // 网关启动前确保对应通道的热更文件存在且最新；其余通道的文件清掉，避免读到过期配置
     if (resolved.channel === 'bridge') {
       await this.writeBridgeSettingsFile(settings)
+      await this.clearLocalBridgeSettingsFile()
+    } else if (resolved.channel === 'local-external') {
+      await this.writeLocalBridgeSettingsFile(externalService)
+      await this.clearBridgeSettingsFile()
     } else {
       await this.clearBridgeSettingsFile()
+      await this.clearLocalBridgeSettingsFile()
     }
     if (!resolved.channel) return {}
+    if (resolved.channel === 'local-external') {
+      if (!externalService || !this.localBridgeScriptPath) return {}
+      // 实例 Key 可空（内网裸部署）；保底 Key 只在用户选择降级火山时注入
+      const instanceKey = this.externalSecrets
+        ? await this.externalSecrets.get(externalService.id)
+        : null
+      const fallbackKey =
+        settings.conversationFallback === 'volcengine'
+          ? await this.secrets.get('clone')
+          : null
+      return buildOpenClawTtsEnv(
+        {
+          conversationTts: settings.conversationTts,
+          channel: 'local-external',
+          resourceId: this.resolveResourceFor(settings.defaultSpeaker),
+          speakerVoice: settings.defaultSpeaker,
+          localExternal: {
+            bridgeScriptPath: this.localBridgeScriptPath,
+            bridgeSettingsPath: this.localBridgeSettingsPath,
+            responseFormat: externalService.responseFormat,
+            fallback: settings.conversationFallback,
+            fallbackResourceId: this.resolveResourceFor(settings.defaultSpeaker),
+            fallbackSpeakerVoice: settings.defaultSpeaker
+          }
+        },
+        instanceKey,
+        fallbackKey
+      )
+    }
     const key = await this.secrets.get(resolved.channel === 'bridge' ? 'tts' : 'clone')
     return buildOpenClawTtsEnv(
       {
@@ -612,16 +787,40 @@ export class VoiceManager {
   async getOpenClawStatus(): Promise<VoiceOpenClawStatus> {
     const settings = await this.loadSettings()
     const status = await this.secrets.status()
+    const externalService =
+      this.externalServices && settings.externalProviderId
+        ? ((await this.externalServices.get(settings.externalProviderId)) ?? null)
+        : null
     const resolved = this.resolveConversationChannel({
       settings,
       hasTtsKey: status.tts.hasKey,
-      hasCloneKey: status.clone.hasKey
+      hasCloneKey: status.clone.hasKey,
+      externalService
     })
+    let reason = resolved.reason
+    // 本地实例已生效但保底选了火山却没配语音控制台 Key：保底实际不会触发，必须如实告诉用户
+    if (
+      resolved.channel === 'local-external' &&
+      settings.conversationFallback === 'volcengine' &&
+      !status.clone.hasKey
+    ) {
+      reason = `${reason}；注意：未配置语音控制台 Key，失败保底不会生效`
+    }
     return {
       setting: settings.conversationChannel,
       effective: resolved.channel,
-      reason: resolved.reason
+      reason
     }
+  }
+
+  /** 本地实例通道自检成功后的文案：保底是否真的武装，要看语音控制台 Key 在不在。 */
+  private localExternalTestMessage(settings: VoiceSettings, hasCloneKey: boolean): string {
+    if (settings.conversationFallback !== 'volcengine') {
+      return '本地 TTS 实例合成成功；未开启保底，失败将直接报错'
+    }
+    return hasCloneKey
+      ? '本地 TTS 实例合成成功；失败时由 OpenClaw 候选链降级火山标准接口'
+      : '本地 TTS 实例合成成功；但未配置语音控制台 Key，失败保底不会生效，请补 Key 或改为不降级'
   }
 
   /**
@@ -631,13 +830,38 @@ export class VoiceManager {
   async testOpenClawChannel(): Promise<VoiceOpenClawTestResult> {
     const settings = await this.loadSettings()
     const status = await this.secrets.status()
+    const externalService =
+      this.externalServices && settings.externalProviderId
+        ? ((await this.externalServices.get(settings.externalProviderId)) ?? null)
+        : null
     const resolved = this.resolveConversationChannel({
       settings,
       hasTtsKey: status.tts.hasKey,
-      hasCloneKey: status.clone.hasKey
+      hasCloneKey: status.clone.hasKey,
+      externalService
     })
     if (!resolved.channel) {
       return { ok: false, channel: null, message: resolved.reason }
+    }
+    if (resolved.channel === 'local-external') {
+      try {
+        const audio = await this.speak({
+          text: '你好，我是大肥鱼。',
+          options: { engine: 'external', providerId: settings.externalProviderId }
+        })
+        return {
+          ok: true,
+          channel: 'local-external',
+          message: this.localExternalTestMessage(settings, status.clone.hasKey),
+          audio
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          channel: 'local-external',
+          message: error instanceof Error ? error.message : '本地 TTS 实例合成失败'
+        }
+      }
     }
     if (resolved.channel === 'bridge') {
       try {
@@ -713,6 +937,12 @@ export class VoiceManager {
       throw new VoiceError(
         VOICE_ERROR_CODES.INVALID_INPUT,
         '本地 TTS 路由必须先选择一个本地实例'
+      )
+    }
+    if (settings.conversationChannel === 'local-external' && !settings.externalProviderId) {
+      throw new VoiceError(
+        VOICE_ERROR_CODES.INVALID_INPUT,
+        '对话内语音选了本地 TTS 实例，请先选择一个实例'
       )
     }
     if (settings.externalProviderId) {

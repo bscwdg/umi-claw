@@ -7,7 +7,7 @@
 //
 // 用法：node test/voice.accept.mjs（npm run accept:voice）
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -19,6 +19,7 @@ import {
   printResult,
   repoRoot,
   tmpDir,
+  waitFor,
   writeJson
 } from './_lib.mjs'
 
@@ -1208,6 +1209,238 @@ await recorder.check('V7', '角色语音条：format/sampleRate 覆盖为 pcm/16
   assertEq(result.mime, 'audio/wav', '输出 WAV')
   assertEq(audio.bytes.length > 44, true, '带 WAV 头')
   return 'pcm/16k 覆盖生效'
+})
+
+await recorder.check('V20', '对话内语音 local-external：tts 块形状、保底开关与密钥边界', async () => {
+  const { buildOpenClawTtsBlock, buildOpenClawTtsEnv } = openclawTtsMod
+  const baseInput = {
+    conversationTts: 'always',
+    channel: 'local-external',
+    resourceId: 'seed-icl-2.0',
+    speakerVoice: 'umi_voice_test_0001',
+    localExternal: {
+      bridgeScriptPath: 'local-tts-bridge.mjs',
+      bridgeSettingsPath: 'local-tts-bridge.json',
+      responseFormat: 'wav',
+      fallback: 'volcengine',
+      fallbackResourceId: 'seed-icl-2.0',
+      fallbackSpeakerVoice: 'umi_voice_test_0001'
+    }
+  }
+  const block = buildOpenClawTtsBlock(baseInput)
+  assertEq(block.provider, 'tts-local-cli', '主 provider 是本地 CLI')
+  assertEq(block.providers['tts-local-cli'].outputFormat, 'wav', 'outputFormat 跟随实例')
+  assertEq(
+    block.providers['tts-local-cli'].args[0],
+    'local-tts-bridge.mjs',
+    'CLI 指向本地实例桥接脚本'
+  )
+  assertEq(
+    block.providers['tts-local-cli'].args[1],
+    '{{Text}}',
+    'CLI 参数保留文本占位符（网关合成时替换）'
+  )
+  assertEq(
+    block.providers['tts-local-cli'].args[2],
+    '{{OutputPath}}',
+    'CLI 参数保留输出路径占位符'
+  )
+  assertEq(block.providers.volcengine.resourceId, 'seed-icl-2.0', '保底火山 provider 同块保留')
+  assertEq(
+    /apiKey|api_key|secret|token/i.test(JSON.stringify(block)),
+    false,
+    'tts 块不含任何密钥字段'
+  )
+  const failBlock = buildOpenClawTtsBlock({
+    ...baseInput,
+    localExternal: { ...baseInput.localExternal, fallback: 'fail' }
+  })
+  assertEq(failBlock.providers.volcengine, undefined, 'fail 档不写火山 provider')
+
+  // 实例本身没 Key（内网裸部署）但保底有 Key：两个通道的变量不能互相吞掉
+  const envNoInstanceKey = buildOpenClawTtsEnv(baseInput, null, 'clone-key-1')
+  assertEq(envNoInstanceKey.VOLCENGINE_TTS_API_KEY, 'clone-key-1', '无实例 Key 仍注入保底 Key')
+  assertEq(envNoInstanceKey.UMI_LOCAL_TTS_API_KEY, undefined, '没实例 Key 不伪造变量')
+  const envBoth = buildOpenClawTtsEnv(baseInput, 'local-key-1', 'clone-key-1')
+  assertEq(envBoth.UMI_LOCAL_TTS_API_KEY, 'local-key-1', '实例 Key 只走环境变量')
+  assertEq(envBoth.UMI_LOCAL_TTS_SETTINGS_FILE, 'local-tts-bridge.json', '热更文件路径注入')
+  const failEnv = buildOpenClawTtsEnv(
+    { ...baseInput, localExternal: { ...baseInput.localExternal, fallback: 'fail' } },
+    'local-key-1',
+    'clone-key-1'
+  )
+  assertEq(failEnv.VOLCENGINE_TTS_API_KEY, undefined, 'fail 档零火山 Key 泄漏')
+  assertEq(failEnv.VOLCENGINE_TTS_RESOURCE_ID, undefined, 'fail 档不注入火山资源变量')
+  assertEq(failEnv.VOLCENGINE_TTS_VOICE, undefined, 'fail 档不注入火山音色变量')
+  const offEnv = buildOpenClawTtsEnv(
+    { ...baseInput, conversationTts: 'off' },
+    'local-key-1',
+    'clone-key-1'
+  )
+  assertEq(Object.keys(offEnv).length, 0, '关闭即不注入任何变量')
+  return '块形状/保底开关/密钥边界 均正确'
+})
+
+await recorder.check('V21', 'Manager 本地实例通道：auto 优先本地、热更文件、保底关闭与缺实例下线', async () => {
+  const localService = {
+    id: 'ext:11111111-1111-4111-8111-111111111111',
+    kind: 'openai-speech',
+    label: '本机 TTS测试',
+    baseUrl: 'http://192.168.31.36:17493/v1',
+    model: 'tts-2',
+    voice: '3afab0b1-ae40-4760-82cb-b3f78329c324',
+    responseFormat: 'wav'
+  }
+  let currentService = localService
+  const externalServices = {
+    async get(id) {
+      return currentService && currentService.id === id ? currentService : null
+    },
+    async list() {
+      return currentService ? [currentService] : []
+    }
+  }
+  const externalSecrets = {
+    async get(id) {
+      return id === localService.id ? 'local-key-12345678' : null
+    },
+    async status(id) {
+      const has = id === localService.id
+      return { hasKey: has, tail: has ? '****5678' : null }
+    }
+  }
+  const localSettingsFile = join(runDir, 'voice', 'local-tts-bridge.json')
+  const manager = createVoiceManager({
+    storage: memoryStore(),
+    secrets: secretStore({ tts: 'tts-key-12345678', clone: 'clone-key-12345678' }),
+    cacheDir: join(runDir, 'local-conv-audio'),
+    externalServices,
+    externalSecrets,
+    localBridgeScriptPath: 'local-tts-bridge.mjs',
+    localBridgeSettingsPath: localSettingsFile,
+    bridgeScriptPath: 'volc-tts.mjs',
+    bridgeSettingsPath: join(runDir, 'voice', 'tts-bridge.json'),
+    fetchImpl: async () => ttsResponse(),
+    now: () => new Date('2026-10-29T10:00:00+08:00').getTime(),
+    logger: () => undefined
+  })
+  await manager.updateSettings({
+    conversationTts: 'always',
+    conversationChannel: 'auto',
+    externalProviderId: localService.id
+  })
+  const status = await manager.getOpenClawStatus()
+  assertEq(status.effective, 'local-external', 'auto 取候选清单第一个就绪项：本地实例')
+
+  const block = manager.buildOpenClawTtsConfigSync()
+  assertEq(block.provider, 'tts-local-cli', '同步块主 provider 为本地 CLI')
+  assertEq(block.providers['tts-local-cli'].outputFormat, 'wav', '同步块 outputFormat 跟随实例')
+  assert(block.providers.volcengine, '默认保底：火山 provider 在候选链里')
+  assertEq(
+    block.providers.volcengine.resourceId,
+    'seed-tts-2.0',
+    '保底 provider 资源按当前音色类型解析'
+  )
+  assertEq(
+    block.providers.volcengine.speakerVoice,
+    'zh_female_vv_uranus_bigtts',
+    '保底 provider 音色取当前默认音色'
+  )
+  // refreshOpenClawTtsSnapshot 对热更文件是 fire-and-forget：轮询等落盘，别靠固定 sleep
+  const hot = JSON.parse(
+    await waitFor(() => readFileSync(localSettingsFile, 'utf-8'), {
+      label: '本地实例热更文件'
+    })
+  )
+  assertEq(hot.baseUrl, localService.baseUrl, '热更文件含实例地址')
+  assertEq(hot.voice, localService.voice, '热更文件含实例音色')
+  assertEq(hot.responseFormat, 'wav', '热更文件含响应格式')
+
+  const env = await manager.buildOpenClawTtsEnv()
+  assertEq(env.UMI_LOCAL_TTS_API_KEY, 'local-key-12345678', '实例 Key 注入网关环境')
+  assertEq(env.VOLCENGINE_TTS_API_KEY, 'clone-key-12345678', '保底火山 Key 注入网关环境')
+  assertEq(env.UMI_LOCAL_TTS_SETTINGS_FILE, localSettingsFile, '热更文件路径注入')
+
+  await manager.updateSettings({ conversationFallback: 'fail' })
+  const failBlock = manager.buildOpenClawTtsConfigSync()
+  assertEq(failBlock.providers.volcengine, undefined, '关闭保底后块内无火山 provider')
+  const failEnv = await manager.buildOpenClawTtsEnv()
+  assertEq(failEnv.VOLCENGINE_TTS_API_KEY, undefined, '关闭保底后零火山 Key')
+  assertEq(failEnv.UMI_LOCAL_TTS_API_KEY, 'local-key-12345678', '实例 Key 不受保底开关影响')
+
+  // 热更文件互斥：切到 bridge 时本地实例文件必须清掉、bridge 文件落盘；切回来反向清理
+  const bridgeSettingsFile = join(runDir, 'voice', 'tts-bridge.json')
+  await manager.updateSettings({ conversationChannel: 'bridge' })
+  await waitFor(() => !existsSync(localSettingsFile), { label: '切 bridge 后本地实例热更文件被清' })
+  await waitFor(() => existsSync(bridgeSettingsFile), { label: 'bridge 热更文件落盘' })
+  await manager.updateSettings({ conversationChannel: 'local-external' })
+  await waitFor(() => !existsSync(bridgeSettingsFile), { label: '切回本地后 bridge 热更文件被清' })
+  await waitFor(() => existsSync(localSettingsFile), { label: '本地实例热更文件重新落盘' })
+
+  // 手动指定本地实例（非 auto）：就绪时 reason 指向本地实例，同步块仍是本地 CLI
+  await manager.updateSettings({ conversationFallback: 'volcengine' })
+  const manual = await manager.getOpenClawStatus()
+  assertEq(manual.effective, 'local-external', '手动本地实例通道生效')
+  assert(/本地 TTS 实例/.test(manual.reason), '手动通道原因指向本地实例')
+
+  let invalidCode = ''
+  try {
+    await manager.updateSettings({ conversationChannel: 'local-external', externalProviderId: '' })
+  } catch (error) {
+    invalidCode = error.code
+  }
+  assertEq(invalidCode, VOICE_ERROR_CODES.INVALID_INPUT, '选本地通道却没实例：拒绝保存')
+
+  // 实例被删除：手动本地通道下线并给出可读原因，不再产出残缺 tts 块
+  await manager.updateSettings({
+    conversationChannel: 'local-external',
+    externalProviderId: localService.id,
+    conversationFallback: 'volcengine'
+  })
+  currentService = null
+  // 实例记录消失（如存储被外部清掉）：读设置会刷新快照但不经过保存校验，
+  // 模拟真实「实例没了而设置仍指着它」的防御下线路径
+  await manager.getSettings()
+  const missing = await manager.getOpenClawStatus()
+  assertEq(missing.effective, null, '实例消失后通道下线')
+  assert(/本地 TTS 实例不存在/.test(missing.reason), '原因指向实例缺失')
+  assertEq(manager.buildOpenClawTtsConfigSync(), null, '通道下线时同步块为 null')
+
+  // 回归：没有本地实例的老配置，auto 仍按火山两条通道选路
+  const plain = makeManager({ fetchImpl: async () => ttsResponse() })
+  await plain.updateSettings({ conversationTts: 'always', conversationChannel: 'auto' })
+  const plainStatus = await plain.getOpenClawStatus()
+  assertEq(plainStatus.effective, 'volcengine', '无本地实例时 auto 回落火山标准接口')
+
+  // 本地实例存在但桥接脚本路径缺失：auto 跳过被阻断的本地候选，改选火山；
+  // 手动硬选本地则整体下线并给出可读阻断原因（候选清单是动态的，不是写死两条路）
+  currentService = localService
+  const scriptless = createVoiceManager({
+    storage: memoryStore(),
+    secrets: secretStore({ tts: 'tts-key-12345678', clone: 'clone-key-12345678' }),
+    cacheDir: join(runDir, 'scriptless-audio'),
+    externalServices,
+    externalSecrets,
+    localBridgeSettingsPath: join(runDir, 'voice', 'scriptless-local.json'),
+    bridgeScriptPath: 'volc-tts.mjs',
+    bridgeSettingsPath: join(runDir, 'voice', 'scriptless-bridge.json'),
+    fetchImpl: async () => ttsResponse(),
+    now: () => new Date('2026-10-29T10:00:00+08:00').getTime(),
+    logger: () => undefined
+  })
+  await scriptless.updateSettings({
+    conversationTts: 'always',
+    conversationChannel: 'auto',
+    externalProviderId: localService.id
+  })
+  const scriptlessAuto = await scriptless.getOpenClawStatus()
+  assertEq(scriptlessAuto.effective, 'volcengine', '本地脚本缺失时 auto 跳过本地选火山')
+  await scriptless.updateSettings({ conversationChannel: 'local-external' })
+  const scriptlessManual = await scriptless.getOpenClawStatus()
+  assertEq(scriptlessManual.effective, null, '手动本地通道缺脚本时下线')
+  assert(/桥接脚本路径缺失/.test(scriptlessManual.reason), '阻断原因指向脚本路径')
+  assertEq(scriptless.buildOpenClawTtsConfigSync(), null, '下线路径不产出残缺 tts 块')
+  return 'auto 选路/热更文件/保底开关/缺实例下线/老配置回归 均正确'
 })
 
 const voiceResult = recorder.toJSON({

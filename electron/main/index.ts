@@ -1465,6 +1465,15 @@ app.whenReady().then(async () => {
         : join(app.getAppPath(), 'resources', 'voice', 'volc-tts.mjs'),
       // bridge 热更文件：音色/资源 ID 每次合成时读取（改音色不必重启网关）
       bridgeSettingsPath: join(configManager.getDataDir(), 'voice', 'tts-bridge.json'),
+      // 对话内语音走用户本地 TTS 实例时的桥接脚本与热更文件（实例连接信息，不含 Key）
+      localBridgeScriptPath: app.isPackaged
+        ? join(process.resourcesPath, 'resources', 'voice', 'local-tts-bridge.mjs')
+        : join(app.getAppPath(), 'resources', 'voice', 'local-tts-bridge.mjs'),
+      localBridgeSettingsPath: join(
+        configManager.getDataDir(),
+        'voice',
+        'local-tts-bridge.json'
+      ),
       logger: (message) => console.log(message),
       onSettingsChanged: () => {
         // tts 块写入 openclaw.json；环境变量部分由网关下次启动生效。

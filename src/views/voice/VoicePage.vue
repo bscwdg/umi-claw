@@ -286,11 +286,54 @@
           </div>
           <div class="form-group">
             <label class="form-label">对话内语音通道</label>
-            <select v-model="voiceForm.conversationChannel" class="form-input">
-              <option value="auto">自动（有语音控制台 Key 优先标准接口）</option>
-              <option value="bridge">本地桥接（Agent Plan Key）</option>
-              <option value="volcengine">标准接口（语音控制台 Key）</option>
-            </select>
+            <div class="radio-group" role="radiogroup" aria-label="对话内语音通道">
+              <label class="radio-item">
+                <input v-model="voiceForm.conversationChannel" type="radio" value="auto" />
+                <span>自动（按已配置可用列表顺序选，失败自动切下一个）</span>
+              </label>
+              <label class="radio-item">
+                <input
+                  v-model="voiceForm.conversationChannel"
+                  type="radio"
+                  value="local-external"
+                />
+                <span>本地 TTS 实例（17493 等自建服务）</span>
+              </label>
+              <label class="radio-item">
+                <input
+                  v-model="voiceForm.conversationChannel"
+                  type="radio"
+                  value="volcengine"
+                />
+                <span>火山标准接口（语音控制台 Key）</span>
+              </label>
+              <label class="radio-item">
+                <input v-model="voiceForm.conversationChannel" type="radio" value="bridge" />
+                <span>火山本地桥接（Agent Plan Key）</span>
+              </label>
+            </div>
+            <div
+              v-if="voiceForm.conversationChannel === 'local-external'"
+              class="radio-group radio-sub"
+            >
+              <span class="radio-sub-label">失败保底</span>
+              <label class="radio-item">
+                <input
+                  v-model="voiceForm.conversationFallback"
+                  type="radio"
+                  value="volcengine"
+                />
+                <span>降级火山标准接口（推荐）</span>
+              </label>
+              <label class="radio-item">
+                <input
+                  v-model="voiceForm.conversationFallback"
+                  type="radio"
+                  value="fail"
+                />
+                <span>不降级，直接报错</span>
+              </label>
+            </div>
             <p class="field-hint">{{ openclawStatusText }}</p>
             <div class="actions">
               <button class="btn btn-sm" :disabled="busy" @click="testOpenClaw">
@@ -318,7 +361,13 @@
               }}
             </p>
           </div>
-          <div class="form-group" v-if="voiceForm.speakRoute !== 'cloud'">
+          <div
+            class="form-group"
+            v-if="
+              voiceForm.speakRoute !== 'cloud' ||
+              voiceForm.conversationChannel === 'local-external'
+            "
+          >
             <label class="form-label">本地 TTS 实例</label>
             <select v-model="voiceForm.externalProviderId" class="form-input">
               <option value="">未选择</option>
@@ -331,6 +380,9 @@
               音色 {{ selectedExternalService.voice }}
             </p>
             <p class="field-hint" v-else>请先在下方「本地 TTS 服务」中添加并选择实例。</p>
+            <p class="field-hint" v-if="voiceForm.conversationChannel === 'local-external'">
+              地址/音色改动即时生效；切换实例或改 API Key 后需重启网关，否则旧 Key 会发往新实例。
+            </p>
           </div>
           <div class="form-group">
             <label class="form-label">复刻模型（仅克隆音色）</label>
@@ -955,7 +1007,8 @@ const voiceForm = reactive({
   speakRoute: 'cloud' as 'cloud' | 'external' | 'auto',
   externalProviderId: '',
   conversationTts: 'off' as 'off' | 'always' | 'inbound' | 'tagged',
-  conversationChannel: 'auto' as 'auto' | 'bridge' | 'volcengine',
+  conversationChannel: 'auto' as 'auto' | 'bridge' | 'volcengine' | 'local-external',
+  conversationFallback: 'volcengine' as 'volcengine' | 'fail',
   cloneModel: 'seed-tts-2.0-standard' as 'seed-tts-2.0-standard' | 'seed-tts-2.0-expressive'
 })
 
@@ -1103,6 +1156,8 @@ async function refreshSettings(): Promise<void> {
   voiceForm.speakRoute = next.speakRoute
   voiceForm.externalProviderId = next.externalProviderId
   voiceForm.conversationTts = next.conversationTts
+  voiceForm.conversationChannel = next.conversationChannel
+  voiceForm.conversationFallback = next.conversationFallback
   voiceForm.cloneModel = next.cloneModel
   budgetLimit.value = next.dailyCharLimit
   syncAdvancedForm(next)
@@ -1111,6 +1166,9 @@ async function refreshSettings(): Promise<void> {
 const openclawStatusText = computed(() => {
   const s = openclawStatus.value
   if (!s) return '正在检测对话内语音通道…'
+  if (s.effective === 'local-external') {
+    return `当前生效：本地 TTS 实例 · ${s.reason}`
+  }
   if (s.effective === 'bridge') return `当前生效：本地桥接 · ${s.reason}`
   if (s.effective === 'volcengine') return `当前生效：OpenClaw 标准接口 · ${s.reason}`
   return `当前不可用：${s.reason}`
@@ -1458,6 +1516,9 @@ async function doDeleteExternalService(service: ExternalTtsServiceView): Promise
     if (settings.value?.externalProviderId === service.id) {
       settings.value = await api.settings.get()
       voiceForm.externalProviderId = settings.value.externalProviderId
+      // 主进程已把对话通道从 local-external 收回 auto：单选必须同步，避免界面停在已失效通道
+      voiceForm.conversationChannel = settings.value.conversationChannel
+      await refreshOpenClawStatus()
     }
     showNotice('本地 TTS 实例已删除')
   } catch (e) {
@@ -1527,6 +1588,7 @@ async function load(): Promise<void> {
     voiceForm.externalProviderId = nextSettings.externalProviderId
     voiceForm.conversationTts = nextSettings.conversationTts
     voiceForm.conversationChannel = nextSettings.conversationChannel
+    voiceForm.conversationFallback = nextSettings.conversationFallback
     voiceForm.cloneModel = nextSettings.cloneModel
     budgetLimit.value = nextSettings.dailyCharLimit
     syncAdvancedForm(nextSettings)
@@ -1643,6 +1705,7 @@ async function saveVoiceSettings(): Promise<void> {
       externalProviderId: voiceForm.externalProviderId,
       conversationTts: voiceForm.conversationTts,
       conversationChannel: voiceForm.conversationChannel,
+      conversationFallback: voiceForm.conversationFallback,
       cloneModel: voiceForm.cloneModel
     })
     await refreshOpenClawStatus()
@@ -2004,6 +2067,46 @@ onBeforeUnmount(() => {
 
 .field-hint.warning {
   color: var(--warning);
+}
+
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.radio-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+
+.radio-item input[type='radio'] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.radio-item span {
+  line-height: 1.4;
+}
+
+.radio-sub {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.radio-sub-label {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
 }
 
 .state-pill,

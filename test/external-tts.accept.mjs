@@ -17,6 +17,7 @@ import {
   printResult,
   repoRoot,
   tmpDir,
+  waitFor,
   writeJson
 } from './_lib.mjs'
 
@@ -786,6 +787,40 @@ await recorder.check('E6', '语音页已接入本地实例管理、必填校验�
     vue.includes('if (seq !== externalProfilesSeq) return'),
     '迟到回包按序号丢弃（成功与失败两条路径都要守）'
   )
+  // 对话内语音通道单选：auto/本地实例/火山标准/桥接 四档，保底子单选只在本地实例档出现
+  assert(vue.includes('role="radiogroup" aria-label="对话内语音通道"'), '通道选择是单选组')
+  assert(
+    vue.includes('本地 TTS 实例（17493 等自建服务）'),
+    '本地 TTS 实例单选项文案'
+  )
+  assert(
+    vue.includes('自动（按已配置可用列表顺序选，失败自动切下一个）'),
+    '自动档文案体现候选链顺序选路'
+  )
+  assert(
+    vue.includes('v-if="voiceForm.conversationChannel === \'local-external\'"'),
+    '失败保底只在本地实例通道下展示'
+  )
+  assert(vue.includes('失败保底'), '失败保底分组标题')
+  assert(vue.includes('降级火山标准接口（推荐）'), '保底：降级火山标准接口')
+  assert(vue.includes('不降级，直接报错'), '保底：不降级直接报错')
+  assert(
+    vue.includes('v-model="voiceForm.conversationFallback"'),
+    '保底策略与表单状态双向绑定'
+  )
+  // 保底选择必须随主表单保存，且两个设置加载器都要回填（漏一个就会出现界面回显默认值）
+  assert(
+    vue.includes('conversationFallback: voiceForm.conversationFallback,'),
+    'conversationFallback 随语音设置保存透传'
+  )
+  assert(
+    vue.includes('voiceForm.conversationFallback = next.conversationFallback'),
+    'refreshSettings 回填保底策略'
+  )
+  assert(
+    vue.includes('voiceForm.conversationFallback = nextSettings.conversationFallback'),
+    '首屏加载器回填保底策略'
+  )
   return 'VoicePage 本地实例操作/必填/草稿测试入口已装配'
 })
 
@@ -1446,6 +1481,471 @@ await recorder.check('E12', 'Manager 草稿音色查询不落盘；Key 复用与
   }
   assertEq(badCode, VOICE_ERROR_CODES.INVALID_INPUT, '非 http(s) 地址拒绝')
   return '草稿查询不落盘、Key 复用/剥离与非法地址拒绝正确'
+})
+
+await recorder.check('E13', 'local-tts-bridge 脚本：OpenAI 优先、404 回落原生、失败非零退出', async () => {
+  const { spawn } = await import('node:child_process')
+  const { createServer } = await import('node:http')
+  const scriptPath = join(repoRoot, 'resources', 'voice', 'local-tts-bridge.mjs')
+  const settingsFile = join(runDir, 'local-bridge-settings.json')
+
+  function wavBytes(dataSize = 20) {
+    const wav = Buffer.alloc(44 + dataSize)
+    wav.write('RIFF', 0, 'ascii')
+    wav.writeUInt32LE(36 + dataSize, 4)
+    wav.write('WAVE', 8, 'ascii')
+    wav.write('fmt ', 12, 'ascii')
+    wav.writeUInt32LE(16, 16)
+    wav.writeUInt16LE(1, 20)
+    wav.writeUInt16LE(1, 22)
+    wav.writeUInt32LE(16000, 24)
+    wav.writeUInt16LE(2, 32)
+    wav.writeUInt16LE(16, 34)
+    wav.write('data', 36, 'ascii')
+    wav.writeUInt32LE(dataSize, 40)
+    for (let i = 0; i < dataSize; i += 1) wav[44 + i] = i % 256
+    return wav
+  }
+  // ID3 头 + 一帧 MPEG 同步头，过脚本的 isMp3 校验即可
+  const mp3Bytes = Buffer.from([0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0xff, 0xfb, 0x90, 0x64])
+
+  const requests = []
+  let mode = 'openai'
+  const server = await new Promise((resolve) => {
+    const created = createServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/v1/audio/speech') {
+        let openAiRaw = ''
+        req.on('data', (chunk) => {
+          openAiRaw += chunk
+        })
+        req.on('end', () => {
+          requests.push({
+            path: req.url,
+            auth: req.headers.authorization || null,
+            body: JSON.parse(openAiRaw)
+          })
+          if (mode === 'openai') {
+            res.writeHead(200, { 'Content-Type': 'audio/mpeg' })
+            res.end(mp3Bytes)
+            return
+          }
+          res.writeHead(404)
+          res.end('not found')
+        })
+        return
+      }
+      if (req.method === 'GET' && req.url === '/profiles') {
+        requests.push({ path: req.url, auth: req.headers.authorization || null })
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(
+          JSON.stringify([
+            {
+              id: 'p-1',
+              name: '测试克隆1',
+              voice_type: 'cloned',
+              language: 'zh',
+              default_engine: 'qwen',
+              sample_count: 1
+            }
+          ])
+        )
+        return
+      }
+      if (req.method === 'POST' && req.url === '/generate/stream') {
+        let raw = ''
+        req.on('data', (chunk) => {
+          raw += chunk
+        })
+        req.on('end', () => {
+          requests.push({
+            path: req.url,
+            body: JSON.parse(raw),
+            auth: req.headers.authorization || null
+          })
+          if (mode === 'fail') {
+            res.writeHead(500)
+            res.end('boom')
+            return
+          }
+          res.writeHead(200, { 'Content-Type': 'audio/wav' })
+          res.end(wavBytes())
+        })
+        return
+      }
+      res.writeHead(404)
+      res.end()
+    })
+    created.listen(0, '127.0.0.1', () => resolve(created))
+  })
+  const port = server.address().port
+  writeFileSync(
+    settingsFile,
+    JSON.stringify({
+      version: 1,
+      baseUrl: `http://127.0.0.1:${port}/v1`,
+      voice: 'p-1',
+      model: 'tts-2',
+      responseFormat: 'mp3',
+      profilesPath: ''
+    })
+  )
+
+  function runBridge(text) {
+    return new Promise((resolve) => {
+      const out = join(runDir, `bridge-out-${Date.now()}-${Math.random().toString(36).slice(2)}.bin`)
+      const child = spawn(process.execPath, [scriptPath, text, out], {
+        env: {
+          ...process.env,
+          UMI_LOCAL_TTS_SETTINGS_FILE: settingsFile,
+          UMI_LOCAL_TTS_API_KEY: 'local-key-123456'
+        }
+      })
+      let stderr = ''
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk.toString()
+      })
+      // spawn 级失败（脚本路径错等）也要落成失败结论，不能让验收进程直接崩
+      child.on('error', (error) => resolve({ code: -1, out, stderr: String(error), exists: false, bytes: null }))
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL')
+        resolve({ code: -2, out, stderr: stderr + '\n[test] bridge 超时被杀', exists: existsSync(out), bytes: null })
+      }, 30000)
+      child.on('close', (code) => {
+        clearTimeout(timer)
+        resolve({ code, out, stderr, exists: existsSync(out), bytes: existsSync(out) ? readFileSync(out) : null })
+      })
+    })
+  }
+
+  try {
+    // ① OpenAI 兼容面可用：直接打 /v1/audio/speech，带实例 Key，不查 profiles
+    const openAi = await runBridge('你好，OpenAI 面。')
+    assertEq(openAi.code, 0, 'OpenAI 面成功退出')
+    assert(openAi.exists, '产出音频文件')
+    assert(openAi.bytes.equals(mp3Bytes), '音频字节原样落盘')
+    assertEq(requests[0].path, '/v1/audio/speech', '先打 OpenAI 兼容面')
+    assertEq(requests[0].auth, 'Bearer local-key-123456', '携带实例 Key')
+    assertEq(requests[0].body.model, 'tts-2', 'OpenAI 面请求带 model')
+    assertEq(requests[0].body.input, '你好，OpenAI 面。', 'OpenAI 面请求带 input')
+    assertEq(requests[0].body.voice, 'p-1', 'OpenAI 面请求带 voice')
+    assertEq(requests[0].body.response_format, 'mp3', 'OpenAI 面请求带 response_format')
+    assertEq(
+      requests.some((item) => item.path === '/profiles'),
+      false,
+      'OpenAI 面可用时不得查询音色列表'
+    )
+
+    // ② OpenAI 面 404：回落 Voicebox 原生 profiles + generate/stream，引擎按克隆音色派生
+    mode = 'native'
+    const native = await runBridge('你好，原生面。')
+    assertEq(native.code, 0, '原生面成功退出')
+    assert(native.bytes.subarray(0, 4).toString('ascii') === 'RIFF', '原生面产出 WAV')
+    const profileCall = requests.find((item) => item.path === '/profiles')
+    const generateCall = requests.find((item) => item.path === '/generate/stream')
+    assert(profileCall, '回落时先查音色列表')
+    assertEq(profileCall.auth, 'Bearer local-key-123456', '音色查询同样带 Key')
+    assert(generateCall, '调用原生合成接口')
+    // 与宿主 openaiSpeech.synthesizeVoicebox 同契约：原生 /generate/stream 不带 Authorization
+    assertEq(generateCall.auth, null, '原生合成接口不携带 Key')
+    assertEq(generateCall.body.profile_id, 'p-1', 'profile_id 取选中音色')
+    assertEq(generateCall.body.engine, 'qwen', '克隆音色引擎为 qwen')
+    assertEq(generateCall.body.model_size, '1.7B', '克隆音色带 1.7B model_size')
+
+    // ③ 两条路都失败：非零退出，交给 OpenClaw 候选链保底，不产空文件
+    mode = 'fail'
+    const failed = await runBridge('注定失败。')
+    assert(failed.code !== 0, `失败必须非零退出（实际 ${failed.code}）`)
+    assertEq(failed.exists, false, '失败不产出音频文件')
+
+    // ④ 长文本分段：两段 WAV 重建容器头，data 长度为两段之和
+    mode = 'native'
+    const longText = '语'.repeat(450)
+    const generateBefore = requests.filter((item) => item.path === '/generate/stream').length
+    const joined = await runBridge(longText)
+    assertEq(joined.code, 0, '长文本合成成功')
+    const generateDelta =
+      requests.filter((item) => item.path === '/generate/stream').length - generateBefore
+    // 差值计数：只看本次运行，避免被前面阶段的累计调用污染（450 字按 400 上限切两段）
+    assertEq(generateDelta, 2, `长文本本次分段恰好两次（实际 ${generateDelta}）`)
+    assertEq(joined.bytes.subarray(0, 4).toString('ascii'), 'RIFF', '拼接结果仍是 WAV')
+    assertEq(joined.bytes.readUInt32LE(40), 40, 'data 块大小=两段之和（20+20）')
+    assertEq(joined.bytes.readUInt32LE(4), joined.bytes.length - 8, 'RIFF 尺寸已重算')
+    return 'OpenAI 优先/原生回落/失败退出/长文本 WAV 拼接 均正确'
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
+})
+
+await recorder.check('E14', 'local-tts-bridge 补充：405 回落、跨主机剥 Key、子路径保留、MP3 多段与 fmt 守卫', async () => {
+  const { spawn } = await import('node:child_process')
+  const { createServer } = await import('node:http')
+  const scriptPath = join(repoRoot, 'resources', 'voice', 'local-tts-bridge.mjs')
+  const settingsFile = join(runDir, 'local-bridge-settings-e14.json')
+
+  function wavBytes(dataSize, sampleRate) {
+    const wav = Buffer.alloc(44 + dataSize)
+    wav.write('RIFF', 0, 'ascii')
+    wav.writeUInt32LE(36 + dataSize, 4)
+    wav.write('WAVE', 8, 'ascii')
+    wav.write('fmt ', 12, 'ascii')
+    wav.writeUInt32LE(16, 16)
+    wav.writeUInt16LE(1, 20)
+    wav.writeUInt16LE(1, 22)
+    wav.writeUInt32LE(sampleRate, 24)
+    wav.writeUInt16LE(2, 32)
+    wav.writeUInt16LE(16, 34)
+    wav.write('data', 36, 'ascii')
+    wav.writeUInt32LE(dataSize, 40)
+    return wav
+  }
+  const mp3Bytes = Buffer.from([0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0xff, 0xfb, 0x90, 0x64])
+
+  const seen = { openai: [], profiles: [], generate: [] }
+  let openaiStatus = 404
+  let generateKind = 'wav'
+  let generateCalls = 0
+  const handler = (req, res) => {
+    if (req.method === 'POST' && req.url === '/v1/audio/speech') {
+      seen.openai.push({ auth: req.headers.authorization || null })
+      res.writeHead(openaiStatus)
+      res.end('x')
+      return
+    }
+    if (req.method === 'GET' && (req.url === '/profiles' || req.url === '/v2/voices')) {
+      seen.profiles.push({ url: req.url, auth: req.headers.authorization || null })
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(
+        JSON.stringify([
+          {
+            id: 'p-9',
+            name: '预设音色',
+            voice_type: 'preset',
+            language: 'zh',
+            preset_engine: 'qwen_custom_voice',
+            sample_count: 0
+          }
+        ])
+      )
+      return
+    }
+    if (req.method === 'POST' && req.url === '/generate/stream') {
+      req.on('data', () => undefined)
+      req.on('end', () => {
+        generateCalls += 1
+        seen.generate.push({ auth: req.headers.authorization || null, n: generateCalls })
+        if (generateKind === 'mp3') {
+          res.writeHead(200, { 'Content-Type': 'audio/mpeg' })
+          res.end(mp3Bytes)
+          return
+        }
+        if (generateKind === 'mixed') {
+          res.writeHead(200, { 'Content-Type': 'audio/wav' })
+          res.end(wavBytes(20, generateCalls % 2 ? 16000 : 8000))
+          return
+        }
+        res.writeHead(200, { 'Content-Type': 'audio/wav' })
+        res.end(wavBytes(20, 16000))
+      })
+      return
+    }
+    res.writeHead(404)
+    res.end()
+  }
+  const main = await new Promise((resolve) => {
+    const server = createServer(handler)
+    server.listen(0, '127.0.0.1', () => resolve(server))
+  })
+  const cross = await new Promise((resolve) => {
+    const server = createServer(handler)
+    server.listen(0, '127.0.0.1', () => resolve(server))
+  })
+  const port = main.address().port
+  const crossPort = cross.address().port
+
+  function writeSettings(extra) {
+    writeFileSync(
+      settingsFile,
+      JSON.stringify({
+        version: 1,
+        baseUrl: `http://127.0.0.1:${port}/v1`,
+        voice: 'p-9',
+        model: 'tts-1',
+        responseFormat: 'wav',
+        profilesPath: '',
+        ...extra
+      })
+    )
+  }
+  function runBridge(text) {
+    return new Promise((resolve) => {
+      const out = join(runDir, `bridge-e14-${Date.now()}-${Math.random().toString(36).slice(2)}.bin`)
+      const child = spawn(process.execPath, [scriptPath, text, out], {
+        env: {
+          ...process.env,
+          UMI_LOCAL_TTS_SETTINGS_FILE: settingsFile,
+          UMI_LOCAL_TTS_API_KEY: 'local-key-123456'
+        }
+      })
+      child.on('error', (error) =>
+        resolve({ code: -1, exists: false, bytes: null, stderr: String(error) })
+      )
+      const timer = setTimeout(() => {
+        child.kill('SIGKILL')
+        resolve({ code: -2, exists: existsSync(out), bytes: null, stderr: 'timeout' })
+      }, 30000)
+      child.on('close', (code) => {
+        clearTimeout(timer)
+        resolve({
+          code,
+          exists: existsSync(out),
+          bytes: existsSync(out) ? readFileSync(out) : null
+        })
+      })
+    })
+  }
+
+  try {
+    // ① OpenAI 面 405（而非 404）同样回落原生面
+    openaiStatus = 405
+    writeSettings({})
+    const r405 = await runBridge('405 回落。')
+    assertEq(r405.code, 0, '405 后回落原生面成功')
+    assertEq(r405.bytes.subarray(0, 4).toString('ascii'), 'RIFF', '原生面产出 WAV')
+    assert(seen.profiles.length >= 1, '405 触发了音色查询')
+
+    // ② 跨主机完整 URL：profiles 打到另一端口且剥离实例 Key
+    openaiStatus = 404
+    const beforeCross = seen.profiles.length
+    writeSettings({ profilesPath: `http://127.0.0.1:${crossPort}/v2/voices` })
+    const crossRun = await runBridge('跨主机查询。')
+    assertEq(crossRun.code, 0, '跨主机查询链路成功')
+    const crossCalls = seen.profiles.slice(beforeCross)
+    assertEq(crossCalls.length, 1, '跨主机只发一次音色查询')
+    assertEq(crossCalls[0].url, '/v2/voices', '查询打到跨主机地址')
+    assertEq(crossCalls[0].auth, null, '跨主机音色查询不带 Key')
+
+    // ③ 同主机绝对路径：拼在实例根后（保留路径）且带 Key
+    const beforeSame = seen.profiles.length
+    writeSettings({ profilesPath: '/v2/voices' })
+    const sameRun = await runBridge('同主机子路径。')
+    assertEq(sameRun.code, 0, '同主机子路径链路成功')
+    const sameCalls = seen.profiles.slice(beforeSame)
+    assertEq(sameCalls[0].url, '/v2/voices', '绝对路径拼在实例根后')
+    assertEq(sameCalls[0].auth, 'Bearer local-key-123456', '同主机查询带 Key')
+
+    // ④ MP3 长文本两段：帧结构裸拼，长度翻倍且仍是 ID3 头
+    generateKind = 'mp3'
+    writeSettings({ responseFormat: 'mp3', profilesPath: '' })
+    const mp3Join = await runBridge('语'.repeat(450))
+    assertEq(mp3Join.code, 0, 'MP3 多段合成成功')
+    assertEq(mp3Join.bytes.length, mp3Bytes.length * 2, '两段 MP3 裸拼长度翻倍')
+    assertEq(mp3Join.bytes.subarray(0, 3).toString('ascii'), 'ID3', 'MP3 头保留')
+
+    // ⑤ 各段 fmt 不一致：拒绝拼接，非零退出且不产文件
+    generateKind = 'mixed'
+    writeSettings({ responseFormat: 'wav' })
+    const mixed = await runBridge('语'.repeat(450))
+    assert(mixed.code !== 0, `fmt 不一致必须非零退出（实际 ${mixed.code}）`)
+    assertEq(mixed.exists, false, 'fmt 不一致不产出坏文件')
+    return '405 回落/跨主机剥 Key/子路径/MP3 拼接/fmt 守卫 均正确'
+  } finally {
+    await new Promise((resolve) => main.close(() => resolve()))
+    await new Promise((resolve) => cross.close(() => resolve()))
+  }
+})
+
+await recorder.check('E15', '对话通道自检信封/保底武装文案，删除实例后通道下线并触发配置重写', async () => {
+  const servicesPath = join(runDir, 'selftest-services.json')
+  const secretsPath = join(runDir, 'selftest-secrets.bin')
+  const store = createExternalServiceStore(servicesPath)
+  const extSecrets = createExternalVoiceSecretStore(secretsPath, fakeEncryption())
+  const service = await store.save({
+    label: '自检实例',
+    baseUrl: 'http://127.0.0.1:8095/v1',
+    model: 'qwen3-tts',
+    voice: 'Chelsie',
+    responseFormat: 'mp3'
+  })
+  await extSecrets.set(service.id, 'external-key-12345678')
+
+  let externalFail = false
+  const fetchImpl = async (url) => {
+    if (String(url).endsWith('/audio/speech')) {
+      if (externalFail) return new Response('boom', { status: 500 })
+      return externalAudio()
+    }
+    return ttsResponse()
+  }
+  const localHot = join(runDir, 'selftest-local.json')
+  let notifyCount = 0
+  const manager = createVoiceManager({
+    storage: memoryStore(),
+    secrets: cloudSecrets(),
+    externalServices: store,
+    externalSecrets: extSecrets,
+    cacheDir: join(runDir, 'selftest-audio'),
+    localBridgeScriptPath: 'local-tts-bridge.mjs',
+    localBridgeSettingsPath: localHot,
+    bridgeScriptPath: 'volc-tts.mjs',
+    bridgeSettingsPath: join(runDir, 'selftest-bridge.json'),
+    fetchImpl,
+    onSettingsChanged: () => {
+      notifyCount += 1
+    },
+    logger: () => undefined
+  })
+  await manager.updateSettings({
+    conversationTts: 'always',
+    conversationChannel: 'local-external',
+    conversationFallback: 'volcengine',
+    externalProviderId: service.id
+  })
+  await waitFor(() => existsSync(localHot), { label: '自检 manager 本地热更文件落盘' })
+
+  // 先测失败信封：缓存还没命中，外部 500 必须落成 ok:false 而不是抛异常
+  externalFail = true
+  const bad = await manager.testOpenClawChannel()
+  assertEq(bad.ok, false, '本地实例失败时自检返回失败信封')
+  assertEq(bad.channel, 'local-external', '失败信封仍带通道标签')
+  externalFail = false
+
+  // clone Key 在位：保底武装，文案承诺候选链降级
+  const okResult = await manager.testOpenClawChannel()
+  assertEq(okResult.ok, true, '本地实例自检成功')
+  assertEq(okResult.channel, 'local-external', '成功信封带通道标签')
+  assert(/候选链降级火山标准接口/.test(okResult.message), '保底武装时承诺降级')
+  assert(okResult.audio, '成功带回试听音频')
+
+  // 清掉 clone Key：本地仍可用，但文案不得再承诺保底
+  await manager.clearKey('clone')
+  const noFallback = await manager.testOpenClawChannel()
+  assertEq(noFallback.ok, true, '无 clone Key 本地实例仍可用')
+  assert(/保底不会生效/.test(noFallback.message), '无 clone Key 如实提示保底未武装')
+
+  // fail 档：文案切换为不降级
+  await manager.setKey('clone', 'clone-key-12345678')
+  await manager.updateSettings({ conversationFallback: 'fail' })
+  const failMode = await manager.testOpenClawChannel()
+  assert(/未开启保底，失败将直接报错/.test(failMode.message), 'fail 档文案正确')
+
+  // 删除当前实例：通道收回 auto、选择清空、同步块脱离本地 CLI、热更文件清理、通知型重写触发
+  const beforeRemove = notifyCount
+  await manager.removeExternalService(service.id)
+  const after = await manager.getSettings()
+  assertEq(after.conversationChannel, 'auto', '删除实例后对话通道收回 auto')
+  assertEq(after.externalProviderId, '', '删除实例后清空实例选择')
+  const status = await manager.getOpenClawStatus()
+  assert(
+    status.effective === 'volcengine' || status.effective === 'bridge',
+    '删除后 auto 在火山候选里选路'
+  )
+  assert(
+    manager.buildOpenClawTtsConfigSync().provider !== 'tts-local-cli',
+    '同步块不再走本地 CLI'
+  )
+  await waitFor(() => !existsSync(localHot), { label: '删除实例后本地热更文件被清' })
+  assert(notifyCount > beforeRemove, '删除触发通知型刷新（重写 openclaw.json 摘掉陈旧块）')
+  return '自检信封/保底文案/删除下线收口 均正确'
 })
 
 const result = recorder.toJSON({ runDir })

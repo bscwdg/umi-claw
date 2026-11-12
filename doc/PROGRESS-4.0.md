@@ -2255,3 +2255,57 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
     状态已在本轮收口；B 项（ACP/comment 保留、JSON5 解析、agentId 作用域、双真源 marker、accountId
     路由、每次保存一次 patch、allowConversationAccess 去掉、状态口径统一）逐条已修或登记为已知边界。
 - 群判定限定 `qqbot` 渠道的 `:qqbot:group:`（不裸用 `:group:`，避免误伤 telegram 群）为本轮明确决策。
+
+### 2026-11-13 · 对话内语音接入用户本地 TTS 实例（local-external）+ OpenClaw 候选链保底
+
+**改了什么**
+
+- 新增第三条对话内语音通道 `local-external`：OpenClaw `tts-local-cli` → 随包脚本
+  `resources/voice/local-tts-bridge.mjs` → 用户自建本地 TTS 实例（如 17493 Voicebox）。
+  脚本先打 OpenAI 兼容 `/v1/audio/speech`，404/405/连接失败/超时回落原生 `/profiles`+
+  `/generate/stream`；多段 WAV 重建 RIFF 头拼接、MP3 帧裸拼；任何失败非零退出，保底交给
+  OpenClaw 自己的 provider 候选链，脚本内不偷换供应商。
+- 候选清单动态生成（本地实例 → 火山标准 → 火山桥接），auto 取第一个就绪项，全不可用则整体
+  下线并列出全部 blockedReason；手动选本地实例时保底单选 `volcengine`（候选链降级）/`fail`
+  （块内只留一个 provider，失败即整体失败）。
+- 密钥红线：实例 Key 只走 safeStorage 与网关环境变量 `UMI_LOCAL_TTS_API_KEY`，绝不进
+  openclaw.json / 热更 json / 日志；连接信息走热更文件，改地址/音色免重启。
+- 涉及 `core/{types,settings,openclawTts,manager}.ts`、`index.ts` 装配、`VoicePage.vue`
+  单选化 + 保底子单选、新增 `local-tts-bridge.mjs`。
+
+**验收**
+
+- 双 typecheck 0 错；`check:boundary` 三基线均 0；`npm run build` 通过；真实 17493 实例
+  端到端合成成功（OpenAI 面 404 → 原生面回落，产出合法 RIFF WAV）。
+- `voice` 23/23（新增 V20 块/env/密钥纯函数、V21 manager 选路/热更/下线回归）、
+  `external-tts` 15/15（新增 E13 脚本契约、E14 405/跨主机剥 Key/子路径/MP3/fmt 守卫、
+  E15 自检信封与删除下线）、`ui` 28/28（U16 补真实挂载的保底单选显隐行为断言）。
+- 全量 accept 38/40；仅 `maintenance`（mklink 撞 MAX_PATH）与 `hot`（collector 原生崩溃
+  3221226505）失败，均在 stash 后的干净工作区复现，与本次改动无关。
+
+**对抗审查（两次独立只读子代理，互不可见）**
+
+- 测试契约向 `01a1d0d5-1321-7010-abba-637748b22cfa`：属实→已修——E13 分段计数被跨阶段
+  污染（改本次差值计数）、热更文件互斥清理零断言（V21 补双向清理）、testOpenClawChannel
+  无覆盖（E15）、删除实例下线无覆盖（E15）、fail 档只锁 API Key（V20 补全 VOLCENGINE_*）、
+  V21 保底仅 truthy（补 resourceId/speakerVoice 精确断言）、E6 纯文本断言（U16 补真实挂载
+  行为）、E13 分支窄（E14）、runBridge 无 error/超时（补 child error + 30s 超时）、
+  blockedReason/手动就绪（V21）、占位符契约（V20）、①阶段反向断言（E13）。
+  前提不成立 1 项：原生 `/generate/stream` 不带 Authorization——宿主 openaiSpeech 同口径，
+  不改行为，改由 E13 断言锁死 `auth === null`。
+- 逻辑安全向 `01a1d0d5-14d9-7e60-a5a7-415b9e62b618`：属实→已修——① 跨主机 profilesPath
+  仍带 Key（脚本按宿主口径返回 crossHost 并剥离，E14 锁）；② 换实例旧 Key 发新主机（纠正
+  误导注释 + UI 明确「换实例/改 Key 需重启网关」，Key 仍只走 env 不进热更文件）；
+  ③ 删除当前实例通道残留且不立即重写（删除即把 conversationChannel 收回 auto + notify=true
+  触发 openclaw.json 重写，UI 同步 radio，E15 锁）；④ 无 clone Key 却承诺降级（自检与状态
+  文案按 Key 是否在位如实提示，E15 锁）；⑤ isMp3 恒真死条件、WAV 多段 fmt 不校验、超时不
+  回落、绝对路径 profilesPath 丢子路径、5 个无人注入的 env 回退死变量——均已修并补测试。
+  M5（auto 改为本地优先）行为本身是用户明确拍板，缺测试部分由 V21 混合/阻断回归补齐。
+  接受为已知边界 2 项：自检走普通 speak 可能命中音频缓存（与既有 bridge/volc 自检同模式）、
+  热更 tmp 名仅带 pid（沿用既有 bridge 同模式）。
+
+**已知边界**
+
+- 切换实例或改实例 Key 必须重启网关（env 仅启动注入一次）；地址/音色/模型/格式走热更文件免重启。
+- 离线环境 volcengine 插件未物化时，未配置 provider 会被网关 skip 并写入 attempts，宿主侧无法预检。
+- edge-tts 野链路（workspace-feiyu/.tts）本次不主动删，留待真机 QQ 语音回归验证。
