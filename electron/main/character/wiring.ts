@@ -359,7 +359,7 @@ async function registerCharacterInternal(
         deps.sendProactive ??
         (async (message) => {
           if (message.channel === 'app') return false
-          return proactiveSender.send(message.text)
+          return proactiveSender.send(message.text, message.conversationId)
         }),
       // 文字送达后偶尔补一张表情包（仅 QQ 外部渠道；无匹配/无凭据返回 false，不重试）
       sendProactiveSticker: async ({ emotion }) => {
@@ -383,6 +383,7 @@ async function registerCharacterInternal(
       readRecentChat: () =>
         readRecentChat({
           nodePath: deps.cli.nodePath,
+          now: (deps.now ?? Date.now)(),
           dbPath: join(
             deps.dataDir,
             'config',

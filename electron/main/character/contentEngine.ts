@@ -521,6 +521,11 @@ export interface ContentEngineOptions {
   settings: CharacterSettings
   state: CharacterState
   day: ProactiveDayState
+  /**
+   * OpenClaw 最近会话里最后一条用户消息时间。
+   * 外部渠道回复只用于解除未回停发，不在这里累计关系数值。
+   */
+  lastUserMessageAt?: number
   /** 话题/台词内容包；缺省只用生活卡模板 */
   deck?: ContentDeck
   /** 今天的「她的一天」卡（最多取前 3 张） */
@@ -558,10 +563,21 @@ export function generateProactiveContent(options: ContentEngineOptions): Proacti
   const state = options.state
   const deck = options.deck ?? createEmptyContentDeck()
   const cards = Array.isArray(options.cards) ? options.cards : []
+  const lastUserMessageAt =
+    typeof options.lastUserMessageAt === 'number' &&
+    Number.isFinite(options.lastUserMessageAt) &&
+    options.lastUserMessageAt > 0 &&
+    options.lastUserMessageAt <= options.now
+      ? options.lastUserMessageAt
+      : 0
+  const replyState =
+    lastUserMessageAt > state.lastInteractionAt
+      ? { ...state, lastInteractionAt: lastUserMessageAt }
+      : state
   const unansweredCount =
     typeof options.unansweredCount === 'number' && Number.isFinite(options.unansweredCount)
       ? Math.max(0, Math.round(options.unansweredCount))
-      : resolveUnansweredCount(day, state, options.now)
+      : resolveUnansweredCount(day, replyState, options.now)
   const backoffThreshold = clampInteger(
     options.backoffThreshold ?? PROACTIVE_BACKOFF_THRESHOLD,
     1,

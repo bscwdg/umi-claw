@@ -42,7 +42,7 @@ export interface ProactiveSenderOptions {
 
 export interface ProactiveSender {
   /** 发送一条主动消息；false = 没发出去（调用方降级气泡） */
-  send(text: string): Promise<boolean>
+  send(text: string, conversationId?: string): Promise<boolean>
 }
 
 /** 每个渠道取最近多少条：按渠道分别查，避免「全局 LIMIT」把绑定渠道的会话挤掉 */
@@ -75,7 +75,7 @@ function readConversationsFromDb(
       'const db = new DatabaseSync(process.argv[1], { readOnly: true });',
       'const channels = JSON.parse(process.env.UCLawBoundChannels || "[]");',
       'const out = [];',
-      'const stmt = db.prepare("SELECT channel, delivery_target, kind, updated_at, account_id, thread_id FROM conversations WHERE channel = ? ORDER BY updated_at DESC LIMIT ' +
+      'const stmt = db.prepare("SELECT conversation_id, channel, delivery_target, kind, updated_at, account_id, thread_id FROM conversations WHERE channel = ? ORDER BY updated_at DESC LIMIT ' +
         CONVERSATION_LIMIT +
         '");',
       'for (const channel of channels) {',
@@ -108,7 +108,9 @@ function readConversationsFromDb(
             if (!channel || !target) continue
             const accountId = String(row?.account_id ?? '').trim()
             const threadId = String(row?.thread_id ?? '').trim()
+            const conversationId = String(row?.conversation_id ?? '').trim()
             out.push({
+              ...(conversationId ? { conversationId } : {}),
               channel,
               target,
               kind: row?.kind === 'group' ? 'group' : row?.kind === 'channel' ? 'channel' : 'direct',
@@ -167,7 +169,7 @@ export function createProactiveSender(options: ProactiveSenderOptions): Proactiv
       readConversationsFromDb(options.nodePath, dbPath, channels, logger))
 
   return {
-    async send(text: string): Promise<boolean> {
+    async send(text: string, conversationId?: string): Promise<boolean> {
       const message = text.trim()
       if (!message) return false
       const channels = await boundChannels()
@@ -176,7 +178,17 @@ export function createProactiveSender(options: ProactiveSenderOptions): Proactiv
         return false
       }
       const conversations = await readConversations(agentId, channels)
-      const target = pickProactiveTarget(conversations, channels)
+      const preferred = conversationId
+        ? conversations.find((conversation) => conversation.conversationId === conversationId)
+        : undefined
+      if (conversationId && !preferred) {
+        logger('[character] 主动消息跳过：锁定会话已不在当前绑定渠道中')
+        return false
+      }
+      const preferredTarget = preferred
+        ? pickProactiveTarget([preferred], [preferred.channel])
+        : null
+      const target = preferredTarget ?? pickProactiveTarget(conversations, channels)
       if (!target) {
         logger('[character] 主动消息跳过：已绑定渠道里没有可用的会话（先在外面对她说句话）')
         return false

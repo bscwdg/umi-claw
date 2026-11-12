@@ -34,6 +34,7 @@ const proactiveMod = await import(pathToFileURL(bundleEntry('electron/main/chara
 const contentEngineMod = await import(pathToFileURL(bundleEntry('electron/main/character/contentEngine.ts', 'character-content-engine.mjs')).href)
 const proactiveTargetMod = await import(pathToFileURL(bundleEntry('electron/main/character/proactiveTarget.ts', 'character-proactive-target.mjs')).href)
 const proactiveSenderMod = await import(pathToFileURL(bundleEntry('electron/main/character/proactiveSender.ts', 'character-proactive-sender.mjs')).href)
+const recentChatMod = await import(pathToFileURL(bundleEntry('electron/main/character/recentChat.ts', 'character-recent-chat.mjs')).href)
 const memoryMod = await import(pathToFileURL(bundleEntry('electron/main/character/memoryJob.ts', 'character-memory.mjs')).href)
 const voicePolicyMod = await import(pathToFileURL(bundleEntry('electron/main/character/voicePolicy.ts', 'character-voice-policy.mjs')).href)
 const qqVoiceMod = await import(pathToFileURL(bundleEntry('electron/main/character/qqVoice.ts', 'character-qq-voice.mjs')).href)
@@ -1763,6 +1764,24 @@ await recorder.check('C42c', '内容引擎：候选池 2–10 + 去重 + 未回�
   assertEq(round3.reason, 'unanswered-backoff', 'backoff 原因')
   assertEq(round3.candidates.length, 0, 'backoff 不产出候选')
 
+  // 5.1) 外部渠道回复：state.lastInteractionAt 没回写时，最后用户消息时间也必须解除停发
+  const externalReplyRound = generateProactiveContent({
+    ...base,
+    state: { ...state, lastInteractionAt: 0 },
+    day: day3,
+    lastUserMessageAt: now - 1_800_000
+  })
+  assertEq(externalReplyRound.send, true, '外部回复后恢复发送')
+  assertEq(externalReplyRound.unansweredCount, 0, '外部回复按最后用户消息时间清零')
+  const futureReplyRound = generateProactiveContent({
+    ...base,
+    state: { ...state, lastInteractionAt: 0 },
+    day: day3,
+    lastUserMessageAt: now + 60_000
+  })
+  assertEq(futureReplyRound.send, false, '未来用户时间不能解除停发')
+  assertEq(futureReplyRound.unansweredCount, 3, '未来用户时间被忽略')
+
   // 6) 用户回复重置：lastInteractionAt 晚于 lastProactiveAt → 清零
   const repliedState = { ...state, lastInteractionAt: now - 1_800_000 }
   assertEq(resolveUnansweredCount(day3, repliedState), 0, '用户回复后未回清零')
@@ -1916,6 +1935,80 @@ await recorder.check('C42d', 'manager：内容引擎接线（试探→换话题�
   assertEq(legacyEvaluated.decision.send, true, '旧 kv 记录仍可判定/生成内容')
   assertEq(Boolean(legacyEvaluated.message), true, '旧 kv 记录仍能生成消息')
   return '试探/换话题/backoff/回复重置/跨天/旧 kv 兼容 均正确'
+})
+
+await recorder.check('C42e', 'manager：外部渠道用户回复时间解除未回停发', async () => {
+  const kv = memoryKv()
+  const now = new Date(2026, 10, 12, 10, 0, 0).getTime()
+  const date = '2026-11-12'
+  const state = {
+    ...createDefaultCharacterState(now),
+    bornAt: now - 10 * 86_400_000,
+    lastInteractionAt: now - 2 * 86_400_000
+  }
+  kv.map.set(FISH_KEYS.state, JSON.stringify(state))
+  let recentChat = { messages: [], lastUserMessageAt: 0, conversationId: '' }
+  const sent = []
+  const manager = new CharacterManager({
+    store: new CharacterStore({ kv, now: () => now }),
+    now: () => now,
+    loadLifeDeck: async () => lifeDeck,
+    contentDeck,
+    readRecentChat: async () => recentChat,
+    sendProactive: async (message) => {
+      sent.push(message)
+      return true
+    }
+  })
+  await manager.init()
+  await manager.updateSettings({
+    enabled: true,
+    safety: { ageConfirmed: true },
+    proactive: {
+      enabled: true,
+      silenceDays: 0,
+      dailyCap: 10,
+      quietFrom: '00:00',
+      quietTo: '00:00',
+      intervalMode: 'fixed',
+      intervalMinutes: 1
+    }
+  })
+  kv.map.set(
+    FISH_KEYS.day(date),
+    JSON.stringify({
+      activeSent: 3,
+      sentTimes: [now - 10 * 60_000, now - 6 * 60_000, now - 2 * 60_000],
+      lastActiveAt: now - 2 * 60_000,
+      lastProactiveAt: now - 2 * 60_000,
+      nextAllowedAt: now - 60_000
+    })
+  )
+
+  const blocked = await manager.evaluateProactive()
+  assertEq(blocked.decision.send, false, '没有外部回复时仍按未回停发')
+  assertEq(blocked.decision.reason, 'unanswered-backoff', '停发原因正确')
+
+  recentChat = {
+    messages: [],
+    lastUserMessageAt: now + 60_000
+  }
+  const future = await manager.evaluateProactive()
+  assertEq(future.decision.send, false, '未来用户时间不能解除停发')
+  assertEq(future.decision.reason, 'unanswered-backoff', '未来时间被忽略')
+
+  recentChat = {
+    messages: [{ role: 'assistant', text: '在。', at: now - 30_000 }],
+    lastUserMessageAt: now - 60_000,
+    conversationId: 'conv-external'
+  }
+  const resumed = await manager.runProactiveTick()
+  assertEq(resumed.decision.send, true, '读到外部用户回复后恢复发送')
+  assertEq(resumed.delivered, true, '恢复后正常外发')
+  assertEq(sent.length, 1, '只外发一条')
+  assertEq(sent[0].conversationId, 'conv-external', '发送锁定产生回复的同一 conversation')
+  assertEq(storeDayRecordOn(kv, date).unansweredCount, 1, '外部回复后未回从新一轮 1 开始')
+  return '外部回复时间解除 backoff 并重新累计'
 })
 
 await recorder.check('C42g', '用户语料变更后 invalidateContentDeck 让引擎重新加载内容包', async () => {
@@ -4388,6 +4481,36 @@ await recorder.check('C93', '主动消息外发：走已绑定渠道的最近会
   })
   assertEq(await readFail.send('不该发出去'), false, '读绑定失败 → false')
 
+  // 6.1) 回复解除 backoff 时锁定的 conversationId 必须优先于“按 updatedAt 重新挑”
+  const lockedCalls = []
+  const locked = createProactiveSender({
+    dataDir: 'D:/tmp/umi-claw-proactive',
+    nodePath: 'node',
+    runner: {
+      run: async (args) => {
+        lockedCalls.push(args)
+        return { code: 0, stdout: '', stderr: '' }
+      }
+    },
+    readBoundChannels: async () => ['qqbot', 'feishu'],
+    readConversations: async () => [
+      { conversationId: 'conv-qq', channel: 'qqbot', target: 'qqbot:c2c:NEW', kind: 'direct', updatedAt: 200 },
+      { conversationId: 'conv-fs', channel: 'feishu', target: 'feishu:oc_OLD', kind: 'direct', updatedAt: 100 }
+    ]
+  })
+  assertEq(await locked.send('锁会话', 'conv-fs'), true, '锁定会话可发送')
+  assertEq(
+    lockedCalls[0].join(' '),
+    'message send --channel feishu --target feishu:oc_OLD --message 锁会话',
+    'conversationId 优先，不因另一个会话 updatedAt 更新而换目标'
+  )
+  assertEq(
+    await locked.send('绑定已取消', 'conv-missing'),
+    false,
+    '锁定会话已解绑时拒发，不回退到其它会话'
+  )
+  assertEq(lockedCalls.length, 1, '拒发不产生任何 message send')
+
   // 7) 真实 readBoundChannels：与角色页同口径，blockedReason 的渠道不能发
   const cliCalls = []
   const cliSender = createProactiveSender({
@@ -4488,17 +4611,17 @@ await recorder.check('C95', '真实会话库：路径/表/列只读读取 → �
   const dbPath = join(agentDir, 'openclaw-agent.sqlite')
   const db = new DatabaseSync(dbPath)
   db.exec(
-    'CREATE TABLE conversations (channel TEXT NOT NULL, account_id TEXT, delivery_target TEXT NOT NULL, kind TEXT NOT NULL, thread_id TEXT, updated_at INTEGER NOT NULL)'
+    'CREATE TABLE conversations (conversation_id TEXT NOT NULL, channel TEXT NOT NULL, account_id TEXT, delivery_target TEXT NOT NULL, kind TEXT NOT NULL, thread_id TEXT, updated_at INTEGER NOT NULL)'
   )
   const insert = db.prepare(
-    'INSERT INTO conversations (channel, account_id, delivery_target, kind, thread_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO conversations (conversation_id, channel, account_id, delivery_target, kind, thread_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
   )
-  insert.run('slack', 'A-slack', 'channel:general', 'channel', null, 900)
-  insert.run('slack', 'A-slack', 'user:U1', 'direct', 'T1', 800)
-  insert.run('qqbot', null, 'qqbot:c2c:U', 'direct', null, 500)
+  insert.run('conv-general', 'slack', 'A-slack', 'channel:general', 'channel', null, 900)
+  insert.run('conv-u1', 'slack', 'A-slack', 'user:U1', 'direct', 'T1', 800)
+  insert.run('conv-qq', 'qqbot', null, 'qqbot:c2c:U', 'direct', null, 500)
   // 60 条更新的其它渠道会话：按渠道查询后不应把绑定渠道挤掉
   for (let i = 0; i < 60; i += 1) {
-    insert.run('other', null, `other:${i}`, 'direct', null, 10_000 + i)
+    insert.run(`conv-other-${i}`, 'other', null, `other:${i}`, 'direct', null, 10_000 + i)
   }
   db.close()
 
@@ -4523,6 +4646,85 @@ await recorder.check('C95', '真实会话库：路径/表/列只读读取 → �
   )
   assertEq(call.includes('channel:general'), false, '公开频道即使在同渠道更新也不抢私聊')
   return '真实 SQLite 路径/表/列/只读/每渠道查询 ✓'
+})
+
+await recorder.check('C95b', '最近聊天快照：最新 direct 跨渠道/多 session/压缩/未来时间都能正确取回复', async () => {
+  const { DatabaseSync } = await import('node:sqlite')
+  const dir = join(tmpDir, 'character-recent-chat')
+  rmSync(dir, { recursive: true, force: true })
+  mkdirSync(dir, { recursive: true })
+  const dbPath = join(dir, 'agent.sqlite')
+  const db = new DatabaseSync(dbPath)
+  db.exec(`
+    CREATE TABLE conversations (
+      conversation_id TEXT PRIMARY KEY,
+      channel TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE session_conversations (
+      session_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      last_seen_at INTEGER NOT NULL
+    );
+    CREATE TABLE transcript_events (
+      session_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      event_json TEXT,
+      event_zstd BLOB,
+      created_at INTEGER NOT NULL,
+      message_role TEXT
+    );
+  `)
+  db.prepare('INSERT INTO conversations VALUES (?, ?, ?, ?)').run('conv-qq', 'qqbot', 'direct', 500)
+  db.prepare('INSERT INTO conversations VALUES (?, ?, ?, ?)').run('conv-slack', 'slack', 'direct', 3000)
+  db.prepare('INSERT INTO conversations VALUES (?, ?, ?, ?)').run('conv-group', 'qqbot', 'group', 4000)
+  db.prepare('INSERT INTO session_conversations VALUES (?, ?, ?)').run('sess-qq', 'conv-qq', 600)
+  db.prepare('INSERT INTO session_conversations VALUES (?, ?, ?)').run('sess-slack-old', 'conv-slack', 1500)
+  db.prepare('INSERT INTO session_conversations VALUES (?, ?, ?)').run('sess-slack-new', 'conv-slack', 1900)
+  db.prepare('INSERT INTO session_conversations VALUES (?, ?, ?)').run('sess-group', 'conv-group', 4000)
+  const insertEvent = db.prepare(
+    'INSERT INTO transcript_events (session_id, seq, event_json, event_zstd, created_at, message_role) VALUES (?, ?, ?, ?, ?, ?)'
+  )
+  const message = (role, text) =>
+    JSON.stringify({
+      type: 'message',
+      message: { role, content: [{ type: 'text', text }] }
+    })
+  // 非最新渠道的旧回复：不能被选中
+  insertEvent.run('sess-qq', 1, message('user', '旧 QQ 回复'), null, 900, 'user')
+  // 最新 direct 是 Slack；最新用户回复在旧 session，且正文已被压缩（event_json=NULL）
+  insertEvent.run('sess-slack-old', 1, null, Buffer.from('compressed'), 1500, 'user')
+  for (let i = 0; i < 30; i += 1) {
+    insertEvent.run('sess-slack-new', i + 2, message('assistant', `回复 ${i}`), null, 1600 + i, 'assistant')
+  }
+  // 只有 message_role、正文与压缩载荷都丢失的空事件，不能算真实回复
+  insertEvent.run('sess-slack-new', 39, null, null, 1550, 'user')
+  // 未来时间必须忽略，不能夹成“刚刚回复”
+  insertEvent.run('sess-slack-new', 40, message('user', '未来消息'), null, 3000, 'user')
+  // 更新的群聊会话不能抢 direct 的回复时间
+  insertEvent.run('sess-group', 1, message('user', '群里说话'), null, 3500, 'user')
+  db.close()
+
+  const snapshot = await recentChatMod.readRecentChat({
+    nodePath: process.execPath,
+    dbPath,
+    limit: 8,
+    now: 2000
+  })
+  assertEq(snapshot.lastUserMessageAt, 1500, '最新 direct 跨 session 取到压缩后的用户回复')
+  assertEq(snapshot.conversationId, 'conv-slack', '回复时间与上下文锁定同一 conversation')
+  assertEq(snapshot.lastUserMessageAt !== 900, true, '不固定读 QQ，而是跟随最新 direct 渠道')
+  assertEq(snapshot.lastUserMessageAt !== 1550, true, '正文/压缩载荷都为空的 user 行不算回复')
+  assertEq(snapshot.lastUserMessageAt !== 3000, true, '未来用户时间被忽略')
+  assertEq(snapshot.lastUserMessageAt !== 3500, true, '群聊用户消息不解除私聊 backoff')
+  assertEq(snapshot.messages.length, 8, '聊天上下文仍按 limit 截取')
+  assertEq(
+    snapshot.messages.every((item) => item.role === 'assistant'),
+    true,
+    '上下文窗口里没有用户消息时，最后用户时间仍保留'
+  )
+  return '用户时间独立于消息窗口 ✓'
 })
 
 await recorder.check('C96', '外发成功不发应用内气泡（避免双通知）；失败仍降级', async () => {
@@ -4565,8 +4767,8 @@ await recorder.check('C97', '生产接线：wiring 默认注入 proactiveSender�
   )
   assert(/deps\.sendProactive\s*\?\?/.test(wiringSrc), '生产缺省必须回落到默认 sender')
   assert(
-    /proactiveSender\.send\(message\.text\)/.test(wiringSrc),
-    'external 分支必须调用 sender.send；不接线就会退化成只发气泡'
+    /proactiveSender\.send\(message\.text,\s*message\.conversationId\)/.test(wiringSrc),
+    'external 分支必须把 conversationId 一起传给 sender；不接线就会退化成只发气泡或换会话'
   )
   assert(
     /if\s*\(message\.channel\s*===\s*'app'\)\s*return false/.test(wiringSrc),

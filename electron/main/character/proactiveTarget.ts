@@ -15,6 +15,8 @@
 export type ProactiveConversationKind = 'direct' | 'group' | 'channel'
 
 export interface ProactiveConversation {
+  /** OpenClaw conversations.conversation_id（发送时用来锁定同一会话） */
+  conversationId?: string
   /** OpenClaw 渠道 id（qqbot/feishu/wecom/…） */
   channel: string
   /** OpenClaw delivery target（如 qqbot:c2c:OPENID） */
@@ -29,6 +31,7 @@ export interface ProactiveConversation {
 }
 
 export interface ProactiveTarget {
+  conversationId?: string
   channel: string
   target: string
   kind: ProactiveConversationKind
@@ -73,8 +76,20 @@ export function pickProactiveTarget(
       typeof conversation.threadId === 'string' && conversation.threadId.trim()
         ? conversation.threadId.trim()
         : undefined
+    const conversationId =
+      typeof conversation.conversationId === 'string' && conversation.conversationId.trim()
+        ? conversation.conversationId.trim()
+        : undefined
     const list = byChannel.get(channel) ?? []
-    list.push({ channel, target, kind, updatedAt, accountId, threadId })
+    list.push({
+      ...(conversationId ? { conversationId } : {}),
+      channel,
+      target,
+      kind,
+      updatedAt,
+      accountId,
+      threadId
+    })
     byChannel.set(channel, list)
   }
 

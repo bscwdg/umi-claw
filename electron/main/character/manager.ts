@@ -109,7 +109,11 @@ export interface CharacterManagerOptions {
   /** 把「她的一天」写进 workspace（fish/LIFE.md） */
   writeLifeDoc?: (text: string) => Promise<void>
   /** 主动消息外发（外部渠道由 wiring 注入；不提供则只做应用内气泡） */
-  sendProactive?: (message: { text: string; channel: 'external' | 'app' }) => Promise<boolean>
+  sendProactive?: (message: {
+    text: string
+    channel: 'external' | 'app'
+    conversationId?: string
+  }) => Promise<boolean>
   /** 主动消息偶尔补一张表情包（QQ 外部渠道；失败不影响文字已送达） */
   sendProactiveSticker?: (input: {
     emotion: string
@@ -121,9 +125,14 @@ export interface CharacterManagerOptions {
   random?: () => number
   /** 每日记忆（C07）：生成日记 + 双写（workspace / Obsidian） */
   generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
-  /** 最近真实聊天（主动消息选话题用）；失败由 manager 降级为空 */
+  /** 最近真实聊天（主动消息选话题 + 外部回复解除停发）；失败由 manager 降级为空 */
   readRecentChat?: () => Promise<
-    Array<{ role: 'user' | 'assistant'; text: string; at: number }>
+    | Array<{ role: 'user' | 'assistant'; text: string; at: number }>
+    | {
+        messages: Array<{ role: 'user' | 'assistant'; text: string; at: number }>
+        lastUserMessageAt?: number
+        conversationId?: string
+      }
   >
   readWorkspaceMemory?: (date: string) => Promise<string | null>
   writeWorkspaceMemory?: (date: string, text: string) => Promise<void>
@@ -152,6 +161,7 @@ export class CharacterManager {
   private readonly sendProactive?: (message: {
     text: string
     channel: 'external' | 'app'
+    conversationId?: string
   }) => Promise<boolean>
   private readonly sendProactiveSticker?: (input: {
     emotion: string
@@ -161,7 +171,12 @@ export class CharacterManager {
   private readonly random: () => number
   private readonly generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
   private readonly readRecentChat?: () => Promise<
-    Array<{ role: 'user' | 'assistant'; text: string; at: number }>
+    | Array<{ role: 'user' | 'assistant'; text: string; at: number }>
+    | {
+        messages: Array<{ role: 'user' | 'assistant'; text: string; at: number }>
+        lastUserMessageAt?: number
+        conversationId?: string
+      }
   >
   private readonly readWorkspaceMemory?: (date: string) => Promise<string | null>
   private readonly writeWorkspaceMemory?: (date: string, text: string) => Promise<void>
@@ -536,6 +551,8 @@ export class CharacterManager {
     day: LifeDay | null
     candidates: ProactiveCandidate[]
     chosen: ProactiveCandidate | null
+    lastUserMessageAt?: number
+    conversationId?: string
   }> {
     this.assertInitialized()
     const settings = await this.getSettings()
@@ -557,9 +574,29 @@ export class CharacterManager {
     const lifeDeck = await this.getLifeDeck()
     const contentDeck = await this.getContentDeck()
     let recentChat = ''
+    let lastUserMessageAt = 0
+    let conversationId = ''
     if (this.readRecentChat) {
       try {
-        const messages = await this.readRecentChat()
+        const snapshot = await this.readRecentChat()
+        const messages = Array.isArray(snapshot) ? snapshot : snapshot.messages
+        conversationId =
+          !Array.isArray(snapshot) && typeof snapshot.conversationId === 'string'
+            ? snapshot.conversationId.trim()
+            : ''
+        const reportedAt =
+          !Array.isArray(snapshot) &&
+          typeof snapshot.lastUserMessageAt === 'number' &&
+          Number.isFinite(snapshot.lastUserMessageAt) &&
+          snapshot.lastUserMessageAt > 0 &&
+          snapshot.lastUserMessageAt <= now
+            ? snapshot.lastUserMessageAt
+            : 0
+        lastUserMessageAt = messages.reduce((latest, message) => {
+          const at = Number(message.at)
+          if (message.role !== 'user' || !Number.isFinite(at) || at <= 0 || at > now) return latest
+          return Math.max(latest, at)
+        }, reportedAt)
         recentChat = messages
           .filter((message) => message.text.trim())
           .map((message) => `${message.role === 'user' ? '用户' : '她'}：${message.text.trim()}`)
@@ -576,7 +613,8 @@ export class CharacterManager {
       deck: contentDeck,
       cards: this.cardsFor(lifeDeck, life.day.cardIds),
       now,
-      recentChat
+      recentChat,
+      lastUserMessageAt
     })
     if (!content.send || !content.chosen) {
       return {
@@ -588,7 +626,9 @@ export class CharacterManager {
         message: '',
         day: life.day,
         candidates: content.candidates,
-        chosen: null
+        chosen: null,
+        ...(lastUserMessageAt > 0 ? { lastUserMessageAt } : {}),
+        ...(conversationId ? { conversationId } : {})
       }
     }
     return {
@@ -596,7 +636,9 @@ export class CharacterManager {
       message: content.message,
       day: life.day,
       candidates: content.candidates,
-      chosen: content.chosen
+      chosen: content.chosen,
+      ...(lastUserMessageAt > 0 ? { lastUserMessageAt } : {}),
+      ...(conversationId ? { conversationId } : {})
     }
   }
 
@@ -633,9 +675,16 @@ export class CharacterManager {
     this.proactiveInFlight = true
     const epoch = this.dataEpoch
     try {
-      const { decision, message, chosen, day: lifeDay } = await this.evaluateProactive(now)
+      const {
+        decision,
+        message,
+        chosen,
+        day: lifeDay,
+        lastUserMessageAt,
+        conversationId
+      } = await this.evaluateProactive(now)
       if (!decision.send || !message || !chosen) return { decision }
-      const claimed = await this.claimProactiveSlot(now, chosen, epoch)
+      const claimed = await this.claimProactiveSlot(now, chosen, epoch, lastUserMessageAt)
       if (!claimed.ok) {
         return { decision: { ...decision, send: false, reason: claimed.reason ?? 'min-interval' } }
       }
@@ -646,7 +695,11 @@ export class CharacterManager {
       let delivered = false
       if (this.sendProactive) {
         try {
-          delivered = await this.sendProactive({ text: message, channel: decision.channel })
+          delivered = await this.sendProactive({
+            text: message,
+            channel: decision.channel,
+            ...(conversationId ? { conversationId } : {})
+          })
         } catch (error) {
           this.logger(`[character] 主动消息外发失败: ${(error as Error)?.message ?? String(error)}`)
         }
@@ -722,7 +775,8 @@ export class CharacterManager {
   private async claimProactiveSlot(
     now: number,
     candidate: ProactiveCandidate | null,
-    epoch?: number
+    epoch?: number,
+    lastUserMessageAt?: number
   ): Promise<{ ok: boolean; reason?: ProactiveReason }> {
     const date = toDateKey(now)
     const time = new Date(now).toTimeString().slice(0, 5)
@@ -748,13 +802,21 @@ export class CharacterManager {
       }
 
       const state = await this.getState()
+      const replyAt =
+        typeof lastUserMessageAt === 'number' &&
+        Number.isFinite(lastUserMessageAt) &&
+        lastUserMessageAt > 0 &&
+        lastUserMessageAt <= now
+          ? lastUserMessageAt
+          : 0
+      const effectiveLastInteractionAt = Math.max(state.lastInteractionAt, replyAt)
       // 6h 过期是“开新一轮”：清掉旧 sentTimes，否则发完本轮 1 条后
       // 下一 tick 又会被历史未回计数顶回 backoff，表现成每 6 小时只发一条。
       const staleEpisode = isUnansweredEpisodeStale(day, now)
       const baseSentTimes = staleEpisode ? [] : day.sentTimes
       const unansweredCount = resolveUnansweredCount(
         { ...day, sentTimes: baseSentTimes },
-        state,
+        { lastInteractionAt: effectiveLastInteractionAt },
         now
       )
       if (unansweredCount >= PROACTIVE_BACKOFF_THRESHOLD) {
