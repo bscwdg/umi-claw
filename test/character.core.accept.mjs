@@ -462,6 +462,22 @@ await recorder.check('C9', '人格变量：空值降级「你」、称呼注入�
   return '变量替换/降级/禁忌规则 正确'
 })
 
+await recorder.check('C9a', '语音通道硬规则：只走网关 tts 工具，禁 edge-tts/野脚本，失败如实说', async () => {
+  // 源头模板先守一道：防止规则被删后渲染层静默丢失
+  const voiceTemplate = readFileSync(join(personaSrcDir, 'voice-rules.md'), 'utf8')
+  assertEq(voiceTemplate.includes('发语音的通道'), true, 'voice-rules.md 含通道硬规则段')
+  assertEq(voiceTemplate.includes('edge-tts'), true, '模板显式封禁 edge-tts 野链路')
+  assertEq(voiceTemplate.includes('qqbot-voice-send.cjs'), true, '模板点名历史野脚本')
+
+  // 规则经 {{voiceRules}} 注入 SOUL.md（agent 实际读到的人格文件）
+  const soul = composePersonaFiles(baseInputs())['SOUL.md']
+  assertEq(soul.includes('dispatch_action id="tts"'), true, 'SOUL 指定唯一合法入口是网关 tts 工具')
+  assertEq(soul.includes('edge-tts'), true, 'SOUL 封禁 edge-tts')
+  assertEq(soul.includes('qqbot-voice-send.cjs'), true, 'SOUL 点名禁止历史野脚本')
+  assertEq(soul.includes('语音没发成'), true, '失败必须如实告知，不得伪装成功')
+  return '语音通道硬规则已随 SOUL.md 下发'
+})
+
 await recorder.check('C10', '受管写入：用户改过的不覆盖、STATE 归宿主、路径越界拒绝', async () => {
   const dir = join(tmpDir, `character-persona-${Date.now()}`)
   mkdirSync(dir, { recursive: true })

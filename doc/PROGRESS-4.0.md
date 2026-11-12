@@ -2309,3 +2309,59 @@ C2 ✗（措辞为「P1/P2/P3 全部采纳」，未用 `属实/前提不成立/�
 - 切换实例或改实例 Key 必须重启网关（env 仅启动注入一次）；地址/音色/模型/格式走热更文件免重启。
 - 离线环境 volcengine 插件未物化时，未配置 provider 会被网关 skip 并写入 attempts，宿主侧无法预检。
 - edge-tts 野链路（workspace-feiyu/.tts）本次不主动删，留待真机 QQ 语音回归验证。
+
+### 2026-11-13 · 语音野链路软收口 + 网关日志默认落盘
+
+**起因**：用户在 QQ 私聊让 feiyu 发语音，没走语音设置里的 local-external 通道。
+转储 `transcript_events`（session dca674b1…，seq 453/462/465/468）查实：agent 按自建
+workshop 技能 `voice-note-send` 的 edge-tts 兜底步骤，pip 装 edge-tts、自写 say.py/silk
+编码/qqbot-voice-send.cjs 直发 QQ，完全绕过网关 tts 配置。官方链路本身已通：
+`infer tts convert --gateway` 实测 tts-local-cli 合成成功，qqbot 插件自带
+TTS→SILK→msg_type=7 语音气泡投递（deliver-pipeline.handleVoiceIntent）。
+
+**改了什么**
+
+- 网关日志默认落盘：`spawnEnv.ts` 的 `openDetachedGatewayLogs` 重写为
+  `openGatewayLogFiles`，管道模式（默认）与 detached 共用
+  `data/logs/openclaw-gateway.{log,err.log}`；管道模式由 `ClawManager` 在 stdout/stderr
+  data 事件把原始 chunk tee 进文件（带 tracked 进程归属守卫），exit/error/stop/catch
+  四条路径统一经 `_closePipeLogFds` 关 fd；每次 spawn 截断，只留本轮日志。
+- 语音通道软收口（提示词层）：`resources/character/persona/voice-rules.md` 新增
+  「四、发语音的通道（硬规则）」，经 SOUL.md 模板随 bootstrap 受管下发；
+  只准网关 `tts` 工具，禁 edge-tts/野脚本，失败如实说不得伪装成功。
+- 运行时数据（data/，不进 git）：workshop 技能 voice-note-send 改写为只走 tts
+  （原件归档 `.archive/voice-note-send/20261112T202851171Z-patch/`）；工作区便签
+  `docs/qqbot-voice-note.md` 改写为废弃指引；`doc/voice/QQBOT-VOICE.md` 顶部标明
+  脚本仅宿主人工排障用。
+
+**验收**
+
+- 双 typecheck 0 错；`check:boundary` 三基线 0；`npm run build` 通过。
+- 新增 `test/gateway-log-files.accept.mjs`（GL1–GL8，8 项）并注册 run-all（38 项）+
+  `package.json` 补 `accept:gateway-log`；character.core 新增 C9a，110/110；
+  voice 23/23；maintenance 唯一失败仍是环境性 mklink MAX_PATH（与本次无关）。
+
+**对抗审查（只读子代理 01a1d175-4537，12 条意见处置）**
+
+- 属实→已修：#5 spawn catch 补 `_closePipeLogFds`（挂字段后抛错的 fd 泄漏窗口）；
+  #6 tee 加 `this.process === proc` 归属守卫并补 GL8（旧实例迟到输出不混新文件）；
+  #8 补 `accept:gateway-log` 脚本；#11 去掉 writeGatewayLogChunk 冗余分支（统一 Buffer）。
+- 属实→接受为已知边界（见下）：#1 workshop 技能设计上绕过 agents.skills allowlist，
+  `skills:[]` 拦不住，只有归档/删除能隐藏；#2 无硬阻断，exec 开放、agent 可重建野链路
+  或 restore 归档；#3 用户改过的 SOUL.md 按受管规则不覆盖（本机 hash 匹配，重启可下发）；
+  #4 运行中 session 持有旧技能快照，重启开新 session 才生效。
+- 前提不成立：#7 逐条复核 stop→exit 双关/error/旧实例/自愈/adopted/detached 均无 fd 问题；
+  #10 GL6/GL7 打真源码非 helper 自证；#12 风格/残留/生成物机械检查全过。
+- #9 spawn 集成断言（真实 spawn 的 detached 移交/catch 路径）登记后续：_spawnGateway 依赖
+  配置同步/CLI/webhook marker 等重装配，现有 maintenance 套件整体替换 start()，
+  强测需独立 harness，本次以 helper 单测 + 真源码事件链覆盖替代。
+
+**已知边界 / 后续硬阻断候选（待用户拍板，不在本次提交内）**
+
+- 本次是**软收口**：提示词 + 技能文本两层，agent 仍保有 exec 能力，野工具
+  `.tts/.silk/scripts` 按上一包决策保留作真机回归兜底，未删除。
+- 硬阻断三选一或组合：① 归档/删除 workshop 技能与野工具；② feiyu agent 配 tool policy
+  限制 exec；③ 参照 feiyu-guard 用 `before_tool_call` hook 拦命令（现 guard 仅群聊生效，
+  扩到私聊属新能力）。
+- 真机回归项：重启后新 session 的 skillsSnapshot 描述应换成 only configured channel；
+  QQ 私聊实发一次语音确认走 `dispatch_action id="tts"` 与 msg_type=7 语音气泡。

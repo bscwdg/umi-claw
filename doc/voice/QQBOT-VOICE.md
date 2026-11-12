@@ -1,5 +1,12 @@
 # QQ 语音条（QQBot C2C）发送说明
 
+> **2026-11-13 起的通道口径**：对话内语音的标准路径是网关 `tts` 工具
+> （`dispatch_action id="tts"`），合成通道由宿主语音设置统一配置（本地 TTS 实例 +
+> 火山候选保底），QQBot 插件自动完成 SILK 转码与 `msg_type=7` 语音气泡投递。
+> 本文下面的脚本是**宿主人工排障/回归专用**，agent 不得在会话里执行——
+> 自建 edge-tts/silk/API 链路会绕过用户配置的通道；该硬规则同时钉在
+> `resources/character/persona/voice-rules.md` 下发的 SOUL.md 里。
+>
 > 适用：Umi Claw 的 OpenClaw QQBot 渠道，给 C2C 用户发**语音条**（不是文件）。
 > 2026-11-07 用脚本真机验证两次（带 `msg_id` + `msg_seq=1`）。
 > 脚本：`scripts/qqbot-voice-send.cjs`；音频转换：`scripts/qqbot-voice-make-silk.mjs`。
