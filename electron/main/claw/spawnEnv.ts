@@ -1,7 +1,7 @@
 // electron/main/claw/spawnEnv.ts —— 拉起网关前的环境/日志准备（副作用集中在这里）
 //
 // 为什么单独拆出来：_spawnGateway 里的 env 拼装、webhook 标记兜底、语音 TTS 注入、
-// V8 编译缓存目录、detached 日志 fd 都是自包含的「准备动作」，不需要碰 ClawManager
+// V8 编译缓存目录、网关日志落盘 fd 都是自包含的「准备动作」，不需要碰 ClawManager
 // 的状态机；抽成显式入参/出参后，spawn 主体只剩顺序与错误分支，读起来才看得清
 // 「哪些失败阻断启动、哪些只是 warning」。
 //
@@ -9,7 +9,7 @@
 // clawManager.ts —— 那里的注释说明「不得在 commonEnv 之后重新 spread process.env」，
 // 这段顺序必须有断言守着。
 
-import { mkdirSync, openSync, writeFileSync } from 'fs'
+import { closeSync, mkdirSync, openSync, writeFileSync, writeSync } from 'fs'
 import { dirname, join } from 'path'
 import { toOpenClawProviderKey } from '../modelConfig'
 import type { EnsureWebhookMarkerResult } from '../openclawWebhookMarker'
@@ -116,37 +116,65 @@ export function buildProviderEnv(activeProvider: GatewayProviderInput | undefine
   return { env }
 }
 
-/** detached 日志文件与 fd（「退出应用保留网关」模式） */
-export interface DetachedGatewayLogs {
+/** 网关日志文件与 fd（detached 与管道两种模式共用同一套落盘文件） */
+export interface GatewayLogFiles {
   logFile: string
   errFile: string
   logFd: number | undefined
   errFd: number | undefined
+  /** true=子进程脱离父进程、stdio 直写文件；false=管道模式，由父进程 tee 进文件 */
   detached: boolean
 }
 
 /**
- * 「退出应用保留网关」需要子进程脱离本实例：detached + 把 stdout/stderr 写文件，
- * 否则 App 退出后管道关闭，网关写日志会中断/崩溃。默认关闭，行为与原来完全一致。
- * 打开失败时返回 detached=false（退回管道模式）。
+ * 打开网关 stdout/stderr 落盘文件。两种运行模式都先把文件建好：
+ * - detached（「退出应用保留网关」）：fd 直接作为子进程 stdio，App 退出后日志不中断；
+ * - 默认管道模式：父进程在 data 事件里把原始 chunk tee 进同一对文件，
+ *   解决「只在内存 ring buffer 留 2000 条、重启后无日志可查」的排障盲区。
+ * 每次拉起都截断重写：文件只保留本轮网关进程日志，沿用原 detached 模式语义，
+ * 避免长期运行无限增长；打开失败时 fds 为 undefined（管道模式退回纯内存，不阻断启动）。
  */
-export function openDetachedGatewayLogs(
+export function openGatewayLogFiles(
   keepOnQuit: boolean,
   dataDir: string
-): DetachedGatewayLogs {
+): GatewayLogFiles {
   const logFile = join(dataDir, 'logs', 'openclaw-gateway.log')
   const errFile = join(dataDir, 'logs', 'openclaw-gateway.err.log')
-  if (!keepOnQuit) {
-    return { logFile, errFile, logFd: undefined, errFd: undefined, detached: false }
-  }
   try {
     mkdirSync(dirname(logFile), { recursive: true })
     writeFileSync(logFile, '')
     writeFileSync(errFile, '')
     const logFd = openSync(logFile, 'a')
     const errFd = openSync(errFile, 'a')
-    return { logFile, errFile, logFd, errFd, detached: true }
+    return { logFile, errFile, logFd, errFd, detached: keepOnQuit === true }
   } catch {
     return { logFile, errFile, logFd: undefined, errFd: undefined, detached: false }
+  }
+}
+
+/**
+ * 管道模式把网关输出的原始 chunk 原样追加到日志文件（不按行重切，保留进程真实输出）。
+ * fd 缺失或写入失败都静默：日志落地永远不能反噬网关进程监管。
+ */
+export function writeGatewayLogChunk(fd: number | undefined, chunk: Buffer | string): void {
+  if (fd === undefined) return
+  try {
+    // 统一成 Buffer：writeSync 的两个重载不接受 string|Buffer 联合类型，
+    // 运行时 data 事件恒为 Buffer，string 只在验收里出现
+    writeSync(fd, typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+  } catch {
+    /* ignore：日志写盘失败不允许影响主流程 */
+  }
+}
+
+/** 关闭管道模式保有的日志 fd；detached 模式的父副本在 spawn 后立即关闭，不走这里 */
+export function closeGatewayLogFds(fds: Array<number | undefined>): void {
+  for (const fd of fds) {
+    if (fd === undefined) continue
+    try {
+      closeSync(fd)
+    } catch {
+      /* ignore */
+    }
   }
 }

@@ -19,6 +19,7 @@
     "accept:gateway": "node test/gateway.accept.mjs",
     "accept:node-runtime": "node test/node-runtime.accept.mjs",
     "accept:maintenance": "node test/claw-maintenance.accept.mjs",
+    "accept:gateway-log": "node test/gateway-log-files.accept.mjs",
     "accept:terminal-sessions": "node test/terminal-sessions.accept.mjs",
     "accept:host-ipc": "node test/host-ipc.accept.mjs",
     "accept:group-policy": "node test/group-policy.accept.mjs",

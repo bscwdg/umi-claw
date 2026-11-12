@@ -15,7 +15,6 @@ import {
   readFileSync,
   statSync,
   writeFileSync,
-  closeSync
 } from 'fs'
 import { ConfigManager } from './configManager'
 import { promisify } from 'util'
@@ -41,10 +40,12 @@ import {
 import type { GatewayLogTail } from './claw/gatewayRuntime'
 import {
   buildProviderEnv,
+  closeGatewayLogFds,
   collectVoiceTtsEnv,
   ensureNodeCompileCacheDir,
   logWebhookMarkerResult,
-  openDetachedGatewayLogs
+  openGatewayLogFiles,
+  writeGatewayLogChunk
 } from './claw/spawnEnv'
 import { installSkill, listSkills, uninstallSkill } from './claw/skills'
 import type { SkillInfo } from './claw/skills'
@@ -100,6 +101,13 @@ export class ClawManager extends EventEmitter {
   /** 文件日志 tail（detached 模式下 stdout/stderr 分别写文件，面板从文件取日志） */
   private logTailTimer?: ReturnType<typeof setInterval>
   private logTails: GatewayLogTail[] = []
+
+  /**
+   * 管道模式（默认）下网关 stdout/stderr 的落盘 fd。
+   * detached 模式不用这两个字段：fd 直接交给子进程 stdio，父副本 spawn 后即关。
+   */
+  private gatewayPipeLogFd: number | undefined
+  private gatewayPipeErrFd: number | undefined
   /** 复用后台网关后的低频健康巡检 */
   private adoptedHealthTimer?: ReturnType<typeof setInterval>
   /** 退出处理幂等标记（quitApp 与 before-quit 都会调用 handleAppQuit） */
@@ -463,15 +471,16 @@ export class ClawManager extends EventEmitter {
 
     this._addLog(`正在启动 OpenClaw (端口 ${this.port})...`, 'system')
 
-    // 「退出应用保留网关」需要子进程脱离本实例：detached + 把 stdout/stderr 写文件，
-    // 否则 App 退出后管道关闭，网关写日志会中断/崩溃。默认关闭，行为与原来完全一致。
+    // 日志落盘两种模式共用 data/logs/openclaw-gateway.{log,err.log}：
+    // detached（退出保留网关）把 fd 直接交给子进程 stdio；默认管道模式由父进程
+    // 在 data 事件里 tee（见 _setupProcessEvents），应用重启后仍有本轮日志可查。
     const keepOnQuit = this.configManager.getConfig().keepGatewayOnQuit === true
-    const detachedLogs = openDetachedGatewayLogs(keepOnQuit, dataDir)
-    const gatewayLogFile = detachedLogs.logFile
-    const gatewayErrFile = detachedLogs.errFile
-    let gatewayLogFd = detachedLogs.logFd
-    let gatewayErrFd = detachedLogs.errFd
-    const detached = detachedLogs.detached
+    const gatewayLogs = openGatewayLogFiles(keepOnQuit, dataDir)
+    const gatewayLogFile = gatewayLogs.logFile
+    const gatewayErrFile = gatewayLogs.errFile
+    let gatewayLogFd = gatewayLogs.logFd
+    let gatewayErrFd = gatewayLogs.errFd
+    const detached = gatewayLogs.detached
 
     try {
       this.process = spawn(nodePath, [
@@ -488,14 +497,14 @@ export class ClawManager extends EventEmitter {
           ? ['ignore', gatewayLogFd!, gatewayErrFd!]
           : ['pipe', 'pipe', 'pipe']
       })
-      // 父进程只需要自己的副本；子进程已继承句柄。
-      for (const fd of [gatewayLogFd, gatewayErrFd]) {
-        if (fd === undefined) continue
-        try {
-          closeSync(fd)
-        } catch {
-          /* ignore */
-        }
+      if (detached) {
+        // 父进程只需要自己的副本；子进程已继承句柄。
+        closeGatewayLogFds([gatewayLogFd, gatewayErrFd])
+      } else {
+        // 管道模式：fd 交给实例字段，随 stdout/stderr data 事件 tee 落盘，
+        // 进程退出/stop 时由 _closePipeLogFds 统一关闭。
+        this.gatewayPipeLogFd = gatewayLogFd
+        this.gatewayPipeErrFd = gatewayErrFd
       }
       gatewayLogFd = undefined
       gatewayErrFd = undefined
@@ -529,14 +538,10 @@ export class ClawManager extends EventEmitter {
       const warning = [peerLinkWarning, syncTransientWarning].filter(Boolean).join('；') || undefined
       return { success: true, warning }
     } catch (err: any) {
-      for (const fd of [gatewayLogFd, gatewayErrFd]) {
-        if (fd === undefined) continue
-        try {
-          closeSync(fd)
-        } catch {
-          /* ignore */
-        }
-      }
+      closeGatewayLogFds([gatewayLogFd, gatewayErrFd])
+      // fd 已移交给实例字段后（spawn 成功到本 try 结束之间）再抛错，
+      // 局部变量已是 undefined，必须由实例方法兜底关，否则句柄泄漏
+      this._closePipeLogFds()
       this.process = null
       this.detachedChild = false
       this._setBootPhase('idle')
@@ -585,6 +590,9 @@ export class ClawManager extends EventEmitter {
 
     const proc = this.process
     this.process = null
+    // stop 先摘掉 tracked 引用，随后的 exit 事件会按「旧实例」跳过清理，
+    // 管道日志 fd 必须在这里显式关，否则要等进程对象 GC 才释放句柄。
+    this._closePipeLogFds()
 
     return new Promise((resolve) => {
       let resolved = false
@@ -1369,6 +1377,9 @@ export class ClawManager extends EventEmitter {
     if (!proc) return
 
     proc.stdout?.on('data', (data: Buffer) => {
+      // 管道模式落盘：写原始 chunk（不按行重切）。只认当前 tracked 进程，
+      // 双启动竞态里存活的旧实例再吐日志不能混进新一轮的日志文件
+      if (this.process === proc) writeGatewayLogChunk(this.gatewayPipeLogFd, data)
       const rawChunk = data.toString()
 
       const lines = rawChunk.split('\n').filter(Boolean)
@@ -1379,6 +1390,7 @@ export class ClawManager extends EventEmitter {
     })
 
     proc.stderr?.on('data', (data: Buffer) => {
+      if (this.process === proc) writeGatewayLogChunk(this.gatewayPipeErrFd, data)
       const lines = data.toString().split('\n').filter(Boolean)
       lines.forEach((line) => {
         this._addLog(line, 'stderr')
@@ -1405,6 +1417,7 @@ export class ClawManager extends EventEmitter {
         this.startedAt = undefined
         this._clearGatewayRuntime()
         this._stopGatewayLogTails()
+        this._closePipeLogFds()
         this._stopAdoptedHealthWatch()
         this._markNotReady()
         this.emit('statusChange', false)
@@ -1443,10 +1456,18 @@ export class ClawManager extends EventEmitter {
       if (this.process === proc) {
         this.process = null
         this.startedAt = undefined
+        this._closePipeLogFds()
         this._markNotReady()
         this.emit('statusChange', false)
       }
     })
+  }
+
+  /** 关闭管道模式保有的网关日志 fd（幂等；detached 模式字段恒为 undefined） */
+  private _closePipeLogFds(): void {
+    closeGatewayLogFds([this.gatewayPipeLogFd, this.gatewayPipeErrFd])
+    this.gatewayPipeLogFd = undefined
+    this.gatewayPipeErrFd = undefined
   }
 
   private _addLog(line: string, type: LogEntry['type']): void {

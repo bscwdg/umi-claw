@@ -25,6 +25,8 @@ const ACCEPT = [
   ['gateway', 'test/gateway.accept.mjs'],
   ['node-runtime', 'test/node-runtime.accept.mjs'],
   ['maintenance', 'test/claw-maintenance.accept.mjs'],
+  // 网关日志落盘（管道 tee / detached 直写 / fd 生命周期），与 maintenance 共用 ClawManager 打桩口径
+  ['gateway-log', 'test/gateway-log-files.accept.mjs'],
   ['terminal-sessions', 'test/terminal-sessions.accept.mjs'],
   // P45：宿主 IPC 行为级验收（env / claw / config / terminal 四组通道，fake registrar + 注入 deps）
   ['host-ipc', 'test/host-ipc.accept.mjs'],
