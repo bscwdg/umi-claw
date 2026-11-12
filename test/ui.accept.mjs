@@ -1630,6 +1630,94 @@ await r.check('U25', '主动消息接线可见：设置页选「外部渠道」�
   return 'external 选项 + bubble 提示 ✓'
 })
 
+await r.check('U28', '大肥鱼页面所有卡片统一接入 CollapsibleCard', async () => {
+  const componentSrc = readFileSync(join(repoRoot, 'src', 'views', 'components', 'CollapsibleCard.vue'), 'utf-8')
+  const pageSrc = readFileSync(join(repoRoot, 'src', 'character', 'CharacterPage.vue'), 'utf-8')
+  const settingsSrc = readFileSync(join(repoRoot, 'src', 'character', 'CharacterSettings.vue'), 'utf-8')
+
+  assert(/defineProps<\{\s*title:\s*string/.test(componentSrc), '公共组件必须接收 title')
+  assert(/@click="collapsed = !collapsed"/.test(componentSrc), '折叠按钮必须切换 collapsed')
+  assert(/v-show="!collapsed"/.test(componentSrc), '折叠状态必须隐藏卡片正文')
+  assert(/:aria-expanded="!collapsed"/.test(componentSrc), '折叠按钮必须暴露 aria-expanded')
+  assert(/:aria-controls="bodyId"/.test(componentSrc), '折叠按钮必须关联正文节点')
+  assert(/:id="bodyId"/.test(componentSrc), '折叠正文必须有稳定 id')
+  assert(/<slot\s*\/>/.test(componentSrc), '公共组件必须保留正文 slot')
+  assert(componentSrc.includes('viewBox="0 0 16 16"'), '折叠图标必须使用固定 viewBox 的 SVG')
+  assert(componentSrc.includes('transform-origin: center'), '图标必须围绕中心旋转')
+  assert(componentSrc.includes('will-change: transform'), '图标旋转层固定，避免点击时布局抖动')
+  assert(!componentSrc.includes('⌄'), '不得再用字体字符充当折叠图标')
+  assert(componentSrc.includes(':slotted(.hint:first-child)'), '首个 hint 的重复上间距必须归零')
+  assert(
+    pageSrc.includes("import CollapsibleCard from '@/views/components/CollapsibleCard.vue'"),
+    '角色页必须复用公共组件'
+  )
+  assert(
+    settingsSrc.includes("import CollapsibleCard from '@/views/components/CollapsibleCard.vue'"),
+    '详细设置必须复用公共组件'
+  )
+  assertEq((pageSrc.match(/<CollapsibleCard/g) || []).length, 17, '角色页 17 张卡片全部替换')
+  assert(!/<section class="card">/.test(pageSrc), '角色页不得残留未折叠的普通卡片')
+  assert(
+    /<CollapsibleCard title="主动消息语料" default-collapsed>/.test(pageSrc),
+    '主动消息语料默认折叠'
+  )
+  assert(
+    /<CollapsibleCard title="桌宠形象" default-collapsed>/.test(pageSrc),
+    '桌宠形象默认折叠'
+  )
+  assertEq((pageSrc.match(/\sdefault-collapsed(?=>)/g) || []).length, 2, '只允许指定的两张卡片默认折叠')
+  assert(!settingsSrc.includes('default-collapsed'), '详细设置卡片保持默认展开')
+  assert(settingsSrc.includes(':deep(.collapsible-body)'), '详细设置保持原有 8px 标题间距')
+  assert(/<CollapsibleCard title="详细设置" card-class="settings">/.test(settingsSrc), '详细设置卡片保留 settings 样式类')
+
+  // 真挂载：验证 defaultCollapsed、点击切换、aria 关联与 v-show 保留 slot 节点
+  const bundle = compileVuePage('test/fixtures/CollapsibleCardHarness.vue', 'ui-collapsible-card', {
+    routerStub: stubs.routerStub,
+    realComponents: ['CollapsibleCard.vue']
+  })
+  const harnessMod = await import(pathToFileURL(bundle).href)
+  setIpc({})
+  const mounted = await mountPage(harnessMod.default, { api })
+  if (mounted.mountError) throw new Error('折叠卡片挂载异常: ' + mounted.mountError.message)
+  const nodes = []
+  const walk = (node) => {
+    if (!node || node.tag === '#text') return
+    nodes.push(node)
+    for (const child of node.children) walk(child)
+  }
+  walk(mounted.root)
+  const buttons = nodes.filter((node) => node.tag === 'button' && node.props['aria-controls'])
+  assertEq(buttons.length, 2, '两张测试卡片各有一个折叠按钮')
+  const bodyFor = (button) =>
+    nodes.find((node) => node.tag === 'div' && node.props.id === button.props['aria-controls'])
+  const expandedBody = bodyFor(buttons[0])
+  const collapsedBody = bodyFor(buttons[1])
+  assert(expandedBody && collapsedBody, '按钮 aria-controls 必须关联正文节点')
+  assertEq(buttons[0].props['aria-expanded'], true, '第一张默认展开')
+  assertEq(buttons[1].props['aria-expanded'], false, '第二张默认折叠')
+  assertEq(expandedBody.style.display !== 'none', true, '默认展开正文可见')
+  assertEq(collapsedBody.style.display, 'none', '默认折叠正文隐藏')
+  assertEq(
+    nodes.some((node) => node.props['data-slot'] === 'collapsed'),
+    true,
+    '折叠只隐藏正文，slot 节点必须保留（不能用 v-if 卸载）'
+  )
+  const click = (button) => {
+    const handler = button.props.onClick ?? button.listeners.click?.[0]
+    assert(typeof handler === 'function', '折叠按钮必须有 click 处理器')
+    handler()
+  }
+  click(buttons[0])
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assertEq(buttons[0].props['aria-expanded'], false, '点击后切换为折叠')
+  assertEq(expandedBody.style.display, 'none', '点击后正文隐藏')
+  click(buttons[1])
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assertEq(buttons[1].props['aria-expanded'], true, '点击后切换为展开')
+  assertEq(collapsedBody.style.display !== 'none', true, '点击后正文恢复')
+  return '公共组件 + 18 张卡片接入 ✓'
+})
+
 const result = r.toJSON({})
 
 const ok = printResult(result)

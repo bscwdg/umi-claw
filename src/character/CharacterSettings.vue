@@ -1,6 +1,5 @@
 <template>
-  <section class="card settings">
-    <h3>详细设置</h3>
+  <CollapsibleCard title="详细设置" card-class="settings">
     <p class="hint">
       这里改的是她自己的行为参数（对应 <code>fish:v2:settings</code>）。保存后立即生效；称呼/关系模式在「首启三问」也能改。
     </p>
@@ -240,11 +239,12 @@
       </button>
       <span v-if="dirty" class="hint">有未保存的修改</span>
     </div>
-  </section>
+  </CollapsibleCard>
 </template>
 
 <script setup lang="ts">
 import { reactive, ref, watch } from 'vue'
+import CollapsibleCard from '@/views/components/CollapsibleCard.vue'
 import type { CharacterSettings, CharacterSettingsPatch } from '../../electron/main/character/types'
 
 const props = defineProps<{
@@ -486,6 +486,9 @@ defineExpose({ setSaving, markSaved, dirty })
   margin: var(--space-2) 0 0;
   font-size: var(--text-xs);
   color: var(--text-secondary);
+}
+.settings :deep(.collapsible-body) {
+  margin-top: var(--space-2);
 }
 .settings h3 + .hint,
 .settings h4 + .hint,

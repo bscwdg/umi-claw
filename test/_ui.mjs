@@ -415,6 +415,8 @@ function makeNode(tag, text) {
     // v-model 走 runtime-dom 指令，直接操作这些并挂事件监听
     value: undefined,
     checked: undefined,
+    // v-show/runtime-dom 直接写 el.style.display；宿主节点必须提供最小 style 对象
+    style: {},
     // 监听器真实存储：验收测试据此触发 v-model 的 input/change 回调模拟交互
     listeners: {},
     addEventListener(type, fn) {

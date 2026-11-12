@@ -13,8 +13,7 @@
     <p v-if="error" class="alert alert-danger">{{ error }}</p>
     <p v-if="toast" class="alert alert-success">{{ toast }}</p>
 
-    <section class="card">
-      <h3>当前状态</h3>
+    <CollapsibleCard title="当前状态">
       <div class="grid-3 stat-grid">
         <div><span class="k">功能</span><span class="v">{{ status.enabled ? '已启用' : '未启用' }}</span></div>
         <div><span class="k">模块</span><span class="v">{{ status.storeReady ? '已就绪' : '未就绪' }}</span></div>
@@ -26,10 +25,9 @@
       <div class="row mt-3">
         <span class="hint">桌宠暂时下线（形象重做后再放出）</span>
       </div>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>首启三问</h3>
+    <CollapsibleCard title="首启三问">
       <div class="row">
         <label class="lab">怎么称呼你</label>
         <input v-model="addressDraft" class="form-input" maxlength="40" placeholder="默认「你」" />
@@ -63,10 +61,9 @@
           {{ f.label }}未就绪 · 去配置
         </button>
       </div>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>人格</h3>
+    <CollapsibleCard title="人格">
       <p class="hint">
         人格 = SOUL / IDENTITY / AGENTS / USER 四个文件。导出可备份或换到别的机器；导入会先备份旧人格，
         导入后这些文件视为你手写的内容，不会再被模板覆盖。
@@ -83,10 +80,9 @@
         />
       </div>
       <p v-if="personaHint" class="hint">{{ personaHint }}</p>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>知识</h3>
+    <CollapsibleCard title="知识">
       <p class="hint">
         把世界书/角色卡/约定写进既有 Obsidian 的「大肥鱼」目录（不新增知识库）。导入内容会进她的检索
         上下文：只导入你信任的来源。同名笔记不会覆盖（会加序号）；单文件 ≤512KB、一次 ≤20 个/2MB。
@@ -138,10 +134,9 @@
         提示：{{ knowledgeWarningText }}（旧索引通常仍可用）
       </p>
       <p v-if="knowledgeHint" class="hint">{{ knowledgeHint }}</p>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>连接自检</h3>
+    <CollapsibleCard title="连接自检">
       <div class="grid-3 stat-grid">
         <div>
           <span class="k">agent</span><span class="v">{{ flag(status.agentReady) }}</span>
@@ -172,10 +167,9 @@
         记忆/世界书/日记走既有 Obsidian：在「知识库」页启用 MCP 并重建索引后，她才能检索回忆。
         外部渠道（QQ/飞书/微信）任一配置即可；不配也不影响在应用里聊天。
       </p>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>聊天渠道</h3>
+    <CollapsibleCard title="聊天渠道">
       <p class="hint">
         勾选后，这些渠道内被渠道策略放行的会话（含群聊）会路由给大肥鱼（文本）；保存后需重启
         OpenClaw 网关生效。语音条仍需 TTS 与 QQ 凭据，和这里独立。
@@ -245,10 +239,9 @@
         </button>
       </div>
       <p v-if="chatChannelsHint" class="hint">{{ chatChannelsHint }}</p>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>聊两句</h3>
+    <CollapsibleCard title="聊两句">
       <div class="chat-log">
         <div v-for="(m, i) in messages" :key="i" class="msg" :class="m.role">
           <span class="who">{{ m.role === 'user' ? '你' : '她' }}</span>
@@ -274,10 +267,9 @@
         清空只轮换会话上下文；日记与关系记忆不受影响。首次或隔很久的回复可能要几十秒（网关/模型冷启动），
         失败会显示在页面上方。
       </p>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>她的一天</h3>
+    <CollapsibleCard title="她的一天">
       <pre v-if="lifeDoc" class="life-doc">{{ lifeDoc }}</pre>
       <p v-else class="hint">还没生成。启用后她会每天写自己的一天。</p>
       <div class="row mt-3">
@@ -288,10 +280,9 @@
         <button class="btn" :disabled="busy || !status.enabled" @click="cancelQuiet">取消安静</button>
       </div>
       <p class="hint">安静期间不发主动消息，不影响聊天与好感；免打扰时段与每日上限在设置里改。</p>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>主动消息语料</h3>
+    <CollapsibleCard title="主动消息语料" default-collapsed>
       <p class="hint">
         内置 {{ contentOverview?.builtinTopicCount ?? 0 }} 张话题、{{ contentOverview?.lineGroups.length ?? 0 }}
         个台词组只读；可导入自己的 JSON 语料。话题按 id 接管内置卡（删除后回落内置），台词按组追加去重。
@@ -371,20 +362,18 @@
         </ul>
         <p v-else class="hint">该组暂无你的自定义句（内置 {{ group.builtinLines.length }} 句只读）</p>
       </div>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>互动</h3>
+    <CollapsibleCard title="互动">
       <div class="row">
         <button class="btn" :disabled="busy || !status.enabled" @click="interact('pat')">摸摸头</button>
         <button class="btn" :disabled="busy || !status.enabled" @click="interact('feed')">投喂</button>
         <button class="btn" :disabled="busy || !status.enabled" @click="sendVoice">发一条语音</button>
       </div>
       <p class="hint">语音需要 QQ 机器人凭据；没配置会降级成文字，不会报错。</p>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>桌宠形象</h3>
+    <CollapsibleCard title="桌宠形象" default-collapsed>
       <p class="hint">
         可以直接导入你自己的图片当形象（PNG / JPEG / WebP / GIF，动图会动；≤8MB）。
         不支持 SVG；导入后角色页立即预览，桌宠窗口接线恢复后会自动使用这张图；恢复默认则回到内置小鱼。
@@ -416,10 +405,9 @@
           @change="onPetAppearancePicked"
         />
       </div>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>表情包</h3>
+    <CollapsibleCard title="表情包">
       <p class="hint">
         导入本地图片当她的 QQ 表情包（PNG / JPEG / GIF / WebP，单张 ≤10MB，最多 200 张；同一张图按 sha256 去重）。
         删除只是归档到 <code>data/character/stickers-archive/</code>，可手动找回。
@@ -466,10 +454,9 @@
         </li>
       </ul>
       <p v-if="stickersHint" class="hint">{{ stickersHint }}</p>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>备份</h3>
+    <CollapsibleCard title="备份">
       <p class="hint">
         导出成一个 zip：她的设置/状态/关系数值/解锁/桌宠状态、人格文件、workspace 记忆日记、表情包。
         <strong>不含</strong>密钥/token/截图/日志、桌宠自定义形象文件；Obsidian vault 里的笔记不打包，
@@ -482,20 +469,18 @@
         <span class="hint">{{ backupBusy ? '处理中…' : '默认保存到 data/backups/character-<时间>.zip' }}</span>
       </div>
       <p v-if="backupHint" class="hint">{{ backupHint }}</p>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>今天的日记</h3>
+    <CollapsibleCard title="今天的日记">
       <p class="hint">{{ memoryText }}</p>
       <div class="row">
         <button class="btn" :disabled="busy || !status.enabled" @click="runMemory">现在写一篇</button>
       </div>
       <p class="hint">每天 23:00 自动写；先写 workspace，再写 Obsidian 的「大肥鱼/日记」。需要先在「隐私与安全」确认年龄。</p>
       <p class="hint">问起过去时，最近 5 天日记 + 约定/大事记会直接进对话上下文（不依赖 Obsidian 索引）。</p>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>记忆与关系</h3>
+    <CollapsibleCard title="记忆与关系">
       <p class="hint">
         查看/修正她的日记、约定与大事记。删除是移到「大肥鱼/归档」或本地 memory-archive，不会物理删除；
         日记保存只改本地记忆（她召回用），Obsidian 原始日记不动。
@@ -533,7 +518,7 @@
         </li>
       </ul>
       <p v-if="!memoryRelations.length" class="hint">还没有约定/大事记；可先在「知识」导入，或让她在聊天里记下约定。</p>
-    </section>
+    </CollapsibleCard>
 
     <CharacterSettings
       ref="settingsRef"
@@ -542,8 +527,7 @@
       @save="saveDetailSettings"
     />
 
-    <section class="card">
-      <h3>隐私与安全</h3>
+    <CollapsibleCard title="隐私与安全">
       <label class="check-row">
         <input v-model="ageConfirmed" type="checkbox" @change="saveAgeConfirm" />
         <span>我已满 18 岁（未确认前她不会主动发消息）</span>
@@ -554,15 +538,14 @@
         <button class="btn btn-danger" :disabled="busy" @click="deleteAll">删除全部</button>
       </div>
       <p class="hint">导出不含密钥；日记会归档到本机 `memory-archive/` 与 Obsidian 的「大肥鱼/归档」，不会直接删除你的笔记。</p>
-    </section>
+    </CollapsibleCard>
 
-    <section class="card">
-      <h3>数据</h3>
+    <CollapsibleCard title="数据">
       <div class="row">
         <button class="btn" :disabled="busy" @click="resetValues">重置数值</button>
       </div>
       <p class="hint">只清角色数值；记忆与日记在 C07/C09 提供更细的删除与导出。</p>
-    </section>
+    </CollapsibleCard>
 
     <!-- 统一二次确认：宿主其它页面用的都是自定义 ConfirmDialog，这里不再用原生 window.confirm -->
     <ConfirmDialog
@@ -584,6 +567,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
+import CollapsibleCard from '@/views/components/CollapsibleCard.vue'
 import CharacterSettings from './CharacterSettings.vue'
 import FishState from './art/FishState.vue'
 import type { BootstrapReport } from '../../electron/main/character/bootstrap'
