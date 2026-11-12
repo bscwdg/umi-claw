@@ -1449,6 +1449,126 @@ await recorder.check('C42c', '内容引擎：候选池 2–10 + 去重 + 未回�
     true,
     '话题候选必须有句末标点（hook2 也不能裸句）'
   )
+  const workTopic = contentDeck.topics.topics.find((topic) => topic.id === 'topic-work')
+  assertEq(Boolean(workTopic), true, '内容包含工作吐槽话题')
+  assertEq(workTopic.requiresChatMention, true, '工作吐槽必须命中最近聊天才可发')
+  const workDeck = {
+    ...contentDeck,
+    topics: { ...contentDeck.topics, topics: workTopic ? [workTopic] : [] }
+  }
+  const workWithoutContext = generateProactiveContent({
+    ...base,
+    deck: workDeck,
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] },
+    unansweredCount: 2,
+    recentChat: ''
+  }).candidates.filter((candidate) => candidate.sourceId === 'topic-work')
+  assertEq(workWithoutContext.length, 0, '没有工作语境时不得发工作吐槽卡')
+  const overriddenWorkDeck = {
+    ...contentDeck,
+    topics: {
+      ...contentDeck.topics,
+      topics: workTopic ? [{ ...workTopic, requiresChatMention: false }] : []
+    }
+  }
+  const overriddenWithoutContext = generateProactiveContent({
+    ...base,
+    deck: overriddenWorkDeck,
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] },
+    unansweredCount: 2,
+    recentChat: ''
+  }).candidates.filter((candidate) => candidate.sourceId === 'topic-work')
+  assertEq(overriddenWithoutContext.length, 0, '用户同 id 接管卡也不能绕过工作语境门禁')
+  const assistantOnlyContext = generateProactiveContent({
+    ...base,
+    deck: workDeck,
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] },
+    recentChat: '她：本鱼今天有在认真工作'
+  }).candidates.filter((candidate) => candidate.sourceId === 'topic-work')
+  assertEq(assistantOnlyContext.length, 0, '她自己回复里的“工作”不能触发工作吐槽卡')
+  const bossAddressContext = generateProactiveContent({
+    ...base,
+    deck: workDeck,
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] },
+    recentChat: '用户：老板，今天吃什么'
+  }).candidates.filter((candidate) => candidate.sourceId === 'topic-work')
+  assertEq(bossAddressContext.length, 0, '“老板”作为称呼不能触发工作吐槽卡')
+  const neutralWorkContext = generateProactiveContent({
+    ...base,
+    deck: workDeck,
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] },
+    recentChat: '用户：今天工作挺顺利的'
+  }).candidates.filter((candidate) => candidate.sourceId === 'topic-work')
+  assertEq(neutralWorkContext.length, 0, '中性工作话题不能触发“骂吧”')
+  const weatherWorkContext = generateProactiveContent({
+    ...base,
+    deck: workDeck,
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] },
+    recentChat: '用户：今天天气不错，工作挺顺利的'
+  }).candidates.filter((candidate) => candidate.sourceId === 'topic-work')
+  assertEq(weatherWorkContext.length, 0, '“天气”里的“气”不能误判成工作抱怨')
+  const workWithContext = generateProactiveContent({
+    ...base,
+    deck: workDeck,
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] },
+    recentChat: '用户：今天加班，被甲方骂了\n她：先骂，本鱼听着'
+  }).candidates.filter((candidate) => candidate.sourceId === 'topic-work')
+  assertEq(workWithContext.length > 0, true, '命中加班/甲方后允许工作吐槽卡')
+  const complainedContext = generateProactiveContent({
+    ...base,
+    deck: workDeck,
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] },
+    recentChat: '用户：今天被骂了'
+  }).candidates.filter((candidate) => candidate.sourceId === 'topic-work')
+  assertEq(complainedContext.length > 0, true, '“被骂”命中工作卡声明的上下文')
+  const tiredWorkContext = generateProactiveContent({
+    ...base,
+    deck: workDeck,
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] },
+    recentChat: '用户：今天工作太累了'
+  }).candidates.filter((candidate) => candidate.sourceId === 'topic-work')
+  assertEq(tiredWorkContext.length > 0, true, '“工作太累”允许工作吐槽卡')
+  const customMentionTopic = {
+    id: 'user-context-only',
+    title: '自定义强语境',
+    when: '',
+    stance: '',
+    details: [],
+    hooks: ['自定义钩子'],
+    sample: '自定义样例',
+    requiresChatMention: true,
+    slots: [],
+    seasons: []
+  }
+  const customMentionDeck = {
+    ...contentDeck,
+    topics: { ...contentDeck.topics, topics: [customMentionTopic] }
+  }
+  const customWithoutContext = generateProactiveContent({
+    ...base,
+    deck: customMentionDeck,
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] },
+    recentChat: ''
+  }).candidates.filter((candidate) => candidate.sourceId === customMentionTopic.id)
+  assertEq(customWithoutContext.length, 0, '用户自定义 requiresChatMention 卡无上下文时不发')
+  const customWithContext = generateProactiveContent({
+    ...base,
+    deck: customMentionDeck,
+    cards: [],
+    day: { recentTopics: [], recentSentTexts: [] },
+    recentChat: '用户：聊聊自定义强语境'
+  }).candidates.filter((candidate) => candidate.sourceId === customMentionTopic.id)
+  assertEq(customWithContext.length > 0, true, '用户自定义 requiresChatMention 卡命中标题后允许发')
   for (const topic of contentDeck.topics.topics) {
     const onlyTopicDeck = {
       ...contentDeck,
@@ -1484,8 +1604,8 @@ await recorder.check('C42c', '内容引擎：候选池 2–10 + 去重 + 未回�
       'topic-fight',
       'topic-neglect'
     ].includes(topic.id)
-    if (sensitive) {
-      assertEq(candidates.length, 0, `敏感话题「${topic.title}」无上下文不硬发`)
+    if (sensitive || topic.requiresChatMention) {
+      assertEq(candidates.length, 0, `强语境话题「${topic.title}」无上下文不硬发`)
       continue
     }
     assertEq(candidates.length > 0, true, `话题「${topic.title}」有可发候选`)

@@ -119,7 +119,13 @@ await suite.check('K2', '导入话题：计数/落盘/来源标注/进引擎候�
   const { store } = makeStore(root)
   const result = await store.importTopics({
     topics: [
-      { id: 'user-1', title: '用户一', sample: '用户样例一', hooks: ['用户钩子'] },
+      {
+        id: 'user-1',
+        title: '用户一',
+        sample: '用户样例一',
+        hooks: ['用户钩子'],
+        requiresChatMention: true
+      },
       { id: 'user-2', title: '用户二', sample: '用户样例二' }
     ]
   })
@@ -131,11 +137,17 @@ await suite.check('K2', '导入话题：计数/落盘/来源标注/进引擎候�
   assertEq(onDisk.topics.length, 2, '落盘 JSON 含 2 张')
   assertDeepEqSafe(onDisk.topics[0].slots, [], '缺省 slots 回落空数组')
   assertDeepEqSafe(onDisk.topics[0].seasons, [], '缺省 seasons 回落空数组（全年可用）')
+  assertEq(onDisk.topics[0].requiresChatMention, true, '用户话题上下文门禁字段落盘')
   const overview = await store.overview()
   assertEq(overview.topics.filter((t) => t.source === 'user').length, 2, '总览 2 张标 user')
   const merged = await store.mergeForEngine()
   assertEq(merged.topics.topics.length, 4, '引擎合并 2 内置 + 2 用户')
   assertEq(merged.topics.topics.some((t) => t.id === 'user-1'), true, '用户卡进引擎')
+  assertEq(
+    merged.topics.topics.find((t) => t.id === 'user-1')?.requiresChatMention,
+    true,
+    '用户话题上下文门禁进入引擎'
+  )
 })
 
 await suite.check('K3', '同 id 接管内置卡；删除用户卡后回落内置版本', async () => {

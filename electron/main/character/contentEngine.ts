@@ -58,6 +58,8 @@ export interface TopicCard {
   details: string[]
   hooks: string[]
   sample: string
+  /** true = 最近聊天必须命中该话题关键词，才允许进入候选池 */
+  requiresChatMention: boolean
   /** 允许出现的时段；空 = 任意时段 */
   slots: TopicSlot[]
   /** 允许出现的季节；空 = 任意季节（老卡不带此字段即全年可用，向后兼容） */
@@ -121,6 +123,7 @@ function parseTopicCard(raw: unknown): TopicCard | null {
     details: readStringList(src.details, 10),
     hooks,
     sample,
+    requiresChatMention: src.requiresChatMention === true,
     slots: Array.isArray(src.slots)
       ? src.slots.filter(
           (slot): slot is TopicSlot =>
@@ -734,7 +737,7 @@ function buildLifeCandidates(cards: LifeCard[], address: string): ProactiveCandi
 const TOPIC_KEYWORDS: Record<string, string[]> = {
   'topic-food': ['吃', '饭', '饿', '白饭', '外卖', '食堂'],
   'topic-slack': ['摸鱼', '偷懒', '老板', '上班', '工作'],
-  'topic-work': ['工作', '项目', '加班', '甲方', '老板', '公司'],
+  'topic-work': ['工作', '项目', '加班', '甲方', '老板', '公司', '被骂', '挨骂'],
   'topic-night': ['熬夜', '睡不着', '晚', '困', '睡'],
   'topic-weather': ['天气', '下雨', '太阳', '热', '冷'],
   'topic-game': ['游戏', '打游戏', '开黑', '番', '动漫'],
@@ -774,8 +777,9 @@ const TOPIC_KEYWORDS: Record<string, string[]> = {
   'topic-hobby': ['爱好', '小玩意', '攒', '玩什么']
 }
 
-/** 这些话题容易冒犯/不搭：只有最近聊天明确提到才发 */
-const SENSITIVE_TOPIC_KEYWORDS: Record<string, string[]> = {
+/** 这些话题必须有最近聊天上下文才发；按 id 兜底，用户同 id 接管卡也不能绕过 */
+const CONTEXT_REQUIRED_TOPIC_KEYWORDS: Record<string, string[]> = {
+  'topic-work': TOPIC_KEYWORDS['topic-work'],
   'topic-sick': TOPIC_KEYWORDS['topic-sick'],
   'topic-trip': TOPIC_KEYWORDS['topic-trip'],
   'topic-birthday': TOPIC_KEYWORDS['topic-birthday'],
@@ -783,6 +787,35 @@ const SENSITIVE_TOPIC_KEYWORDS: Record<string, string[]> = {
   'topic-fight': TOPIC_KEYWORDS['topic-fight'],
   'topic-neglect': TOPIC_KEYWORDS['topic-neglect']
 }
+
+/** 工作卡只有“工作词”还不够，必须同时带一点吐槽/受挫语气，避免“今天工作挺顺利”也发“骂吧” */
+const WORK_COMPLAINT_KEYWORDS = [
+  '骂',
+  '烦死',
+  '好烦',
+  '烦人',
+  '好累',
+  '累死',
+  '太累',
+  '压力',
+  '受不了',
+  '离谱',
+  '催',
+  '背锅',
+  '改需求',
+  '不想干',
+  '加班',
+  '好难',
+  '太难',
+  '难受',
+  '气死',
+  '生气',
+  '崩溃',
+  '委屈',
+  '头大',
+  '服了',
+  '无语'
+]
 
 function buildTopicCandidates(
   deck: TopicDeck,
@@ -794,6 +827,11 @@ function buildTopicCandidates(
 ): ProactiveCandidate[] {
   const recent = new Set(recentTopics)
   const chat = recentChat.trim()
+  const userChat = chat
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('用户：'))
+    .join('\n')
   const out: ProactiveCandidate[] = []
   for (const topic of deck?.topics ?? []) {
     if (topic.slots.length > 0 && !topic.slots.includes(slot)) continue
@@ -802,10 +840,19 @@ function buildTopicCandidates(
     // 同一 topic 7 天窗口内尽量不重复：直接用最近使用过的 id 排除
     if (recent.has(topic.id)) continue
     const keywords = TOPIC_KEYWORDS[topic.id] ?? [topic.title]
-    const mentioned = Boolean(chat) && keywords.some((word) => chat.includes(word))
-    // 生病/吵架/出差/生日/节日/被冷落：没有最近聊天触发就不要硬问，避免前后不搭
-    if (SENSITIVE_TOPIC_KEYWORDS[topic.id] && !mentioned) continue
-    const affinity = mentioned ? 1.8 : 1
+    const mentioned = Boolean(userChat) && keywords.some((word) => userChat.includes(word))
+    const contextMatched =
+      topic.id === 'topic-work'
+        ? mentioned && WORK_COMPLAINT_KEYWORDS.some((word) => userChat.includes(word))
+        : mentioned
+    // 强语境话题（生病/吵架/工作吐槽等）没有最近聊天触发就不要硬聊，避免前后不搭
+    if (
+      (topic.requiresChatMention || CONTEXT_REQUIRED_TOPIC_KEYWORDS[topic.id]) &&
+      !contextMatched
+    ) {
+      continue
+    }
+    const affinity = contextMatched ? 1.8 : 1
     const detail = topic.details[0] ?? ''
     const hook = topic.hooks[0] ?? ''
     const hook2 = topic.hooks[1] ?? ''
