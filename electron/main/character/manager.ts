@@ -49,6 +49,11 @@ import {
   type ProactiveCandidate
 } from './contentEngine'
 import {
+  buildProactiveWriterPrompt,
+  normalizeProactiveWriterOutput,
+  type GenerateProactiveText
+} from './proactiveWriter'
+import {
   decideProactive,
   proactiveIntervalMs,
   PROACTIVE_MAX_DAILY_CAP,
@@ -70,6 +75,7 @@ import {
 import { renderStateDoc } from './persona'
 import { decideVoice, type VoiceDecision } from './voicePolicy'
 import { isQuietHours } from './proactive'
+import { withTimeout } from './searchContext'
 import {
   buildExportPayload,
   CRISIS_REDIRECT,
@@ -125,6 +131,8 @@ export interface CharacterManagerOptions {
   random?: () => number
   /** 每日记忆（C07）：生成日记 + 双写（workspace / Obsidian） */
   generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
+  /** 主动消息：规则选中候选后，交给 feiyu agent 改写；失败/非法输出回退候选原文 */
+  generateProactiveText?: GenerateProactiveText
   /** 最近真实聊天（主动消息选话题 + 外部回复解除停发）；失败由 manager 降级为空 */
   readRecentChat?: () => Promise<
     | Array<{ role: 'user' | 'assistant'; text: string; at: number }>
@@ -170,6 +178,7 @@ export class CharacterManager {
   private readonly stickerChance: number
   private readonly random: () => number
   private readonly generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
+  private readonly generateProactiveText?: GenerateProactiveText
   private readonly readRecentChat?: () => Promise<
     | Array<{ role: 'user' | 'assistant'; text: string; at: number }>
     | {
@@ -234,6 +243,7 @@ export class CharacterManager {
         : 0.2
     this.random = options.random ?? Math.random
     this.generateDiary = options.generateDiary
+    this.generateProactiveText = options.generateProactiveText
     this.readRecentChat = options.readRecentChat
     this.readWorkspaceMemory = options.readWorkspaceMemory
     this.writeWorkspaceMemory = options.writeWorkspaceMemory
@@ -553,6 +563,7 @@ export class CharacterManager {
     chosen: ProactiveCandidate | null
     lastUserMessageAt?: number
     conversationId?: string
+    recentChat?: string
   }> {
     this.assertInitialized()
     const settings = await this.getSettings()
@@ -638,7 +649,8 @@ export class CharacterManager {
       candidates: content.candidates,
       chosen: content.chosen,
       ...(lastUserMessageAt > 0 ? { lastUserMessageAt } : {}),
-      ...(conversationId ? { conversationId } : {})
+      ...(conversationId ? { conversationId } : {}),
+      ...(recentChat ? { recentChat } : {})
     }
   }
 
@@ -663,7 +675,8 @@ export class CharacterManager {
 
   /**
    * 主动性 tick：原子预留额度 → 外发（可选）→ 失败降级应用内气泡。
-   * 不重试、不换通道；tick 重入被 in-flight 挡住，额度在发送前已计入。
+   * 外发不重试、不换通道；仅当 agent 改写撞去重时，在额度预留内回退一次模板候选。
+   * tick 重入被 in-flight 挡住，额度在发送前已计入。
    */
   async runProactiveTick(
     now = this.now()
@@ -677,14 +690,62 @@ export class CharacterManager {
     try {
       const {
         decision,
-        message,
+        message: ruleMessage,
         chosen,
         day: lifeDay,
         lastUserMessageAt,
-        conversationId
+        conversationId,
+        recentChat
       } = await this.evaluateProactive(now)
-      if (!decision.send || !message || !chosen) return { decision }
-      const claimed = await this.claimProactiveSlot(now, chosen, epoch, lastUserMessageAt)
+      if (!decision.send || !ruleMessage || !chosen) return { decision }
+
+      let sendCandidate = chosen
+      let generated = false
+      if (this.generateProactiveText) {
+        try {
+          const settings = await this.getSettings()
+          const prompt = buildProactiveWriterPrompt({
+            candidate: chosen,
+            recentChat: recentChat ?? '',
+            address: settings.relationship.address,
+            relationshipMode: settings.relationship.mode,
+            mood: lifeDay?.mood ?? '平静',
+            activity: lifeDay?.activity ?? ''
+          })
+          const raw = await withTimeout(
+            this.generateProactiveText(prompt, {
+              at: now,
+              intent: chosen.intent,
+              sourceId: chosen.sourceId
+            }),
+            45_000
+          )
+          const written = normalizeProactiveWriterOutput(raw)
+          if (written) {
+            sendCandidate = { ...chosen, text: written }
+            generated = true
+          } else {
+            this.logger('[character] 主动消息 agent 改写输出无效，回退模板候选')
+          }
+        } catch (error) {
+          this.logger(
+            `[character] 主动消息 agent 改写失败，回退模板候选: ${(error as Error)?.message ?? String(error)}`
+          )
+        }
+      }
+
+      let claimed = await this.claimProactiveSlot(
+        now,
+        sendCandidate,
+        epoch,
+        lastUserMessageAt
+      )
+      // 模型改写撞了近期文案：回退原候选再试一次；其它失败原因不退避重试。
+      if (!claimed.ok && generated && claimed.reason === 'duplicate') {
+        sendCandidate = chosen
+        generated = false
+        claimed = await this.claimProactiveSlot(now, sendCandidate, epoch, lastUserMessageAt)
+      }
       if (!claimed.ok) {
         return { decision: { ...decision, send: false, reason: claimed.reason ?? 'min-interval' } }
       }
@@ -693,6 +754,7 @@ export class CharacterManager {
         return { decision: { ...decision, send: false }, message: undefined }
       }
       let delivered = false
+      const message = sendCandidate.text
       if (this.sendProactive) {
         try {
           delivered = await this.sendProactive({

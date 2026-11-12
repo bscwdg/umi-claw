@@ -43,6 +43,7 @@ import { createStickerStore, type StickerImportInput, type StickerUpdatePatch } 
 import { createContentStore } from './contentStore'
 import { sendSticker } from './stickerSender'
 import { createBackupBundle } from './backupBundle'
+import type { GenerateProactiveText } from './proactiveWriter'
 import {
   CHARACTER_CHANNELS,
   CharacterError,
@@ -102,6 +103,8 @@ export interface CharacterWiringDeps {
   sendProactive?: (message: { text: string; channel: 'external' | 'app' }) => Promise<boolean>
   /** 日记生成（index.ts 用 gateway 非流式 chat + openclaw/feiyu） */
   generateDiary?: (prompt: string, meta: { date: string }) => Promise<string>
+  /** 主动消息 agent 改写（feiyu 一次性生成；失败时 manager 回退模板） */
+  generateProactiveText?: GenerateProactiveText
   /** 预检索（性能）：像在问过去/笔记时由宿主直接查 Obsidian，命中片段注入本轮上下文 */
   searchKnowledge?: (
     query: string
@@ -379,6 +382,7 @@ async function registerCharacterInternal(
         return true
       },
       generateDiary: deps.generateDiary,
+      generateProactiveText: deps.generateProactiveText,
       // 主动消息选话题前读最近真实聊天（只读 transcript_events；失败降级为空）
       readRecentChat: () =>
         readRecentChat({

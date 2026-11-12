@@ -19,6 +19,7 @@ import type { CharacterWiringDeps } from '../character/wiring'
 import { filterCharacterHits } from '../character/searchContext'
 import { buildKnowledgeHealth, countCharacterNotes } from '../character/knowledgeHealth'
 import { scrubForLog } from '../character/safety'
+import { buildProactiveConversationKey } from '../character/proactiveWriter'
 import { applyCharacterGroupPolicy } from './characterGroupConfig'
 
 /** 宿主侧能提供的一切（都是现成对象，不是新造） */
@@ -113,6 +114,18 @@ export function buildCharacterDeps(src: CharacterHostSources): CharacterWiringDe
         stream: false,
         model: 'openclaw/feiyu',
         conversationKey: `conv:fish:daily-memory:${meta.date}`
+      })
+      return result.text
+    },
+    generateProactiveText: async (prompt, meta) => {
+      if (!src.gateway || !src.gatewayReady()) throw new Error('OpenClaw Gateway 未就绪')
+      const result = await src.gateway.chat({
+        messages: [{ role: 'user', content: prompt }],
+        stream: false,
+        model: 'openclaw/feiyu',
+        temperature: 0.8,
+        // 每次主动消息使用独立会话键：保留人格/记忆，又不让上一次生成轮次污染下一次
+        conversationKey: buildProactiveConversationKey(meta)
       })
       return result.text
     },
