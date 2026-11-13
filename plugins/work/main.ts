@@ -6,13 +6,13 @@
 // 数据边界：Phase 2 首批仍用宿主 work.db（voice 也绑在这个库上），
 // 由宿主以 `ctx.services.db` 注入；下一步切到 `<dataDir>/plugins/work/data.db`。
 
-import { definePlugin, type PluginContext } from '../../electron/main/kernel'
+import { definePlugin, type PluginContext } from '../../plugin-sdk/src/official'
 import { createWorkRuntime, type WorkRuntime } from './domain/runtime'
 import { registerWorkIpc, setWorkIpcRegistrar, type WorkIpcDeps } from './main/ipc/work'
-import { resolvePdfjsAssets } from '../../electron/main/services/knowledge/parsers/pdfjsAssets'
+import { resolvePdfjsAssets } from '../../plugin-sdk/src/official-knowledge'
 import { importWorkDataIfNeeded } from './domain/migrate'
-import { clearLegacyImportRetry, registerLegacyImportRetry } from '../../electron/main/services/pluginDataImport'
-import type { GatewayClient } from '../../electron/main/services/gateway/types'
+import { clearLegacyImportRetry, registerLegacyImportRetry } from '../../plugin-sdk/src/official-import'
+import type { GatewayClient } from '../../plugin-sdk/src/official-gateway'
 import { join } from 'node:path'
 
 let runtime: WorkRuntime | null = null

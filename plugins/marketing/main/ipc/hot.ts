@@ -11,7 +11,7 @@
 
 import type { IpcMainInvokeEventLike as IpcMainInvokeEvent } from './ipcTypes'
 import { channelHandleEvent } from './channelRegistrar'
-import { toErrorEnvelope, type ErrorEnvelope } from '../../../../electron/main/services/errors'
+import { toErrorEnvelope, type ErrorEnvelope } from '../../../../plugin-sdk/src/official-errors'
 import type { HotManager, RadarView, HotTopicRow, HotCollectStatus } from '../../domain/hotManager'
 import type { HotScoreManager, HotScoreBatchResult } from '../../domain/hotScoreManager'
 

@@ -21,15 +21,15 @@
 //   - 与 11 的边界：hotManager 管采集/读榜（不碰 AI），本模块只评分/写缓存；listRadar
 //     的 LEFT 关联会自动读到这里写的分数，渲染端评分后 skipCollect 重读即可看到分组。
 
-import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
+import { AppError, ERROR_CODES } from '../../../plugin-sdk/src/official-errors'
 import { extractJsonArray } from './jsonExtract'
 import { randomUUID } from 'node:crypto'
 import type { MarketingDatabase } from './database'
 import type { ContextEngine, Platform } from './contextEngine'
 import { renderContextPackText } from './contextEngine'
 import { PLATFORM_LABELS, renderPackRuleSection } from './platformRules'
-import type { GatewayStreamDelta } from '../../../electron/main/services/gateway/stream'
-import type { GatewayClient, GatewayChatMessage } from '../../../electron/main/services/gateway/types'
+import type { GatewayStreamDelta } from '../../../plugin-sdk/src/official-gateway'
+import type { GatewayClient, GatewayChatMessage } from '../../../plugin-sdk/src/official-gateway'
 import type { HotTopicRow } from './hotManager'
 import { listAllRows, compareHeatRank } from './hotShared'
 

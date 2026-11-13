@@ -287,13 +287,21 @@ interface PluginDbApiV1 {
 | 子路径 | 内容 | 可用方 |
 | --- | --- | --- |
 | `@umi/plugin-sdk/public` | 公开类型、`definePlugin`、错误码/manifest 类型（**A3a 加入**） | 官方 + 第三方 |
-| `@umi/plugin-sdk/official` | internal 服务类型（consent/abort/hostOps/legacyDb/registerChannelIpc） | 仅官方 |
+| `@umi/plugin-sdk/official` | kernel 契约全量（`definePlugin` / `PluginContext` / services 类型） | 仅官方 |
+| `@umi/plugin-sdk/official-errors` | `AppError` / `ERROR_CODES` / 信封 | 仅官方 |
+| `@umi/plugin-sdk/official-gateway` | gateway 类型 / 流助手 / parts | 仅官方 |
+| `@umi/plugin-sdk/official-context` | 上下文预算 / 组装 / 截断 | 仅官方 |
+| `@umi/plugin-sdk/official-knowledge` | 知识库解析 / 抓取 / pdfjs 资产（barrel 会链 mammoth/exceljs；只给需要解析的 main/domain） | 仅官方 |
+| `@umi/plugin-sdk/official-import` | 旧库一次性导入 | 仅官方 |
+| `@umi/plugin-sdk/official-db` | 数据库共享窄类型 | 仅官方 |
+| `@umi/plugin-sdk/official-host` | 宿主 electron 适配（仅 main/ipc） | 仅官方 |
 | `@umi/plugin-sdk/client` | 官方 UI 的 `PluginUiModule`/`PluginUiHost` | 仅官方 |
 | `@umi/plugin-sdk/testing` | 契约测试工具（fake host、断言） | 测试 |
 
 - 第三方包构建时 SDK **不随包**：宿主注入 `definePlugin`（identity）与类型；运行时对象由宿主提供。
-- **A2 当前只有骨架**：`@umi/plugin-sdk/*` 的 alias/宿主注入尚未实现；仓内 hello 暂用相对路径 `../../plugin-sdk/src/public`。B1 前不得依赖全局变量。
-- 官方插件迁移期间允许 `@umi/plugin-sdk/official`；迁移完成后门禁只允许 SDK。
+- **A2/A3b 当前是相对路径骨架**：`@umi/plugin-sdk/*` 的 alias/宿主注入尚未实现；仓内插件暂用 `../../plugin-sdk/src/*`。B1 前不得依赖全局变量。
+- official 拆成多个子路径而不是一个 barrel：避免 knowledge（mammoth/exceljs）、hostUi（electron）链进每个 domain bundle。
+- 官方插件迁移期间允许 official-*；迁移完成后门禁只允许 SDK。当前 ratchet：host import 0，UI host import 23(+2 type)，hostBridge 12。
 
 ---
 

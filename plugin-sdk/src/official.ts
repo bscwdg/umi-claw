@@ -1,18 +1,7 @@
-// plugin-sdk/src/official.ts —— 官方插件专用的 internal 能力（第三方不可用）
+// plugin-sdk/src/official.ts —— 官方插件 internal：kernel 契约与 definePlugin
 //
-// 这些服务（hostOps/legacyDb/consent/abort/registerChannelIpc/ctx.host.paths）
-// 依赖宿主内部实现，不进入公开 API。第三方包构建时该入口会被 external 并拒绝解析。
-// A3b 迁移期间官方插件仍可直接 import kernel；迁移完成后只允许从本入口取 internal。
+// 为什么拆成多个 official-* 子路径而不是一个 barrel：barrel 的 `export *` 会把
+// knowledge（mammoth/exceljs）、hostUi（electron）一并链进每个 domain bundle，
+// 纯 Node 验收/打包都会炸。按宿主模块拆开后，插件只拉自己用的那条链。
 
-export { definePlugin } from '../../electron/main/kernel'
-
-export type {
-  HostOpsApi,
-  LegacyDbApi,
-  PluginAbortApi,
-  PluginConsentApi,
-  PluginContext,
-  PluginModule,
-  PluginServiceBag,
-  ServiceName
-} from '../../electron/main/kernel'
+export * from '../../electron/main/kernel'

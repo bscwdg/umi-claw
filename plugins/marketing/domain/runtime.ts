@@ -18,7 +18,7 @@ import { createScanRecognizer, type ScanRecognizer } from './scanRecognizer'
 import { createHotManager, type HotManager } from './hotManager'
 import { createHotScoreManager, type HotScoreManager } from './hotScoreManager'
 import type { MarketingDatabase } from './database'
-import type { GatewayClient } from '../../../electron/main/services/gateway/types'
+import type { GatewayClient } from '../../../plugin-sdk/src/official-gateway'
 
 export type { MarketingDatabase } from './database'
 

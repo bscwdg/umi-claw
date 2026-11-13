@@ -15,10 +15,10 @@
 //   - code 取自 §五 错误码表（errors.ts 的 ERROR_CODES）
 //   - 渲染端**禁止**用 error.message.includes() 判断，一律按 code 分支
 
-import { showOpenDialog } from '../../../../electron/main/services/hostUi'
+import { showOpenDialog } from '../../../../plugin-sdk/src/official-host'
 import { channelHandle } from './channelRegistrar'
-import { toErrorEnvelope, type ErrorEnvelope } from '../../../../electron/main/services/errors'
-import type { BackupResult, DatabaseLike, DatabaseStatus } from '../../../../electron/main/services/dbTypes'
+import { toErrorEnvelope, type ErrorEnvelope } from '../../../../plugin-sdk/src/official-errors'
+import type { BackupResult, DatabaseLike, DatabaseStatus } from '../../../../plugin-sdk/src/official-db'
 import type {
   CreateProjectInput,
   DeleteProjectResult,

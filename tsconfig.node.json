@@ -5,6 +5,7 @@
     "electron/**/*",
     "plugin-sdk/src/public.ts",
     "plugin-sdk/src/official.ts",
+    "plugin-sdk/src/official-host.ts",
     "plugin-sdk/src/testing.ts",
     "plugins/*/main.ts",
     "plugins/*/domain/**/*.ts"

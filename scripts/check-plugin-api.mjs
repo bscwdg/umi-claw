@@ -79,11 +79,12 @@ if (isMain) {
   if (process.argv.includes('--update')) {
     // ratchet 只准降：上调必须显式 --allow-raise + --note（与 check-boundaries 同口径）
     const raised = Object.keys(current).filter((k) => current[k] > (baseline[k] ?? 0))
+    const noteIdx = process.argv.indexOf('--note')
+    const givenNote = noteIdx >= 0 ? String(process.argv[noteIdx + 1] ?? '').trim() : ''
     let raiseNote = ''
     if (raised.length) {
       const detail = raised.map((k) => `${k} ${baseline[k] ?? 0}→${current[k]}`).join(', ')
-      const noteIdx = process.argv.indexOf('--note')
-      raiseNote = noteIdx >= 0 ? String(process.argv[noteIdx + 1] ?? '').trim() : ''
+      raiseNote = givenNote
       if (!process.argv.includes('--allow-raise')) {
         console.error(`\n✗ 拒绝上调基线（ratchet 只准降）：${detail}`)
         console.error('  若确属新暴露的真实耦合，用 --allow-raise --note "<原因>" 并在提交信息写明')
@@ -94,11 +95,13 @@ if (isMain) {
         process.exit(1)
       }
     }
-    // 保留既有 _note：--update 只该改数字；上调时把原因追加进去
+    // 保留既有 _note；上调追加原因；纯收紧时允许用 --note 重写说明。
     let nextNote = baseline._note
     if (raiseNote) {
       const stamp = new Date().toISOString().slice(0, 10)
       nextNote = `${nextNote ? nextNote + ' | ' : ''}${stamp} raised by --note: ${raiseNote}`
+    } else if (givenNote) {
+      nextNote = givenNote
     }
     const next = nextNote ? { ...current, _note: nextNote } : current
     writeFileSync(baselinePath, JSON.stringify(next, null, 2) + '\n', 'utf8')

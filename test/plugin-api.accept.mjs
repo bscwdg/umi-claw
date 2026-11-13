@@ -70,7 +70,10 @@ await r.check('A3', 'SDK 四入口齐备（public/official/client/testing）', a
     assert(existsSync(join(repoRoot, 'plugin-sdk', 'src', name)), `plugin-sdk/src/${name} 存在`)
   }
   const official = readFileSync(join(repoRoot, 'plugin-sdk', 'src', 'official.ts'), 'utf8')
-  assert(/PluginContext/.test(official), 'official 承接 kernel PluginContext（internal）')
+  assert(/electron\/main\/kernel/.test(official), 'official 承接 kernel（internal）')
+  for (const sub of ['official-errors.ts', 'official-gateway.ts', 'official-context.ts', 'official-knowledge.ts', 'official-import.ts', 'official-db.ts', 'official-host.ts']) {
+    assert(existsSync(join(repoRoot, 'plugin-sdk', 'src', sub)), `official 子路径 ${sub} 存在`)
+  }
   return 'SDK 入口齐备 ✓'
 })
 

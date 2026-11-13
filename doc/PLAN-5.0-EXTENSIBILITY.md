@@ -168,6 +168,13 @@ renderer
 - consent 的 host→work 插件库反向读（登记，A3b 处理）
 - `knowledge.search` 在 marketing 插件库的 pre-existing 缺口（单独修）
 
+### 3.1.2 A3b 官方插件迁移（2026-11-13）
+
+- 79 处 `electron/main/**` import / 38 文件已迁到 `plugin-sdk/src/official-*`（按宿主模块拆子路径，避免 barrel 把 mammoth/electron 链进 domain bundle）。
+- `check-plugin-api` ratchet：**host import 0**（值 0 / type 0）；仍剩 UI host import 23(+2 type)、hostBridge consumers 12。
+- 未完成：UI 的 `@/` 宿主 import 收敛（23 处）、hostBridge 收窄（12 文件）、`@umi/plugin-sdk/*` alias/宿主注入（B1）。
+- 验收：plugin.accept 68/68、plugin-api 3/3、ui 28/28、build 通过；全量 accept 45 套/846 条全绿。
+
 ### 3.2 Phase 0 出口判据
 
 - [ ] 基线（分支/commit/命令/TEMP）可复现，accept 全绿并留档

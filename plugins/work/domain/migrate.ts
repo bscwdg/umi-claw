@@ -13,7 +13,7 @@ import {
   type ImportResult,
   type ImportTarget,
   type LegacyReader
-} from '../../../electron/main/services/pluginDataImport'
+} from '../../../plugin-sdk/src/official-import'
 
 export type { ImportResult, ImportTarget, LegacyReader }
 

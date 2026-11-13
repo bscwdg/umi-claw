@@ -3,8 +3,8 @@
 // 装配顺序：插件库 migrate → createMarketingRuntime → 注册 marketing:* / advisor / scan / content / hot 通道。
 // 默认启用（承接 3.0/2.0 已有功能；用户可在能力中心关闭）。
 
-import type { PluginContext } from '../../electron/main/kernel'
-import { definePlugin } from '../../electron/main/kernel'
+import type { PluginContext } from '../../plugin-sdk/src/official'
+import { definePlugin } from '../../plugin-sdk/src/official'
 import { createMarketingRuntime, type MarketingRuntime } from './domain/runtime'
 import { setChannelRegistrar } from './main/ipc/channelRegistrar'
 import { registerMarketingIpc } from './main/ipc/marketing'
@@ -17,7 +17,7 @@ import { abortAllAdvisorStreams } from './main/ipc/advisor'
 import { abortAllContentGenerations } from './main/ipc/content'
 import { abortAllScanStreams } from './main/ipc/scan'
 import { join } from 'node:path'
-import { resolvePdfjsAssets } from '../../electron/main/services/knowledge/parsers/pdfjsAssets'
+import { resolvePdfjsAssets } from '../../plugin-sdk/src/official-knowledge'
 import { buildOpenClawGateway } from './gatewayAdapter'
 import {
   clearLegacyImportRetry,
@@ -25,7 +25,7 @@ import {
   importTableData,
   MARKETING_TABLES,
   HOST_APP_META_PREFIXES
-} from '../../electron/main/services/pluginDataImport'
+} from '../../plugin-sdk/src/official-import'
 
 let runtime: MarketingRuntime | null = null
 

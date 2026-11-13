@@ -14,8 +14,8 @@
 //
 // 本模块只做参数透传与信封包装；业务规则全在 Manager 层（可纯 Node 测）。
 
-import { getFocusedWindow, showOpenDialog } from '../../../../electron/main/services/hostUi'
-import { toErrorEnvelope, type ErrorEnvelope } from '../../../../electron/main/services/errors'
+import { getFocusedWindow, showOpenDialog } from '../../../../plugin-sdk/src/official-host'
+import { toErrorEnvelope, type ErrorEnvelope } from '../../../../plugin-sdk/src/official-errors'
 import type { ProfileManager, UpdateProfileInput } from '../../domain/profileManager'
 import type { CreateMatterInput, MatterManager, UpdateMatterInput } from '../../domain/matterManager'
 import type { CreateTodoInput, ListTodosParams, TodoManager, UpdateTodoInput } from '../../domain/todoManager'
@@ -36,7 +36,7 @@ import type { KnowledgeManager } from '../../domain/knowledgeManager'
 import type { WizardManager } from '../../domain/wizardManager'
 import type { ReminderManager, ReminderId, PushChannel } from '../../domain/reminderManager'
 import type { OpenClawSummaryManager } from '../../domain/openclawSummaryManager'
-import { forwardGatewayStream } from '../../../../electron/main/services/gateway/stream'
+import { forwardGatewayStream } from '../../../../plugin-sdk/src/official-gateway'
 
 /** IPC 统一返回信封（§14.2） */
 export type WorkIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }

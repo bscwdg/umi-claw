@@ -17,7 +17,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { AppError, ERROR_CODES, errorCodeOf } from '../../../electron/main/services/errors'
+import { AppError, ERROR_CODES, errorCodeOf } from '../../../plugin-sdk/src/official-errors'
 import type { MarketingDatabase } from './database'
 
 /** `app_meta` 中存放「当前 Project」的键名（§四 app_meta 白名单内） */

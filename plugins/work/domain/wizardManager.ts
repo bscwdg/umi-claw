@@ -11,7 +11,7 @@
 //
 // 本模块不 import electron；DB 注入，oldDbLocator/reader 注入，纯 Node 可测。
 
-import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
+import { AppError, ERROR_CODES } from '../../../plugin-sdk/src/official-errors'
 import type { WorkDatabase } from './database'
 
 // ── app_meta 键（本模块唯一读写这些键；app_meta 无 worker 白名单）──

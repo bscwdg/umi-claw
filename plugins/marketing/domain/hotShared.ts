@@ -3,7 +3,7 @@
 // 两个 manager 都分页读表（worker 单次硬上限 5000），也都按 heat/rank 给热点排序——
 // 抽到这里只有一份真相，避免「5000 截断假设」与排序口径在四处拷贝里漂移（12 复审 6/8）。
 
-import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
+import { AppError, ERROR_CODES } from '../../../plugin-sdk/src/official-errors'
 import type { MarketingDatabase } from './database'
 
 /** worker 单页硬上限（db-worker.mjs opList limit 上限） */

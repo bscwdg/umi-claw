@@ -9,7 +9,7 @@
 // 设计约束：本模块**不 import electron**，依赖（DatabaseClient）注入，
 // 因此可在纯 Node 下被 esbuild bundle 后直接测试。
 
-import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
+import { AppError, ERROR_CODES } from '../../../plugin-sdk/src/official-errors'
 import type { WorkDatabase } from './database'
 
 /** 单行画像的固定主键 */

@@ -19,7 +19,7 @@
 // 设计约束：本模块**不 import electron**，依赖注入，可在纯 Node 下测试。
 // 注意：本模块直接写 `activity_log` 表（联动规则是 DB 级事实，不依赖 Commit 03 的 RecordManager）。
 
-import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
+import { AppError, ERROR_CODES } from '../../../plugin-sdk/src/official-errors'
 import type { WorkDatabase } from './database'
 
 /** 待办来源（决定初始状态） */

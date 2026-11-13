@@ -5,8 +5,8 @@
 // 本文件走插件的 channelRegistrar（激活时接管、停用即摘除），不直接 import electron。
 
 import { channelHandle } from './channelRegistrar'
-import { toErrorEnvelope, type ErrorEnvelope } from '../../../../electron/main/services/errors'
-import type { GatewayClient, GatewayStatusSnapshot } from '../../../../electron/main/services/gateway/types'
+import { toErrorEnvelope, type ErrorEnvelope } from '../../../../plugin-sdk/src/official-errors'
+import type { GatewayClient, GatewayStatusSnapshot } from '../../../../plugin-sdk/src/official-gateway'
 
 /** IPC 统一返回信封 */
 type GatewayIpcResult<T> = { ok: true; data: T } | { ok: false; error: ErrorEnvelope }

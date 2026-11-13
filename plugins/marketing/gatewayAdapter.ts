@@ -3,8 +3,8 @@
 // 全应用只有一个 GatewayClient（宿主持有），插件拿的是窄服务。这里只做结构适配：
 // 插件既拿不到 token，也控制不了网关进程。
 
-import type { OpenClawApi } from '../../electron/main/kernel'
-import type { GatewayClient } from '../../electron/main/services/gateway/types'
+import type { OpenClawApi } from '../../plugin-sdk/src/official'
+import type { GatewayClient } from '../../plugin-sdk/src/official-gateway'
 
 export function buildOpenClawGateway(openclaw: OpenClawApi): GatewayClient {
   return {

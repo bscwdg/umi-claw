@@ -23,9 +23,9 @@
 // 本模块不 import electron；gateway / records / DB 全注入，纯 Node 可测。
 
 import { createHash } from 'crypto'
-import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
+import { AppError, ERROR_CODES } from '../../../plugin-sdk/src/official-errors'
 import type { WorkDatabase } from './database'
-import type { GatewayClient, GatewayStreamHandle } from '../../../electron/main/services/gateway/types'
+import type { GatewayClient, GatewayStreamHandle } from '../../../plugin-sdk/src/official-gateway'
 import type { RecordManager } from './recordManager'
 import { dateOf } from './todoManager'
 

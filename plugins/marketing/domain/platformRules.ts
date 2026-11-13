@@ -12,7 +12,7 @@
 //   - 纯数据 + 纯函数：不 import electron、不发 HTTP、不落库（与硬规则 12/13 同精神），
 //     esbuild bundle 后可直接在纯 Node 验收（test/platform.accept.mjs）。
 
-import { AppError, ERROR_CODES } from '../../../electron/main/services/errors'
+import { AppError, ERROR_CODES } from '../../../plugin-sdk/src/official-errors'
 import type { Platform } from './contextEngine'
 
 // ── 平台展示名（主进程侧单一真相；渲染端 ContentCenter 另有同形小常量，不上 IPC） ──
