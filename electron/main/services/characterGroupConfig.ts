@@ -6,7 +6,9 @@
 // 群聊行为由本文件编译成两处官方配置：
 //   1) channels.qqbot.groups["*"] —— 需要 @、群历史、群提示词（qqbot 插件原生支持）；
 //   2) plugins.load.paths + plugins.entries["feiyu-guard"] —— 随包 hook 插件，硬执行
-//      亲密词过滤 / 群语音开关与日上限 / 群聊不写记忆（只在群会话生效，私聊放行）。
+//      亲密词过滤 / 群语音开关与日上限 / 群聊不写记忆（群策略只在群会话生效，私聊放行）；
+//      另有 feiyu 语音通道合规：feiyu 会话的 edge-tts/say.py/手工上传野链路 exec
+//      不分群私聊一律阻断（非 feiyu 会话放行），规则内建在插件 policy.mjs，不经本配置下发。
 // 新增群策略字段要同步五处：本文件编译、character/groupPolicy.ts 的模型、types.ts 的
 // GROUP_PATCH_KEYS（否则 UI 局部补丁不生效）、src/character/CharacterSettings.vue 的
 // draft/保存列表、插件 policy.mjs 的读取/执行。写盘一律走 openClawConfigWriter 的串行队列。

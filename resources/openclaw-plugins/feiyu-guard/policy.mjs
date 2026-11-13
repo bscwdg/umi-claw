@@ -43,19 +43,75 @@ export const GUARD_REASONS = Object.freeze({
   WORD_BLOCKED: 'group-word-blocked',
   VOICE_DISABLED: 'group-voice-disabled',
   VOICE_DAILY_CAP: 'group-voice-daily-cap',
-  MEMORY_ISOLATED: 'group-memory-isolated'
+  MEMORY_ISOLATED: 'group-memory-isolated',
+  WILD_VOICE_PATH_BLOCKED: 'wild-voice-path-blocked'
 })
 
 /** 群记忆隔离要拦的写入类工具（OpenClaw 标准 tool id；不含 exec/其他写路径） */
 export const GROUP_MEMORY_TOOLS = Object.freeze(['write', 'edit', 'apply_patch'])
 
-/** before_tool_call 的 matcher：语音上传网关 + 三个写入类工具 */
+/** before_tool_call 的 matcher：语音上传网关 + 三个写入类工具 + exec（野链路阻断） */
 export const GUARD_TOOL_MATCHERS = Object.freeze([
   'qqbot_platform_api',
   'write',
   'edit',
-  'apply_patch'
+  'apply_patch',
+  'exec'
 ])
+
+/**
+ * 本插件只服务 feiyu agent：野链路规则按会话键 `agent:feiyu...` 门控，
+ * main 等其它 agent 的 exec 不受影响（最小爆炸半径，也满足非目标会话 fail-open）。
+ */
+export function isFeiyuAgentSession(sessionKey) {
+  return typeof sessionKey === 'string' && /^agent:feiyu(?=:|$)/i.test(sessionKey)
+}
+
+/**
+ * 子串特征（名字足够特殊，碰撞概率极低）：
+ * - edge-tts / edge_tts：被禁的 edge TTS 包名、模块名与 CLI（pip 安装 / python -m /
+ *   npx / 内联 import 都靠它识别）；
+ * - qqbot-voice-send / qqbot-voice-make-silk：绕过渠道投递的手工 QQ 语音脚本；
+ * - probe-upload：工作区里直传 QQ 富媒体（file_type=3）的探测/投递脚本，与
+ *   qqbot-voice-send 是零改名等效投递路径，必须同口径拦（它在 data/ 运行时目录，不进 git）。
+ * 注意这是「特征摩擦层」而非绝对阻断：变量拼接/编码/改名等混淆仍可绕过，
+ * 真正减面靠归档工作区野工具（见 PROGRESS 已知边界）。
+ * 连带取舍（已知并接受）：feiyu 会话内即便只是排查/整改，命令里出现这些串也会被拦，
+ * 例如 `rg edge-tts`、`pip show edge_tts`、`pip uninstall edge-tts`——通道合规优先于
+ * 会话内排查便利，宿主侧人工排障不受影响（那是 main/人工进程，不是 agent:feiyu 会话）。
+ */
+export const WILD_VOICE_SUBSTRING_MARKERS = Object.freeze([
+  'edge-tts',
+  'edge_tts',
+  'qqbot-voice-send',
+  'qqbot-voice-make-silk',
+  'probe-upload'
+])
+
+/**
+ * say.py 边界特征：工作区 edge-tts 本地合成脚本的固定入口。
+ * 要求 say.py 前是行首/路径分隔符/引号/空白/反引号，避免误伤 essay.py 这类
+ * 「名字里恰好含 say.py」的正常脚本（实测 `python essay.py` 必须放行）。
+ */
+const WILD_VOICE_SAY_PY_RE = /(?:^|[\\/"'\s`])say\.py/
+
+/**
+ * 检测 exec 工具调用是否在跑语音野链路（纯函数，零依赖，不抛异常）。
+ * 命中返回 marker 字符串（稳定标识，供日志与断言使用），未命中或形状不可判返回 null。
+ * 三层 fail-open，把「判不出就放行」固化在函数边界上：
+ * 1) 非 feiyu 会话（含 sessionKey 缺失/其它 agent）→ null，不越界管别的 agent；
+ * 2) 非 exec 工具 / params 非对象 / command 非字符串 → null；
+ * 3) 命令里没有明确野链路特征 → null（普通排查、ffmpeg 转码等照常放行）。
+ */
+export function detectWildVoiceCommand(toolName, params, sessionKey) {
+  if (!isFeiyuAgentSession(sessionKey)) return null
+  if (typeof toolName !== 'string' || toolName.trim().toLowerCase() !== 'exec') return null
+  if (!isRecord(params) || typeof params.command !== 'string' || !params.command) return null
+  const command = params.command.toLowerCase()
+  if (WILD_VOICE_SAY_PY_RE.test(command)) return 'say.py'
+  const hit = WILD_VOICE_SUBSTRING_MARKERS.find((marker) => command.includes(marker))
+  return hit ?? null
+}
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)

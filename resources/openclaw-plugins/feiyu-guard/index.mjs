@@ -11,7 +11,7 @@ import { registerGuard } from './guard.mjs'
 export default definePluginEntry({
   id: 'feiyu-guard',
   name: 'Feiyu Group Guard',
-  description: 'QQ 群聊硬策略：群回复开关、亲密词过滤、群语音条开关/日上限、群记忆隔离；私聊放行。',
+  description: 'QQ 群聊硬策略（群回复开关/亲密词/群语音日上限/记忆隔离，仅群会话生效）+ feiyu 语音通道合规：feiyu 会话的 edge-tts/手工上传等野链路 exec 不分群私聊一律阻断，非 feiyu 会话放行。',
   register(api) {
     registerGuard(api)
   }

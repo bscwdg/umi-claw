@@ -3,9 +3,10 @@
 // 打真源码：直接 import resources/openclaw-plugins/feiyu-guard/policy.mjs + guard.mjs
 // （零 npm 依赖、零 esbuild、不启 Gateway）。fake api 收集 hook 注册，注入 fake 时钟与
 // 状态读写，把「群/私聊识别、回复闸、词过滤、语音条开关/日上限/按群隔离/跨天、
-// 记忆隔离、渠道出站语音剥离、状态文件异常 fail-open、配置非法值」逐条打真；每条都配负向断言。
+// 记忆隔离、渠道出站语音剥离、feiyu 语音通道合规（野链路 exec 门控阻断）、状态文件异常
+// fail-open、配置非法值」逐条打真；每条都配负向断言。
 //
-// 末尾 7 条 MUTATION：把 policy/guard 的判定改坏后重新 import，断言「坏实现确实会放过
+// 末尾 8 条 MUTATION：把 policy/guard 的判定改坏后重新 import，断言「坏实现确实会放过
 // 本该拦的行为」——证明前面的断言真的能抓住逻辑回退，而不是恒绿。
 //
 // 用法：node test/guard-plugin.accept.mjs
@@ -37,10 +38,12 @@ const {
   GUARD_REASONS,
   createDefaultGuardPolicy,
   dayKey,
+  detectWildVoiceCommand,
   emptyState,
   filterWords,
   groupKeyFromSessionKey,
   isAudioAttachment,
+  isFeiyuAgentSession,
   isGroupTarget,
   normalizeState,
   parseGuardConfig,
@@ -199,8 +202,10 @@ function memoryStore(initial = null) {
 
 const groupCtx = { channelId: 'qqbot', sessionKey: GROUP_SESSION }
 const dmCtx = { channelId: 'qqbot', sessionKey: DM_SESSION }
+// 非 feiyu agent（main）：野链路规则按会话键门控，它的 exec 即便带特征也必须放行
+const mainCtx = { channelId: 'qqbot', sessionKey: 'agent:main:main' }
 
-const r = new Recorder('feiyu-guard OpenClaw hook 插件（群策略硬执行 + fail-open）')
+const r = new Recorder('feiyu-guard OpenClaw hook 插件（群策略硬执行 + 语音通道合规 + fail-open）')
 
 // ── P1：配置解析默认值 ───────────────────────────────────────────────────────
 await r.check('P1', 'parseGuardConfig：缺省/非对象 → 与 GroupSettings 对齐的默认值', () => {
@@ -423,6 +428,122 @@ await r.check('P8', 'payloadVoiceInfo 剥离语音保留文本/非音频 media�
   return '语音识别/对齐剥离/计数键/可见内容判定都正确'
 })
 
+// ── P9：语音野链路命令检测（纯函数，feiyu 会话门控）────────────────────────
+await r.check('P9', 'detectWildVoiceCommand：feiyu 会话 exec 野链路特征命中；非 feiyu/非 exec/坏形状/普通命令返回 null', () => {
+  // feiyu 会话内命中（第三参传会话键）
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'python "$b\\.tts\\say.py" "早" out.mp3' }, DM_SESSION),
+    'say.py',
+    'say.py 本地合成脚本命中'
+  )
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'python .tts/say.py hi out.mp3' }, DM_SESSION),
+    'say.py',
+    '正斜杠路径的 say.py 命中'
+  )
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'python -m pip install --target .tts edge-tts' }, DM_SESSION),
+    'edge-tts',
+    'pip 安装 edge-tts 命中'
+  )
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'python -c "import edge_tts; edge_tts.Communicate(...)"' }, DM_SESSION),
+    'edge_tts',
+    '内联 edge_tts 模块命中'
+  )
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'node scripts/qqbot-voice-send.cjs v11.silk openid msgid' }, DM_SESSION),
+    'qqbot-voice-send',
+    '手工 QQ 语音上传脚本命中'
+  )
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'node scripts/qqbot-voice-make-silk.mjs in.mp3 out.silk' }, GROUP_SESSION),
+    'qqbot-voice-make-silk',
+    '手工 silk 转码脚本命中'
+  )
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'node scripts/probe-upload.cjs v11.silk' }, DM_SESSION),
+    'probe-upload',
+    'QQ 富媒体直传探测脚本与 qqbot-voice-send 等效，同口径命中'
+  )
+  assertEq(
+    detectWildVoiceCommand('EXEC', { command: 'python SAY.PY x' }, DM_SESSION),
+    'say.py',
+    '工具名与命令大小写不敏感'
+  )
+  // say.py 右边界现状（钉住，未来收紧正则时改这条）：.pyc 是同一野脚本编译形态，命中可接受
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'python .tts/say.pyc x' }, DM_SESSION),
+    'say.py',
+    'say.pyc 当前同样命中（编译形态，误伤可接受）'
+  )
+  // say.py 边界正则：名字里恰好含 say.py 的正常脚本不能误伤
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'python essay.py --topic voice' }, DM_SESSION),
+    null,
+    'essay.py 不被 say.py 规则误伤'
+  )
+  // 会话门控：非 feiyu / 会话键缺失，即便命令带野链路特征也放行
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'pip install edge-tts --target .tts' }, 'agent:main:main'),
+    null,
+    'main agent 会话不属本插件管辖，放行'
+  )
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'python .tts/say.py hi' }, undefined),
+    null,
+    'sessionKey 缺失放行'
+  )
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'python .tts/say.py hi' }, null),
+    null,
+    'sessionKey 为 null 放行'
+  )
+  // 泛名脚本不纳入特征（encode 太常见，误伤面大），钉住这个已知边界，未来收紧时改这条
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'node .silk/encode.mjs in.mp3 out.silk' }, DM_SESSION),
+    null,
+    '.silk/encode.mjs 名字过泛不进特征表（已知边界，靠归档野工具减面）'
+  )
+  // 连带取舍（已接受）：feiyu 会话内排查/整改命令只要含特征串也命中
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'pip uninstall edge-tts' }, DM_SESSION),
+    'edge-tts',
+    '卸载命令同样命中（通道合规优先于会话内排查便利）'
+  )
+  // fail-open 负向：判不出一律 null
+  assertEq(detectWildVoiceCommand('write', { command: 'say.py' }, DM_SESSION), null, '非 exec 工具不判')
+  assertEq(detectWildVoiceCommand('exec', null, DM_SESSION), null, 'params 为 null 放行')
+  assertEq(detectWildVoiceCommand('exec', {}, DM_SESSION), null, '缺 command 放行')
+  assertEq(detectWildVoiceCommand('exec', { command: 42 }, DM_SESSION), null, '非字符串 command 放行')
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'Get-ChildItem "$b\\voice-notes" | Sort-Object LastWriteTime' }, DM_SESSION),
+    null,
+    '普通排查命令放行'
+  )
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'ffmpeg -y -i in.mp3 -ac 1 out.wav' }, DM_SESSION),
+    null,
+    '单独 ffmpeg 转码放行'
+  )
+  return 'feiyu 门控内野链路命中，门控外与判不出一律 null'
+})
+
+// ── P9b：feiyu 会话键门控纯函数 ────────────────────────────────────────────
+await r.check('P9b', 'isFeiyuAgentSession：只认 agent:feiyu 前缀（冒号边界/大小写），其它 agent 与坏形状 false', () => {
+  assertEq(isFeiyuAgentSession('agent:feiyu:qqbot:direct:abc'), true, 'feiyu 私聊会话')
+  assertEq(isFeiyuAgentSession('agent:feiyu:qqbot:group:abc'), true, 'feiyu 群会话')
+  assertEq(isFeiyuAgentSession('AGENT:FEIYU:main'), true, '大小写不敏感')
+  assertEq(isFeiyuAgentSession('agent:feiyu'), true, '无尾冒号的精确键也算 feiyu')
+  assertEq(isFeiyuAgentSession('agent:feiyu2:main'), false, 'feiyu2 前缀碰撞不放行')
+  assertEq(isFeiyuAgentSession('agent:feiyu-backup:x'), false, '连字符后缀不算 feiyu')
+  assertEq(isFeiyuAgentSession('agent:main:main'), false, 'main agent 不放行')
+  assertEq(isFeiyuAgentSession(undefined), false, 'undefined 不放行')
+  assertEq(isFeiyuAgentSession(null), false, 'null 不放行')
+  assertEq(isFeiyuAgentSession(42), false, '非字符串不放行')
+  return '会话键门控边界正确'
+})
+
 // ── G0：注册形状 ─────────────────────────────────────────────────────────────
 await r.check('G0', 'registerGuard：注册 message_sending + reply_payload_sending + before_tool_call', () => {
   const fake = setup(guardConfig())
@@ -435,8 +556,8 @@ await r.check('G0', 'registerGuard：注册 message_sending + reply_payload_send
   assertEq(reply.opts, undefined, 'reply_payload_sending 不需要 matcher')
   const gate = fake.hook('before_tool_call')
   assert(gate, 'before_tool_call 已注册')
-  assertDeepEq(gate.opts.matcher, [...GUARD_TOOL_MATCHERS], 'matcher 覆盖语音网关与三个写工具')
-  assertDeepEq([...GUARD_TOOL_MATCHERS], ['qqbot_platform_api', 'write', 'edit', 'apply_patch'], 'matcher 常量按契约固定')
+  assertDeepEq(gate.opts.matcher, [...GUARD_TOOL_MATCHERS], 'matcher 覆盖语音网关、三个写工具与 exec')
+  assertDeepEq([...GUARD_TOOL_MATCHERS], ['qqbot_platform_api', 'write', 'edit', 'apply_patch', 'exec'], 'matcher 常量按契约固定')
   return '三个 hook 与 matcher 形状正确'
 })
 
@@ -586,7 +707,7 @@ await r.check('G6', '记忆隔离：群会话 write/edit/apply_patch 全 block�
     '关掉隔离后群里 write 放行'
   )
   assertEq(await callTool(fake, { toolName: 'read', params: { file_path: '/tmp/x' } }, groupCtx), undefined, '群里 read 放行')
-  assertEq(await callTool(fake, { toolName: 'exec', params: { command: 'ls' } }, groupCtx), undefined, '群里 exec 不拦（已知限制）')
+  assertEq(await callTool(fake, { toolName: 'exec', params: { command: 'ls' } }, groupCtx), undefined, '普通 exec（ls）放行，野链路特征另有 G21')
   assertEq(await callTool(fake, { params: {} }, groupCtx), undefined, 'toolName 缺失不抛错')
   return '三类写入工具拦截 + 四条放行负向正确'
 })
@@ -1120,6 +1241,81 @@ await r.check('G20', '群回复关闭：qqbot_platform_api 群发送被 block，
     '私聊工具调用放行'
   )
   return 'tool 路径受 replyEnabled 硬控'
+})
+
+// ── G21：语音野链路 exec 硬阻断（feiyu 会话门控，不分群私聊）──────────────
+await r.check('G21', '野链路阻断：feiyu 私聊/群聊 exec 跑 say.py/edge-tts/上传脚本一律 block；非 feiyu 会话与普通/坏形状 exec 放行', async () => {
+  const fake = setup(guardConfig())
+  const blocked = { block: true, blockReason: GUARD_REASONS.WILD_VOICE_PATH_BLOCKED }
+  // 本次故障场景：私聊 c2c 里跑 say.py 野链路
+  assertDeepEq(
+    await callTool(fake, { toolName: 'exec', params: { command: 'python "$b\\.tts\\say.py" "早" "$b\\voice-notes\\x.mp3"' } }, dmCtx),
+    blocked,
+    '私聊 exec 跑 say.py 被 block'
+  )
+  assertDeepEq(
+    await callTool(fake, { toolName: 'exec', params: { command: 'pip install edge-tts --target .tts' } }, dmCtx),
+    blocked,
+    '私聊安装 edge-tts 被 block'
+  )
+  assertDeepEq(
+    await callTool(fake, { toolName: 'exec', params: { command: 'node "$b\\scripts\\qqbot-voice-send.cjs" v11.silk openid msgid' } }, groupCtx),
+    blocked,
+    '群聊 exec 跑手工上传脚本同样被 block'
+  )
+  assertDeepEq(
+    await callTool(fake, { toolName: 'exec', params: { command: 'node scripts/probe-upload.cjs v11.silk' } }, dmCtx),
+    blocked,
+    '私聊 exec 跑 QQ 富媒体直传探测脚本同样被 block（等效投递路径）'
+  )
+  // 阻断先于群策略：replyEnabled=false 也不改变野链路原因码
+  const strict = setup(guardConfig({ policy: { replyEnabled: false } }))
+  assertDeepEq(
+    await callTool(strict, { toolName: 'exec', params: { command: 'python .tts/say.py hi out.mp3' } }, dmCtx),
+    blocked,
+    '野链路阻断不依赖群策略开关'
+  )
+  // 会话门控：非 feiyu / 会话键缺失，即便命令带特征也放行（不越界管别的 agent）
+  assertEq(
+    await callTool(fake, { toolName: 'exec', params: { command: 'pip install edge-tts --target .tts' } }, mainCtx),
+    undefined,
+    'main agent 会话的 edge-tts exec 放行'
+  )
+  assertEq(
+    await callTool(fake, { toolName: 'exec', params: { command: 'python .tts/say.py hi' } }, { channelId: 'qqbot' }),
+    undefined,
+    '缺 sessionKey 的 ctx 放行'
+  )
+  // fail-open 负向
+  assertEq(
+    await callTool(fake, { toolName: 'exec', params: { command: 'Get-ChildItem voice-notes' } }, dmCtx),
+    undefined,
+    '普通 exec 私聊放行'
+  )
+  assertEq(await callTool(fake, { toolName: 'exec', params: {} }, groupCtx), undefined, '缺 command 放行')
+  assertEq(await callTool(fake, { toolName: 'exec', params: null }, dmCtx), undefined, 'params 为 null 放行')
+  assertEq(
+    await callTool(fake, { toolName: 'write', params: { file_path: 'workspace/.tts/say.py' } }, dmCtx),
+    undefined,
+    '非 exec 工具不触发野链路规则（私聊 write 放行）'
+  )
+  return 'feiyu 会话野链路硬拦且先于群策略，非 feiyu 与判不出一律放行'
+})
+
+// ── M8：野链路检测改坏必须被 G21 抓住 ───────────────────────────────────────
+await r.check('M8', 'MUTATION：子串特征分支恒返回 null → 「feiyu 会话 edge-tts 安装被 block」断言会变红', async () => {
+  const register = await importMutatedGuard({
+    policyEdits: [['  return hit ?? null', '  return null']]
+  })
+  const fake = setupMutated(register, guardConfig())
+  // 走子串分支：say.py 正则在它之前返回，变异只打掉 marker 命中后的返回值
+  const result = await callTool(
+    fake,
+    { toolName: 'exec', params: { command: 'pip install edge-tts --target .tts' } },
+    dmCtx
+  )
+  assertEq(result, undefined, '改坏后私聊野链路放行（说明 G21 的 block 断言能抓住这个回退）')
+  return 'mutation caught: 野链路阻断被绕过'
 })
 
 const result = r.toJSON()

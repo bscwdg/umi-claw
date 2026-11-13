@@ -13,6 +13,11 @@
 //   误伤工具调用；message_sending/reply_payload_sending 抛错虽被宿主吞掉，也统一走同一层兜底。
 // 只有明确命中「QQ 群 + 策略开关」时才返回 cancel/block/剥离后的 payload。
 //
+// 例外是语音野链路阻断（detectWildVoiceCommand）：它不是群策略，而是 feiyu agent 的
+// 通道合规硬规则，按会话键 `agent:feiyu...` 门控（不看群/私聊/渠道）——语音只能走
+// 网关 tts 工具，feiyu 的 exec 里出现 say.py / edge-tts / qqbot-voice-send 等明确特征
+// 才 block；非 feiyu 会话或命令形状判不出时函数返回 null，仍然 fail-open，不越界管别的 agent。
+//
 // 三个 hook 覆盖两条出站路径：
 // 1) agent 调 qqbot_platform_api 上传群语音 → before_tool_call 拦；
 // 2) agent 普通回复自带 audioAsVoice 媒体 → reply_payload_sending 剥离（否则「关群语音」
@@ -28,6 +33,7 @@ import {
   GUARD_REASONS,
   GUARD_TOOL_MATCHERS,
   dayKey,
+  detectWildVoiceCommand,
   filterWords,
   groupKeyFromSessionKey,
   isGroupTarget,
@@ -333,9 +339,21 @@ export function registerGuard(api, deps) {
     }
   }
 
-  /** before_tool_call：群语音上传闸 + 群记忆隔离；群会话以外一律 undefined（放行） */
+  /** before_tool_call：feiyu 野链路阻断（先）+ 群语音上传闸 + 群记忆隔离 */
   async function handleBeforeToolCall(event, ctx) {
     try {
+      // 通道合规（仅 feiyu 会话，不分群/私聊/渠道）：exec 跑 edge-tts/say.py/手工 QQ
+      // 语音上传等野链路一律硬拦，逼 agent 回到网关 tts 工具；非 feiyu 或判不出 → null 放行。
+      const wildVoiceMarker = detectWildVoiceCommand(
+        event?.toolName,
+        event?.params,
+        ctx?.sessionKey
+      )
+      if (wildVoiceMarker) {
+        resolved.warn(`wild voice path blocked via exec marker: ${wildVoiceMarker}`)
+        return { block: true, blockReason: GUARD_REASONS.WILD_VOICE_PATH_BLOCKED }
+      }
+
       const group = isGroupTarget({
         sessionKey: ctx?.sessionKey,
         channelId: ctx?.channelId

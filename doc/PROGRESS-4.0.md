@@ -2365,3 +2365,87 @@ TTS→SILK→msg_type=7 语音气泡投递（deliver-pipeline.handleVoiceIntent�
   扩到私聊属新能力）。
 - 真机回归项：重启后新 session 的 skillsSnapshot 描述应换成 only configured channel；
   QQ 私聊实发一次语音确认走 `dispatch_action id="tts"` 与 msg_type=7 语音气泡。
+
+### 2026-11-13 · feiyu 语音野链路硬阻断（feiyu-guard v2，承接上条软收口候选③）
+
+**起因**：软收口（提示词 + workshop 技能文本）后 10:14 再次绕过——agent 转储
+（`transcript_events` seq 539–546）显示它用 exec 自建 edge-tts 流水线（`.tts/say.py`
+→ silk → `qqbot-voice-send.cjs`），网关侧零 tts 调用，工作区产出 `v11.silk`。用户拍板
+「肯定要按照设置的逻辑走，没走就是有问题」，本次把候选③落地为随包插件层硬阻断。
+
+**改了什么（9 个文件）**
+
+- `resources/openclaw-plugins/feiyu-guard/policy.mjs`：新增 `isFeiyuAgentSession`
+ （`/^agent:feiyu(?=:|$)/i` 会话键门控）、`detectWildVoiceCommand(toolName, params, sessionKey)`
+ 三参纯函数；`GUARD_TOOL_MATCHERS` 加入规范工具 id `exec`（真实网关 dist 核对：非规范名
+ `exec_command` 不在 matcher 集合，`exec` 是规范核心 id）；子串特征 5 个
+ `edge-tts / edge_tts / qqbot-voice-send / qqbot-voice-make-silk / probe-upload`，
+ `say.py` 走独立边界正则（前导为行首/分隔符/引号/空白/反引号，放过 `essay.py`）；
+ 新原因码 `GUARD_REASONS.WILD_VOICE_PATH_BLOCKED`。
+- `guard.mjs`：`handleBeforeToolCall` 在群策略之前先做野链路判定（传 `ctx?.sessionKey`），
+ 命中即 `{ block: true, blockReason }`，整体仍在 try/catch fail-open 内；event/ctx/params
+ 任何坏形状返回 undefined 放行。
+- 描述三处同步：`index.mjs`、`openclaw.plugin.json`、`package.json`（后者审查发现漏改、
+ 仍写「私聊一律放行」，已修）。
+- `electron/main/services/characterGroupConfig.ts`：仅头注释补两类规则边界。
+- `test/guard-plugin.accept.mjs`：P9 重写为三参（5 marker 全量 + say.pyc 现状 + essay.py
+ 负向 + 门控外/坏形状 fail-open + encode.mjs 泛名边界 + uninstall 连带取舍），新增 P9b
+ 门控纯函数 10 例；G21 补非 feiyu/缺会话键放行与 probe-upload hook 层断言；M8 变异用例
+ 从 say.py 换成 edge-tts 子串分支（锚点 `  return hit ?? null` 全仓唯一，变异后 P9/G21/M8
+ 三条稳定变红，端到端 10 连跑实证非恒绿）；G0 matcher 契约 4→5、G6 文案修正。套件 40/40。
+- 文档：`AGENTS.md` §5.4 增「语音通道合规例外」（含注册前提）、目录树同步；
+ `doc/RUNBOOK-4.0.md` 修三处口径漂移（群硬控/exec 拦不到/私聊不受影响），避免排障误诊。
+
+**验收（执行者实测）**
+
+- `typecheck:node` / `typecheck:web` 0 错；`check:boundary` 三基线 0（扫描目录数 >0，非假绿）；
+ 四个 .mjs `node --check` OK；`npm run build` 通过；e2e 11/11、packaged smoke 7/7。
+- 全量 accept：除两个与本次无关的既有环境失败外全绿——`claw-maintenance` 29/30
+（沙箱不支持 `mklink /J` 的 plugin-captures-cleanup，PROGRESS 早有记录）、`hot` collector
+ 子进程原生崩溃 0xC0000409（`git stash` 收起本次全部改动后基线同样崩，已证无关）。
+- 环境注记：本机便携 node（`data/runtime/node-win32-x64/node.exe`）带 Low Mandatory Label，
+ 沙箱 TEMP 又重定向进数据目录，`node:sqlite` 建库报 SQLITE 14；按 `_lib.mjs` 文档用
+ `$env:UMI_ACCEPT_NODE="C:\Program Files\nodejs\node.exe"`（中完整性，v24）覆盖后全绿。
+
+**对抗审查纪律（AGENTS §12.2，两个互不可见只读子代理，均亲跑命令/读真实文件）**
+
+- 对抗复核 Jason（runId 01a1d2f1-d1a9-7490-b963-b312194092cb）：无严重问题，7 条一般项。
+  ① probe-upload 等效投递路径漏网 → **属实→已修**：纳入 marker 并补 P9/G21 断言；
+  ② package.json 描述事实错误 → **属实→已修**；③ RUNBOOK 三处漂移 → **属实→已修**；
+  ④ PROGRESS 悬空引用 → **属实→已修**（本条）；⑤ say.py 正则无右边界 → **部分接受**：
+  say.pyc/say.py.bak 命中属可接受的编译形态误伤，已加断言钉住；括号/转义形态漏网登记为
+  已知边界，不贸然扩正则（每次扩展都带新误伤面）；⑥ 排查/整改命令连带 block（rg/pip show/
+  pip uninstall）→ **前提成立但属已接受取舍**：policy 注释点名这些场景，补 uninstall 断言，
+  宿主人工排障走 main 会话不受影响；⑦ cron 投影工具自定义 name 不被 matcher 精确匹配
+  → **属实→登记已知边界**。
+- 事实核对 Kierkegaard（runId 01a1d304-8d0a-7831-9111-1aa33adf3998）：7 条出口判据全过，
+  结论「事实核对通过」。F1 PROGRESS 悬空 → 本条闭环；F2 目录树只写群策略 → **属实→已修**；
+  F3 G7/G8 一次性 rename 瞬态 → **前提不成立**：其后 20 连跑不可复现，且该状态文件代码本
+  diff 未触碰；F4 版本≠1 零 hook 时规则不生效 → **属实→接受**，与既有 fail-open 红线一致，
+  AGENTS §5.4 已补注册前提；F5 make-silk/edge_tts 仅纯函数层断言 → 接受（同一 `.find()`
+  路径）；F6 CHANGELOG 旧表述 → 接受（append-only 历史不改写）。
+- v1 阶段另两个只读子代理（Averroes 01a1d2c1-8f2b、Volta 01a1d2c1-909f）提出的作用域过大、
+  误伤、文档漂移等问题，由本版 feiyu 会话门控 + say.py 边界正则 + 三处文档同步解决。
+
+**已知边界（摩擦层，不是绝对阻断；绕过不回退群策略 fail-open 红线）**
+
+- 变量拼接/EncodedCommand/改名可绕过：`xsay.py`、`says.py`、`say-py` 实测返回 null；
+ say.py 正则对 `(say.py)`/`[say.py]`/`say\.py` 转义形态不识别；`.silk/encode.mjs`
+ 名字过泛不进特征表；cron 投影工具的自定义 name 不在 matcher；process PTY 注入与
+ code-mode `code` 字段不在 exec command 检测面。
+- 连带误伤（已接受）：feiyu 会话内 `rg edge-tts`、`pip show/uninstall edge-tts`、含特征串
+ 的 URL/文档名也会 block；`say.pyc` 等编译形态会命中。
+- 硬规则以插件注册且配置版本=1 为前提；插件整体异常仍 fail-open。
+- 减面根治靠归档工作区野工具（`workspace-feiyu/.tts`、`.silk`、`scripts`，运行时数据不进
+ git，**删前待用户确认**）；tracked 的 `scripts/qqbot-voice-*.mjs/.cjs` 是宿主人工排障工具，
+ 见 `doc/voice/QQBOT-VOICE.md`，禁止删除。
+
+**真机回归项（重启网关/应用后，新 feiyu session）**
+
+- QQ 私聊实发语音：确认走网关 `tts` 工具（local-external 通道）与 msg_type=7 语音气泡，
+ 网关日志出现 tts 调用而非 edge-tts。
+- 让 agent 尝试 `say.py`/`edge-tts`/`probe-upload`：`before_tool_call` 返回 block、
+ 原因码 `wild-voice-path-blocked`，网关日志有 `wild voice path blocked via exec marker` warn。
+- main agent 的普通 exec（含 edge-tts 字样的排查命令）不受影响。
+- 待用户确认：① 是否 reset 旧 feiyu session（持有旧 bootstrap/技能快照，正规入口是 WS RPC
+ `sessions.reset`，key `agent:feiyu:main`）；② 是否归档工作区野工具。

@@ -66,7 +66,7 @@ src/                 # 渲染端（Vue3 + Pinia + vue-router）
 └── composables/     # useToast
 
 resources/           # 打包为 extraResources（只放数据与脚本，不放业务源码）
-├── openclaw-plugins/ # 随包 OpenClaw 原生插件（feiyu-guard：QQ 群聊硬策略，plugins.load.paths 加载）
+├── openclaw-plugins/ # 随包 OpenClaw 原生插件（feiyu-guard：QQ 群聊硬策略 + feiyu 语音通道合规，plugins.load.paths 加载）
 └── ...              # character 内容包 / database db-worker / pdfjs 等数据与脚本
 test/                # accept 验收脚本（零 npm 依赖）
 scripts/             # 构建/验收脚本
@@ -215,11 +215,12 @@ export default { routes, nav, slot, setup } as PluginUiModule
 
 ### 5.4 随包 OpenClaw 原生 hook 插件（feiyu-guard）
 
-`resources/openclaw-plugins/feiyu-guard/` 是随安装包发布的 OpenClaw 原生插件（`plugins.load.paths` 加载，不走 npm 安装），只对 **QQ 群会话**硬执行群聊策略：`message_sending`（群回复取消 / 亲密词替换或拦截）、`reply_payload_sending`（渠道出站语音）、`before_tool_call`（群语音上传 `qqbot_platform_api` 按群按天限额、群会话 `write/edit/apply_patch` 记忆隔离）。
+`resources/openclaw-plugins/feiyu-guard/` 是随安装包发布的 OpenClaw 原生插件（`plugins.load.paths` 加载，不走 npm 安装），硬执行两类规则：① **QQ 群会话**群聊策略：`message_sending`（群回复取消 / 亲密词替换或拦截）、`reply_payload_sending`（渠道出站语音）、`before_tool_call`（群语音上传 `qqbot_platform_api` 按群按天限额、群会话 `write/edit/apply_patch` 记忆隔离）；② **feiyu 语音通道合规**：`before_tool_call` 对 feiyu 会话的 `exec` 野链路（`say.py` / `edge-tts` / `edge_tts` / `qqbot-voice-send` / `qqbot-voice-make-silk` / `probe-upload` 特征）一律 block，语音只能走网关 tts 工具。
 
 硬约束：
 
 - **fail-open 红线**：私聊、非 qqbot 渠道、会话类型判不出、配置版本≠1 → 一律放行；状态文件读失败按空状态、写失败保留进程内计数（语音上限仍按内存判定），状态异常不得影响私聊或宿主启动。
+- **语音通道合规例外（与群策略并列，不受 fail-open 红线的群/私聊口径限制）**：野链路规则按会话键 `agent:feiyu` 前缀门控（`isFeiyuAgentSession`，冒号边界 + 大小写不敏感），**不分群聊/私聊/渠道**，feiyu 会话内命中明确特征即 block；非 feiyu 会话、会话键缺失或形状判不出 → 返回 null 放行，不越界管其它 agent。规则以插件成功注册且配置版本=1 为前提（版本≠1 时零 hook，与群策略一起 fail-open，见 guard.mjs 注册闸）。这是「特征摩擦层」而非绝对阻断（变量拼接/编码/改名等混淆仍可绕过），减面根治靠归档工作区野工具；已知边界与实测口径登记在 `doc/PROGRESS-4.0.md`，规则真源是插件 `policy.mjs` 的 `detectWildVoiceCommand`，不经宿主 GroupPolicy 下发。
 - **策略唯一真源**是宿主 `GroupPolicy`（`electron/main/character/groupPolicy.ts`）→ `services/characterGroupConfig.ts` 编译进 `plugins.entries["feiyu-guard"].config`；插件内 `api.pluginConfig` 只读，不得另立配置真源。
 - **群策略写盘**在 `openClawConfigWriter` 的同一路径串行队列里直接读改写 `openclaw.json`（临时文件 + rename），**不走 `config patch` CLI**（网关运行时 CLI 会等配置锁）；写后需重启网关生效，patch 形状由 accept 的真实 dry-run + zod schema 校验兜底。
 - 新增群策略字段要同步五处：`groupPolicy.ts`（模型/默认值/夹紧）、`types.ts` 的 `GROUP_PATCH_KEYS`（否则 UI 保存的局部补丁不生效）、`src/character/CharacterSettings.vue`（draft 默认值/回填/保存列表）、`characterGroupConfig.ts`（编译进 OpenClaw 配置）、插件 `policy.mjs`（读取/执行）；manifest `configSchema` 的对象层保持 `additionalProperties: true`，避免扩字段时整份配置校验失败。
