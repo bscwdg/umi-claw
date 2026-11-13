@@ -151,6 +151,10 @@ node scripts/qqbot-voice-send.cjs media/voice.silk --openid <openid> --msg-id <m
 - 新电脑先跑 `node scripts/qqbot-voice-send.cjs <silk> --openid <openid> --dry-run` 自检，
   不会发消息。
 
+> 注意：下面两个脚本只用于**宿主侧人工排障**（main/人工进程）。feiyu agent 会话的 `exec`
+> 调用它们会被 feiyu-guard 按野链路硬拦（原因码 `wild-voice-path-blocked`）；agent 发语音
+> 的唯一合规入口是网关 `tts` 工具，见 §10。
+
 ## 10. QQ 群聊策略与 feiyu-guard 排障
 
 群聊走**单 agent**：qqbot 私聊/群聊都路由到 `feiyu`；群策略由宿主写入
@@ -166,9 +170,20 @@ node scripts/qqbot-voice-send.cjs media/voice.silk --openid <openid> --msg-id <m
 - 语音发不出去/超限：群语音限额（日上限/开关）只对群硬控，看
   `<dataDir>/character/group-guard-state.json` 的当日计数（按群 openid）。语音开关/上限在角色设置
   「群聊」组；改设置会即时重写配置（生效仍需重启网关）。另有一条与群无关的 **feiyu 语音通道合规**：
-  feiyu 会话（不分群/私聊）的 `exec` 命中 `say.py`/`edge-tts`/`edge_tts`/`qqbot-voice-send`/
-  `qqbot-voice-make-silk`/`probe-upload` 特征会被 block（原因码 `wild-voice-path-blocked`），
-  这是预期行为不是故障——语音应走网关 `tts` 工具；非 feiyu 会话（如 main）不受此限。
+  feiyu 会话（不分群/私聊）的 `exec` 命中以下任一类特征会被 block（原因码
+  `wild-voice-path-blocked`），这是预期行为不是故障——语音应走网关 `tts` 工具；非 feiyu
+  会话（如 main）不受此限：
+  - 脚本名：`say.py`/`edge-tts`/`edge_tts`/`qqbot-voice-send`/`qqbot-voice-make-silk`/`probe-upload`；
+  - 平台端点：`api.sgroup.qq.com`（含 `sandbox.` 沙箱子域）、`bots.qq.com/app/getappaccesstoken`、
+    `api.bot.qq.com`（现 wiki 新主机族，与 sgroup 等价的 OpenAPI 基座；大小写不敏感）；
+  - 媒体路径：命令文本出现 `/v2/users/<id>/files` 或 `/v2/groups/<id>/files`（host 拆进变量也认）。
+  改名野脚本（如 `probe2.cjs`）只能绕过脚本名特征，端点/路径特征仍会命中。这是「特征摩擦层」
+  而非绝对阻断，变量拼接/编码等混淆仍可能绕过，减面根治靠归档工作区野工具。
+  另有一条 **C2C 平台 API 通道合规**（不经 exec，独立分支）：feiyu 会话调用
+  `qqbot_platform_api` 工具直传私聊语音（`POST /v2/users/<id>/files` 且 `file_type=3`）
+  同样按野链路 block（原因码不变）。它在群判定之前执行，先于群策略，且只认 feiyu 会话——
+  非 feiyu 会话、图片/文件（file_type 1/4）、`/messages` 发送端点、群路径参数在私聊会话里
+  一律放行；群语音上传仍走原群策略（回复开关 + 日上限），两条分支互不影响。
 - 亲密词没过滤：确认「启用」+ 词表；filter 只对群 `message_sending` 文本生效（含 agent 回复），
   私聊不生效；命中「整条拦截」时群里看不到回复，投递记录里会有 `group-word-blocked` 抑制原因。
 - 群聊写了记忆：记忆隔离只拦 `write`/`edit`/`apply_patch` 三个写工具；`exec` 不做记忆隔离判定

@@ -36,13 +36,15 @@ import {
   detectWildVoiceCommand,
   filterWords,
   groupKeyFromSessionKey,
+  isFeiyuAgentSession,
   isGroupTarget,
   normalizeState,
   parseGuardConfig,
   payloadHasVisibleContent,
   payloadVoiceInfo,
   voiceCounter,
-  voiceUploadGroupId
+  voiceUploadGroupId,
+  voiceUploadUserId
 } from './policy.mjs'
 
 const LOG_PREFIX = '[feiyu-guard]'
@@ -351,6 +353,20 @@ export function registerGuard(api, deps) {
       )
       if (wildVoiceMarker) {
         resolved.warn(`wild voice path blocked via exec marker: ${wildVoiceMarker}`)
+        return { block: true, blockReason: GUARD_REASONS.WILD_VOICE_PATH_BLOCKED }
+      }
+
+      // 通道合规补面（仅 feiyu 会话，不分群/私聊）：exec 之外，agent 还可能改用
+      // qqbot_platform_api 工具直传 C2C 语音（/v2/users/<id>/files, file_type=3），
+      // 与 exec 野链路等效，必须同口径收口到网关 tts。群侧上传不在这里判，
+      // 继续走下方群策略（回复开关/语音日上限），两条分支互不影响。
+      if (
+        isFeiyuAgentSession(ctx?.sessionKey) &&
+        typeof event?.toolName === 'string' &&
+        event.toolName === 'qqbot_platform_api' &&
+        voiceUploadUserId(event?.params)
+      ) {
+        resolved.warn('wild voice path blocked via platform-api c2c voice upload')
         return { block: true, blockReason: GUARD_REASONS.WILD_VOICE_PATH_BLOCKED }
       }
 

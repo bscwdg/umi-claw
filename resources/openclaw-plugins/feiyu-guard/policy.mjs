@@ -89,6 +89,29 @@ export const WILD_VOICE_SUBSTRING_MARKERS = Object.freeze([
 ])
 
 /**
+ * 端点级特征（2026-11-13 实测绕过补面）：野脚本改名 probe2.cjs/probe3.cjs 后，
+ * 上面的名字 marker 全部失效，但手搓 QQ OpenAPI 的命令里必然出现平台域名或
+ * 取 app access token 的端点。feiyu 会话的合规语音只走网关 tts 工具，
+ * exec 直连 QQ OpenAPI 没有合法用途，命中即拦。
+ * 域名清单：sgroup 正式/沙箱（sandbox. 是前者子串自动覆盖）、bots.qq.com 凭证端点、
+ * api.bot.qq.com（现 wiki 的新主机族，与 sgroup 等价的 OpenAPI 基座）。
+ * 连带取舍与名字 marker 一致：feiyu 会话内排查/文档命令只要含这些串也会 block，
+ * 宿主人工排障走 main 会话，不受影响。
+ */
+export const WILD_VOICE_ENDPOINT_MARKERS = Object.freeze([
+  'api.sgroup.qq.com',
+  'bots.qq.com/app/getappaccesstoken',
+  'api.bot.qq.com'
+])
+
+/**
+ * 媒体 files 路径特征：host 被变量拆走时的补面（/v2/users|groups/<id>/files）。
+ * 只在 exec 命令文本里匹配；qqbot_platform_api 工具的正规调用不经本函数，
+ * 群语音日上限等群策略由 guard.mjs 的另一条分支负责，互不影响。
+ */
+const WILD_VOICE_FILES_PATH_RE = /\/v2\/(?:users|groups)\/[^/\s"'`]+\/files\/?/i
+
+/**
  * say.py 边界特征：工作区 edge-tts 本地合成脚本的固定入口。
  * 要求 say.py 前是行首/路径分隔符/引号/空白/反引号，避免误伤 essay.py 这类
  * 「名字里恰好含 say.py」的正常脚本（实测 `python essay.py` 必须放行）。
@@ -110,7 +133,11 @@ export function detectWildVoiceCommand(toolName, params, sessionKey) {
   const command = params.command.toLowerCase()
   if (WILD_VOICE_SAY_PY_RE.test(command)) return 'say.py'
   const hit = WILD_VOICE_SUBSTRING_MARKERS.find((marker) => command.includes(marker))
-  return hit ?? null
+  if (hit) return hit
+  const endpointHit = WILD_VOICE_ENDPOINT_MARKERS.find((marker) => command.includes(marker))
+  if (endpointHit) return endpointHit
+  if (WILD_VOICE_FILES_PATH_RE.test(command)) return 'qq-openapi-files-path'
+  return null
 }
 
 function isRecord(value) {
@@ -527,6 +554,33 @@ export function voiceUploadGroupId(params) {
   const src = isRecord(params) ? params : {}
   const path = typeof src.path === 'string' ? src.path.trim() : ''
   const match = GROUP_VOICE_UPLOAD_PATH_RE.exec(path)
+  if (!match) return null
+  const body = parseBody(src.body)
+  if (!body) return null
+  const rawType = body.file_type
+  const fileType =
+    typeof rawType === 'number'
+      ? rawType
+      : typeof rawType === 'string' && rawType.trim() !== ''
+        ? Number(rawType)
+        : Number.NaN
+  if (fileType !== 3) return null
+  return match[1]
+}
+
+/** C2C 语音上传路径：POST /v2/users/<openid>/files（与群路径同构，仅段名不同） */
+const QQBOT_USER_VOICE_UPLOAD_PATH_RE = /^\/v2\/users\/([^/]+)\/files\/?$/
+
+/**
+ * 从 `qqbot_platform_api` 的参数里认出「C2C 语音上传」，返回用户 openid；认不出返回 null。
+ * 判据与 voiceUploadGroupId 同口径：path 命中 `/v2/users/<id>/files` 且 body.file_type === 3。
+ * 用途是 feiyu 通道合规（guard.mjs 按 feiyu 会话门控）：agent 经平台 API 直传私聊语音
+ * 与 exec 野链路等效，必须收口到网关 tts；非语音 file_type 与其它 path 一律 null。
+ */
+export function voiceUploadUserId(params) {
+  const src = isRecord(params) ? params : {}
+  const path = typeof src.path === 'string' ? src.path.trim() : ''
+  const match = QQBOT_USER_VOICE_UPLOAD_PATH_RE.exec(path)
   if (!match) return null
   const body = parseBody(src.body)
   if (!body) return null

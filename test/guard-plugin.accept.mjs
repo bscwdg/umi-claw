@@ -3,10 +3,10 @@
 // 打真源码：直接 import resources/openclaw-plugins/feiyu-guard/policy.mjs + guard.mjs
 // （零 npm 依赖、零 esbuild、不启 Gateway）。fake api 收集 hook 注册，注入 fake 时钟与
 // 状态读写，把「群/私聊识别、回复闸、词过滤、语音条开关/日上限/按群隔离/跨天、
-// 记忆隔离、渠道出站语音剥离、feiyu 语音通道合规（野链路 exec 门控阻断）、状态文件异常
+// 记忆隔离、渠道出站语音剥离、feiyu 语音通道合规（野链路 exec 门控 + C2C 平台 API 语音阻断）、状态文件异常
 // fail-open、配置非法值」逐条打真；每条都配负向断言。
 //
-// 末尾 8 条 MUTATION：把 policy/guard 的判定改坏后重新 import，断言「坏实现确实会放过
+// 末尾 11 条 MUTATION：把 policy/guard 的判定改坏后重新 import，断言「坏实现确实会放过
 // 本该拦的行为」——证明前面的断言真的能抓住逻辑回退，而不是恒绿。
 //
 // 用法：node test/guard-plugin.accept.mjs
@@ -50,7 +50,8 @@ const {
   payloadHasVisibleContent,
   payloadVoiceInfo,
   voiceCounter,
-  voiceUploadGroupId
+  voiceUploadGroupId,
+  voiceUploadUserId
 } = policyModule
 const { registerGuard } = guardModule
 
@@ -466,6 +467,66 @@ await r.check('P9', 'detectWildVoiceCommand：feiyu 会话 exec 野链路特征�
     'probe-upload',
     'QQ 富媒体直传探测脚本与 qqbot-voice-send 等效，同口径命中'
   )
+  // 端点级特征（2026-11-13 实测绕过补面）：脚本改名后名字 marker 失效，靠平台域名/端点拦
+  assertEq(
+    detectWildVoiceCommand(
+      'exec',
+      { command: 'node probe2.cjs (fetch https://api.sgroup.qq.com/v2/users/abc/files, file_type=3)' },
+      DM_SESSION
+    ),
+    'api.sgroup.qq.com',
+    '改名野脚本直连 QQ 平台域名，端点 marker 命中'
+  )
+  assertEq(
+    detectWildVoiceCommand(
+      'exec',
+      { command: 'curl -X POST https://bots.qq.com/app/getAppAccessToken' },
+      DM_SESSION
+    ),
+    'bots.qq.com/app/getappaccesstoken',
+    '手搓取 app access token 端点命中（大小写归一）'
+  )
+  assertEq(
+    detectWildVoiceCommand(
+      'exec',
+      { command: 'curl https://api.bot.qq.com/v2/users/abc/files' },
+      DM_SESSION
+    ),
+    'api.bot.qq.com',
+    '新主机族域名 api.bot.qq.com 同口径命中（不被 sgroup/bots 两条 marker 漏过）'
+  )
+  assertEq(
+    detectWildVoiceCommand(
+      'exec',
+      { command: "$u='https://'+$h; fetch($u+'/v2/users/abcdef0123456789abcdef0123456789/files')" },
+      DM_SESSION
+    ),
+    'qq-openapi-files-path',
+    'host 拆进变量时，/v2/users/<id>/files 路径特征补面命中'
+  )
+  assertEq(
+    detectWildVoiceCommand(
+      'exec',
+      { command: 'curl -X POST https://example.test/v2/groups/abcdef0123456789/files' },
+      GROUP_SESSION
+    ),
+    'qq-openapi-files-path',
+    '群 files 媒体路径同口径命中'
+  )
+  assertEq(
+    detectWildVoiceCommand(
+      'exec',
+      { command: 'curl https://api.sgroup.qq.com/gateway' },
+      'agent:main:main'
+    ),
+    null,
+    '非 feiyu 会话即便含平台域名也放行'
+  )
+  assertEq(
+    detectWildVoiceCommand('exec', { command: 'curl https://example.com/v2/users/me/profile' }, DM_SESSION),
+    null,
+    '不含 /files 尾段的普通 URL 不误伤'
+  )
   assertEq(
     detectWildVoiceCommand('EXEC', { command: 'python SAY.PY x' }, DM_SESSION),
     'say.py',
@@ -606,7 +667,7 @@ await r.check('G2', '词过滤 hook：replace 改写群出站；block 取消；�
 })
 
 // ── G3：群语音开关 ───────────────────────────────────────────────────────────
-await r.check('G3', '群语音开关：关闭拦群语音上传；图片/非 files 路径/私聊/c2c 全部放行', async () => {
+await r.check('G3', '群语音开关：关闭拦群语音上传；图片/非 files 路径/私聊放行；feiyu 私聊 c2c 语音归通道合规（G22）', async () => {
   const fake = setup(guardConfig({ policy: { voice: { enabled: false, dailyCap: 2 } } }))
   const blocked = await callTool(fake, { toolName: 'qqbot_platform_api', params: voiceUploadParams(GROUP_ID) }, groupCtx)
   assertDeepEq(blocked, { block: true, blockReason: GUARD_REASONS.VOICE_DISABLED }, '关闭 → block 并带原因码')
@@ -630,10 +691,16 @@ await r.check('G3', '群语音开关：关闭拦群语音上传；图片/非 fil
     { toolName: 'qqbot_platform_api', params: { method: 'POST', path: `/v2/users/${DM_ID}/files`, body: { file_type: 3 } } },
     dmCtx
   )
-  assertEq(c2c, undefined, '私聊语音上传放行')
+  assertDeepEq(c2c, { block: true, blockReason: GUARD_REASONS.WILD_VOICE_PATH_BLOCKED }, 'feiyu 私聊 c2c 语音上传改由通道合规硬拦（P2 契约变更，详见 G22）')
+  const c2cImage = await callTool(
+    fake,
+    { toolName: 'qqbot_platform_api', params: { method: 'POST', path: `/v2/users/${DM_ID}/files`, body: { file_type: 1 } } },
+    dmCtx
+  )
+  assertEq(c2cImage, undefined, '私聊 c2c 图片上传（file_type=1）放行')
   const groupVoiceInDm = await callTool(fake, { toolName: 'qqbot_platform_api', params: voiceUploadParams(GROUP_ID) }, dmCtx)
   assertEq(groupVoiceInDm, undefined, '私聊会话里的群上传参数也放行（按会话判定）')
-  return '关闭态拦截 + 五条放行负向都正确'
+  return '关闭态拦截 + 放行负向正确（c2c 语音契约变更到 G22）'
 })
 
 // ── G4：群语音日上限/按群隔离/跨天 ──────────────────────────────────────────
@@ -1268,6 +1335,33 @@ await r.check('G21', '野链路阻断：feiyu 私聊/群聊 exec 跑 say.py/edge
     blocked,
     '私聊 exec 跑 QQ 富媒体直传探测脚本同样被 block（等效投递路径）'
   )
+  assertDeepEq(
+    await callTool(
+      fake,
+      { toolName: 'exec', params: { command: 'node probe2.cjs (fetch https://api.sgroup.qq.com/gateway)' } },
+      dmCtx
+    ),
+    blocked,
+    '改名野脚本直连 QQ 平台域名被 block（纯域名形态，端点分支独占守护，不经 /files 正则兜底）'
+  )
+  assertDeepEq(
+    await callTool(
+      fake,
+      { toolName: 'exec', params: { command: `$u='https://'+$h; Invoke-RestMethod "$u/v2/users/${DM_ID}/files"` } },
+      dmCtx
+    ),
+    blocked,
+    'host 拆变量的 /v2/users/.../files 直连被 block（路径特征补面）'
+  )
+  assertEq(
+    await callTool(
+      fake,
+      { toolName: 'exec', params: { command: 'curl https://api.sgroup.qq.com/gateway' } },
+      mainCtx
+    ),
+    undefined,
+    '非 feiyu 会话的平台域名 exec 放行'
+  )
   // 阻断先于群策略：replyEnabled=false 也不改变野链路原因码
   const strict = setup(guardConfig({ policy: { replyEnabled: false } }))
   assertDeepEq(
@@ -1302,10 +1396,111 @@ await r.check('G21', '野链路阻断：feiyu 私聊/群聊 exec 跑 say.py/edge
   return 'feiyu 会话野链路硬拦且先于群策略，非 feiyu 与判不出一律放行'
 })
 
+// ── G22：feiyu 会话 qqbot_platform_api 直传 C2C 语音硬拦（P2 通道合规补面）──
+await r.check('G22', 'C2C 平台 API 语音：feiyu 会话 block 且先于群策略；非 feiyu/非语音/群路径/坏形状放行', async () => {
+  const fake = setup(guardConfig())
+  const blocked = { block: true, blockReason: GUARD_REASONS.WILD_VOICE_PATH_BLOCKED }
+  // 纯函数：voiceUploadUserId 只认 /v2/users/<id>/files + file_type=3
+  assertEq(
+    voiceUploadUserId({ method: 'POST', path: `/v2/users/${DM_ID}/files`, body: { file_type: 3 } }),
+    DM_ID,
+    '数字 file_type=3 命中并返回 openid'
+  )
+  assertEq(
+    voiceUploadUserId({ path: `/v2/users/${DM_ID}/files`, body: { file_type: '3' } }),
+    DM_ID,
+    '字符串 file_type 归一后命中'
+  )
+  assertEq(voiceUploadUserId({ path: `/v2/users/${DM_ID}/files/`, body: { file_type: 3 } }), DM_ID, '尾斜杠命中')
+  assertEq(
+    voiceUploadUserId({ path: `/v2/users/${DM_ID}/files`, body: JSON.stringify({ file_type: 3 }) }),
+    DM_ID,
+    'body 为 JSON 字符串时 parseBody 解包后命中'
+  )
+  assertEq(voiceUploadUserId({ path: `/v2/users/${DM_ID}/files`, body: { file_type: 1 } }), null, '图片 file_type=1 放行')
+  assertEq(voiceUploadUserId({ path: `/v2/users/${DM_ID}/files`, body: { file_type: 4 } }), null, '文件 file_type=4 放行')
+  assertEq(voiceUploadUserId({ path: `/v2/users/${DM_ID}/messages`, body: { file_type: 3 } }), null, '/messages 路径放行')
+  assertEq(voiceUploadUserId({ path: `/v2/groups/${GROUP_ID}/files`, body: { file_type: 3 } }), null, '群路径不归本函数管')
+  assertEq(voiceUploadUserId({ path: `/v2/users/${DM_ID}/files` }), null, '缺 body 放行')
+  assertEq(voiceUploadUserId(null), null, 'params 为 null 放行')
+  assertEq(voiceUploadUserId({ path: 42, body: { file_type: 3 } }), null, 'path 非字符串放行')
+  // 集成：feiyu 私聊 c2c 语音 → block
+  assertDeepEq(
+    await callTool(
+      fake,
+      { toolName: 'qqbot_platform_api', params: { method: 'POST', path: `/v2/users/${DM_ID}/files`, body: { file_type: 3 } } },
+      dmCtx
+    ),
+    blocked,
+    'feiyu 私聊 c2c 语音上传被 block'
+  )
+  // 先于群策略：replyEnabled=false 原因码仍是通道合规
+  const strict = setup(guardConfig({ policy: { replyEnabled: false } }))
+  assertDeepEq(
+    await callTool(
+      strict,
+      { toolName: 'qqbot_platform_api', params: { method: 'POST', path: `/v2/users/${DM_ID}/files`, body: { file_type: 3 } } },
+      dmCtx
+    ),
+    blocked,
+    'c2c 拦截不依赖群回复开关'
+  )
+  assertDeepEq(
+    await callTool(
+      fake,
+      { toolName: 'qqbot_platform_api', params: { method: 'POST', path: `/v2/users/${DM_ID}/files`, body: { file_type: 3 } } },
+      groupCtx
+    ),
+    blocked,
+    'feiyu 群会话携带 c2c path 同样 block（通道合规不分群/私聊）'
+  )
+  // 负向：非 feiyu 会话即便 c2c 语音也放行（不越界管别的 agent）
+  assertEq(
+    await callTool(
+      fake,
+      { toolName: 'qqbot_platform_api', params: { method: 'POST', path: `/v2/users/${DM_ID}/files`, body: { file_type: 3 } } },
+      mainCtx
+    ),
+    undefined,
+    'main agent 会话的 c2c 语音上传放行'
+  )
+  // 负向：feiyu 私聊的 c2c 图片、群路径参数、/messages 均放行
+  assertEq(
+    await callTool(
+      fake,
+      { toolName: 'qqbot_platform_api', params: { method: 'POST', path: `/v2/users/${DM_ID}/files`, body: { file_type: 1 } } },
+      dmCtx
+    ),
+    undefined,
+    'c2c 图片上传放行'
+  )
+  assertEq(
+    await callTool(fake, { toolName: 'qqbot_platform_api', params: voiceUploadParams(GROUP_ID) }, dmCtx),
+    undefined,
+    '私聊会话里的群上传参数仍按会话判定放行（群策略不进私聊）'
+  )
+  assertEq(
+    await callTool(
+      fake,
+      { toolName: 'qqbot_platform_api', params: { method: 'POST', path: `/v2/users/${DM_ID}/messages`, body: { msg_type: 7 } } },
+      dmCtx
+    ),
+    undefined,
+    '/messages 发送端点放行'
+  )
+  // 群策略路径不受影响：默认策略 voice.enabled=false，群上传仍走群闸原因码
+  assertDeepEq(
+    await callTool(fake, { toolName: 'qqbot_platform_api', params: voiceUploadParams(GROUP_ID) }, groupCtx),
+    { block: true, blockReason: GUARD_REASONS.VOICE_DISABLED },
+    '群上传仍走群策略分支，未被 c2c 规则改道'
+  )
+  return 'c2c 平台 API 语音 feiyu 硬拦且先于群策略，其它会话/类型/群路径不受影响'
+})
+
 // ── M8：野链路检测改坏必须被 G21 抓住 ───────────────────────────────────────
 await r.check('M8', 'MUTATION：子串特征分支恒返回 null → 「feiyu 会话 edge-tts 安装被 block」断言会变红', async () => {
   const register = await importMutatedGuard({
-    policyEdits: [['  return hit ?? null', '  return null']]
+    policyEdits: [['  if (hit) return hit', '  if (false) return hit']]
   })
   const fake = setupMutated(register, guardConfig())
   // 走子串分支：say.py 正则在它之前返回，变异只打掉 marker 命中后的返回值
@@ -1316,6 +1511,55 @@ await r.check('M8', 'MUTATION：子串特征分支恒返回 null → 「feiyu �
   )
   assertEq(result, undefined, '改坏后私聊野链路放行（说明 G21 的 block 断言能抓住这个回退）')
   return 'mutation caught: 野链路阻断被绕过'
+})
+
+// ── M9：端点 marker 分支改坏必须被 P9 严格断言与本变异抓住 ──────────────────
+await r.check('M9', 'MUTATION：端点 marker 分支恒不命中 → P9 的 marker 相等断言与本用例会变红', async () => {
+  const register = await importMutatedGuard({
+    policyEdits: [['  if (endpointHit) return endpointHit', '  if (false) return endpointHit']]
+  })
+  const fake = setupMutated(register, guardConfig())
+  // 只含平台域名、不含 /files 路径：打掉端点分支后没有任何特征兜底，必须放行
+  const result = await callTool(
+    fake,
+    { toolName: 'exec', params: { command: 'node -e "fetch(\'https://api.sgroup.qq.com/gateway\')"' } },
+    dmCtx
+  )
+  assertEq(result, undefined, '改坏后平台域名直连放行（P9 严格 marker 断言与本变异能抓住这个回退）')
+  return 'mutation caught: 端点 marker 被绕过'
+})
+
+// ── M10：files 路径分支改坏必须被 G21 抓住 ──────────────────────────────────
+await r.check('M10', 'MUTATION：files 路径分支失效 → 「host 拆变量的 /v2/users/.../files 直连被 block」断言会变红', async () => {
+  const register = await importMutatedGuard({
+    policyEdits: [
+      ["if (WILD_VOICE_FILES_PATH_RE.test(command)) return 'qq-openapi-files-path'", "if (false) return 'qq-openapi-files-path'"]
+    ]
+  })
+  const fake = setupMutated(register, guardConfig())
+  // host 由变量拼接，命令文本不含平台域名，只剩 /v2/users/<id>/files 路径特征
+  const result = await callTool(
+    fake,
+    { toolName: 'exec', params: { command: `$u='https://'+$h; Invoke-RestMethod "$u/v2/users/${DM_ID}/files"` } },
+    dmCtx
+  )
+  assertEq(result, undefined, '改坏后 files 路径直连放行（说明 G21 的路径 block 断言能抓住这个回退）')
+  return 'mutation caught: files 路径特征被绕过'
+})
+
+// ── M11：C2C 平台 API 语音拦截分支改坏必须被 G22 抓住 ──────────────────────
+await r.check('M11', 'MUTATION：C2C 平台 API 语音分支门控失效 → 「feiyu 私聊 c2c 语音被 block」断言会变红', async () => {
+  const register = await importMutatedGuard({
+    guardEdits: [['        isFeiyuAgentSession(ctx?.sessionKey) &&', '        false &&']]
+  })
+  const fake = setupMutated(register, guardConfig())
+  const result = await callTool(
+    fake,
+    { toolName: 'qqbot_platform_api', params: { method: 'POST', path: `/v2/users/${DM_ID}/files`, body: { file_type: 3 } } },
+    dmCtx
+  )
+  assertEq(result, undefined, '改坏后 feiyu 私聊 c2c 语音放行（说明 G22 的 block 断言能抓住这个回退）')
+  return 'mutation caught: C2C 平台 API 语音拦截被绕过'
 })
 
 const result = r.toJSON()

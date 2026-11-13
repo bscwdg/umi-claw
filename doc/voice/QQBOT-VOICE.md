@@ -149,7 +149,7 @@ node scripts/qqbot-voice-send.cjs <silkFile> [openid] [msg_id] [msg_seq]
 | `QQBOT_APP_ID` / `QQBOT_CLIENT_SECRET` | 覆盖凭据（逐字段） |
 | `QQBOT_OPENID` | 默认 openid（命令行显式参数优先） |
 | `QQBOT_CREDENTIAL_FILE` | 指定 credential-backup/current.json |
-| `QQBOT_API_BASE` | 默认 `https://api.sgroup.qq.com`（沙箱时可改） |
+| `QQBOT_API_BASE` | 默认 `https://api.sgroup.qq.com`（沙箱时可改）；新主机族 `https://api.bot.qq.com` 同协议，feiyu-guard 对两个主机族同口径拦截 |
 | `QQBOT_VOICE_DRY_RUN=1` | 只校验，不发网络请求（等价 `--dry-run`） |
 | `FFMPEG` | make-silk 用的 ffmpeg 路径 |
 

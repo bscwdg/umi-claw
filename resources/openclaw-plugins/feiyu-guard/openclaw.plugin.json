@@ -1,7 +1,7 @@
 {
   "id": "feiyu-guard",
   "name": "Feiyu Group Guard",
-  "description": "QQ 群聊硬策略（群回复开关、亲密词过滤、群语音条开关/日上限、群记忆隔离），群策略只在 QQ 群会话生效、私聊放行；另有 feiyu 语音通道合规规则：feiyu 会话里 edge-tts/say.py/手工上传等野链路 exec 不分群私聊一律阻断（非 feiyu 会话放行）。状态文件读失败按空状态、写失败保留进程内计数。",
+  "description": "QQ 群聊硬策略（群回复开关、亲密词过滤、群语音条开关/日上限、群记忆隔离），群策略只在 QQ 群会话生效、私聊放行；另有 feiyu 语音通道合规规则：feiyu 会话里 edge-tts/say.py/手工上传等野链路 exec（含 QQ OpenAPI 域名与 /v2/.../files 媒体路径端点特征）以及 qqbot_platform_api 私聊语音直传不分群私聊一律阻断（非 feiyu 会话放行）。状态文件读失败按空状态、写失败保留进程内计数。",
   "version": "1.0.0",
   "categories": ["security"],
   "activation": {

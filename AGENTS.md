@@ -215,7 +215,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 
 ### 5.4 随包 OpenClaw 原生 hook 插件（feiyu-guard）
 
-`resources/openclaw-plugins/feiyu-guard/` 是随安装包发布的 OpenClaw 原生插件（`plugins.load.paths` 加载，不走 npm 安装），硬执行两类规则：① **QQ 群会话**群聊策略：`message_sending`（群回复取消 / 亲密词替换或拦截）、`reply_payload_sending`（渠道出站语音）、`before_tool_call`（群语音上传 `qqbot_platform_api` 按群按天限额、群会话 `write/edit/apply_patch` 记忆隔离）；② **feiyu 语音通道合规**：`before_tool_call` 对 feiyu 会话的 `exec` 野链路（`say.py` / `edge-tts` / `edge_tts` / `qqbot-voice-send` / `qqbot-voice-make-silk` / `probe-upload` 特征）一律 block，语音只能走网关 tts 工具。
+`resources/openclaw-plugins/feiyu-guard/` 是随安装包发布的 OpenClaw 原生插件（`plugins.load.paths` 加载，不走 npm 安装），硬执行两类规则：① **QQ 群会话**群聊策略：`message_sending`（群回复取消 / 亲密词替换或拦截）、`reply_payload_sending`（渠道出站语音）、`before_tool_call`（群语音上传 `qqbot_platform_api` 按群按天限额、群会话 `write/edit/apply_patch` 记忆隔离）；② **feiyu 语音通道合规**（不分群/私聊）：`before_tool_call` 对 feiyu 会话的 `exec` 野链路（`say.py` / `edge-tts` / `edge_tts` / `qqbot-voice-send` / `qqbot-voice-make-silk` / `probe-upload` 脚本名特征 + `api.sgroup.qq.com` / `bots.qq.com/app/getappaccesstoken`（匹配前整体转小写）/ `api.bot.qq.com` 端点特征 + `/v2/users|groups/<id>/files` 媒体路径特征）一律 block；feiyu 会话经 `qqbot_platform_api` 直传 C2C 语音（`/v2/users/<id>/files` 且 `file_type=3`，由 `voiceUploadUserId` 识别）同口径 block，群路径参数不进该分支。语音只能走网关 tts 工具。
 
 硬约束：
 
