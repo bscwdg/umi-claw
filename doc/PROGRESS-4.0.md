@@ -2509,3 +2509,64 @@ TTS→SILK→msg_type=7 语音气泡投递（deliver-pipeline.handleVoiceIntent�
   真正减面靠归档工作区野工具（运行时数据不进 git，删前待用户确认）。
 - P3 只认 stderr、管道入口无 carry、detached 依赖文件 tail 的文本格式；失效模式都是少计不错计。
 - C2C 分支只覆盖 `/v2/users/<id>/files` 语音；频道 `/v2/channels/...` 与 `/messages` 不在本次范围。
+
+### 2026-11-13 · openclaw-qqbot 语音本地路径误判热修沉淀进仓库（启动前幂等补丁）
+
+背景：第三方网关插件 `@tencent-connect/openclaw-qqbot` 2.0.4（装在 `data/` 下、git 忽略、
+npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 Windows 盘符/UNC 本地
+路径误判为 base64，塞进 `/v2/.../files` 的 `file_data`，QQ 回「系统繁忙」后静默降级成文件消息，
+语音条发不出去（网关 err 日志 `sendVoice failed ... falling back to sendFile` 实测）。
+先做了手工热修验证有效，但换机/重装即失效，故把热修沉淀为宿主启动前的幂等自动补丁。
+
+**改了什么（5 个代码/测试文件 + 本入档）**
+
+- 新模块 `electron/main/claw/qqVoicePatch.ts`（纯 Node，0 个 electron import）：
+  `ensureQqBotVoicePatch(deps, dataDir)` 扫描 `config/.openclaw/npm/projects/*/node_modules/
+  @tencent-connect/openclaw-qqbot/dist/index.cjs`；锚点逐字命中才插入共享 helper
+  `isWindowsLocalVoicePath`（正则 `^[a-zA-Z]:[\\/]|^\\`，盘符两种斜杠 + UNC）与两个解析器守卫；
+  marker 已存在则跳过（手工热修与模块补丁同构，混用幂等）；锚点不匹配返回 `unsupported` 不动文件；
+  备份 `index.cjs.orig-<version>`（同名是目录则换时间戳名，普通文件不覆盖）；`patch-tmp` 残留
+  写入前清理 + rename 失败回收自己的 tmp；临时文件 + rename 原子写；整体 fail-open。
+- `electron/main/clawManager.ts`：`_spawnGateway` 在「清旧 capture 之后、spawn 之前」调用，
+  `_withTimeoutValue(30s, emptyQqVoicePatchSummary() 兜底)`；patched>0 打中文 system 行，
+  unsupported/error 逐条 stderr，already-patched 静默。
+- `scripts/patch-qqbot-voice-path.mjs`：手动 CLI，esbuild 临时打包同一份 TS 核心，零逻辑复制；
+  `package.json` 加 `patch:qqbot-voice` 与 `accept:qqbot-voice-patch`。
+- `test/qqbot-voice-patch.accept.mjs`：Q1–Q10 共 11 个 check，bundle 真源码 + 临时 fixture 树；
+  注册进 `scripts/run-all-accept.mjs`。
+
+**验收（真实输出）**
+
+- 新套件 11/11 通过；`accept:gateway-log` 10/10；双 typecheck 0 错；`check:boundary` 三项 0；
+  `npm run build` 通过；CLI 对线上 data 跑 `alreadyPatched=1` exit 0。
+- 金标准：用真实 548KB `index.cjs.orig-2.0.4` 走真实模块，产物 SHA256 `a6cd9de5…` 与生产现网
+  手工补丁**逐字节相同**；Q4 变异可红性验证（before/after hash 断言能抓住重复补丁）。
+- 预存环境红与本次无关：`maintenance/plugin-captures-cleanup` 29/30（248 字符深路径 mklink 撞
+  MAX_PATH）、`hot` 2/16（libuv 句柄断言），stash 干净树对照复现。
+
+**对抗审查（AGENTS §12，两轮只读子代理，互不可见）**
+
+- 第一轮 Lorentz（runId 01a1d438-b145-7790-80ca-8b929089ecf3），无 P0：
+  - P1-1 Q4「dist 稳定」断言自比 → **属实→已修**：改执行前快照 vs 执行后比对，并补变异可红验证。
+  - P1-2 正则不覆盖 `file://`、`.\x`、`D:rel` → **前提不成立（经实测后登记边界）**：生产链路
+    `resolveMediaPath` 前置 realpath 已绝对化，这些形态不可达；且实测 `readFile('file://…')`
+    ENOENT、必须转 URL 对象，硬判 localPath 只会把上传 500 换成读文件失败，故在文件头与 Q3
+    显式登记边界而非扩大补丁。
+  - P2-1 tmp 残留无回收 → **属实→已修**：补丁前清专属前缀 + rename 失败回收，新增 Q9。
+  - P2-2 空 summary 两份真源 → **属实→已修**：clawManager 改用 `emptyQqVoicePatchSummary()`。
+  - P2-3 超时迟到写入竞态、P2-5 同版本备份单份 → **登记接受**：注释写明，rename 原子只可能被
+    capture 看到完整旧/新文件。
+- 第二轮独立事实核对+对抗复核 Locke（runId 01a1d453-22c9-72b1-be97-a51689bef0c9）：亲跑 11/11、
+  双 typecheck、boundary 全绿；程序化比对锚点与真实 orig 逐字一致；四类 fail-open 故障注入不冒泡；
+  独立 fixture 验证幂等/原子/残留清理；capture 机制以磁盘 SHA256 证实「spawn 前补源码、网关每进程
+  拷贝补丁源码」链路闭合。无 P0/P1。其 P2-1（备份名被目录占用静默跳过备份）→ **属实→已修**：
+  加 `stat.isFile()` 判定 + 时间戳兜底名，新增 Q10。P2-2（sourcemap 行号漂移，仅影响调试）、
+  P2-3（测试分号风格，已对齐为载荷外零分号）、P2-4（日志轮转证据）→ 登记/已处置。
+
+**已知边界（登记，不是阻断）**
+
+- 守卫只认盘符绝对路径与 UNC；`file://`、反斜杠相对、盘符相对依赖前置 normalize，裸 `sendMedia2`
+  直调才可达，刻意不扩（见上 P1-2）。
+- 只改 `index.cjs` 不同步 `index.cjs.map`，sourcemap 堆栈行号漂移，运行时无影响。
+- 备份按版本号单份保留；同版本号重发包且未整体替换 dist 的极小概率场景不另留底。
+- 超时不取消底层 promise，迟到 rename 理论上与 capture 交错；同目录 rename 原子，实际风险可忽略。
