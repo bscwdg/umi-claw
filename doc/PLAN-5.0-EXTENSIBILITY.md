@@ -158,7 +158,7 @@ renderer
 - host→plugin 反向依赖：会话键 resolver 注册表（marketing activate 注册、onDispose 摘除）
 - 删除 work 插件原始 `ipcMain` fallback、`hostUi` 不再导出裸 `ipcMain`
 - `scripts/check-plugin-api.mjs` + baseline + `test/plugin-api.accept.mjs`（ratchet 已注册 run-all）
-- 验收：52 套 / 894 项 + node:test 21（全绿）
+- 验收：47 套 / 854 项 + node:test 21（当时基线，全绿）
 
 未完成（下次 A3a 续）：
 - 第三方可见面 async 化 + 事件/流式 RPC（依赖 B1）
@@ -173,7 +173,7 @@ renderer
 - 79 处 `electron/main/**` import / 38 文件已迁到 `plugin-sdk/src/official-*`（按宿主模块拆子路径，避免 barrel 把 mammoth/electron 链进 domain bundle）。
 - `check-plugin-api` ratchet：**host import 0**（值 0 / type 0）；UI host import 23→4（+2 type；4 处 ConfirmDialog .vue 直连属测试管线例外）；hostBridge consumers 13（useWorkStream 移入插件后必须经 hostBridge；官方 UI 内部，Phase 1 前不动）。
 - 未完成：UI 的 `@/` 宿主 import 仅剩 4 处 ConfirmDialog（等 UI 测试管线支持跨 .vue 或组件下沉）；hostBridge 收窄/下沉留 Phase 1；`@umi/plugin-sdk/*` alias/宿主注入（B1）。
-- 验收：plugin.accept 71/71、plugin-contract 3/3、plugin-api 3/3、ui 28/28、build 通过；全量 accept 52 套/894 项全绿（含启动级 E2E）。
+- 验收：plugin.accept 71/71、plugin-contract 3/3、plugin-api 3/3、ui 28/28、build 通过；全量 accept 47 套/854 项（当时基线）全绿（含启动级 E2E）。
 
 ### 3.1.3 A4/A5 兼容与契约（2026-11-13）
 
@@ -240,7 +240,9 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - [x] 第三方样例在 utilityProcess 跑通（`plugin-isolation.e2e`）；官方插件仍 in-process，accept 绿
 - [x] fs/child_process/worker/dlopen 越权被拦（B4 真机）；网络残余风险写入 B0 ADR/权限提示
 - [x] 崩溃/心跳 hang/启动失败有状态机与 disabled 安全态（B1/B4）
-- [x] feature flag 默认 off，关闭时行为与 4.3 一致（B1 I7/I8 + 全量回归）
+'- [x] feature flag 默认 off，关闭时行为与 4.3 一致（B1 I7/I8 + 全量回归）
+
+> 口径限定（2026-11-14 独立检查）：item1 是 `UMI_ISOLATION_PROBE` 测试探针的 utilityProcess E2E，**不是生产 installer 已启动 supervisor**；item4 是默认 off 且关闭路径不变，flag on 的生产接线、dev 读根收窄、junction 拒绝、生产 installer 均登记 Phase 2。不得对外表述为“生产隔离已上线”。
 
 ### 4.2 B1 实施状态（2026-11-13）
 
@@ -257,7 +259,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - manifest `permissions`：`fs.read` / `fs.write` 相对路径（禁绝对路径/`..`）、`network`（精确/`*.` 通配）、`services`；未知键/非法值 **fail-closed**。
 - 授权存储 `<dataDir>/plugin-permissions.json`（schema v1，坏文件按未授权）；`plugin:permissions:list/grant/revoke` IPC；grant **只授予 manifest 已申请权限**，UI 不能扩权；`PluginManager.vue` 增加权限提示/授权/撤销按钮。
 - broker：默认拒绝；fs 读含插件包目录，写只允许 dataDir 子路径；network/services allowlist；每次判定写 `<dataDir>/plugin-audit.log`（无 payload/密钥）。
-- `NODE_OPTIONS` 注入 `--experimental-permission --allow-fs-read=<包目录,申明读路径> --allow-fs-write=<申明写路径>`；子进程 env 白名单（PATH/SystemRoot/TEMP/HOME 等），**不透传宿主 dataDir/API key/云密钥**。
+- `NODE_OPTIONS` 注入 `--experimental-permission --allow-fs-read=<包目录,申明读路径> --allow-fs-write=<申明写路径>`；子进程 env 白名单（PATH/SystemRoot/TEMP/TMP/LANG/TZ；**不含 HOME/USERPROFILE/APPDATA**），**不透传宿主 dataDir/API key/云密钥**。
 - 测试：`test/plugin-permissions.accept.mjs` 10/10（manifest/store/broker/audit/env/空格路径真 Electron/损坏 grant）。
 - 未完成（B3/B4）：真实 `utilityProcess` 启动时接 env；服务调用 broker 接入；越权负向用例；撤销后进程重启语义。
 
@@ -283,7 +285,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - `devMode.ts`：`UMI_DEV_PLUGINS=1` 才开 plugins，`UMI_DEV_BUILD=1` 且 plugins 开才开 build；**打包版即使设 env 也拒绝**。
 - 接线：`plugin:dev-mode`（`{ok,data}` 信封）+ preload `plugins.devMode()` + 管理页风险横幅。
 - 本批只做闸门与提示，不扫描/不加载 dev-plugins、不新增安装入口；扫描/源码构建留 Phase 2。
-- 测试：`plugin-dev-mode` 4/4；全量 52 套/894 项（893 通过 + 1 显式跳过）。
+- 测试：`plugin-dev-mode` 4/4；全量 52 套/896 项（895 通过 + 1 显式跳过）。
 - 未做/登记：UI 横幅可达性无 E2E；dev-plugins 扫描/源码构建 Phase 2。
 
 ### 4.7 Phase 2 起点提醒
@@ -356,7 +358,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 | 打包 | `npm run build` + packaged smoke |
 | 审查 | AGENTS §12：每 commit 对抗审查；每 WP 两次独立检查 |
 
-**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**47 套**（ACCEPT 44 + e2e×2 + smoke）、accept result **854 项（853 通过 + 1 跳过）** + `node:test` **21 条** = **874**。AGENTS/RUNBOOK 已同步该口径；release/4.0 在 voice 合并后复核。后续以每次留档为准。
+**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**52 套**（ACCEPT 48 + e2e×3 + smoke）、accept result **896 项（895 通过 + 1 显式跳过）** + `node:test` **21 条** = **916**。AGENTS/RUNBOOK 已同步该口径（2026-11-14 Phase 1 收尾）；release/4.0 在 voice 合并后复核。后续以每次留档为准。
 
 ---
 

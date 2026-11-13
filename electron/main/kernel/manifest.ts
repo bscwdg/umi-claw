@@ -187,6 +187,19 @@ function isSafePermissionPath(value: string): boolean {
   return !value.split(/[\\/]+/).includes('..')
 }
 
+/** 第三方可申请的宿主服务 allowlist（consent/abort/hostOps/legacyDb 属内部能力，永不对第三方开放） */
+export const PUBLIC_SERVICE_NAMES = [
+  'db',
+  'openclaw',
+  'notifications',
+  'config',
+  'kv',
+  'secrets',
+  'voice',
+  'http',
+  'dialog'
+] as const
+
 function parsePermissions(raw: unknown, pluginId: string): PluginPermissions | undefined {
   if (raw === undefined) return undefined
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -231,8 +244,8 @@ function parsePermissions(raw: unknown, pluginId: string): PluginPermissions | u
   if (obj.services !== undefined) {
     const services = asStringArray(obj.services, 'permissions.services', pluginId)
     for (const name of services) {
-      if (!/^[a-z][a-z0-9._-]*$/.test(name)) {
-        fail(`permissions.services 非法服务名：${JSON.stringify(name)}`, 'permissions.services', pluginId)
+      if (!(PUBLIC_SERVICE_NAMES as readonly string[]).includes(name)) {
+        fail(`permissions.services 不在公开服务 allowlist：${JSON.stringify(name)}`, 'permissions.services', pluginId)
       }
     }
     if (services.length) out.services = services

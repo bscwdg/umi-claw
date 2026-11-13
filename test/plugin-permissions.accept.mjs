@@ -283,6 +283,32 @@ await r.check('P10', '真 Electron 子进程：相对 NODE_OPTIONS + 空格安�
   }
 })
 
+await r.check('P11', '内部服务永不对第三方开放：manifest 拒绝 consent/abort，broker 双保险拒绝历史 grant', async () => {
+  for (const name of ['consent', 'abort', 'hostOps', 'legacyDb']) {
+    let err = null
+    try {
+      manifestMod.parseManifest({ ...baseManifest, permissions: { services: [name] } }, '<test>')
+    } catch (e) {
+      err = e
+    }
+    assert(err, `${name} 应被 manifest 拒绝`)
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'umi-perm-'))
+  try {
+    const store = permMod.createPermissionStore(join(dir, 'permissions.json'))
+    const broker = permMod.createPermissionBroker({
+      store,
+      audit: permMod.createPermissionAudit(join(dir, 'audit.log')),
+      rootsFor: () => ({ pluginDir: join(dir, 'plugin'), dataDir: join(dir, 'data') })
+    })
+    store.grant('p1', { services: ['consent'] })
+    assertEq(broker.check('p1', { type: 'service', name: 'consent' }).allowed, false, 'consent 被 broker 拒绝')
+    return '内部服务 allowlist ✓'
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin-permissions.json'), result)

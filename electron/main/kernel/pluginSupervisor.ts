@@ -223,7 +223,9 @@ export class PluginSupervisor extends EventEmitter {
         this.emit('log', message)
         break
       case 'service':
-        if (this._state === 'running') void this.handleService(message)
+        // activate 期间插件可能已经调用 ctx.services（官方插件在 activate 里 migrate）；
+        // starting 阶段必须服务，否则 activate 会被 30s 超时拖死并 disabled。
+        if (this._state === 'running' || this._state === 'starting') void this.handleService(message)
         break
       case 'event':
         this.emit('plugin-event', message)

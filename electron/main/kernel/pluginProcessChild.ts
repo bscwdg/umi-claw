@@ -108,7 +108,28 @@ export function createChildRuntime(options: ChildRuntimeOptions): ChildRuntime {
         }, intervalMs)
         disposers.push(() => clearInterval(timer))
         return () => clearInterval(timer)
+      },
+      timeout(ms: number, fn: () => unknown, opts?: { name?: string }) {
+        const timer = setTimeout(() => {
+          try {
+            void fn()
+          } catch (e) {
+            send({ type: 'log', level: 'error', message: `[${opts?.name ?? 'timeout'}] ${(e as Error)?.message ?? e}` })
+          }
+        }, ms)
+        disposers.push(() => clearTimeout(timer))
+        return () => clearTimeout(timer)
+      },
+      count() {
+        return disposers.length
       }
+    },
+    onDispose(fn: () => void | Promise<void>) {
+      disposers.push(() => {
+        void Promise.resolve(fn()).catch((e) => {
+          send({ type: 'log', level: 'error', message: `onDispose 失败：${(e as Error)?.message ?? e}` })
+        })
+      })
     },
     registerIpc(method: string, handler: (payload: unknown) => unknown): void {
       if (!/^[A-Za-z][\w.-]*$/.test(method)) throw new Error(`非法 IPC 方法名：${method}`)

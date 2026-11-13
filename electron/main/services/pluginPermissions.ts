@@ -7,6 +7,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import type { PluginPermissions } from '../kernel/manifest'
+import { PUBLIC_SERVICE_NAMES } from '../kernel/manifest'
 
 export interface PermissionGrant {
   pluginId: string
@@ -235,10 +236,12 @@ export function createPermissionBroker(options: {
         })
         decision = allowed ? { allowed: true, reason: 'network allowlist' } : { allowed: false, reason: 'network 不在 allowlist' }
       } else {
-        const allowed = (grant.permissions.services ?? []).includes(action.name)
+        // 公开服务 allowlist 双保险：即使历史 grant 里有内部能力（consent/abort），也拒绝
+        const publicName = (PUBLIC_SERVICE_NAMES as readonly string[]).includes(action.name)
+        const allowed = publicName && (grant.permissions.services ?? []).includes(action.name)
         decision = allowed
           ? { allowed: true, reason: 'service allowlist' }
-          : { allowed: false, reason: 'service 不在 allowlist' }
+          : { allowed: false, reason: publicName ? 'service 不在 allowlist' : 'service 不是公开服务' }
       }
       options.audit.record(pluginId, action, decision)
       return decision

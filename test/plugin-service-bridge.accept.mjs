@@ -320,6 +320,53 @@ await r.check('S8', 'supervisor 宿主 onService 超时：不回包时回 servic
   }
 })
 
+await r.check('S9', 'activate 期间（starting）调 ctx.services 也能回包，不被静默丢弃', async () => {
+  const { EventEmitter } = await import('node:events')
+  const supMod = await import(
+    pathToFileURL(bundleEntry('electron/main/kernel/pluginSupervisor.ts', 'svc-supervisor-starting.mjs')).href
+  )
+  class FakeChild extends EventEmitter {
+    sent = []
+    postMessage(m) {
+      this.sent.push(m)
+    }
+    kill() {
+      this.emit('exit', 0)
+    }
+  }
+  let child = null
+  const sup = supMod.createPluginSupervisor({
+    fork: () => {
+      child = new FakeChild()
+      return child
+    },
+    onService: async () => 'during-activate'
+  })
+  try {
+    const started = sup.start({
+      pluginId: 'p',
+      entry: '/x/child.js',
+      mainPath: '/x/main.cjs',
+      dataDir: '/x/data',
+      hostVersion: '4.3.0'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    child.emit('message', { type: 'ready', version: '4.3.0' })
+    await waitFor(() => child.sent.find((m) => m.type === 'activate'), { timeout: 1000 })
+    child.emit('message', { type: 'service', id: 11, service: 'kv', method: 'get', args: ['k'] })
+    const result = await waitFor(() => child.sent.find((m) => m.type === 'service-result' && m.id === 11), {
+      timeout: 1500
+    })
+    assertEq(result.ok, true, 'starting 期间 service 成功')
+    assertEq(result.data, 'during-activate', '返回值')
+    child.emit('message', { type: 'activated' })
+    await started
+    return 'starting service ✓'
+  } finally {
+    await sup.stop()
+  }
+})
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin-service-bridge.json'), result)

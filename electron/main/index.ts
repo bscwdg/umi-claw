@@ -1309,7 +1309,7 @@ app.whenReady().then(async () => {
 
   // Phase 1 B3 真机探针：真实 utilityProcess + permission NODE_OPTIONS + 服务桥。
   // 只给 e2e 用；正常启动不设 env 就完全无行为。
-  if (process.env.UMI_ISOLATION_PROBE === '1') {
+  if (!app.isPackaged && process.env.UMI_ISOLATION_PROBE === '1') {
     const probeDir = process.env.CLAW_DATA_DIR || app.getPath('userData')
     mkdirSync(probeDir, { recursive: true })
     const pluginDir = process.env.UMI_ISOLATION_PLUGIN_DIR || process.cwd()
