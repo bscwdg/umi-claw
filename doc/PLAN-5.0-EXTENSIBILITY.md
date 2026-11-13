@@ -127,7 +127,7 @@ renderer
 | A3b | **官方插件迁移** | 80 行 host import / 39 文件；23 处 `@/` UI import（含 `useAgreementGate`/`useWizardGate` 单例风险） | 分小批；每批 accept 绿；UI 行为不变 | 8–10 天 |
 | A4 | **兼容元数据与状态 schema** | `apiVersion` / `engines.host`；状态文件 schema 版本；不兼容拒绝 | 老状态可迁移；错误码明确 | 2–3 天 |
 | A5 | **契约测试/模板** | `test/plugin-contract.accept.mjs`；`templates/plugin/`；注册进 run-all | 模板可跑；契约测试覆盖 v1 公开面 | 3–5 天 |
-| A6 | **官方插件收尾** | work/marketing/hello 全部走 SDK；文档/迁移指南 | 0 条非 SDK 宿主 import；accept 绿 | 5–8 天 |
+| A6 | **官方插件收尾** | work/marketing/hello 全部走 SDK；文档/迁移指南 | 0 条非 SDK 宿主 import（UI 仅 4 处 ConfirmDialog `.vue` 例外）；accept 绿 | 5–8 天 |
 | A7 | **文档与培训** | 插件开发/发布/API 变更记录 | 评审通过 | 2 天 |
 
 ### 3.1 A3a 明细（v1.1 修订）
@@ -158,7 +158,7 @@ renderer
 - host→plugin 反向依赖：会话键 resolver 注册表（marketing activate 注册、onDispose 摘除）
 - 删除 work 插件原始 `ipcMain` fallback、`hostUi` 不再导出裸 `ipcMain`
 - `scripts/check-plugin-api.mjs` + baseline + `test/plugin-api.accept.mjs`（ratchet 已注册 run-all）
-- 验收：46 套 / 852 条 + node:test 21（全绿）
+- 验收：47 套 / 854 项 + node:test 21（全绿）
 
 未完成（下次 A3a 续）：
 - 第三方可见面 async 化 + 事件/流式 RPC（依赖 B1）
@@ -173,7 +173,7 @@ renderer
 - 79 处 `electron/main/**` import / 38 文件已迁到 `plugin-sdk/src/official-*`（按宿主模块拆子路径，避免 barrel 把 mammoth/electron 链进 domain bundle）。
 - `check-plugin-api` ratchet：**host import 0**（值 0 / type 0）；UI host import 23→4（+2 type；4 处 ConfirmDialog .vue 直连属测试管线例外）；hostBridge consumers 13（useWorkStream 移入插件后必须经 hostBridge；官方 UI 内部，Phase 1 前不动）。
 - 未完成：UI 的 `@/` 宿主 import 仅剩 4 处 ConfirmDialog（等 UI 测试管线支持跨 .vue 或组件下沉）；hostBridge 收窄/下沉留 Phase 1；`@umi/plugin-sdk/*` alias/宿主注入（B1）。
-- 验收：plugin.accept 71/71、plugin-contract 3/3、plugin-api 3/3、ui 28/28、build 通过；全量 accept 46 套/852 条全绿。
+- 验收：plugin.accept 71/71、plugin-contract 3/3、plugin-api 3/3、ui 28/28、build 通过；全量 accept 47 套/854 项全绿（含启动级 E2E）。
 
 ### 3.1.3 A4/A5 兼容与契约（2026-11-13）
 
@@ -182,14 +182,44 @@ renderer
 - 官方 plugin.json 加 `apiVersion: 1`；契约测试验证模板只依赖 public SDK、activate→IPC→jobs→dispose 全链路。
 - 剩余：第三方权限/configSchema（A3a/B2）、N/N-1 兼容矩阵（Phase 1）。
 
+### 3.1.4 B0 ADR 定稿（Phase 0 出口评审）
+
+> 来源：`data/tmp/analysis/b0-isolation-adr.md` 的 spike 结论 + Phase 0 收尾评审。状态：**定稿**（2026-11-13）。
+
+| # | 决策 | 依据 / 残余风险 |
+| --- | --- | --- |
+| B0-1 | 第三方插件运行时 = **Electron `utilityProcess`，单插件单进程**；官方插件继续 in-process | Electron 30.5.1 / Node 20.16 实测；启动 140–180ms、IPC <0.5ms、RSS 45–50MB |
+| B0-2 | **不是沙箱**：隔离目标是「故障/权限收敛 + 可审计」，不是对抗恶意代码 | Node 权限模型只覆盖 fs/child_process/worker/native；TCP 与 `process._linkedBinding` 仍可绕过 |
+| B0-3 | 权限只走 `env.NODE_OPTIONS`（`execArgv` 无效）；`--allow-fs-read` 必须含插件入口目录；子进程 env 显式白名单 | spike 实测；B2 实现 |
+| B0-4 | 入口 **CJS canonical**；ESM 通过 CJS `import()` 动态加载 | Node 20.16 下 utilityProcess + ESM 入口兼容性不稳，CJS 最稳 |
+| B0-5 | 崩溃检测：监听 `UtilityProcess.exit` + 心跳；**不使用 `child-process-gone`**（对 utilityProcess 不触发）；状态机 `stopped/starting/running/stopping/crashed/disabled`，退避 1/2/4s，5min≥3 次熔断，配置/权限错误直接 disabled | B1 实现；B0 spike 证据 |
+| B0-6 | v1 **不开放第三方 UI**（schema 设置页除外）；第三方网络请求**不做强制拦截**，在授权页/文档明示残余风险 | 与 §0.2 边界一致 |
+| B0-7 | feature flag `UMI_PLUGIN_ISOLATION=1` 显式开启，默认 off；关闭时行为与 4.3 完全一致 | B5 + Phase 1 出口 |
+
+Phase 0 出口评审：B0 ADR 通过 → API v1-final 冻结（后续不兼容变更升 major）。
+评审记录（2026-11-13）：事实核对（`phase0-factcheck.md` / `phase0-factcheck-a3a.md`）与对抗复核（`phase0-adversarial.md`）；正式结论以本节为准，证据文件仅作复现附件（`data/` 不入库）。
+冻结范围**仅官方内置插件**：4.x 没有第三方发现/安装路径，kernel 仍向 built-in 注入全部服务；第三方 trust/权限/隔离在 Phase 1 落地，不属于 v1 已冻结承诺。
+
+### 3.1.5 Phase 0 范围裁剪与 Phase 1 交接（诚实清单）
+
+Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；以下计划项**未在 Phase 0 完成**，明确移交 Phase 1，不阻塞 4.3.0：
+
+- A2：`@umi/plugin-sdk/*` alias / build external / 宿主注入机制未做；仓内插件暂用相对 `plugin-sdk/src/*` 路径（迁移本身已完成）。
+- A3a 剩余：async/事件流 RPC、`onDemand`、`contributes.settings/commands` 消费、`capabilities`/`inject` 合并、`ctx.host` 公开/内部拆分、hostBridge 收窄（13 consumers）、consent host→work 反向读、marketing `knowledge.search` 缺口、`plugin-data/<id>/` 独立数据根/保留 id。
+- A6：host import 0；UI 仅 4 处 ConfirmDialog `.vue` 直连（`.ts` SDK 无法 re-export SFC；由 ratchet 锁死，不再新增）。
+- A7：文档/PLAN/AGENTS 已评审；4.3.0 **只升版本号，未生成 tag/安装包**（发布产物待用户真机验收后出）。
+- 门禁扩容（`plugins/**` 的 node:fs/child_process、templates/plugin-sdk typecheck）与 SDK 内部 host import 白名单已部分落地；完整负向门禁随 Phase 1 B2/B4。
+
 ### 3.2 Phase 0 出口判据
 
-- [ ] 基线（分支/commit/命令/TEMP）可复现，accept 全绿并留档
-- [ ] 双 typecheck 0 错；boundary 0/0/0 且扫描目录非空
-- [ ] 官方插件 0 条非 SDK 宿主 import；UI 23 处 `@/` 收敛（不重现 gate 单例脱钩）
-- [ ] `plugin-contract.accept.mjs` 注册进 run-all，覆盖 v1 公开面
-- [ ] API v1-final 通过 B0 ADR 前置评审
-- [ ] 用户可见行为不变（现有 accept + 至少一条启动级 E2E；ui.accept 是 mock，不能单独作证）
+- [x] 基线（分支/commit/命令/TEMP）可复现：`codex/voice-local-external-conversation`，4.3.0 收尾 commit（见 PROGRESS 2026-11-13 条目）；`TEMP=%LOCALAPPDATA%\Temp` + 清 `test/.tmp`；`node scripts/run-all-accept.mjs` 留档；accept 全绿
+- [x] 双 typecheck 0 错；boundary 0/0/0 且扫描 2 个域目录（非空）
+- [x] 官方插件 0 条非 SDK 宿主 import（host 0/0）；UI `@/` 仅 4 处 ConfirmDialog `.vue` 例外（`.ts` SDK 不能 re-export SFC；ratchet 锁死，不再新增）
+- [x] `plugin-contract.accept.mjs` 注册进 run-all，覆盖 v1 公开面（模板 manifest/依赖面/activate→IPC→jobs→dispose）
+- [x] API v1 官方面冻结：B0 ADR §3.1.4 定稿、`PLUGIN-API.md` 标 v1.0；permissions/configSchema/async/onDemand 明确列 Phase 1 增量，不改已冻结签名
+- [x] 用户可见行为不变：现有 accept 全绿 + **启动级 E2E**（`test/startup.e2e.mjs` 真 Electron whenReady）+ one-day e2e 真 Worker；ui.accept 是 mock，不单独作证
+
+**Phase 0 出口评审**（2026-11-13）：事实核对 + 对抗复核两份独立报告（`data/tmp/analysis/phase0-*.md`）；代码/验收达标；出口文档、4.3.0 基线、启动级 E2E、API 冻结口径已按意见补齐。**通过。**
 
 ---
 
@@ -280,7 +310,7 @@ renderer
 | 打包 | `npm run build` + packaged smoke |
 | 审查 | AGENTS §12：每 commit 对抗审查；每 WP 两次独立检查 |
 
-**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**46 套**（ACCEPT 44 + e2e + smoke）、accept result **852 条** + `node:test` **21 条** = **873**。AGENTS/RUNBOOK 已同步该口径；release/4.0 在 voice 合并后复核。后续以每次留档为准。
+**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**47 套**（ACCEPT 44 + e2e×2 + smoke）、accept result **854 项（853 通过 + 1 跳过）** + `node:test` **21 条** = **874**。AGENTS/RUNBOOK 已同步该口径；release/4.0 在 voice 合并后复核。后续以每次留档为准。
 
 ---
 

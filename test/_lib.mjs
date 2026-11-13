@@ -340,8 +340,24 @@ export class Recorder {
     }
   }
 
+  /** 显式跳过：不计入 passed，但仍算已执行；验收汇总必须显示 SKIP，不能假装 PASS */
+  skip(id, name, reason) {
+    this.checks.push({
+      id,
+      name,
+      ok: true,
+      skipped: true,
+      detail: `SKIPPED：${reason}`,
+      ms: 0
+    })
+  }
+
   get passed() {
-    return this.checks.filter((c) => c.ok).length
+    return this.checks.filter((c) => c.ok && !c.skipped).length
+  }
+
+  get skipped() {
+    return this.checks.filter((c) => c.skipped).length
   }
 
   get failed() {
@@ -356,6 +372,7 @@ export class Recorder {
       durationMs: Date.now() - this.t0,
       total: this.checks.length,
       passed: this.passed,
+      skipped: this.skipped,
       failed: this.failed,
       env: {
         node: process.version,
@@ -374,7 +391,8 @@ export function printResult(result) {
   console.log('')
   console.log(`===== ${result.suite} =====`)
   for (const c of result.checks) {
-    console.log(`${c.ok ? '[PASS]' : '[FAIL]'} ${c.id} ${c.name}  (${c.ms}ms)`)
+    const tag = c.skipped ? '[SKIP]' : c.ok ? '[PASS]' : '[FAIL]'
+    console.log(`${tag} ${c.id} ${c.name}  (${c.ms}ms)`)
     if (!c.ok) {
       for (const line of String(c.detail).split('\n')) console.log('        ' + line)
     } else if (c.detail) {
@@ -382,7 +400,7 @@ export function printResult(result) {
     }
   }
   console.log(
-    `----- ${result.suite}: ${result.passed}/${result.total} 通过，失败 ${result.failed}，用时 ${result.durationMs}ms -----`
+    `----- ${result.suite}: ${result.passed}/${result.total} 通过，跳过 ${result.skipped ?? 0}，失败 ${result.failed}，用时 ${result.durationMs}ms -----`
   )
   // total=0 不是绿：套件在注册断言前就抛异常时 failed 也是 0，
   // 只看 failed 会把「什么都没跑」判成通过（2026-11-02 实测 platform 假绿）。

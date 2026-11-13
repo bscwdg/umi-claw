@@ -429,16 +429,13 @@ try {
     })
   } else {
     skipped.push('K8')
-    r.checks.push({
-      id: 'K8',
-      name: 'PDF（KNW_PDF_SAMPLE 真中文文字层）',
-      ok: true,
-      skipped: true,
-      detail: pdfSample
-        ? `SKIPPED：KNW_PDF_SAMPLE 指向的文件不存在（${pdfSample}）`
-        : 'SKIPPED：未设置 KNW_PDF_SAMPLE（中文文字层需真样本；缺 cMap 时会抽出 0 汉字，故不能用手写 PDF 代替）',
-      ms: 0
-    })
+    r.skip(
+      'K8',
+      'PDF（KNW_PDF_SAMPLE 真中文文字层）',
+      pdfSample
+        ? `KNW_PDF_SAMPLE 指向的文件不存在（${pdfSample}）`
+        : '未设置 KNW_PDF_SAMPLE（中文文字层需真样本；缺 cMap 时会抽出 0 汉字，故不能用手写 PDF 代替）'
+    )
   }
 
   // ── K9 扫描件检测 ──

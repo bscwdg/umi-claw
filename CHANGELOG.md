@@ -109,9 +109,9 @@
 
 ---
 
-## [4.3]（未发布，4.2.0 之后）— 2026-11-03
+## [4.3.0]（未发布，4.2.0 之后）— 2026-11-13
 
-> 主题：**大肥鱼功能补齐**（设置页 / 人格包 / 知识导入）。真机手工验收由用户执行。
+> 主题：**大肥鱼功能补齐**（设置页 / 人格包 / 知识导入）+ **插件化 Phase 0**（API v1 / SDK / 官方插件迁移）。真机手工验收由用户执行。
 
 ### 新增
 - **角色详细设置页**：主动消息、语音、记忆、关系等已接线参数可直接编辑；未接线项显式 disabled；
@@ -145,8 +145,14 @@
 - **删除全部不再静默成功**：workspace 文件（SOUL/IDENTITY/AGENTS/USER/人格备份等）删除失败时
   收集失败并回传 warning，UI 会显示「清理未完全成功」而不是「全部已删除」。
 
+### 插件化（PLAN-5.0 Phase 0）
+- **插件 API v1-RC**：`doc/PLUGIN-API.md` 公开面收窄；`plugin-sdk/` 提供 public / official-* / client* / testing 分层，官方插件全部改从 SDK 引入（host 直连 import 62→0，UI `@/` 直连 23→4，4 处 ConfirmDialog `.vue` 例外）。
+- **契约收敛**：migrations DDL 白名单、`ctx.db.request` 表级白名单、会话键 resolver 拆反向依赖、`apiVersion`/`engines.host` 注册期兼容检查、状态文件 schema v1、插件 IPC 统一信封示例。
+- **契约测试 / 模板**：新增 `test/plugin-contract.accept.mjs` 与 `templates/plugin/`；`check-plugin-api` ratchet 锁死 host/UI 耦合只准降。
+- **边界**：4.x 仍只支持官方内置插件；**不开放第三方安装**，第三方签名/权限/隔离在 5.0 Phase 1+ 继续。
+
 ### 测试
-- 全量 **33 套 / 630 条断言 / 0 失败**；character 90/90（C81–C91）；ui 23/23。
+- 全量 **47 套 / 854 项检查（853 通过 + 1 显式跳过） / 0 失败**；plugin 71/71；plugin-contract 3/3；plugin-api 3/3；ui 28/28；character 110/110；启动级 E2E 1/1。
 
 ---
 

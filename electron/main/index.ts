@@ -23,7 +23,7 @@ import { ObsidianManager } from './obsidian/obsidianManager'
 import { OFFICIAL_MODEL_PRESETS } from './modelConfig'
 import { openClawPaths, buildOpenClawEnv, toPosix, GATEWAY_TOKEN } from './openClawPaths'
 import { shouldSpeakInApp } from './fish/voice/core/openclawTts'
-import { readFileSync, existsSync, readdirSync, mkdirSync, appendFileSync } from 'fs'
+import { readFileSync, existsSync, readdirSync, mkdirSync, appendFileSync, writeFileSync } from 'fs'
 import { spawn, execFile } from 'child_process'
 import { createTerminalSessionRegistry } from './terminalSessions'
 
@@ -1287,6 +1287,20 @@ app.whenReady().then(async () => {
   // 这里必须立刻返回，绝不能在第二个实例里建窗口/拉 DB worker/激活插件（会同写一个 dataDir）。
   if (!singleInstanceLock) return
   electronApp.setAppUserModelId('com.clawdesktop.app')
+
+  // Phase 0 启动级 E2E：只验证真实 Electron app 能走到 whenReady 并正常退出。
+  // 放在窗口/DB/网关初始化之前，避免测试把用户真实 dataDir 或网关拉起来。
+  // 打包版不设这个 env 就完全无行为；它只服务 `test/startup.e2e.mjs`。
+  if (process.env.UMI_STARTUP_PROBE === '1') {
+    const probeDir = process.env.CLAW_DATA_DIR || app.getPath('userData')
+    mkdirSync(probeDir, { recursive: true })
+    writeFileSync(
+      join(probeDir, 'startup-probe.json'),
+      JSON.stringify({ ok: true, version: app.getVersion(), at: Date.now() })
+    )
+    app.quit()
+    return
+  }
   protocol.handle('app', async (request) => {
     let urlPath = request.url.replace('app://', '')
 

@@ -1,6 +1,6 @@
 {
   "name": "umi-claw",
-  "version": "4.2.0",
+  "version": "4.3.0",
   "description": "🦞 Umi Claw - OpenClaw 便携管理工具，基于 Electron + Vue3 + Vite",
   "main": "dist-electron/main/index.js",
   "scripts": {
@@ -54,6 +54,7 @@
     "accept:ui": "node test/ui.accept.mjs",
     "accept:plugin": "node test/plugin.accept.mjs",
     "e2e:day": "node test/one-day.e2e.mjs",
+    "e2e:startup": "node test/startup.e2e.mjs",
     "smoke": "node test/packaged.smoke.mjs",
     "accept:config-writer": "esbuild electron/main/openClawConfigWriter.ts --bundle --platform=node --format=esm --target=node20 --outfile=test/.tmp/openclaw-config-writer.mjs && node --test test/openclaw-config-writer.accept.mjs",
     "accept": "node scripts/run-all-accept.mjs",

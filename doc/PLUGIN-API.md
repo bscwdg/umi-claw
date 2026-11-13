@@ -1,25 +1,27 @@
-# 插件 API v1（RC）
+# 插件 API v1.0（Phase 0 冻结）
 
-> 状态：v1.0-RC（2026-11-13）｜适用：4.3.0 起的官方内置插件；5.0 起的受控第三方插件
+> 状态：**v1.0（2026-11-13，Phase 0 冻结）**｜适用：4.3.0 起的官方内置插件；5.0 起的受控第三方插件
 > 上位计划：[PLAN-5.0-EXTENSIBILITY.md](PLAN-5.0-EXTENSIBILITY.md)
-> 说明：本文件在 B0 隔离 ADR 通过前为 **RC**；CJS/ESM、事件传输、进程粒度、网络残余风险以 B0 结论为准后升 v1-final。
+> 冻结范围：manifest/生命周期/`ctx` 核心（db/ipc/jobs/kv/secrets/config/services）/错误码/DDL+DB 白名单/兼容元数据。**B0 ADR 已定稿（PLAN §3.1.4）**。
+> **信任边界**：4.x 只发现随包 `resources/plugins/`（内置）；没有第三方发现/安装路径，kernel 向内置插件注入全部服务。第三方 trust/权限/隔离在 Phase 1 落地，不属于本文件已冻结的 v1 承诺。
+> Phase 1 增量（不改已冻结签名）：permissions allowlist、configSchema、async/事件流 RPC、onDemand、第三方 UI；这些条目在下表标 ❌ 但**不阻塞 Phase 0 出口**。
 > 原则：**第三方可见面 = 显式 allowlist；官方 internal 不等于公开 API。**
 
-> ⚠️ **实现状态（2026-11-13）**：本文件是 **v1-RC 目标契约**，不是“已实现清单”。未标 ✅ 的条目属于 A3a/A4/A5/B1/B2 的施工目标；当前代码仍是 4.x 的 internal 契约。逐项状态见下表。
+> ⚠️ **实现状态（2026-11-13）**：本文件是 **v1.0 冻结契约（官方插件面）**；❌ 条目是 Phase 1 增量（permissions/configSchema/async/onDemand），当前代码仍是 4.x internal + 官方插件已迁 SDK。逐项状态见下表。
 
 | 能力 | 当前 | 目标 WP |
 | --- | --- | --- |
 | SDK 分层（public/official-*/client*/testing） | ✅ 骨架（无 alias/注入） | A2 → A3b |
 | manifest `apiVersion` / `engines.host` 校验 | ✅ A4（hostVersion 注入；缺省不限制） | A4 |
-| permissions allowlist / 未知键 fail-closed | ❌ | A3a/B2 |
+| permissions allowlist / 未知键 fail-closed | ❌ Phase 1 | A3a/B2 |
 | migrations DDL 白名单 / 禁 ATTACH/VACUUM | ✅ A3a | A3a |
 | `ctx.db.request` 收窄（官方 `<table>.<op>`） | ✅ A3a（禁 migrate/maintenance/shutdown） | A3a |
-| async 第三方可见面 / 事件流 RPC | ❌ | A3a/A1 |
-| configSchema / config.onChange | ❌ | A4/B2 |
+| async 第三方可见面 / 事件流 RPC | ❌ Phase 1 | A3a/A1 |
+| configSchema / config.onChange | ❌ Phase 1 | A4/B2 |
 | 插件 IPC 统一 `{ok,data}` 信封 | ⚠️ 官方插件手工包 | A3a |
 | `test/plugin-contract.accept.mjs` | ✅ A5（templates/plugin） | A5 |
 | 状态文件 schema 版本 | ✅ A4（v1 wrapper + 旧 flat 兼容） | A4 |
-| `onDemand` 懒激活 | ❌ | A3a |
+| `onDemand` 懒激活 | ❌ Phase 1 | A3a |
 
 ---
 
@@ -347,18 +349,18 @@ export default definePlugin({
 
 ---
 
-## 十四、待 B0/后续定稿
+## 十四、Phase 1 增量（B0 已定稿的部分不再待定）
 
 | # | 项 | 依赖 |
 | --- | --- | --- |
-| 1 | CJS/ESM 入口 | **B0 实测（ADR 草案待评审）**：CJS canonical；`.mjs`/ESM 可用，CJS 可 `import()` ESM |
-| 2 | 事件/流式传输细节（MessagePort vs IPC） | **B0 实测（ADR 草案待评审）**：MessagePort RTT 中位 0.19–0.28ms；优先 MessagePort |
-| 3 | 进程粒度（单插件/信任组） | **B0 实测（ADR 草案待评审）**：单插件单进程 + 懒激活 + 并发上限 4–6 |
+| 1 | CJS/ESM 入口 | **B0 定稿**：CJS canonical；`.mjs`/ESM 可用，CJS 可 `import()` ESM |
+| 2 | 事件/流式传输细节（MessagePort vs IPC） | **B0 定稿**：MessagePort RTT 中位 0.19–0.28ms；优先 MessagePort |
+| 3 | 进程粒度（单插件/信任组） | **B0 定稿**：单插件单进程 + 懒激活 + 并发上限 4–6 |
 | 4 | 网络残余风险的用户提示文案 | B0/A1：不承诺网络；审核/代理白名单降险 |
-| 5 | `onDemand` 实现或删除 | A3a |
-| 6 | configSchema 子集最终清单 | A1 评审 |
+| 5 | `onDemand` 实现或删除 | Phase 1 |
+| 6 | configSchema 子集最终清单 | B2 |
 | 7 | 权限预设（最小/模型/集成） | B2 |
 
 ---
 
-*本文件是 API v1-RC，不是最终契约；B0 ADR 通过后升 v1-final 并冻结。*
+*本文件是 API v1.0（Phase 0 冻结官方插件面）；第三方 permissions/configSchema/async/onDemand 为 Phase 1 增量，不改已冻结签名；破坏性变更升 major。*

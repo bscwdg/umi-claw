@@ -2603,3 +2603,17 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 - 对抗审查：a4a5-reviewer（P0=0/P1=0/P2=7，可提交）；已修 semver 预发布/`^0.x`、文档错误码/缺省口径、模板 engines/信封、hostVersion 注入断言。
 - 验证：双 typecheck 0 错、build 通过、boundary 0/0/0、plugin.accept 71/71、plugin-contract 3/3、全量 46 套/852 条全绿。
 - 未完成：A3a 剩余（async/事件 RPC、onDemand、settings/commands、capabilities、ctx.host 拆分）；A7（4.3.0）；Phase 1。
+
+---
+
+## 2026-11-13 · Phase 0 收尾（4.3.0）
+
+- 版本：`package.json` / `package-lock.json` 升 4.3.0；CHANGELOG 增「插件化 Phase 0」并同步 47 套/854 项口径。
+- B0 ADR 定稿入 PLAN §3.1.4（utilityProcess 单进程/非沙箱、NODE_OPTIONS、CJS canonical、exit+心跳状态机、网络残余、flag 默认 off）。
+- 启动级 E2E：`test/startup.e2e.mjs` 用 `UMI_STARTUP_PROBE=1` 启动真实 Electron app 到 `whenReady`，写版本标记并退出 0；加入 run-all `e2e×2`。
+- Phase 0 出口：accept 47 套/854 项（+ node:test 21）全绿；双 typecheck 0；boundary 0/0/0；host import 0/0；UI `@/` 仅 4 处 ConfirmDialog；plugin-contract 已注册；one-day + startup E2E 全绿。
+- 基线：分支 `codex/voice-local-external-conversation`；命令 `node scripts/run-all-accept.mjs`；`TEMP/TMP=%LOCALAPPDATA%\Temp` 且 `git clean -fdX -- test/.tmp`；日志 `data/tmp/analysis/accept-phase0-final.log`；4.3.0 提交见本条目所在 commit。
+- 收尾检查：事实核对（`phase0-factcheck*.md`）+ 对抗复核（`phase0-adversarial.md`）；P0 文档/基线问题已在本批处置；A3a 剩余与权限/configSchema 明确列 Phase 1。
+- 审查处置（属实→已修）：API v1 冻结口径改为「官方插件面」并写信任边界；§3.2 判据/勾选/基线记录补齐；4.3.0 只升版本不生成 tag/安装包已注明；startup E2E 补入 run-all；P32 三类绕过正则修正 + 合成探针；SDK 门禁盲区加 A4 白名单（15 个宿主 re-export）；K8 改为显式 SKIP（不计 PASS）；CHANGELOG character 90→110。
+- 未采纳/范围裁剪：A2 alias/build/注入、A3a async/onDemand/settings/capabilities/ctx.host、hostBridge 收窄、plugin-data 数据根明确列 Phase 1（见 PLAN §3.1.5），不伪装成 Phase 0 已完成。
+- 遗留到 Phase 1：A3a async/事件 RPC、onDemand、settings/commands、capabilities、ctx.host 拆分；hostBridge 13 收窄；SDK 门禁盲区与契约覆盖扩展。

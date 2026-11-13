@@ -577,6 +577,13 @@ await r.check('P32', '渲染端边界：插件 UI 只准经 hostBridge 触达 wi
   assert(files.length > 0, '至少有一个插件源文件')
 
   const bridge = join(dir, 'shared', 'hostBridge.ts')
+  // 抽成函数供真实文件与合成探针共用：正则里的反斜杠只写一次（旧版写成 \\b 导致解构/变量中转漏检）
+  const touchesHostApi = (src) =>
+    /window\s*\??\.\s*api/.test(src) ||
+    /window\s*\[\s*['"]api['"]\s*\]/.test(src) ||
+    /\{[^}]*\bapi\b[^}]*\}\s*=\s*window/.test(src) ||
+    /(?:const|let|var)\s+\w+\s*=\s*window\b[\s\S]{0,40}?\.api\b/.test(src) ||
+    /globalThis[\s\S]{0,20}?window[\s\S]{0,20}?\.api/.test(src)
   let bridgeSeen = false
   for (const file of files) {
     // 去掉注释再扫：注释里解释「不要用 window.api」不该被当成违规
@@ -595,17 +602,20 @@ await r.check('P32', '渲染端边界：插件 UI 只准经 hostBridge 触达 wi
     }
     // window.api 只允许出现在桥接层（Phase 4 把 80+ 处直连收敛到一处，后续换 host.invoke 只改一个文件）
     // 覆盖点号、可选链、方括号、解构与「先赋给变量再取」等常见绕过写法
-    const touchesHostApi =
-      /window\s*\??\.\s*api/.test(src) ||
-      /window\s*\[\s*['\"]api['\"]\s*\]/.test(src) ||
-      /\\{[^}]*\\bapi\\b[^}]*\\}\\s*=\\s*window/.test(src) ||
-      /(?:const|let|var)\\s+\\w+\\s*=\\s*window\\b[\\s\\S]{0,40}?\\.api\\b/.test(src) ||
-      /globalThis[\\s\\S]{0,20}?window[\\s\\S]{0,20}?\\.api/.test(src)
-    if (touchesHostApi) {
+    if (touchesHostApi(src)) {
       assertEq(file, bridge, `${name} 直接用了 window.api——请改走 plugins/shared/hostBridge`)
       bridgeSeen = true
     }
   }
+  // 合成探针：锁住旧版漏检的三类写法（解构 / 变量中转 / globalThis）
+  for (const sample of [
+    'const { api } = window',
+    'let x = window; x.api.today.get()',
+    'const api = globalThis.window.api'
+  ]) {
+    assert(touchesHostApi(sample), `应命中 window.api 绕过写法：${sample}`)
+  }
+  assert(!touchesHostApi('window.open()'), '不误伤普通 window 用法')
   const bridgeSrc = readFileSync(bridge, 'utf-8')
   assert(/window/.test(bridgeSrc) && /\bapi\b/.test(bridgeSrc), 'hostBridge 应封装 window.api（否则说明这一层没生效）')
   return `${files.length} 个插件源文件都守边界，window.api 只在 hostBridge`

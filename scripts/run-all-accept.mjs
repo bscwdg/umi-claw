@@ -70,7 +70,10 @@ const ACCEPT = [
   ['ui', 'test/ui.accept.mjs']
 ]
 // 全部单模块绿后
-const E2E = ['one-day e2e', 'test/one-day.e2e.mjs']
+const E2E = [
+  ['one-day e2e', 'test/one-day.e2e.mjs'],
+  ['startup e2e', 'test/startup.e2e.mjs']
+]
 const SMOKE = ['packaged smoke', 'test/packaged.smoke.mjs']
 
 // 套件「自身异常」必须判失败：各套件主体包在 try/catch 里，异常只打一行
@@ -118,7 +121,7 @@ async function main() {
     }
   }
 
-  for (const [name, script] of [E2E, SMOKE]) {
+  for (const [name, script] of [...E2E, SMOKE]) {
     process.stdout.write(`\n── ${name} ────────────────────────────\n`)
     const { code, crashed } = await runNode(script)
     results.push({ name, code, crashed })
@@ -133,7 +136,7 @@ async function main() {
   }
 
   process.stdout.write(
-    `\n✅ 全部 ${results.length} 套验收通过（accept×${ACCEPT.length} + e2e + smoke）\n`
+    `\n✅ 全部 ${results.length} 套验收通过（accept×${ACCEPT.length} + e2e×${E2E.length} + smoke）\n`
   )
   process.exit(0)
 }

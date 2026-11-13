@@ -5,7 +5,7 @@
 //   2) 基线文件结构完整（缺键 = 门禁悄悄失效）；
 //   3) SDK public 不泄漏 internal（dataDir/paths/registerChannelIpc/hostOps/legacyDb/consent/abort）。
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   Recorder,
@@ -74,6 +74,50 @@ await r.check('A3', 'SDK 四入口齐备（public/official/client/testing）', a
     assert(existsSync(join(repoRoot, 'plugin-sdk', 'src', sub)), `official 子路径 ${sub} 存在`)
   }
   return 'SDK 入口齐备 ✓'
+})
+
+await r.check('A4', 'SDK 门禁盲区收口：official-* 只允许列出的宿主模块，client-official 只允许共享 UI', async () => {
+  // SDK 不在 plugins/** 扫描范围内；这里显式列白名单，防止「把宿主 import 藏进 SDK」变成无门禁。
+  const allowedHost = new Set([
+    'kernel',
+    'services/errors',
+    'services/gateway/types',
+    'services/gateway/stream',
+    'services/gateway/parts',
+    'services/context/tokens',
+    'services/context/assemble',
+    'services/context/budget',
+    'services/context/pack',
+    'services/context/limits',
+    'services/knowledge',
+    'services/pluginDataImport',
+    'services/dbTypes',
+    'services/hostUi'
+  ])
+  const allowedSrc = new Set([
+    'src/composables/useToast',
+    'src/composables/useAgreementGate',
+    'src/composables/useWizardGate',
+    'src/composables/useContentPrefill',
+    'src/constants/photographyPresets',
+    'src/renderer/pluginUi'
+  ])
+  const sdkDir = join(repoRoot, 'plugin-sdk', 'src')
+  const files = readdirSync(sdkDir).filter((f) => f.endsWith('.ts'))
+  let hostRefs = 0
+  for (const file of files) {
+    const src = readFileSync(join(sdkDir, file), 'utf8')
+    assert(!/from\s+['"][^'"]*\/plugins\//.test(src), `${file} 不得 import 插件实现`)
+    for (const m of src.matchAll(/from\s+['"][^'"]*electron\/main\/([^'"]+)['"]/g)) {
+      hostRefs += 1
+      assert(allowedHost.has(m[1]), `${file} import 未登记的宿主模块：${m[1]}`)
+    }
+    for (const m of src.matchAll(/from\s+['"][^'"]*\/src\/([^'"]+)['"]/g)) {
+      assert(allowedSrc.has(`src/${m[1]}`), `${file} import 未登记的宿主 UI：${m[1]}`)
+    }
+  }
+  assert(hostRefs > 0, 'SDK 至少有一个 official 宿主 re-export（防扫描空目录）')
+  return `SDK 白名单 ${hostRefs} 个宿主 re-export ✓`
 })
 
 const result = r.toJSON()
