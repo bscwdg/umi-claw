@@ -1,6 +1,7 @@
 // kernel/index.ts —— 内核出口。宿主只从这里取东西；插件只从这里取**类型**。
 
 export { PLUGIN_ISOLATION_ENV, isPluginIsolationEnabled } from './pluginIsolation'
+export { DEV_BUILD_ENV, DEV_PLUGINS_ENV, resolveDevMode, type DevModeState } from './devMode'
 export {
   createPluginSupervisor,
   createUtilityProcessFork,

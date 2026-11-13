@@ -13,7 +13,7 @@
 cd D:\work2026\umi-claw
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 51 套验收（ACCEPT 47 + e2e×3 + smoke，890 项检查（889 通过 + 1 显式跳过）；node:test 21 条另计）— 2026-11-13 codex/voice HEAD 实测；release/4.0 为 40/822，voice 合并后复核
+npm run accept         # 52 套验收（ACCEPT 48 + e2e×3 + smoke，894 项检查（893 通过 + 1 显式跳过）；node:test 21 条另计）— 2026-11-13 codex/voice HEAD 实测；release/4.0 为 40/822，voice 合并后复核
 npm run build          # 构建（含 plugin:gen）
 ```
 
@@ -114,7 +114,7 @@ doc/                 # 计划、施工日志、运维手册、调研
 
 **规则**：`plugins/<id>/domain/**/*Manager.ts` 与 `contextEngine.ts` **禁止** `import ... from 'electron'`（WP3 起域代码住在 `plugins/<id>/domain/`；宿主 `electron/main/{work,marketing}` 已删除）。
 
-**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 51 套验收能在纯 Node 里跑真源码的前提。
+**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 52 套验收能在纯 Node 里跑真源码的前提。
 
 **写法**：工厂函数 + 显式 options，不 `new`、不单例、不从全局推。
 
@@ -261,7 +261,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 - 验收脚本**零 npm 依赖**，只用 `node:` 内置 + `test/_lib.mjs`
 - 断言打**真源码**：`bundleEntry('electron/main/work/todoManager.ts', 'todo-todo.mjs')` 后 `import()`，不 mock 被测逻辑
 
-**现状证据**：48 个 `.accept.mjs`、run-all `ACCEPT` 47 项；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。2026-11-13 干净基线（codex/voice HEAD；release/4.0 为 40/822，voice 合并后复核）：51 套（含 e2e×3 + smoke）、890 项检查（889 通过 + 1 显式跳过） + `node:test` 21 条。
+**现状证据**：49 个 `.accept.mjs`、run-all `ACCEPT` 48 项；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。2026-11-13 干净基线（codex/voice HEAD；release/4.0 为 40/822，voice 合并后复核）：52 套（含 e2e×3 + smoke）、894 项检查（893 通过 + 1 显式跳过） + `node:test` 21 条。
 
 ### 7.2 `_lib.mjs` 提供的工具
 
@@ -354,7 +354,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 51 套（ACCEPT 47 + e2e×3 + smoke，890 项检查（889 通过 + 1 显式跳过）；node:test 21 条另计）
+# ② 全量验收 52 套（ACCEPT 48 + e2e×3 + smoke，894 项检查（893 通过 + 1 显式跳过）；node:test 21 条另计）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）

@@ -158,7 +158,7 @@ renderer
 - host→plugin 反向依赖：会话键 resolver 注册表（marketing activate 注册、onDispose 摘除）
 - 删除 work 插件原始 `ipcMain` fallback、`hostUi` 不再导出裸 `ipcMain`
 - `scripts/check-plugin-api.mjs` + baseline + `test/plugin-api.accept.mjs`（ratchet 已注册 run-all）
-- 验收：51 套 / 890 项 + node:test 21（全绿）
+- 验收：52 套 / 894 项 + node:test 21（全绿）
 
 未完成（下次 A3a 续）：
 - 第三方可见面 async 化 + 事件/流式 RPC（依赖 B1）
@@ -173,7 +173,7 @@ renderer
 - 79 处 `electron/main/**` import / 38 文件已迁到 `plugin-sdk/src/official-*`（按宿主模块拆子路径，避免 barrel 把 mammoth/electron 链进 domain bundle）。
 - `check-plugin-api` ratchet：**host import 0**（值 0 / type 0）；UI host import 23→4（+2 type；4 处 ConfirmDialog .vue 直连属测试管线例外）；hostBridge consumers 13（useWorkStream 移入插件后必须经 hostBridge；官方 UI 内部，Phase 1 前不动）。
 - 未完成：UI 的 `@/` 宿主 import 仅剩 4 处 ConfirmDialog（等 UI 测试管线支持跨 .vue 或组件下沉）；hostBridge 收窄/下沉留 Phase 1；`@umi/plugin-sdk/*` alias/宿主注入（B1）。
-- 验收：plugin.accept 71/71、plugin-contract 3/3、plugin-api 3/3、ui 28/28、build 通过；全量 accept 51 套/890 项全绿（含启动级 E2E）。
+- 验收：plugin.accept 71/71、plugin-contract 3/3、plugin-api 3/3、ui 28/28、build 通过；全量 accept 52 套/894 项全绿（含启动级 E2E）。
 
 ### 3.1.3 A4/A5 兼容与契约（2026-11-13）
 
@@ -237,10 +237,10 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 
 ### 4.1 Phase 1 出口判据
 
-- [ ] 第三方样例在 utilityProcess 跑通；官方插件仍 in-process，accept 绿
-- [ ] fs/child_process 越权被拦；网络残余风险写入 ADR/用户提示
-- [ ] 崩溃/死循环/启动失败有状态机与安全模式
-- [ ] feature flag 默认 off，关闭时行为与 4.3 一致
+- [x] 第三方样例在 utilityProcess 跑通（`plugin-isolation.e2e`）；官方插件仍 in-process，accept 绿
+- [x] fs/child_process/worker/dlopen 越权被拦（B4 真机）；网络残余风险写入 B0 ADR/权限提示
+- [x] 崩溃/心跳 hang/启动失败有状态机与 disabled 安全态（B1/B4）
+- [x] feature flag 默认 off，关闭时行为与 4.3 一致（B1 I7/I8 + 全量回归）
 
 ### 4.2 B1 实施状态（2026-11-13）
 
@@ -267,7 +267,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - `pluginServiceBridge`：先过 B2 broker（未授权 `PLUGIN_PERMISSION_DENIED`），按 method 调宿主 serviceFactories；未知服务/方法/危险属性 NOT_FOUND；AppError 跨 bundle 按 code 透传。
 - `createUtilityProcessFork`：真实 `utilityProcess.fork` + cwd + 权限 env；`pluginRuntime.callPluginService` 接线。
 - 真机 E2E：`plugin-isolation.e2e` 启动真实 Electron，utilityProcess 加载 fixture，插件 `ctx.services.kv.get` 经宿主返回，invoke 成功。
-- 测试：`plugin-service-bridge` 8/8；`plugin-isolation.e2e` 1/1；全量 51 套/890 项（889 通过 + 1 显式跳过）。
+- 测试：`plugin-service-bridge` 8/8；`plugin-isolation.e2e` 1/1；全量 51 套/888 项（887 通过 + 1 显式跳过）。
 - 未完成（B4/B5）：事件流 RPC、HTTP/dialog/secrets 完整代理、越权负向、性能、开发者模式。
 
 ### 4.5 B4 实施状态（2026-11-14）
@@ -278,7 +278,15 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - 测试：`plugin-service-bridge` 8/8；`plugin-isolation.e2e` 1/1（负向断言内置）；全量 51 套/890 项（889 通过 + 1 显式跳过）。
 - 未完成（B5/Phase 2）：开发者模式、生产 installer 启动 supervisor、事件流/HTTP/dialog、性能上限。
 
-### 4.6 Phase 2 起点提醒
+### 4.6 B5 实施状态（2026-11-14）
+
+- `devMode.ts`：`UMI_DEV_PLUGINS=1` 才开 plugins，`UMI_DEV_BUILD=1` 且 plugins 开才开 build；**打包版即使设 env 也拒绝**。
+- 接线：`plugin:dev-mode`（`{ok,data}` 信封）+ preload `plugins.devMode()` + 管理页风险横幅。
+- 本批只做闸门与提示，不扫描/不加载 dev-plugins、不新增安装入口；扫描/源码构建留 Phase 2。
+- 测试：`plugin-dev-mode` 4/4；全量 52 套/894 项（893 通过 + 1 显式跳过）。
+- 未做/登记：UI 横幅可达性无 E2E；dev-plugins 扫描/源码构建 Phase 2。
+
+### 4.7 Phase 2 起点提醒
 
 ---
 

@@ -9,6 +9,7 @@
     "plugin-sdk/src/testing.ts",
     "electron/main/kernel/pluginProcessProtocol.ts",
     "electron/main/kernel/pluginProcessChild.ts",
+    "electron/main/kernel/devMode.ts",
     "electron/main/kernel/pluginSupervisor.ts",
     "electron/main/kernel/pluginIsolation.ts",
     "electron/main/services/pluginPermissions.ts",

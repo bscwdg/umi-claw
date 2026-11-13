@@ -10,6 +10,10 @@
       <button class="btn" :disabled="loading" @click="reload">刷新</button>
     </header>
 
+    <p v-if="devMode?.plugins" class="dev-banner">
+      ⚠️ {{ devMode.warning }}<span v-if="devMode.build"> 已允许源码构建。</span>
+    </p>
+
     <p v-if="loadError" class="error-banner">
       {{ loadError }}
       <button class="btn btn-sm" @click="reload">重试</button>
@@ -161,6 +165,7 @@ const plugins = ref<PluginStatus[]>([])
 const permissionMap = ref<Record<string, { granted: boolean; requested: unknown }>>({})
 const loading = ref(false)
 const loadError = ref('')
+const devMode = ref<{ plugins: boolean; build: boolean; reason: string; warning: string | null } | null>(null)
 const busy = ref('')
 const confirmVisible = ref(false)
 const confirmMessage = ref('')
@@ -332,6 +337,14 @@ async function loadPermissions(): Promise<void> {
   }
 }
 
+async function loadDevMode(): Promise<void> {
+  try {
+    devMode.value = await window.api.plugins.devMode()
+  } catch {
+    devMode.value = null
+  }
+}
+
 async function togglePermission(status: PluginStatus): Promise<void> {
   busy.value = status.id
   try {
@@ -387,8 +400,7 @@ function cancelDisable(): void {
 }
 
 onMounted(async () => {
-  unsubscribe = window.api.plugins.onChanged((next: PluginStatus[]) => {
-    try {
+  unsubscribe = window.api.plugins.onChanged((next: PluginStatus[]) => {    try {
       plugins.value = normalizeListPayload(next)
     } catch {
       // 推送不合法就保持现状，等用户手动刷新
@@ -401,6 +413,7 @@ onMounted(async () => {
   }
   await reload()
   await loadPermissions()
+  await loadDevMode()
 })
 
 onUnmounted(() => {
@@ -461,6 +474,10 @@ onUnmounted(() => {
 }
 .error-banner {
   color: var(--danger);
+  margin-bottom: var(--space-3);
+}
+.dev-banner {
+  color: var(--warning, var(--danger));
   margin-bottom: var(--space-3);
 }
 .empty {

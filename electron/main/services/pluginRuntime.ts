@@ -20,6 +20,8 @@ import {
   PluginHost,
   PluginRegistry,
   isPluginIsolationEnabled,
+  resolveDevMode,
+  type DevModeState,
   type HostOpsApi,
   type LegacyDbApi,
   type NotificationsApi,
@@ -122,6 +124,8 @@ export interface PluginRuntime {
   permissionGrants(): Array<{ id: string; granted: boolean; grantedAt: number | null; requested: unknown }>
   /** Phase 1 B3：子进程服务调用（supervisor onService 用）；过权限 broker */
   callPluginService(pluginId: string, service: string, method: string, args: unknown[]): Promise<unknown>
+  /** Phase 1 B5：开发者模式闸门（打包版永远拒绝） */
+  devMode(): DevModeState
 }
 
 export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
@@ -208,6 +212,12 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
 
     deps.ipc.removeHandler('plugin:permissions:list')
     deps.ipc.handle('plugin:permissions:list', () => ({ ok: true, data: permissionGrants() }))
+
+    deps.ipc.removeHandler('plugin:dev-mode')
+    deps.ipc.handle('plugin:dev-mode', () => ({
+      ok: true,
+      data: resolveDevMode({ isPackaged: deps.appInfo().isPackaged, env: process.env })
+    }))
 
     deps.ipc.removeHandler('plugin:permissions:grant')
     deps.ipc.handle('plugin:permissions:grant', (_e, payload: { id?: string }) => {
@@ -435,6 +445,10 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     callPluginService(pluginId, service, method, args) {
       if (!serviceBridge) return Promise.reject(new Error('服务桥未初始化'))
       return serviceBridge.call(pluginId, service, method, args)
+    },
+
+    devMode() {
+      return resolveDevMode({ isPackaged: deps.appInfo().isPackaged, env: process.env })
     }
   }
 }
