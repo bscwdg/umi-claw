@@ -41,6 +41,7 @@ try {
   await r.check('S1', 'dist-electron/ 构建产物存在（main/preload/renderer）', async () => {
     assert(existsSync(outDir), 'dist-electron/ 存在（先跑 npm run build）')
     assert(existsSync(join(outDir, 'main', 'index.js')), 'dist-electron/main/index.js')
+    assert(existsSync(join(outDir, 'main', 'pluginProcessChild.js')), 'dist-electron/main/pluginProcessChild.js（B1 子进程入口）')
     assert(existsSync(join(outDir, 'preload', 'index.js')), 'dist-electron/preload/index.js')
     assert(existsSync(join(outDir, 'renderer', 'index.html')), 'dist-electron/renderer/index.html')
     const mainBytes = readFileSync(join(outDir, 'main', 'index.js'))

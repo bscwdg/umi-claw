@@ -19,6 +19,7 @@ import {
   discoverPlugins,
   PluginHost,
   PluginRegistry,
+  isPluginIsolationEnabled,
   type HostOpsApi,
   type LegacyDbApi,
   type NotificationsApi,
@@ -104,6 +105,8 @@ export interface PluginRuntime {
   disposeHost(): Promise<void>
   flushConfig(): Promise<void>
   disposeDb(): Promise<void>
+  /** Phase 1 B1：第三方进程隔离开关（默认 off；4.3 行为不变） */
+  isolationEnabled(): boolean
 }
 
 export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
@@ -333,6 +336,11 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
 
     async disposeDb() {
       await dbService?.disposeAll()
+    },
+
+    isolationEnabled() {
+      // B1：只暴露开关；真正的第三方 supervisor 在 B2/B3 接入。默认 off 保证 4.3 行为不变。
+      return isPluginIsolationEnabled()
     }
   }
 }

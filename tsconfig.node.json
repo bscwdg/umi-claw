@@ -7,6 +7,10 @@
     "plugin-sdk/src/official.ts",
     "plugin-sdk/src/official-host.ts",
     "plugin-sdk/src/testing.ts",
+    "electron/main/kernel/pluginProcessProtocol.ts",
+    "electron/main/kernel/pluginProcessChild.ts",
+    "electron/main/kernel/pluginSupervisor.ts",
+    "electron/main/kernel/pluginIsolation.ts",
     "templates/plugin/main.ts",
     "plugins/*/main.ts",
     "plugins/*/domain/**/*.ts"

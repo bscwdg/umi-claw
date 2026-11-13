@@ -7,8 +7,13 @@ export default defineConfig({
     build: {
       outDir: 'dist-electron/main',
       lib: {
-        entry: resolve(__dirname, 'electron/main/index.ts'),
-        formats: ['cjs']
+        entry: {
+          index: resolve(__dirname, 'electron/main/index.ts'),
+          // B1：第三方插件子进程入口单独产出一个 CJS 文件（utilityProcess.fork 用）
+          pluginProcessChild: resolve(__dirname, 'electron/main/kernel/pluginProcessChild.ts')
+        },
+        formats: ['cjs'],
+        fileName: (_format, entryName) => `${entryName}.js`
       }
     }
   },

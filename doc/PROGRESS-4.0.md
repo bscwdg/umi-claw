@@ -2608,12 +2608,31 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 
 ## 2026-11-13 · Phase 0 收尾（4.3.0）
 
-- 版本：`package.json` / `package-lock.json` 升 4.3.0；CHANGELOG 增「插件化 Phase 0」并同步 47 套/854 项口径。
+- 版本：`package.json` / `package-lock.json` 升 4.3.0；CHANGELOG 增「插件化 Phase 0」并同步 48 套/869 项口径。
 - B0 ADR 定稿入 PLAN §3.1.4（utilityProcess 单进程/非沙箱、NODE_OPTIONS、CJS canonical、exit+心跳状态机、网络残余、flag 默认 off）。
 - 启动级 E2E：`test/startup.e2e.mjs` 用 `UMI_STARTUP_PROBE=1` 启动真实 Electron app 到 `whenReady`，写版本标记并退出 0；加入 run-all `e2e×2`。
-- Phase 0 出口：accept 47 套/854 项（+ node:test 21）全绿；双 typecheck 0；boundary 0/0/0；host import 0/0；UI `@/` 仅 4 处 ConfirmDialog；plugin-contract 已注册；one-day + startup E2E 全绿。
+- Phase 0 出口：accept 48 套/869 项（+ node:test 21）全绿；双 typecheck 0；boundary 0/0/0；host import 0/0；UI `@/` 仅 4 处 ConfirmDialog；plugin-contract 已注册；one-day + startup E2E 全绿。
 - 基线：分支 `codex/voice-local-external-conversation`；命令 `node scripts/run-all-accept.mjs`；`TEMP/TMP=%LOCALAPPDATA%\Temp` 且 `git clean -fdX -- test/.tmp`；日志 `data/tmp/analysis/accept-phase0-final.log`；4.3.0 提交见本条目所在 commit。
 - 收尾检查：事实核对（`phase0-factcheck*.md`）+ 对抗复核（`phase0-adversarial.md`）；P0 文档/基线问题已在本批处置；A3a 剩余与权限/configSchema 明确列 Phase 1。
 - 审查处置（属实→已修）：API v1 冻结口径改为「官方插件面」并写信任边界；§3.2 判据/勾选/基线记录补齐；4.3.0 只升版本不生成 tag/安装包已注明；startup E2E 补入 run-all；P32 三类绕过正则修正 + 合成探针；SDK 门禁盲区加 A4 白名单（15 个宿主 re-export）；K8 改为显式 SKIP（不计 PASS）；CHANGELOG character 90→110。
 - 未采纳/范围裁剪：A2 alias/build/注入、A3a async/onDemand/settings/capabilities/ctx.host、hostBridge 收窄、plugin-data 数据根明确列 Phase 1（见 PLAN §3.1.5），不伪装成 Phase 0 已完成。
 - 遗留到 Phase 1：A3a async/事件 RPC、onDemand、settings/commands、capabilities、ctx.host 拆分；hostBridge 13 收窄；SDK 门禁盲区与契约覆盖扩展。
+
+---
+
+## 2026-11-13 · Phase 1 B1（插件进程骨架）
+
+- 协议：`electron/main/kernel/pluginProcessProtocol.ts`（JSON RPC；host→child：init/activate/deactivate/ping/invoke/shutdown；child→host：ready/activated/deactivated/pong/result/log；两端 type guard）。
+- child：`pluginProcessChild.ts`（CJS canonical；Electron `process.parentPort` / Node `process.send` 双 transport；ctx 最小面 logger/host/config/jobs/registerIpc；activate/deactivate/dispose；activate 失败 exit 1）。
+- supervisor：`pluginSupervisor.ts`（状态机 stopped/starting/running/stopping/crashed/disabled；仅监听 exit；心跳 ping/pong；启动失败 disabled；退避 1/2/4s；5min≥3 次熔断；stop 取消待重启）。
+- 开关：`pluginIsolation.ts` `UMI_PLUGIN_ISOLATION=1`，默认 off；`pluginRuntime.isolationEnabled()` 暴露但 B1 不 fork（B2/B3 接服务桥后启用）。
+- 构建：electron-vite main 双入口，产出 `dist-electron/main/pluginProcessChild.js`（6.9KB）。
+- 验收：`test/plugin-isolation.accept.mjs` 15/15（状态机/invoke/崩溃重启/启动失败/心跳 hang/pong id/熔断/stop 竞态/stale generation/disabled-reset/真 Node child 协议/parentPort MessageEvent/flag off/生产接线）；全量 48 套/869 项（868 通过 + 1 显式跳过）全绿。
+- 对抗审查（task-13，`data/tmp/analysis/phase1-b1-review.md`）：P0=0、P1=5、P2=9；已处置：
+  - P1-1 parentPort message 是 MessageEvent：transport 解包 `.data` + I12 真路径；ready.version 用 init 的 hostVersion。
+  - P1-2 启动失败 kill 的 exit 被当 crash 重启：start catch 置 intentional + disabled 终态守卫；I10 ready 超时验证不重启。
+  - P1-3 跨 generation 串台：监听器闭包绑定 child、旧 exit/message 忽略；I13 stale exit/message。
+  - P1-4 心跳 postMessage 抛错崩宿主：try/catch 按 hang 处理；I15。
+  - P1-5 验收日志旧 8/8：本批重跑 `accept-phase1-b1-final2.log` 为 15/15，文档同步 869。
+  - P2：pong id 校验、disabled stop 不清白+reset、stop 取消待重启、stopTimeout 可配、ready.version、wrapper 落 test/.tmp、packaged smoke 断言 child 入口、PLAN 15/15。
+- 未采纳/登记：asar 内 fork 真机验证留 B2；TLA ESM 回退仅兜底未增断言；child 监听器解绑/心跳 unref 留 P3。

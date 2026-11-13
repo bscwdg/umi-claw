@@ -1,5 +1,22 @@
 // kernel/index.ts —— 内核出口。宿主只从这里取东西；插件只从这里取**类型**。
 
+export { PLUGIN_ISOLATION_ENV, isPluginIsolationEnabled } from './pluginIsolation'
+export {
+  createPluginSupervisor,
+  PluginSupervisor,
+  type ChildProcessLike,
+  type ForkPluginProcess,
+  type PluginSupervisorOptions
+} from './pluginSupervisor'
+export {
+  isChildToHostMessage,
+  isHostToChildMessage,
+  PLUGIN_PROCESS_CHANNEL,
+  type ChildToHostMessage,
+  type HostToChildMessage,
+  type PluginProcessSpec,
+  type PluginProcessState
+} from './pluginProcessProtocol'
 export {
   HOST_API_VERSION,
   HOST_CAPABILITIES,

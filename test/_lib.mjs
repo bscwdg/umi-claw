@@ -280,6 +280,39 @@ export function bundleEntry(entryRelPath, outName, options = {}) {
   return outfile
 }
 
+/**
+ * esbuild 把 TS 入口打成 **CJS**（子进程入口 / Node fork 验收用），返回 outfile 绝对路径。
+ * 与 bundleEntry 分开：child 入口必须是 CJS canonical（B0 决策），且不能 external electron。
+ */
+export function bundleCjs(entryRelPath, outName, options = {}) {
+  mkdirSync(tmpDir, { recursive: true })
+  const outfile = join(tmpDir, outName)
+  const bin = join(repoRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'esbuild.cmd' : 'esbuild')
+  if (!existsSync(bin)) {
+    throw new Error(`未找到 esbuild CLI: ${bin}（应由 vite 依赖提供）`)
+  }
+  const externals = Array.isArray(options.externals) ? options.externals : []
+  const res = spawnSync(
+    bin,
+    [
+      join(repoRoot, entryRelPath),
+      '--bundle',
+      '--platform=node',
+      '--format=cjs',
+      '--target=node20',
+      ...externals.map((name) => `--external:${name}`),
+      '--log-level=warning',
+      `--outfile=${outfile}`
+    ],
+    { encoding: 'utf-8', shell: process.platform === 'win32', cwd: repoRoot }
+  )
+  if (res.status !== 0) {
+    throw new Error(`esbuild CJS 失败（${entryRelPath}）:\n${res.stdout || ''}${res.stderr || ''}`)
+  }
+  if (!existsSync(outfile)) throw new Error(`esbuild 未产出 ${outfile}`)
+  return outfile
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 export { sleep }
 

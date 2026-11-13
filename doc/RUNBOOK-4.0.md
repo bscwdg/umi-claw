@@ -111,7 +111,7 @@ npm run build               # 生成 + 构建（含插件代码）
 npm run typecheck:node      # 主进程
 npm run typecheck:web       # 渲染端（tsc 只管 .ts；.vue 由构建期 vite/vue 编译检查）
 node test/plugin.accept.mjs # 插件内核 + 两个域装箱 + 加固（71 项）
-npm run accept               # 全量验收（2026-11-13 干净基线：47 套 = ACCEPT 44 + e2e×2 + smoke；854 项检查（853 通过 + 1 显式跳过） + config-writer node:test 21 条另计）
+npm run accept               # 全量验收（2026-11-13 干净基线：48 套 = ACCEPT 45 + e2e×2 + smoke；869 项检查（868 通过 + 1 显式跳过） + config-writer node:test 21 条另计）
 node test/packaged.smoke.mjs# 打包态静态冒烟
 node test/one-day.e2e.mjs   # 「一天」端到端
 ```

@@ -158,7 +158,7 @@ renderer
 - host→plugin 反向依赖：会话键 resolver 注册表（marketing activate 注册、onDispose 摘除）
 - 删除 work 插件原始 `ipcMain` fallback、`hostUi` 不再导出裸 `ipcMain`
 - `scripts/check-plugin-api.mjs` + baseline + `test/plugin-api.accept.mjs`（ratchet 已注册 run-all）
-- 验收：47 套 / 854 项 + node:test 21（全绿）
+- 验收：48 套 / 869 项 + node:test 21（全绿）
 
 未完成（下次 A3a 续）：
 - 第三方可见面 async 化 + 事件/流式 RPC（依赖 B1）
@@ -173,7 +173,7 @@ renderer
 - 79 处 `electron/main/**` import / 38 文件已迁到 `plugin-sdk/src/official-*`（按宿主模块拆子路径，避免 barrel 把 mammoth/electron 链进 domain bundle）。
 - `check-plugin-api` ratchet：**host import 0**（值 0 / type 0）；UI host import 23→4（+2 type；4 处 ConfirmDialog .vue 直连属测试管线例外）；hostBridge consumers 13（useWorkStream 移入插件后必须经 hostBridge；官方 UI 内部，Phase 1 前不动）。
 - 未完成：UI 的 `@/` 宿主 import 仅剩 4 处 ConfirmDialog（等 UI 测试管线支持跨 .vue 或组件下沉）；hostBridge 收窄/下沉留 Phase 1；`@umi/plugin-sdk/*` alias/宿主注入（B1）。
-- 验收：plugin.accept 71/71、plugin-contract 3/3、plugin-api 3/3、ui 28/28、build 通过；全量 accept 47 套/854 项全绿（含启动级 E2E）。
+- 验收：plugin.accept 71/71、plugin-contract 3/3、plugin-api 3/3、ui 28/28、build 通过；全量 accept 48 套/869 项全绿（含启动级 E2E）。
 
 ### 3.1.3 A4/A5 兼容与契约（2026-11-13）
 
@@ -241,6 +241,18 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - [ ] fs/child_process 越权被拦；网络残余风险写入 ADR/用户提示
 - [ ] 崩溃/死循环/启动失败有状态机与安全模式
 - [ ] feature flag 默认 off，关闭时行为与 4.3 一致
+
+### 4.2 B1 实施状态（2026-11-13）
+
+- `pluginProcessProtocol.ts`：JSON RPC（init/activate/deactivate/ping/invoke/shutdown → ready/activated/result/pong/log），两端 type guard。
+- `pluginProcessChild.ts`：CJS canonical 子进程入口；Node-only（Electron `process.parentPort` / Node `process.send` 双 transport）；`ctx` 最小面（logger/host/config/jobs/registerIpc）；activate/dispose/错误退出。
+- `pluginSupervisor.ts`：`stopped/starting/running/stopping/crashed/disabled`；`exit` 监督（不依赖 `child-process-gone`）；心跳 ping/pong；启动失败 disabled；退避 1/2/4s；5min≥3 次熔断。
+- `pluginIsolation.ts`：`UMI_PLUGIN_ISOLATION=1` 显式开启，默认 off；`pluginRuntime.isolationEnabled()` 暴露但**不 fork**（B2/B3 服务桥后启用）。
+- 构建：electron-vite main 双入口，`dist-electron/main/pluginProcessChild.js`（6.9KB）。
+- 验收：`test/plugin-isolation.accept.mjs` 15/15（状态机、崩溃/熔断、心跳 hang、pong id、stale generation、disabled/reset、真 Node child 协议、parentPort MessageEvent、flag off）。
+- 未完成（B2/B3）：真实 `utilityProcess.fork` 接线、权限 allowlist、服务代理；B1 只冻结协议与状态机。
+
+### 4.3 Phase 2 起点提醒
 
 ---
 
