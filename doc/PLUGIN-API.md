@@ -108,7 +108,8 @@ interface PluginContextV1 {
   readonly host: { version: string; platform: string }
   readonly logger: PluginLogger
   readonly jobs: PluginJobs
-  readonly config: PluginConfigApi
+  /** 仅 manifest.inject 含 config 时存在；未声明时为 undefined */
+  readonly config?: PluginConfigApi
   readonly services: {
     db?: PluginDbApiV1
     kv?: PluginKvApi
@@ -168,7 +169,8 @@ type PluginStreamEvent =
   | { type: 'error'; id: string; error: { code: string; message: string; details?: unknown } }
 
 interface PluginIpcHandler {
-  (payload?: unknown, context?: { signal: AbortSignal; requestId: string }): unknown | Promise<unknown>
+  // TODO(A3a)：当前第二参是 Electron event；RPC 事件契约落地前第三方不得依赖
+  (payload?: unknown, context?: unknown): unknown | Promise<unknown>
 }
 ```
 
@@ -284,7 +286,7 @@ interface PluginDbApiV1 {
 
 | 子路径 | 内容 | 可用方 |
 | --- | --- | --- |
-| `@umi/plugin-sdk/public` | 公开类型、`definePlugin`、错误码、权限/manifest 类型 | 官方 + 第三方 |
+| `@umi/plugin-sdk/public` | 公开类型、`definePlugin`、错误码/manifest 类型（**A3a 加入**） | 官方 + 第三方 |
 | `@umi/plugin-sdk/official` | internal 服务类型（consent/abort/hostOps/legacyDb/registerChannelIpc） | 仅官方 |
 | `@umi/plugin-sdk/client` | 官方 UI 的 `PluginUiModule`/`PluginUiHost` | 仅官方 |
 | `@umi/plugin-sdk/testing` | 契约测试工具（fake host、断言） | 测试 |
