@@ -88,6 +88,15 @@
 
       <p v-if="p.error" class="error-line">{{ errorSummary(p) }}</p>
 
+      <div v-if="permissionMap[p.id]" class="actions">
+        <span class="text-muted">
+          权限：{{ permissionMap[p.id].granted ? '已授权' : '未授权' }}
+        </span>
+        <button class="btn btn-ghost" :disabled="busy === p.id" @click="togglePermission(p)">
+          {{ permissionMap[p.id].granted ? '撤销权限' : '授权' }}
+        </button>
+      </div>
+
       <div class="actions">
         <button
           class="btn"
@@ -149,6 +158,7 @@ import {
 } from '@/renderer/pluginAdmin'
 
 const plugins = ref<PluginStatus[]>([])
+const permissionMap = ref<Record<string, { granted: boolean; requested: unknown }>>({})
 const loading = ref(false)
 const loadError = ref('')
 const busy = ref('')
@@ -308,6 +318,36 @@ async function reload(): Promise<void> {
   await loadCharacter()
 }
 
+async function loadPermissions(): Promise<void> {
+  try {
+    const rows = await window.api.plugins.permissions()
+    const next: Record<string, { granted: boolean; requested: unknown }> = {}
+    for (const row of rows) {
+      if (row.requested) next[row.id] = { granted: row.granted, requested: row.requested }
+    }
+    permissionMap.value = next
+  } catch {
+    // 权限读取失败不影响插件列表；默认不展示权限区
+    permissionMap.value = {}
+  }
+}
+
+async function togglePermission(status: PluginStatus): Promise<void> {
+  busy.value = status.id
+  try {
+    if (permissionMap.value[status.id]?.granted) {
+      await window.api.plugins.revokePermissions(status.id)
+    } else {
+      await window.api.plugins.grantPermissions(status.id)
+    }
+    await loadPermissions()
+  } catch (e) {
+    loadError.value = `权限操作失败：${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    busy.value = ''
+  }
+}
+
 async function applyToggle(status: PluginStatus, enabled: boolean): Promise<void> {
   busy.value = status.id
   try {
@@ -347,7 +387,6 @@ function cancelDisable(): void {
 }
 
 onMounted(async () => {
-  // 先订阅再拉列表：否则首屏加载期间的 plugin:changed 会丢（审查 P2-9）
   unsubscribe = window.api.plugins.onChanged((next: PluginStatus[]) => {
     try {
       plugins.value = normalizeListPayload(next)
@@ -361,6 +400,7 @@ onMounted(async () => {
     return
   }
   await reload()
+  await loadPermissions()
 })
 
 onUnmounted(() => {

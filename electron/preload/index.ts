@@ -448,6 +448,10 @@ const api = {
     list: () => call<PluginStatus[]>('plugin:list'),
     setEnabled: (id: string, enabled: boolean) =>
       call<PluginStatus[]>('plugin:setEnabled', { id, enabled }),
+    // B2：权限授权只授予 manifest 已申请的权限（主进程再次校验，渲染端不能凭空扩权）
+    permissions: () => call<Array<{ id: string; granted: boolean; grantedAt: number | null; requested: unknown }>>('plugin:permissions:list'),
+    grantPermissions: (id: string) => call<unknown>('plugin:permissions:grant', { id }),
+    revokePermissions: (id: string) => call<unknown>('plugin:permissions:revoke', { id }),
     invoke: <T = unknown>(id: string, method: string, payload?: unknown): Promise<T> => {
       if (!/^[a-z][a-z0-9-]*$/.test(id)) return Promise.reject(new Error(`插件 id 非法：${id}`))
       if (!method || /[\s:]/.test(method)) return Promise.reject(new Error(`插件方法名非法：${method}`))

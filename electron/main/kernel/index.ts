@@ -29,7 +29,8 @@ export {
   type PluginContributes,
   type PluginId,
   type PluginManifest,
-  type PluginNavGroup
+  type PluginNavGroup,
+  type PluginPermissions
 } from './manifest'
 export {
   definePlugin,

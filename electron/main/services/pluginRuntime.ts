@@ -34,6 +34,14 @@ import { createPluginDbService, type PluginDbService } from './pluginDb'
 import { createPluginKvService } from './pluginKv'
 import { PluginSecretStore } from './pluginSecrets'
 import { registerConversationKeyResolver } from './conversationKeyRegistry'
+import {
+  createPermissionAudit,
+  createPermissionBroker,
+  createPermissionStore,
+  type PermissionAction,
+  type PermissionDecision,
+  type PluginPermissionStore
+} from './pluginPermissions'
 
 type PluginDbApi = ReturnType<PluginDbService['forPlugin']>
 
@@ -107,6 +115,10 @@ export interface PluginRuntime {
   disposeDb(): Promise<void>
   /** Phase 1 B1：第三方进程隔离开关（默认 off；4.3 行为不变） */
   isolationEnabled(): boolean
+  /** Phase 1 B2：权限 broker（B3 服务桥/子进程调用前 check） */
+  checkPermission(pluginId: string, action: PermissionAction): PermissionDecision
+  /** 权限汇总（管理页展示；不含 secrets） */
+  permissionGrants(): Array<{ id: string; granted: boolean; grantedAt: number | null; requested: unknown }>
 }
 
 export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
@@ -114,6 +126,8 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
   let registry: PluginRegistry | null = null
   let configStore: ReturnType<typeof createPluginConfigStore> | null = null
   let dbService: PluginDbService | null = null
+  let permissionStore: PluginPermissionStore | null = null
+  let permissionBroker: ReturnType<typeof createPermissionBroker> | null = null
 
   const statuses = (): PluginStatus[] => host?.statuses() ?? []
 
@@ -167,13 +181,49 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     }
   }
 
-  const registerHostIpc = (stateStore: ReturnType<typeof createJsonStateStore>): void => {
-    deps.ipc.removeHandler('plugin:list')
+  const permissionGrants = (): Array<{
+    id: string
+    granted: boolean
+    grantedAt: number | null
+    requested: unknown
+  }> => {
+    const records = registry?.list() ?? []
+    return records.map((record) => {
+      const grant = permissionStore?.get(record.manifest.id)
+      return {
+        id: record.manifest.id,
+        granted: Boolean(grant),
+        grantedAt: grant?.grantedAt ?? null,
+        requested: record.manifest.permissions ?? null
+      }
+    })
+  }
+
+  const registerHostIpc = (stateStore: ReturnType<typeof createJsonStateStore>): void => {    deps.ipc.removeHandler('plugin:list')
     deps.ipc.handle('plugin:list', () => ({ ok: true, data: statuses() }))
 
-    deps.ipc.removeHandler('plugin:setEnabled')
-    deps.ipc.handle('plugin:setEnabled', async (_e, payload: { id?: string; enabled?: boolean }) => {
+    deps.ipc.removeHandler('plugin:permissions:list')
+    deps.ipc.handle('plugin:permissions:list', () => ({ ok: true, data: permissionGrants() }))
+
+    deps.ipc.removeHandler('plugin:permissions:grant')
+    deps.ipc.handle('plugin:permissions:grant', (_e, payload: { id?: string }) => {
       const id = String(payload?.id ?? '')
+      const record = registry?.get(id)
+      if (!record) return { ok: false, error: { code: 'NOT_FOUND', message: `插件不存在：${id}` } }
+      // 只允许授予 manifest 里申请过的权限，UI 不能凭空扩权
+      const grant = permissionStore!.grant(id, record.manifest.permissions ?? {})
+      return { ok: true, data: { id, grantedAt: grant.grantedAt, permissions: grant.permissions } }
+    })
+
+    deps.ipc.removeHandler('plugin:permissions:revoke')
+    deps.ipc.handle('plugin:permissions:revoke', (_e, payload: { id?: string }) => {
+      const id = String(payload?.id ?? '')
+      permissionStore!.revoke(id)
+      return { ok: true, data: permissionGrants() }
+    })
+
+    deps.ipc.removeHandler('plugin:setEnabled')
+    deps.ipc.handle('plugin:setEnabled', async (_e, payload: { id?: string; enabled?: boolean }) => {      const id = String(payload?.id ?? '')
       const enabled = Boolean(payload?.enabled)
       try {
         if (!host || !registry) throw new Error('插件宿主未初始化')
@@ -206,6 +256,16 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       try {
         const dataDir = deps.dataDir()
         const stateStore = createJsonStateStore(join(dataDir, 'plugins-state.json'))
+        permissionStore = createPermissionStore(join(dataDir, 'plugin-permissions.json'))
+        const permissionAudit = createPermissionAudit(join(dataDir, 'plugin-audit.log'))
+        permissionBroker = createPermissionBroker({
+          store: permissionStore,
+          audit: permissionAudit,
+          rootsFor: (pluginId) => ({
+            pluginDir: join(deps.resourcesRoot(), 'plugins', pluginId),
+            dataDir: join(dataDir, 'plugins', pluginId)
+          })
+        })
 
         // ── 服务层（Phase 1 WP1）：插件只能经 ctx.services 拿到这些窄接口 ──────────
         configStore = createPluginConfigStore(join(dataDir, 'plugin-config.json'))
@@ -275,6 +335,14 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
           }
         }
 
+        // 授权必须随 manifest 收窄：插件升级后申请范围变化时，旧授权自动夹到新 manifest，
+        // 不能让历史 grant 保留已删除的权限。
+        for (const record of reg.list()) {
+          if (permissionStore.get(record.manifest.id)) {
+            permissionStore.grant(record.manifest.id, record.manifest.permissions ?? {})
+          }
+        }
+
         const info = deps.appInfo()
         const pluginHost = new PluginHost({
           registry: reg,
@@ -341,7 +409,14 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     isolationEnabled() {
       // B1：只暴露开关；真正的第三方 supervisor 在 B2/B3 接入。默认 off 保证 4.3 行为不变。
       return isPluginIsolationEnabled()
-    }
+    },
+
+    checkPermission(pluginId: string, action: PermissionAction) {
+      if (!permissionBroker) return { allowed: false, reason: '权限服务未初始化' }
+      return permissionBroker.check(pluginId, action)
+    },
+
+    permissionGrants
   }
 }
 

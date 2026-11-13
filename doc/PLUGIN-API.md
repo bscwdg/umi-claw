@@ -13,7 +13,7 @@
 | --- | --- | --- |
 | SDK 分层（public/official-*/client*/testing） | ✅ 骨架（无 alias/注入） | A2 → A3b |
 | manifest `apiVersion` / `engines.host` 校验 | ✅ A4（hostVersion 注入；缺省不限制） | A4 |
-| permissions allowlist / 未知键 fail-closed | ❌ Phase 1 | A3a/B2 |
+| permissions allowlist / 未知键 fail-closed | ⚠️ B2 原型（manifest/授权/撤销/审计/NODE_OPTIONS；服务桥 B3） | A3a/B2 |
 | migrations DDL 白名单 / 禁 ATTACH/VACUUM | ✅ A3a | A3a |
 | `ctx.db.request` 收窄（官方 `<table>.<op>`） | ✅ A3a（禁 migrate/maintenance/shutdown） | A3a |
 | async 第三方可见面 / 事件流 RPC | ❌ Phase 1 | A3a/A1 |

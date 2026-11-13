@@ -22,6 +22,12 @@ export interface PluginContributes {
   commands?: string[]
 }
 
+export interface PluginPermissions {
+  fs?: { read?: string[]; write?: string[] }
+  network?: string[]
+  services?: string[]
+}
+
 export interface PluginManifest {
   id: PluginId
   name: string
@@ -30,6 +36,8 @@ export interface PluginManifest {
   apiVersion: number
   /** 宿主版本范围（如 ">=4.3.0 <6.0.0"；缺省不限制） */
   engines?: { host?: string }
+  /** 第三方权限申请（缺省 = 全部拒绝；B2 原型） */
+  permissions?: PluginPermissions
   /** 需要宿主提供的能力版本，如 host.db.v1 */
   capabilities: string[]
   /** 需要注入的服务名，如 db / openclaw / host */
@@ -169,6 +177,70 @@ function asStringArray(value: unknown, field: string, pluginId?: string): string
   return value as string[]
 }
 
+/** 权限路径必须是插件数据目录/包目录内的相对路径，禁止绝对路径、盘符相对路径与 .. 穿越 */
+function isSafePermissionPath(value: string): boolean {
+  if (!value || value.length > 200) return false
+  // Windows 盘符（C:、C:foo、C:..）都能逃出数据目录；空白/控制字符可注入 NODE_OPTIONS
+  if (/^[a-zA-Z]:/.test(value)) return false
+  if (/[\s\u0000-\u001f<>:"|?*]/.test(value)) return false
+  if (value.startsWith('/') || value.startsWith('\\') || value.startsWith('~')) return false
+  return !value.split(/[\\/]+/).includes('..')
+}
+
+function parsePermissions(raw: unknown, pluginId: string): PluginPermissions | undefined {
+  if (raw === undefined) return undefined
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    fail('permissions 必须是对象', 'permissions', pluginId)
+  }
+  const obj = raw as Record<string, unknown>
+  const allowedTop = new Set(['fs', 'network', 'services'])
+  for (const key of Object.keys(obj)) {
+    if (!allowedTop.has(key)) fail(`permissions 未知键：${key}`, `permissions.${key}`, pluginId)
+  }
+
+  const out: PluginPermissions = {}
+  if (obj.fs !== undefined) {
+    if (!obj.fs || typeof obj.fs !== 'object' || Array.isArray(obj.fs)) {
+      fail('permissions.fs 必须是对象', 'permissions.fs', pluginId)
+    }
+    const fsObj = obj.fs as Record<string, unknown>
+    const allowedFs = new Set(['read', 'write'])
+    for (const key of Object.keys(fsObj)) {
+      if (!allowedFs.has(key)) fail(`permissions.fs 未知键：${key}`, `permissions.fs.${key}`, pluginId)
+    }
+    const read = asStringArray(fsObj.read, 'permissions.fs.read', pluginId)
+    const write = asStringArray(fsObj.write, 'permissions.fs.write', pluginId)
+    for (const p of [...read, ...write]) {
+      if (!isSafePermissionPath(p)) {
+        fail(`permissions.fs 路径必须是插件目录内相对路径：${JSON.stringify(p)}`, 'permissions.fs', pluginId)
+      }
+    }
+    if (read.length || write.length) out.fs = { ...(read.length ? { read } : {}), ...(write.length ? { write } : {}) }
+  }
+
+  if (obj.network !== undefined) {
+    const network = asStringArray(obj.network, 'permissions.network', pluginId)
+    for (const host of network) {
+      if (!/^(\*\.)?[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?$/i.test(host)) {
+        fail(`permissions.network 非法域名：${JSON.stringify(host)}`, 'permissions.network', pluginId)
+      }
+    }
+    if (network.length) out.network = network.map((h) => h.toLowerCase())
+  }
+
+  if (obj.services !== undefined) {
+    const services = asStringArray(obj.services, 'permissions.services', pluginId)
+    for (const name of services) {
+      if (!/^[a-z][a-z0-9._-]*$/.test(name)) {
+        fail(`permissions.services 非法服务名：${JSON.stringify(name)}`, 'permissions.services', pluginId)
+      }
+    }
+    if (services.length) out.services = services
+  }
+
+  return Object.keys(out).length ? out : undefined
+}
+
 /**
  * 解析并校验清单。任何字段不合法都抛 `PluginManifestError`（带 field），
  * 便于「插件管理页」原样展示给用户。
@@ -196,8 +268,7 @@ export function parseManifest(raw: unknown, source = '<inline>'): PluginManifest
   }
 
   let engines: { host?: string } | undefined
-  if (obj.engines !== undefined) {
-    if (!obj.engines || typeof obj.engines !== 'object' || Array.isArray(obj.engines)) {
+  if (obj.engines !== undefined) {    if (!obj.engines || typeof obj.engines !== 'object' || Array.isArray(obj.engines)) {
       fail('engines 必须是对象', 'engines', id)
     }
     const host = (obj.engines as Record<string, unknown>).host
@@ -272,12 +343,15 @@ export function parseManifest(raw: unknown, source = '<inline>'): PluginManifest
     }
   }
 
+  const permissions = parsePermissions(obj.permissions, id)
+
   return {
     id,
     name,
     version,
     apiVersion: apiVersion as number,
     engines,
+    permissions,
     capabilities,
     inject,
     channels,
