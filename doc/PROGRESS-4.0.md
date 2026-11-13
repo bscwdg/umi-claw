@@ -2570,3 +2570,16 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 - 只改 `index.cjs` 不同步 `index.cjs.map`，sourcemap 堆栈行号漂移，运行时无影响。
 - 备份按版本号单份保留；同版本号重发包且未整体替换 dist 的极小概率场景不另留底。
 - 超时不取消底层 promise，迟到 rename 理论上与 capture 交错；同目录 rename 原子，实际风险可忽略。
+
+---
+
+## 2026-11-13 · PLAN-5.0 Phase 0（A0/B0/A1/A2/A3a 首批）
+
+- 计划：`doc/PLAN-5.0-EXTENSIBILITY.md` v1.1（两轮对抗审查 + 第三轮复审后入档）；提交 `9cc57de`、`b38f267`、`681119b`、`a1b4ec5`。
+- A0 基线：codex/voice HEAD，TEMP 系统临时目录 + 清空 `test/.tmp`；45 套（ACCEPT 43 + e2e + smoke）/846 条断言 + node:test 21 全绿；AGENTS/RUNBOOK/PLAN 数字已同步。
+- B0 隔离 spike（ADR 草案 `data/tmp/analysis/b0-isolation-adr.md`）：Electron 30.5.1/Node 20.16；CJS canonical（ESM 可用）；权限只走 `NODE_OPTIONS`（`execArgv` 无效、入口目录必须 allowlist）；fs/child_process/worker/native/binding 可拦，TCP 与 `_linkedBinding` 不承诺；单插件单进程；启动 140–180ms、IPC <0.5ms、RSS 45–50MB；`child-process-gone` 不覆盖 utilityProcess。
+- A1：`doc/PLUGIN-API.md` v1.0-RC（公开 allowlist + 实现状态表；未实现项标注 A3a/A4/A5/B1/B2）。
+- A2：`plugin-sdk/` 三层骨架（public/official/client/testing），hello 迁移；alias/注入/三套 ratchet 留 A3b；`check-plugin-api` baseline：host 62(+17 type)/UI 23(+2)/hostBridge 12。
+- A3a 首批：DDL 白名单 + request 白名单 + gen 清理 + 会话键 resolver + 删 raw ipcMain + ratchet（plugin.accept 68/68、plugin-api 3/3、ui 28/28；全量 45 套绿）。
+- 对抗审查：`a1a2-reviewer`（P0-1/P0-2 已修，A2 标骨架）；`a3a-reviewer`（P0=0/P1=3，三条 P1 已修；P2 登记：DDL 前缀反例、STRICT、knowledge.search pre-existing、consent 反向读、release.zip 不提交）。
+- 未完成：A3a 剩余项（async/事件 RPC/onDemand/settings-commands/capabilities/ctx.host 拆分/hostBridge 收窄）、A3b/A6、A4/A5、Phase 1。

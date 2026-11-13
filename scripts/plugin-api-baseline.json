@@ -1,0 +1,8 @@
+{
+  "pluginHostImport": 62,
+  "pluginHostTypeOnly": 17,
+  "pluginUiHostImport": 23,
+  "pluginUiHostTypeOnly": 2,
+  "hostBridgeConsumers": 12,
+  "_note": "2026-11-13 A3a baseline: hello migrated to SDK; remaining 62 host value/17 type, 23 UI/2 type, 12 hostBridge consumers -> A3b drive to 0"
+}

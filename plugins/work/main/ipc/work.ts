@@ -14,7 +14,7 @@
 //
 // 本模块只做参数透传与信封包装；业务规则全在 Manager 层（可纯 Node 测）。
 
-import { hostIpcMain, getFocusedWindow, showOpenDialog } from '../../../../electron/main/services/hostUi'
+import { getFocusedWindow, showOpenDialog } from '../../../../electron/main/services/hostUi'
 import { toErrorEnvelope, type ErrorEnvelope } from '../../../../electron/main/services/errors'
 import type { ProfileManager, UpdateProfileInput } from '../../domain/profileManager'
 import type { CreateMatterInput, MatterManager, UpdateMatterInput } from '../../domain/matterManager'
@@ -190,20 +190,24 @@ export interface WorkIpcRegistrar {
   ): void
 }
 
+// 未注入注册器就注册属于接线错误：直接抛错比静默落到宿主 ipcMain 更安全
+// （PLAN-5.0 A3a：删掉原始 ipcMain 逃生门，通道只能经 ctx.registerChannelIpc 注册）。
 const defaultRegistrar: WorkIpcRegistrar = {
-  handle(channel, fn) {
-    hostIpcMain.removeHandler(channel)
-    hostIpcMain.handle(channel, (_e, ...args) => fn(...args))
+  handle() {
+    throw new Error(
+      '通道注册器未注入：插件必须在注册 IPC 前 setWorkIpcRegistrar(ctx.registerChannelIpc)'
+    )
   },
-  handleEvent(channel, fn) {
-    hostIpcMain.removeHandler(channel)
-    hostIpcMain.handle(channel, (event, ...args) => fn(event, ...args))
+  handleEvent() {
+    throw new Error(
+      '通道注册器未注入：插件必须在注册 IPC 前 setWorkIpcRegistrar(ctx.registerChannelIpc)'
+    )
   }
 }
 
 let activeRegistrar: WorkIpcRegistrar | null = null
 
-/** 注入注册器（传 null 恢复默认 ipcMain） */
+/** 注入注册器（传 null 摘除；再注册会抛错，A3a 起不再回落宿主 ipcMain） */
 export function setWorkIpcRegistrar(registrar: WorkIpcRegistrar | null): void {
   activeRegistrar = registrar
 }

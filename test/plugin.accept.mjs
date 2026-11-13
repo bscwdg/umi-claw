@@ -1530,7 +1530,9 @@ await r.check('P38', 'work 插件启停循环：停用摘通道，重新启用�
       listPushChannels: async () => [],
       listPushTargets: async () => [],
       locateOldDbs: () => [],
-      readOldDb: async () => ({})
+      readOldDb: async () => ({}),
+      registerConversationKeyResolver: () => () => {},
+      isMultimodalConfigured: () => false
     }),
     config: () => ({ get: () => undefined, set: () => undefined, all: () => ({}) })
   }
@@ -1822,6 +1824,8 @@ await r.check('P41', 'marketing 插件：默认开启；启用后 marketing:* �
     }
   }
   const abortCalls = []
+  let resolverRegistrations = 0
+  let resolverDisposals = 0
   const services = {
     legacyDb: () => ({ list: async () => [] }),
     db: () => fakeDb,
@@ -1833,14 +1837,20 @@ await r.check('P41', 'marketing 插件：默认开启；启用后 marketing:* �
       }
     }),
     consent: () => fakeConsentService(),
-    legacyDb: () => ({ list: async () => [] }),
     hostOps: () => ({
       notify: () => undefined,
       push: async () => ({ ok: true }),
       listPushChannels: async () => [],
       listPushTargets: async () => [],
       locateOldDbs: () => [],
-      readOldDb: async () => ({})
+      readOldDb: async () => ({}),
+      registerConversationKeyResolver: () => {
+        resolverRegistrations += 1
+        return () => {
+          resolverDisposals += 1
+        }
+      },
+      isMultimodalConfigured: () => false
     }),
     config: () => ({ get: () => undefined, set: () => undefined, all: () => ({}) })
   }
@@ -1880,6 +1890,7 @@ await r.check('P41', 'marketing 插件：默认开启；启用后 marketing:* �
       abortCalls.includes('marketing'),
       'marketing 在 activate 时把中止函数登记到 abortRegistry（B3 复核补修）'
     )
+    assertEq(resolverRegistrations, 1, 'marketing 在 activate 时注册会话键 resolver（A3a）')
     assert(status.channels.some((c) => c.startsWith('marketing:')), '注册了 marketing:* 通道')
     assert(status.channels.length > 20, '通道数量应覆盖 5 组 IPC：' + status.channels.length)
     assert(
@@ -1898,6 +1909,7 @@ await r.check('P41', 'marketing 插件：默认开启；启用后 marketing:* �
 
     await host.disposeAll()
     assertEq(ipc.handlers.size, 0, '停用后 marketing:* 通道全部摘除')
+    assertEq(resolverDisposals, 1, '停用后 resolver 被摘除（A3a）')
   } finally {
     await host.disposeAll()
   }
@@ -2253,7 +2265,9 @@ await r.check('P43', '两个插件都在 inject 里声明 legacyDb，且激活�
       listPushChannels: async () => [],
       listPushTargets: async () => [],
       locateOldDbs: () => [],
-      readOldDb: async () => ({})
+      readOldDb: async () => ({}),
+      registerConversationKeyResolver: () => () => {},
+      isMultimodalConfigured: () => false
     }),
     // 旧库只读：只给 projects 一行，app_meta 带 voice 前缀（应被排除）
     legacyDb: () => ({
@@ -2729,6 +2743,7 @@ await r.check('P52', '通道注册器只在激活阶段存在：营销插件就�
       listPushTargets: async () => [],
       locateOldDbs: () => [],
       readOldDb: async () => ({}),
+      registerConversationKeyResolver: () => () => {},
       isMultimodalConfigured: () => false
     }),
     legacyDb: () => ({ list: async () => [] }),
@@ -2975,6 +2990,166 @@ await r.check(
     rmSync(root2, { recursive: true, force: true })
     rmSync(root, { recursive: true, force: true })
     return '并发不丢键 ✓'
+  }
+)
+
+await r.check(
+  'P59',
+  'migrations 白名单：只许 CREATE TABLE/INDEX/ALTER ADD COLUMN；ATTACH/PRAGMA/VACUUM/INSERT 拒绝（PLAN-5.0 A3a）',
+  async () => {
+    const { isAllowedMigrationStatement } = schemaMod
+    assertEq(isAllowedMigrationStatement('CREATE TABLE t (id TEXT)'), true, 'CREATE TABLE 放行')
+    assertEq(isAllowedMigrationStatement('CREATE INDEX idx ON t(id)'), true, 'CREATE INDEX 放行')
+    assertEq(isAllowedMigrationStatement('CREATE UNIQUE INDEX idx ON t(id)'), true, 'CREATE UNIQUE INDEX 放行')
+    assertEq(isAllowedMigrationStatement('CREATE TABLE t (id TEXT) STRICT'), true, 'STRICT 表放行')
+    assertEq(isAllowedMigrationStatement('ALTER TABLE t ADD COLUMN x TEXT'), true, 'ALTER ADD COLUMN 放行')
+    for (const bad of [
+      "ATTACH DATABASE 'x.db' AS other",
+      'PRAGMA journal_mode=WAL',
+      "VACUUM INTO 'x.db'",
+      'INSERT INTO t VALUES (1)',
+      'DROP TABLE t',
+      "CREATE TABLE t (id TEXT) ATTACH DATABASE 'x' AS y",
+      'CREATE TRIGGER trg AFTER INSERT ON t BEGIN SELECT 1; END'
+    ]) {
+      assertEq(isAllowedMigrationStatement(bad), false, `应拒绝：${bad}`)
+    }
+
+    const root = mkdtempSync(join(tmpdir(), 'umi-mig-'))
+    try {
+      const badDir = join(root, 'bad')
+      mkdirSync(badDir, { recursive: true })
+      writeFileSync(join(badDir, '001_bad.sql'), "ATTACH DATABASE 'other.db' AS other;\n")
+      let threw = null
+      try {
+        loadPluginSchema(badDir)
+      } catch (e) {
+        threw = e
+      }
+      assert(threw, '含 ATTACH 的迁移应拒绝加载')
+      assert(/不允许的语句/.test(String(threw?.message ?? '')), '错误信息可诊断：' + String(threw?.message ?? ''))
+
+      // 注释剥离后合并成一条的夹带也要拒绝（原报告的文件级反例）
+      const smuggleDir = join(root, 'smuggle')
+      mkdirSync(smuggleDir, { recursive: true })
+      writeFileSync(
+        join(smuggleDir, '001_smuggle.sql'),
+        "CREATE TABLE t (id TEXT); /* x */ ATTACH DATABASE 'other.db' AS other;\n"
+      )
+      let smuggleThrew = null
+      try {
+        loadPluginSchema(smuggleDir)
+      } catch (e) {
+        smuggleThrew = e
+      }
+      assert(smuggleThrew, '注释夹带的 ATTACH 也应拒绝')
+
+      const goodDir = join(root, 'good')
+      mkdirSync(goodDir, { recursive: true })
+      writeFileSync(
+        join(goodDir, '001_good.sql'),
+        'CREATE TABLE IF NOT EXISTS t (id TEXT PRIMARY KEY, created_at INTEGER);\nCREATE INDEX idx_t_created ON t(created_at);\n'
+      )
+      const parsed = loadPluginSchema(goodDir)
+      assertEq(parsed.targetUserVersion, 1, '合法迁移正常解析')
+      assert(Boolean(parsed.tables.t), '解析出表结构')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+    return 'DDL 白名单生效'
+  }
+)
+
+await r.check(
+  'P60',
+  'ctx.db.request 白名单：表级 CRUD 可用，migrate/maintenance.*/shutdown 拒绝（PLAN-5.0 A3a）',
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'umi-dbwhitelist-'))
+    const dbService = createPluginDbService({
+      dataDir: root,
+      nodePath: resolveNodePath(),
+      workerScriptPath: join(repoRoot, 'resources', 'database', 'db-worker.mjs')
+    })
+    try {
+      const db = dbService.forPlugin({ id: 'hello', dir: join(repoRoot, 'resources', 'plugins', 'hello') })
+      await db.migrate()
+      const count = await db.request('notes.count', {})
+      assertEq(typeof count?.count, 'number', '表级 count 可经 request 调用')
+
+      const forbidden = [
+        ['migrate', {}],
+        ['maintenance.vacuumInto', { path: join(root, 'x.db') }],
+        ['maintenance.checkpoint', {}],
+        ['shutdown', {}],
+        ['notes.migrate', {}]
+      ]
+      for (const [method, params] of forbidden) {
+        let threw = null
+        try {
+          await db.request(method, params)
+        } catch (e) {
+          threw = e
+        }
+        assert(threw, `应拒绝 request('${method}')`)
+        assert(
+          /白名单|未在插件 migrations 中定义/.test(String(threw?.message ?? '')),
+          `拒绝原因应可诊断（${method}）：${String(threw?.message ?? '')}`
+        )
+      }
+    } finally {
+      await dbService.disposeAll()
+      rmSync(root, { recursive: true, force: true })
+    }
+    return 'request 白名单生效'
+  }
+)
+
+await r.check(
+  'P61',
+  '会话键解析器：插件注册/解析/停用摘除；无 resolver 时 OPENCLAW_NOT_READY（A3a 拆 host→plugin 反向依赖）',
+  async () => {
+    const mod = await import(
+      pathToFileURL(
+        bundleEntry('electron/main/services/conversationKeyRegistry.ts', 'conversation-key-registry.mjs')
+      ).href
+    )
+    const { registerConversationKeyResolver, resolveConversationKey } = mod
+    const dispose = registerConversationKeyResolver('marketing', async (projectId) => `key-${projectId}`)
+    assertEq(await resolveConversationKey('p1'), 'key-p1', '已注册时解析成功')
+    dispose()
+    let threw = null
+    try {
+      await resolveConversationKey('p1')
+    } catch (e) {
+      threw = e
+    }
+    assert(threw, '摘除后必须拒绝')
+    assertEq(threw?.code, 'OPENCLAW_NOT_READY', '返回明确错误码')
+    return 'resolver 注册/摘除 ✓'
+  }
+)
+
+await r.check(
+  'P62',
+  'host→plugin 反向依赖接线：index 不再直读营销库；marketing activate 注册 resolver；hostUi 无裸 ipcMain',
+  async () => {
+    const indexSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf8')
+    assert(!indexSrc.includes("pluginDbFor('marketing')"), 'index.ts 不应再 pluginDbFor(marketing) 直读插件库')
+    assert(/resolveConversationKey/.test(indexSrc), 'index.ts 通过 registry 解析会话键')
+
+    const marketingMain = readFileSync(join(repoRoot, 'plugins', 'marketing', 'main.ts'), 'utf8')
+    assert(
+      /registerConversationKeyResolver/.test(marketingMain),
+      'marketing 在 activate 注册会话键 resolver'
+    )
+    assert(/ctx\.onDispose\(/.test(marketingMain), 'resolver 注册走 onDispose（停用摘除）')
+    assert(
+      !/typeof\s+ctx\.services\.hostOps/.test(marketingMain),
+      'marketing 不得用 typeof guard 掩盖 hostOps 接线错误（A3a 复审 P1-1）'
+    )
+
+    const hostUi = readFileSync(join(repoRoot, 'electron', 'main', 'services', 'hostUi.ts'), 'utf8')
+    assert(!/hostIpcMain/.test(hostUi), 'hostUi 不再导出裸 ipcMain')
   }
 )
 

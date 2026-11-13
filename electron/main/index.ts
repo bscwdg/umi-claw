@@ -79,6 +79,7 @@ import { CharacterKvStore } from './services/characterKv'
 import { probeNodeWritable } from './services/runtimeProbe'
 import type { CharacterManager } from './character/manager'
 import { AppError, ERROR_CODES } from './services/errors'
+import { resolveConversationKey } from './services/conversationKeyRegistry'
 import { DatabaseClient, WORK_DB_FILENAME } from './database/database'
 import { subprocessRegistry } from './subprocessRegistry'
 
@@ -284,32 +285,16 @@ function createWorkGatewayClient(): GatewayClient {
       clawManager.getStatus().running || clawManager.isMaintenanceActive(),
     // ── marketing 域借道（合并点）：只给 projectId 时按 Project 的 conversation_key 派生会话键 ──
     // work 域调用方始终传完整 `conv:` 键，永远不会走到这里（见 gatewayClient.resolveConversationUser）。
-    // 营销域借道：只给 projectId 时按 Project 的 conversation_key 派生会话键。
-    // Phase 3 起营销域数据在插件库，宿主直读（不依赖插件是否激活，也不需要它的 Manager）。
+    // A3a：宿主不再直读营销插件库；resolver 由插件 activate 时注册到 registry。
     conversationKeyResolver: async (projectId?: string) => {
       if (!projectId) {
         throw new AppError(ERROR_CODES.VALIDATION_ERROR, '缺少 projectId：营销域会话键必须由 Project 派生', {
           field: 'projectId'
         })
       }
-      // 营销域未启用时不该悄悄建库：resolver 只在插件启用时工作（对抗 C2）
-      if (!pluginRuntime?.isEnabled('marketing')) {
-        throw new AppError(ERROR_CODES.OPENCLAW_NOT_READY, '营销域插件未启用：无法派生 Project 会话键')
-      }
-      const db = pluginRuntime.pluginDbFor('marketing')
-      if (!db) {
-        throw new AppError(ERROR_CODES.OPENCLAW_NOT_READY, '插件库服务尚未初始化（应在 app.whenReady 之后取用）')
-      }
-      const project = await db.request<{ conversation_key?: string } | null>('projects.get', { pk: projectId })
-      const conversationKey = project?.conversation_key
-      if (!conversationKey) {
-        throw new AppError(
-          ERROR_CODES.VALIDATION_ERROR,
-          `Project ${projectId} 缺少 conversation_key（会话隔离键无法拼装）`,
-          { field: 'conversationKey' }
-        )
-      }
-      return conversationKey
+      // 宿主不再直读营销插件库：resolver 由插件 activate 时注册，停用自动摘除。
+      // 插件未启用/未激活时 registry 返回 OPENCLAW_NOT_READY（不建库）。
+      return resolveConversationKey(projectId)
     },
     actualPortResolver: () => readActualGatewayPort(),
     logger: (message: string) => console.log(message)

@@ -33,6 +33,36 @@ export interface PluginSchemaDef {
 
 const TABLE_CONSTRAINTS = new Set(['PRIMARY', 'FOREIGN', 'UNIQUE', 'CHECK', 'CONSTRAINT'])
 
+/**
+ * 迁移语句白名单（PLAN-5.0 A3a）。
+ *
+ * 为什么只允许三类：插件迁移由宿主直接交给 SQLite 执行，`ATTACH` 可跨库读写、
+ * `VACUUM INTO` 可任意路径写、`PRAGMA` 可改连接级行为——这些都会绕过插件 DB 的
+ * 参数化 CRUD 与数据目录边界。官方插件现有迁移全部是 CREATE/ALTER/INDEX，
+ * 因此白名单不会误伤；第三方迁移也必须遵守（见 PLUGIN-API §5）。
+ */
+const MIGRATION_ALLOWED = [
+  /^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?[A-Za-z_][A-Za-z0-9_]*["'`]?\s*\(/i,
+  /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?[A-Za-z_][A-Za-z0-9_]*["'`]?\s+ON\s+/i,
+  /^ALTER\s+TABLE\s+["'`]?[A-Za-z_][A-Za-z0-9_]*["'`]?\s+ADD\s+(?:COLUMN\s+)?["'`]?[A-Za-z_][A-Za-z0-9_]*["'`]?/i
+]
+
+const MIGRATION_FORBIDDEN =
+  /\b(?:ATTACH|DETACH|PRAGMA|VACUUM|INSERT|DROP|CREATE\s+(?:TRIGGER|VIEW|VIRTUAL\s+TABLE))\b/i
+
+/** 单条迁移语句是否在白名单内（供 loadPluginSchema 与验收共用） */
+export function isAllowedMigrationStatement(statement: string): boolean {
+  const text = statement.trim()
+  if (!text) return false
+  // 黑名单匹配前先抹掉字符串字面量：DEFAULT 'insert' 这类合法默认值不能误伤。
+  const masked = text.replace(/'(?:[^']|'')*'/g, "''")
+  // 防止 `CREATE TABLE ... ATTACH ...` 这类前缀匹配混过（即使 SQLite 会语法错，
+  // 也不该让它进入宿主执行路径）。
+  if (MIGRATION_FORBIDDEN.test(masked)) return false
+  return MIGRATION_ALLOWED.some((re) => re.test(text))
+}
+
+
 /** 解析单个 SQL 文件 → 语句数组（按分号切，忽略字符串里的分号不追求完美） */
 export function splitStatements(sql: string): string[] {
   // 先去掉 `--` 行注释与 `/* *\/` 块注释：否则 `-- 说明\nCREATE TABLE ...` 整段会被
@@ -63,7 +93,7 @@ export function splitStatements(sql: string): string[] {
 
 /** 解析 CREATE TABLE / ALTER TABLE ADD COLUMN，把结果并入 tables */
 export function applyStatement(tables: Record<string, PluginTableDef>, statement: string): void {
-  const create = /^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?([A-Za-z_][A-Za-z0-9_]*)["'`]?\s*\(([\s\S]*)\)\s*$/i.exec(
+  const create = /^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?["'`]?([A-Za-z_][A-Za-z0-9_]*)["'`]?\s*\(([\s\S]*)\)\s*(?:STRICT\s*(?:,\s*WITHOUT\s+ROWID)?|WITHOUT\s+ROWID)?\s*$/i.exec(
     statement.trim()
   )
   if (create) {
@@ -152,7 +182,14 @@ export function loadPluginSchema(migrationsDir: string): PluginSchemaDef {
     if (!Number.isFinite(version) || version <= 0) continue
     const sql = readFileSync(join(migrationsDir, file), 'utf-8')
     const statements = splitStatements(sql)
-    for (const statement of statements) applyStatement(tables, statement)
+    for (const statement of statements) {
+      if (!isAllowedMigrationStatement(statement)) {
+        throw new Error(
+          `插件迁移包含不允许的语句（${file}）：${statement.slice(0, 120)}（仅允许 CREATE TABLE / CREATE INDEX / ALTER TABLE ADD COLUMN）`
+        )
+      }
+      applyStatement(tables, statement)
+    }
     steps.push({ version, name: file.replace(/^\d+[-_]?/, '').replace(/\.sql$/, '') || file, statements })
   }
 

@@ -19,6 +19,8 @@ const repoRoot = join(here, '..')
 const ACCEPT = [
   // 首套跑边界门禁：零依赖、秒级；它必须被自动链路执行，否则 ratchet 只是文档
   ['boundary', 'test/boundary.accept.mjs'],
+  // 插件 API 迁移 ratchet（host/UI/hostBridge 三类耦合只准降；PLAN-5.0 A2/A3b）
+  ['plugin-api', 'test/plugin-api.accept.mjs'],
   // 样式 token 门禁紧随其后：同为零依赖秒级，卡住硬编码色/rem/错误变量名回退
   ['style-tokens', 'test/style-tokens.accept.mjs'],
   ['db-worker', 'test/db-worker.accept.mjs'],

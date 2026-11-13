@@ -32,6 +32,7 @@ import { PLUGIN_MAIN_ENTRIES } from '../kernel/plugins.main.generated'
 import { createPluginDbService, type PluginDbService } from './pluginDb'
 import { createPluginKvService } from './pluginKv'
 import { PluginSecretStore } from './pluginSecrets'
+import { registerConversationKeyResolver } from './conversationKeyRegistry'
 
 type PluginDbApi = ReturnType<PluginDbService['forPlugin']>
 
@@ -129,7 +130,10 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
         if (!dbService) throw new Error('插件库服务尚未初始化')
         return dbService.forPlugin(info)
       },
-      hostOps: () => deps.hostOps(),
+      hostOps: (info) => ({
+        ...deps.hostOps(),
+        registerConversationKeyResolver: (fn) => registerConversationKeyResolver(info.id, fn)
+      }),
       // 插件密钥（PLAN-4.0 §8.2）：safeStorage 按 plugin:<id>:<key> 隔离
       secrets: (info) =>
         new PluginSecretStore(join(dataDir, 'plugins', info.id, 'secrets.bin'), deps.encryption),

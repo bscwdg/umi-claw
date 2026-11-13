@@ -28,6 +28,10 @@ export function createHostOpsService(deps: HostOpsAdapterDeps): HostOpsApi {
     listPushTargets: async (channel) => (await deps.listPushTargets(channel)) as never,
     locateOldDbs: () => deps.locateOldDbs() as never,
     readOldDb: async (info) => (await deps.readOldDb(info)) as never,
+    // 基座不知道插件 id；pluginRuntime 会按插件替换成真实注册表（A3a）
+    registerConversationKeyResolver: () => {
+      throw new Error('registerConversationKeyResolver 必须由 pluginRuntime 按插件注入')
+    },
     isMultimodalConfigured: () => deps.isMultimodalConfigured()
   }
 }

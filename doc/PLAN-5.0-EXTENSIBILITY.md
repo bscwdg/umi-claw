@@ -149,6 +149,25 @@ renderer
 15. **插件 id 保留字与数据根**：`plugin-data/<id>/` 独立数据根；保留 id（host/plugin/system/...）；覆盖「删除全部数据」、宿主备份、卸载导出。
 16. **门禁扩容**：renderer 插件→宿主 `src/**`；`plugins/**` 的 `node:fs`/`node:child_process`/裸 electron；`templates/`、`plugin-sdk/` 纳入 typecheck。
 
+### 3.1.1 A3a 实施状态（2026-11-13）
+
+已落地（有断言/测试）：
+- migrations DDL 白名单（CREATE TABLE/INDEX/ALTER ADD COLUMN + 黑名单；STRICT 可解析）
+- `ctx.db.request` 白名单（表级 CRUD + `knowledge.search`；禁 migrate/maintenance/shutdown）
+- gen 清理已删插件的 `resources/plugins/<id>`（空插件列表不清）
+- host→plugin 反向依赖：会话键 resolver 注册表（marketing activate 注册、onDispose 摘除）
+- 删除 work 插件原始 `ipcMain` fallback、`hostUi` 不再导出裸 `ipcMain`
+- `scripts/check-plugin-api.mjs` + baseline + `test/plugin-api.accept.mjs`（ratchet 已注册 run-all）
+- 验收：45 套 / 846 条 + node:test 21（全绿）
+
+未完成（下次 A3a 续）：
+- 第三方可见面 async 化 + 事件/流式 RPC（依赖 B1）
+- `onDemand` 真懒激活；`contributes.settings/commands` 消费
+- `capabilities` 与 `inject` 合并；`ctx.host` 公开/内部拆分
+- `hostBridge` 收窄与 UI 宿主 import 收敛（23 处）
+- consent 的 host→work 插件库反向读（登记，A3b 处理）
+- `knowledge.search` 在 marketing 插件库的 pre-existing 缺口（单独修）
+
 ### 3.2 Phase 0 出口判据
 
 - [ ] 基线（分支/commit/命令/TEMP）可复现，accept 全绿并留档
@@ -247,7 +266,7 @@ renderer
 | 打包 | `npm run build` + packaged smoke |
 | 审查 | AGENTS §12：每 commit 对抗审查；每 WP 两次独立检查 |
 
-**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**44 套**（ACCEPT 42 + e2e + smoke）、accept result **839 条** + `node:test` **21 条** = **860**。AGENTS/RUNBOOK 已同步该口径；release/4.0 在 voice 合并后复核。后续以每次留档为准。
+**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**45 套**（ACCEPT 43 + e2e + smoke）、accept result **846 条** + `node:test` **21 条** = **867**。AGENTS/RUNBOOK 已同步该口径；release/4.0 在 voice 合并后复核。后续以每次留档为准。
 
 ---
 

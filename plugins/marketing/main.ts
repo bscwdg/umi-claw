@@ -71,10 +71,13 @@ export default definePlugin({
   async activate(ctx) {
     const db = ctx.services.db
     const openclaw = ctx.services.openclaw
+    const hostOps = ctx.services.hostOps
     // 4.2 B3：后台任务中止登记（宿主退出时统一调用，不再反向依赖本插件内部函数）
     const abort = ctx.services.abort
 
-    if (!db || !openclaw) throw new Error('marketing 插件缺少必需服务（db / openclaw）')
+    if (!db || !openclaw || !hostOps) {
+      throw new Error('marketing 插件缺少必需服务（db / openclaw / hostOps）')
+    }
 
     await db.migrate()
 
@@ -97,6 +100,14 @@ export default definePlugin({
       getDailyhotBase: () => ctx.services.config?.get('dailyhotBase') ?? null,
       logger: (m) => ctx.logger.info(m)
     })
+
+    // 宿主不再直读营销插件库：会话键 resolver 由插件注册（A3a）。
+    ctx.onDispose(
+      hostOps.registerConversationKeyResolver(async (projectId) => {
+        const project = await marketing.projects.getProject(projectId)
+        return project.conversation_key
+      })
+    )
 
     // 旧库数据一次性导入（只读 umi-claw.db → 插件库）：后台跑，失败不写标记
     const legacy = ctx.services.legacyDb

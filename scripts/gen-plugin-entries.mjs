@@ -113,7 +113,21 @@ for (const p of plugins) {
   }
 }
 
+// 清理已删除插件的 resources 副本：只增长不清理会让安装包残留「装了但入口表没有」的清单，
+// 排查时无法区分是删除遗留还是构建漏拷（PLAN-5.0 A3a）。
+// 注意：plugins 列表为空时不清——那通常意味着目录被搬走/构建异常，清空 resources 会放大问题。
+const activeIds = new Set(plugins.map((p) => p.id))
+let removedResources = 0
+if (plugins.length > 0 && existsSync(resourcesPluginsDir)) {
+  for (const entry of readdirSync(resourcesPluginsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    if (activeIds.has(entry.name)) continue
+    rmSync(join(resourcesPluginsDir, entry.name), { recursive: true, force: true })
+    removedResources += 1
+  }
+}
+
 console.log(`[plugin:gen] ${plugins.length} 个插件：${plugins.map((p) => p.id).join(', ') || '(无)'}`)
 console.log(`[plugin:gen] main 入口 → ${MAIN_OUT}`)
 console.log(`[plugin:gen] ui 入口   → ${UI_OUT}（${uiPlugins.length} 个有 renderer）`)
-console.log(`[plugin:gen] 清单副本 → ${resourcesPluginsDir}`)
+console.log(`[plugin:gen] 清单副本 → ${resourcesPluginsDir}${removedResources ? `（清理 ${removedResources} 个已删插件）` : ''}`)

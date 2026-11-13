@@ -54,8 +54,8 @@ export interface PluginDbApi {
   update(table: string, id: unknown, patch: Record<string, unknown>): Promise<{ changes: number }>
   remove(table: string, id: unknown): Promise<{ deleted: boolean }>
   /**
-   * 底层方法调用（装箱用逃生门）。`table.op` 形式由 worker 白名单校验，`migrate` / `schema.info` 等
-   * 内置方法也走这里——work/marketing 的 Manager 只依赖 database.request，装箱时可以直接复用。
+   * 底层方法调用（装箱用逃生门）。A3a 起只允许 `<table>.<op>` 白名单（含 upsert/count），
+   * 且禁 `migrate` / `maintenance.*` / `shutdown`；第三方不可见。
    */
   request<T = unknown>(method: string, params?: unknown): Promise<T>
   /** app_meta 读写（偏好类配置；work/marketing 的提醒与外发开关都落这里） */
@@ -203,6 +203,11 @@ export interface HostOpsApi {
   listPushTargets(channel: string): Promise<unknown[]>
   locateOldDbs(): unknown[]
   readOldDb(info: unknown): Promise<unknown>
+  /**
+   * 注册「projectId → conversation_key」解析器（营销插件在自己的库里读）。
+   * 返回摘除函数；停用插件时由 ctx.onDispose 摘除。宿主不再直读插件库。
+   */
+  registerConversationKeyResolver(fn: (projectId: string) => Promise<string>): () => void
   /**
    * 当前配置的模型是否支持多模态（按次读配置，与网关同源）。
    * 扫描件识别用它做「栅格化前预检」：没配多模态模型就别先花几秒解码 PDF。

@@ -375,6 +375,15 @@ export async function loadWorkIpcChannels({ electronStub }) {
   if (typeof workMod.registerWorkIpc !== 'function') {
     throw new Error('plugins/work/main/ipc/work.ts 未导出 registerWorkIpc')
   }
+  // A3a 起 work.ts 不再回落到宿主 ipcMain：测试必须像生产一样先注入注册器。
+  workMod.setWorkIpcRegistrar({
+    handle(channel, fn) {
+      globalThis.__handlers?.set(channel, fn)
+    },
+    handleEvent(channel, fn) {
+      globalThis.__handlers?.set(channel, fn)
+    }
+  })
   workMod.registerWorkIpc({
     profile: stub, matters: stub, todos: stub, records: stub, context: stub,
     today: stub, router: stub, reports: stub, qa: stub, tools: stub,

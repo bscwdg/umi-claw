@@ -12,6 +12,11 @@ import type { DbSchemaProfile } from '../database/schemas'
 import { loadPluginSchema } from '../kernel/pluginSchema'
 import type { PluginDbApi } from '../kernel/services'
 
+/** 允许经 `request` 调用的表级方法（白名单，A3a） */
+const ALLOWED_TABLE_OPS = new Set(['list', 'get', 'create', 'upsert', 'update', 'delete', 'count'])
+/** 特例：db-worker 的全文检索分发方法（work/marketing 的 knowledge.search 在用） */
+const ALLOWED_SPECIAL_METHODS = new Set(['knowledge.search'])
+
 export interface PluginDbServiceOptions {
   dataDir: string
   /** 便携 Node（configManager.getNodePath()） */
@@ -72,6 +77,20 @@ export function createPluginDbService(opts: PluginDbServiceOptions): PluginDbSer
         }
       }
 
+      /** request 白名单：只允许表级 CRUD + knowledge.search；禁 migrate / maintenance.* / shutdown */
+      const assertAllowedRequest = (method: string): void => {
+        if (ALLOWED_SPECIAL_METHODS.has(method)) return
+        const parts = method.split('.')
+        if (parts.length !== 2) {
+          throw new Error(`插件请求方法不在白名单：${method}（只允许 <table>.<op> 或 knowledge.search）`)
+        }
+        const [table, op] = parts
+        ensureTable(table)
+        if (!ALLOWED_TABLE_OPS.has(op)) {
+          throw new Error(`插件请求操作不在白名单：${method}（允许：${[...ALLOWED_TABLE_OPS].join(', ')}）`)
+        }
+      }
+
       /** 主键对象：单主键用 `{ pk: value }` 走 worker 的简写形式 */
       const keyParams = (table: string, idValue: unknown): Record<string, unknown> => {
         const pk = schemaDef.tables[table].pk
@@ -86,6 +105,7 @@ export function createPluginDbService(opts: PluginDbServiceOptions): PluginDbSer
           await client.ensureReady()
         },
         async request(method, params) {
+          assertAllowedRequest(method)
           return (await client.request(method, (params ?? {}) as Record<string, unknown>)) as never
         },
         async metaGet(key) {
