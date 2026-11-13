@@ -13,10 +13,11 @@
 | --- | --- | --- |
 | SDK 分层（public/official-*/client*/testing） | ✅ 骨架（无 alias/注入） | A2 → A3b |
 | manifest `apiVersion` / `engines.host` 校验 | ✅ A4（hostVersion 注入；缺省不限制） | A4 |
-| permissions allowlist / 未知键 fail-closed | ⚠️ B2 原型（manifest/授权/撤销/审计/NODE_OPTIONS；服务桥 B3） | A3a/B2 |
+| permissions allowlist / 未知键 fail-closed | ⚠️ B2 原型 + B3 服务桥（manifest/授权/撤销/审计/NODE_OPTIONS） | A3a/B2/B3 |
+| `ctx.services` 子进程代理（JSON RPC → 宿主服务） | ✅ B3 原型（serviceFactories；权限 broker 前置） | B3 |
 | migrations DDL 白名单 / 禁 ATTACH/VACUUM | ✅ A3a | A3a |
 | `ctx.db.request` 收窄（官方 `<table>.<op>`） | ✅ A3a（禁 migrate/maintenance/shutdown） | A3a |
-| async 第三方可见面 / 事件流 RPC | ❌ Phase 1 | A3a/A1 |
+| async 第三方可见面 / 事件流 RPC | ⚠️ B3 同步 request/response；事件流仍 ❌ | A3a/A1 |
 | configSchema / config.onChange | ❌ Phase 1 | A4/B2 |
 | 插件 IPC 统一 `{ok,data}` 信封 | ⚠️ 官方插件手工包 | A3a |
 | `test/plugin-contract.accept.mjs` | ✅ A5（templates/plugin） | A5 |

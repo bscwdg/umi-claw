@@ -7,7 +7,7 @@
 //   - 去掉与 3.0 无关的 HOT_SOURCE_ERROR（营销热点采集专属）
 //   - 新增 STREAM_TRUNCATED：流式响应体已开始后的传输中断（2.0 v1.21 已从 connect-failed 拆出）
 
-/** §14.2 错误码表（唯一的 code 真相来源，共 12 项） */
+/** §14.2 错误码表（唯一的 code 真相来源，共 15 项） */
 export const ERROR_CODES = {
   /** 参数不合法 */
   VALIDATION_ERROR: 'VALIDATION_ERROR',
@@ -17,6 +17,8 @@ export const ERROR_CODES = {
   CONFLICT: 'CONFLICT',
   /** 插件运行时操作失败（宿主/插件管理面） */
   PLUGIN_OPERATION_FAILED: 'PLUGIN_OPERATION_FAILED',
+  /** 插件未授权（PLAN-5.0 B2 权限 broker） */
+  PLUGIN_PERMISSION_DENIED: 'PLUGIN_PERMISSION_DENIED',
   /** Worker 查询失败（重试后仍败） */
   DB_ERROR: 'DB_ERROR',
   /** 便携 Node 不存在，Worker 无法启动 */

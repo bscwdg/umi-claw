@@ -42,6 +42,7 @@ import {
   type PermissionDecision,
   type PluginPermissionStore
 } from './pluginPermissions'
+import { createPluginServiceBridge, type PluginServiceBridge } from './pluginServiceBridge'
 
 type PluginDbApi = ReturnType<PluginDbService['forPlugin']>
 
@@ -119,6 +120,8 @@ export interface PluginRuntime {
   checkPermission(pluginId: string, action: PermissionAction): PermissionDecision
   /** 权限汇总（管理页展示；不含 secrets） */
   permissionGrants(): Array<{ id: string; granted: boolean; grantedAt: number | null; requested: unknown }>
+  /** Phase 1 B3：子进程服务调用（supervisor onService 用）；过权限 broker */
+  callPluginService(pluginId: string, service: string, method: string, args: unknown[]): Promise<unknown>
 }
 
 export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
@@ -128,6 +131,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
   let dbService: PluginDbService | null = null
   let permissionStore: PluginPermissionStore | null = null
   let permissionBroker: ReturnType<typeof createPermissionBroker> | null = null
+  let serviceBridge: PluginServiceBridge | null = null
 
   const statuses = (): PluginStatus[] => host?.statuses() ?? []
 
@@ -277,6 +281,16 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
         })
 
         const serviceFactories = buildServiceFactories(dataDir)
+        serviceBridge = createPluginServiceBridge({
+          broker: permissionBroker!,
+          resolveService: (pluginId, name) => {
+            if (!Object.prototype.hasOwnProperty.call(serviceFactories, name)) return undefined
+            const factory = serviceFactories[name as keyof typeof serviceFactories]
+            if (typeof factory !== 'function') return undefined
+            return factory({ id: pluginId, dir: join(deps.resourcesRoot(), 'plugins', pluginId) })
+          },
+          logger: deps.logger
+        })
         const reg = new PluginRegistry({
           persistedEnabled: await stateStore.load(),
           hostServices: availableServices(serviceFactories),
@@ -416,7 +430,12 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       return permissionBroker.check(pluginId, action)
     },
 
-    permissionGrants
+    permissionGrants,
+
+    callPluginService(pluginId, service, method, args) {
+      if (!serviceBridge) return Promise.reject(new Error('服务桥未初始化'))
+      return serviceBridge.call(pluginId, service, method, args)
+    }
   }
 }
 

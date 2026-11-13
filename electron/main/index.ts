@@ -10,7 +10,8 @@ import {
   Notification,
   // 系统唤醒后热点采集补检（Phase 4：改为插件订阅 hostEvents.onResume）
   safeStorage,
-  powerMonitor
+  powerMonitor,
+  utilityProcess
 } from 'electron'
 import { join, parse, dirname, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -29,6 +30,10 @@ import { createTerminalSessionRegistry } from './terminalSessions'
 
 // ── 4.0 插件内核（Phase 0/1）──────────────────────────────────────────────────
 import { createPluginRuntime, type PluginRuntime } from './services/pluginRuntime'
+import { PluginSupervisor, createUtilityProcessFork } from './kernel'
+import { buildPluginPermissionEnv } from './services/pluginPermissions'
+import { createPermissionAudit, createPermissionBroker, createPermissionStore } from './services/pluginPermissions'
+import { createPluginServiceBridge } from './services/pluginServiceBridge'
 import {
   createHostOpsService,
   createNotificationsService,
@@ -1299,6 +1304,74 @@ app.whenReady().then(async () => {
       JSON.stringify({ ok: true, version: app.getVersion(), at: Date.now() })
     )
     app.quit()
+    return
+  }
+
+  // Phase 1 B3 真机探针：真实 utilityProcess + permission NODE_OPTIONS + 服务桥。
+  // 只给 e2e 用；正常启动不设 env 就完全无行为。
+  if (process.env.UMI_ISOLATION_PROBE === '1') {
+    const probeDir = process.env.CLAW_DATA_DIR || app.getPath('userData')
+    mkdirSync(probeDir, { recursive: true })
+    const pluginDir = process.env.UMI_ISOLATION_PLUGIN_DIR || process.cwd()
+    const mainPath = process.env.UMI_ISOLATION_MAIN
+    const dataDir = join(probeDir, 'plugin-data')
+    // 走真实权限 broker + service bridge（不是 stub）：E2E 要证明 B2/B3 串联
+    const permStore = createPermissionStore(join(probeDir, 'permissions.json'))
+    permStore.grant('probe', { services: ['kv'] })
+    const broker = createPermissionBroker({
+      store: permStore,
+      audit: createPermissionAudit(join(probeDir, 'plugin-audit.log')),
+      rootsFor: () => ({ pluginDir, dataDir })
+    })
+    const serviceBridge = createPluginServiceBridge({
+      broker,
+      resolveService: (_id, name) =>
+        name === 'kv' ? { get: async () => 'host-value', set: async () => true } : undefined
+    })
+    const supervisor = new PluginSupervisor({
+      fork: createUtilityProcessFork(utilityProcess),
+      logger: (line) => console.error('[isolation-probe]', line),
+      onService: (id, service, method, args) => serviceBridge.call(id, service, method, args)
+    })
+    try {
+      if (!mainPath) throw new Error('缺少 UMI_ISOLATION_MAIN')
+      const entry = join(__dirname, 'pluginProcessChild.js')
+      const env = buildPluginPermissionEnv({
+        pluginDir,
+        dataDir,
+        cwd: process.cwd(),
+        permissions: {},
+        extraReadDirs: [
+          dirname(entry),
+          process.resourcesPath,
+          dirname(process.resourcesPath),
+          app.getAppPath()
+        ]
+      })
+      await supervisor.start({
+        pluginId: 'probe',
+        entry,
+        mainPath,
+        dataDir,
+        hostVersion: app.getVersion(),
+        cwd: process.cwd(),
+        services: ['kv'],
+        env
+      })
+      const result = await supervisor.invoke('read')
+      writeFileSync(
+        join(probeDir, 'isolation-probe.json'),
+        JSON.stringify({ ok: true, result, state: supervisor.state, at: Date.now() })
+      )
+    } catch (e) {
+      writeFileSync(
+        join(probeDir, 'isolation-probe.json'),
+        JSON.stringify({ ok: false, error: (e as Error)?.message ?? String(e), at: Date.now() })
+      )
+    } finally {
+      await supervisor.dispose()
+      app.quit()
+    }
     return
   }
   protocol.handle('app', async (request) => {

@@ -68,13 +68,15 @@ const ACCEPT = [
   ['plugin-contract', 'test/plugin-contract.accept.mjs'],
   ['plugin-isolation', 'test/plugin-isolation.accept.mjs'],
   ['plugin-permissions', 'test/plugin-permissions.accept.mjs'],
+  ['plugin-service-bridge', 'test/plugin-service-bridge.accept.mjs'],
   ['consent', 'test/consent.accept.mjs'],
   ['ui', 'test/ui.accept.mjs']
 ]
 // 全部单模块绿后
 const E2E = [
   ['one-day e2e', 'test/one-day.e2e.mjs'],
-  ['startup e2e', 'test/startup.e2e.mjs']
+  ['startup e2e', 'test/startup.e2e.mjs'],
+  ['isolation e2e', 'test/plugin-isolation.e2e.mjs']
 ]
 const SMOKE = ['packaged smoke', 'test/packaged.smoke.mjs']
 

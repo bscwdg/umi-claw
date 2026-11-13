@@ -58,6 +58,34 @@ export function createChildRuntime(options: ChildRuntimeOptions): ChildRuntime {
   let cleanup: (() => void) | null = null
   let plugin: Record<string, unknown> | null = null
   let disposed = false
+  let nextServiceId = 1
+  const servicePending = new Map<
+    number,
+    { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+  >()
+
+  const callService = (service: string, method: string, args: unknown[]): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      const id = nextServiceId++
+      const timer = setTimeout(() => {
+        servicePending.delete(id)
+        const error = new Error(`服务调用超时：${service}.${method}`)
+        ;(error as Error & { code?: string }).code = 'PLUGIN_OPERATION_FAILED'
+        reject(error)
+      }, 30_000)
+      servicePending.set(id, { resolve, reject, timer })
+      send({ type: 'service', id, service, method, args })
+    })
+
+  const serviceProxy = (service: string): Record<string, (...args: unknown[]) => Promise<unknown>> =>
+    new Proxy({} as Record<string, (...args: unknown[]) => Promise<unknown>>, {
+      get(_target, method) {
+        // await ctx.services.kv 不能把代理当 thenable（否则永久挂起）
+        if (method === 'then') return undefined
+        if (typeof method !== 'string') return undefined
+        return (...args: unknown[]) => callService(service, method, args)
+      }
+    })
 
   const ctx = {
     pluginId: '',
@@ -85,7 +113,7 @@ export function createChildRuntime(options: ChildRuntimeOptions): ChildRuntime {
       if (!/^[A-Za-z][\w.-]*$/.test(method)) throw new Error(`非法 IPC 方法名：${method}`)
       handlers.set(method, handler)
     },
-    services: {} as Record<string, never>
+    services: {} as Record<string, Record<string, (...args: unknown[]) => Promise<unknown>>>
   }
 
   async function handleInit(message: Extract<HostToChildMessage, { type: 'init' }>): Promise<void> {
@@ -93,6 +121,7 @@ export function createChildRuntime(options: ChildRuntimeOptions): ChildRuntime {
     ctx.pluginId = message.pluginId
     ctx.config = message.config
     ctx.host.version = message.hostVersion
+    ctx.services = Object.fromEntries((message.services ?? []).map((name) => [name, serviceProxy(name)]))
     plugin = await loadMain(message.mainPath)
     const mod = plugin as unknown as {
       activate?: unknown
@@ -194,6 +223,20 @@ export function createChildRuntime(options: ChildRuntimeOptions): ChildRuntime {
         case 'invoke':
           await handleInvoke(message)
           break
+        case 'service-result': {
+          const pending = servicePending.get(message.id)
+          if (pending) {
+            servicePending.delete(message.id)
+            clearTimeout(pending.timer)
+            if (message.ok) pending.resolve(message.data)
+            else {
+              const error = new Error(message.error?.message ?? '服务调用失败')
+              ;(error as Error & { code?: string }).code = message.error?.code ?? 'PLUGIN_OPERATION_FAILED'
+              pending.reject(error)
+            }
+          }
+          break
+        }
         case 'shutdown':
           await handleDeactivate().catch(() => undefined)
           dispose()
@@ -215,6 +258,10 @@ export function createChildRuntime(options: ChildRuntimeOptions): ChildRuntime {
   function dispose(): void {
     if (disposed) return
     disposed = true
+    // 不 reject pending：插件进程正在退出，插件作者未必 await 每个调用；
+    // reject 会制造 unhandledRejection 并可能把退出码搞乱。
+    for (const [, pending] of servicePending) clearTimeout(pending.timer)
+    servicePending.clear()
     for (const d of disposers.splice(0)) d()
     handlers = new Map()
     if (cleanup) {
@@ -275,5 +322,10 @@ export function startPluginProcessChild(): void {
 
 // 只有作为 utilityProcess 入口时才自动启动；Node fork 测试由 wrapper 显式调用 startPluginProcessChild()
 if ((process as unknown as { parentPort?: unknown }).parentPort) {
-  startPluginProcessChild()
+  try {
+    startPluginProcessChild()
+  } catch (e) {
+    process.stderr.write(`CHILD_START_ERROR ${(e as Error)?.stack ?? String(e)}\n`)
+    process.exit(1)
+  }
 }

@@ -252,6 +252,8 @@ const ENV_ALLOWLIST = new Set(['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'TEMP
 export interface PermissionEnvOptions {
   pluginDir: string
   dataDir: string
+  /** 额外只读根（child 入口目录等；同样走 cwd 相对路径） */
+  extraReadDirs?: string[]
   /** 子进程 cwd；缺省 = pluginDir。NODE_OPTIONS 用相对路径，避开 "Program Files" 空格 */
   cwd?: string
   permissions?: PluginPermissions
@@ -282,6 +284,7 @@ export function buildPluginPermissionEnv(options: PermissionEnvOptions): Record<
 
   const readDirs = new Set<string>([flagPath(options.pluginDir)])
   const writeDirs = new Set<string>()
+  for (const dir of options.extraReadDirs ?? []) readDirs.add(flagPath(dir))
   for (const rel of options.permissions?.fs?.read ?? []) {
     const dir = pathFromData(options.dataDir, rel)
     if (dir) readDirs.add(flagPath(dir))

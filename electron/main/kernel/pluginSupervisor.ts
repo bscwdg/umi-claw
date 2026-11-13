@@ -10,6 +10,7 @@
 // 依赖注入 fork，便于纯 Node 验收覆盖状态机；生产默认用 Electron utilityProcess。
 
 import { EventEmitter } from 'node:events'
+import { dirname } from 'node:path'
 import type { PluginProcessSpec, PluginProcessState, HostToChildMessage, ChildToHostMessage } from './pluginProcessProtocol'
 
 export interface ChildProcessLike extends EventEmitter {
@@ -29,6 +30,8 @@ export interface PluginSupervisorOptions {
   crashWindowMs?: number
   crashLimit?: number
   stopTimeoutMs?: number
+  /** B3 服务桥：子进程 ctx.services.* 转发到宿主；返回 undefined 表示服务不存在 */
+  onService?: (pluginId: string, service: string, method: string, args: unknown[]) => Promise<unknown>
   logger?: (line: string) => void
 }
 
@@ -41,7 +44,8 @@ interface PendingRequest {
 const DEFAULT_BACKOFF = [1000, 2000, 4000]
 
 export class PluginSupervisor extends EventEmitter {
-  private readonly opts: Required<Omit<PluginSupervisorOptions, 'logger'>> & Pick<PluginSupervisorOptions, 'logger'>
+  private readonly opts: Omit<Required<PluginSupervisorOptions>, 'onService' | 'logger'> &
+    Pick<PluginSupervisorOptions, 'onService' | 'logger'>
   private child: ChildProcessLike | null = null
   private spec: PluginProcessSpec | null = null
   private _state: PluginProcessState = 'stopped'
@@ -153,7 +157,8 @@ export class PluginSupervisor extends EventEmitter {
         pluginId: spec.pluginId,
         mainPath: spec.mainPath,
         dataDir: spec.dataDir,
-        hostVersion: spec.hostVersion
+        hostVersion: spec.hostVersion,
+        services: spec.services ?? []
       })
     })
   }
@@ -212,11 +217,49 @@ export class PluginSupervisor extends EventEmitter {
         this.opts.logger?.(`[plugin:${this.spec?.pluginId ?? '?'}] ${message.message}`)
         this.emit('log', message)
         break
+      case 'service':
+        if (this._state === 'running') void this.handleService(message)
+        break
       case 'event':
         this.emit('plugin-event', message)
         break
       default:
         this.opts.logger?.(`[plugin-process] 未知子进程消息：${JSON.stringify(message)}`)
+    }
+  }
+
+  private async handleService(message: Extract<ChildToHostMessage, { type: 'service' }>): Promise<void> {
+    const child = this.child
+    if (!child) return
+    try {
+      if (!this.opts.onService) throw Object.assign(new Error('宿主未提供服务桥'), { code: 'PLUGIN_OPERATION_FAILED' })
+      const data = await this.opts.onService(
+        this.spec?.pluginId ?? '',
+        message.service,
+        message.method,
+        message.args
+      )
+      if (this.child !== child) return
+      try {
+        child.postMessage({ type: 'service-result', id: message.id, ok: true, data })
+      } catch {
+        /* child 已退出 */
+      }
+    } catch (e) {
+      if (this.child !== child) return
+      try {
+        child.postMessage({
+          type: 'service-result',
+          id: message.id,
+          ok: false,
+          error: {
+            code: (e as { code?: string })?.code ?? 'PLUGIN_OPERATION_FAILED',
+            message: (e as Error)?.message ?? String(e)
+          }
+        })
+      } catch {
+        /* child 已退出 */
+      }
     }
   }
 
@@ -387,4 +430,40 @@ export class PluginSupervisor extends EventEmitter {
 
 export function createPluginSupervisor(options: PluginSupervisorOptions): PluginSupervisor {
   return new PluginSupervisor(options)
+}
+
+export interface UtilityProcessForkApi {
+  fork(
+    modulePath: string,
+    args?: string[],
+    options?: Record<string, unknown>
+  ): ChildProcessLike
+}
+
+/**
+ * 生产 fork：Electron utilityProcess（由调用方注入 electron.utilityProcess，避免 kernel 直接 import electron）。
+ * 注意：权限 env 必须显式传入，缺省 fail-closed，绝不默认透传 process.env。
+ */
+export function createUtilityProcessFork(utilityProcess: UtilityProcessForkApi): ForkPluginProcess {
+  return (spec) => {
+    if (!spec.env) {
+      throw Object.assign(new Error('PLUGIN_PERMISSION_CONFIG_INVALID：fork 必须显式传权限 env'), {
+        code: 'PLUGIN_PERMISSION_CONFIG_INVALID'
+      })
+    }
+    const child = utilityProcess.fork(spec.entry, [], {
+      cwd: spec.cwd ?? dirname(spec.mainPath),
+      env: spec.env as NodeJS.ProcessEnv,
+      serviceName: `plugin-${spec.pluginId}`,
+      stdio: 'pipe'
+    })
+    // 子进程日志单独前缀转发；pipe 必须有人读，否则写满会阻塞子进程
+    const proc = child as unknown as {
+      stdout?: NodeJS.ReadableStream
+      stderr?: NodeJS.ReadableStream
+    }
+    proc.stdout?.on('data', (chunk) => process.stdout.write(`[plugin:${spec.pluginId}] ${String(chunk)}`))
+    proc.stderr?.on('data', (chunk) => process.stderr.write(`[plugin:${spec.pluginId}] ${String(chunk)}`))
+    return child
+  }
 }

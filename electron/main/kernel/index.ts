@@ -3,10 +3,12 @@
 export { PLUGIN_ISOLATION_ENV, isPluginIsolationEnabled } from './pluginIsolation'
 export {
   createPluginSupervisor,
+  createUtilityProcessFork,
   PluginSupervisor,
   type ChildProcessLike,
   type ForkPluginProcess,
-  type PluginSupervisorOptions
+  type PluginSupervisorOptions,
+  type UtilityProcessForkApi
 } from './pluginSupervisor'
 export {
   isChildToHostMessage,

@@ -158,7 +158,7 @@ renderer
 - host→plugin 反向依赖：会话键 resolver 注册表（marketing activate 注册、onDispose 摘除）
 - 删除 work 插件原始 `ipcMain` fallback、`hostUi` 不再导出裸 `ipcMain`
 - `scripts/check-plugin-api.mjs` + baseline + `test/plugin-api.accept.mjs`（ratchet 已注册 run-all）
-- 验收：49 套 / 881 项 + node:test 21（全绿）
+- 验收：51 套 / 888 项 + node:test 21（全绿）
 
 未完成（下次 A3a 续）：
 - 第三方可见面 async 化 + 事件/流式 RPC（依赖 B1）
@@ -173,7 +173,7 @@ renderer
 - 79 处 `electron/main/**` import / 38 文件已迁到 `plugin-sdk/src/official-*`（按宿主模块拆子路径，避免 barrel 把 mammoth/electron 链进 domain bundle）。
 - `check-plugin-api` ratchet：**host import 0**（值 0 / type 0）；UI host import 23→4（+2 type；4 处 ConfirmDialog .vue 直连属测试管线例外）；hostBridge consumers 13（useWorkStream 移入插件后必须经 hostBridge；官方 UI 内部，Phase 1 前不动）。
 - 未完成：UI 的 `@/` 宿主 import 仅剩 4 处 ConfirmDialog（等 UI 测试管线支持跨 .vue 或组件下沉）；hostBridge 收窄/下沉留 Phase 1；`@umi/plugin-sdk/*` alias/宿主注入（B1）。
-- 验收：plugin.accept 71/71、plugin-contract 3/3、plugin-api 3/3、ui 28/28、build 通过；全量 accept 49 套/881 项全绿（含启动级 E2E）。
+- 验收：plugin.accept 71/71、plugin-contract 3/3、plugin-api 3/3、ui 28/28、build 通过；全量 accept 51 套/888 项全绿（含启动级 E2E）。
 
 ### 3.1.3 A4/A5 兼容与契约（2026-11-13）
 
@@ -261,7 +261,16 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - 测试：`test/plugin-permissions.accept.mjs` 10/10（manifest/store/broker/audit/env/空格路径真 Electron/损坏 grant）。
 - 未完成（B3/B4）：真实 `utilityProcess` 启动时接 env；服务调用 broker 接入；越权负向用例；撤销后进程重启语义。
 
-### 4.4 Phase 2 起点提醒
+### 4.4 B3 实施状态（2026-11-14）
+
+- 协议新增 `service`/`service-result`；child `ctx.services` 为 Proxy，调用转发到宿主；supervisor `onService` 回包。
+- `pluginServiceBridge`：先过 B2 broker（未授权 `PLUGIN_PERMISSION_DENIED`），按 method 调宿主 serviceFactories；未知服务/方法/危险属性 NOT_FOUND；AppError 跨 bundle 按 code 透传。
+- `createUtilityProcessFork`：真实 `utilityProcess.fork` + cwd + 权限 env；`pluginRuntime.callPluginService` 接线。
+- 真机 E2E：`plugin-isolation.e2e` 启动真实 Electron，utilityProcess 加载 fixture，插件 `ctx.services.kv.get` 经宿主返回，invoke 成功。
+- 测试：`plugin-service-bridge` 6/6；`plugin-isolation.e2e` 1/1；全量 51 套/888 项（887 通过 + 1 显式跳过）。
+- 未完成（B4/B5）：事件流 RPC、HTTP/dialog/secrets 完整代理、越权负向、性能、开发者模式。
+
+### 4.5 Phase 2 起点提醒
 
 ---
 
