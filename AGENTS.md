@@ -58,6 +58,8 @@ plugins/             # 官方内置插件（同仓源码，参与宿主构建）
 ├── hello/           # 内核演示插件
 └── shared/
 
+plugin-sdk/          # 插件 SDK（public/official/client/testing；A2 骨架，alias/注入待 B1）
+
 src/                 # 渲染端（Vue3 + Pinia + vue-router）
 ├── views/           # 宿主页面
 ├── character/       # 角色页面与桌宠窗口

@@ -24,7 +24,8 @@
 
 **v1 不做「任意不可信代码」承诺，只做「受控第三方」：**
 
-- `utilityProcess` + Node permission model 能约束 `fs` / `child_process`，但**不能约束 TCP 外连**（实测：`NODE_OPTIONS=--experimental-permission` 可拦 fs/子进程，TCP 仍成功）；
+- `utilityProcess` + Node permission model 能约束 `fs` / `child_process`（**仅 `env.NODE_OPTIONS` 生效，`execArgv` 实测无效**），且**必须把入口目录写进 `--allow-fs-read`**（否则入口加载即 exit 1）；连带的 `worker_threads` / native addon / `process.binding` 也被拦，但 `process._linkedBinding` 仍可用（残余）；
+- **不能约束 TCP 外连**（实测：permission model 下 loopback 与 `example.com:80` 均 CONNECTED；Node 20.16 无 net 权限项）；`child-process-gone` 对 utilityProcess 21 次终止 0 触发，必须监听 `UtilityProcess.exit` + 应用层心跳；
 - 因此 v1 的第三方插件必须经过**签名/审核/权限声明**，网络能力只承诺「宿主代理 + 域名白名单 + 静态审查」，不承诺「恶意代码无法直连网络」；
 - 真正的不可信沙箱（OS 级网络/文件隔离）列为 Phase 3 研究项，不纳入 5.0 承诺；
 - 对外文案不要写「插件沙箱」，写「进程隔离 + 最小权限 + 可撤销」。
@@ -74,7 +75,7 @@
 main process
 ├── kernel / plugin host（官方插件，in-process，保持现状）
 ├── plugin process supervisor（Phase 1）
-│   └── utilityProcess：第三方插件 main（CJS/ESM 待 B0 实测）
+│   └── utilityProcess：第三方插件 main（**CJS canonical**；`.mjs`/ESM 实测可用）
 ├── capability broker（Phase 1）
 │   └── allowlist + 权限校验 + 会话命名空间 + 审计
 ├── host services（db / openclaw / config / notifications / voice / secrets / kv ...）
@@ -121,7 +122,7 @@ renderer
 | A0 | **基线冻结与文档契约修订** | 基线 commit/分支；干净 `test/.tmp`；TEMP 说明；双 typecheck + accept + boundary 留档；AGENTS/PLAN-4.0 修订（§10） | 基线可复现；数字单一来源；文档修订单独提交 | 1–2 天 |
 | A0b/B0 | **隔离 spike（与 A1 并行，时间盒 1 周）** | utilityProcess：CJS/ESM 入口、Node permission model（fs/child_process）、TCP 残余风险、崩溃/重启、MessagePort 性能；ADR | ADR 通过才能冻结 API；负向测试可复现 | 1 周 |
 | A1 | **API v1-RC** | `doc/PLUGIN-API.md`：公开面 allowlist、async 规则、事件/流 RPC、DB/迁移白名单、权限 manifest、SDK 注入、版本/弃用 | 评审通过；B0 ADR 后升 v1-final | 5–7 天 |
-| A2 | **SDK 抽取（三层）** | `plugin-sdk/`：`public` / `official` / `client` / `testing` 子路径；alias + build + 注入机制 | 只做骨架/alias/门禁：`pluginHostImport`（65 值 + 15 type = 80 行 / 39 文件）、`pluginUiHostImport`（23 运行时 + 3 类型）、`hostBridgeConsumers`（12）三套独立 ratchet；迁移交 A3b/A6 | 8–10 天 |
+| A2 | **SDK 抽取（三层）** | `plugin-sdk/`：`public` / `official` / `client` / `testing` 子路径；alias + build + 注入机制（当前仅骨架，alias/注入/ratchet 待 A3b 前完成） | 只做骨架/alias/门禁：`pluginHostImport`（65 值 + 15 type = 80 行 / 39 文件）、`pluginUiHostImport`（23 运行时 + 3 类型）、`hostBridgeConsumers`（12）三套独立 ratchet；迁移交 A3b/A6 | 8–10 天 |
 | A3a | **kernel/API 收敛** | async 化、onDemand、settings/commands、capabilities、voice、migrations、`ctx.host` 拆公开/内部、hostBridge、raw ipcMain、`db.request`、宿主反向读库、gen 清理、通道租约 | 每项有断言；boundary 绿；无行为回归 | 8–10 天 |
 | A3b | **官方插件迁移** | 80 行 host import / 39 文件；23 处 `@/` UI import（含 `useAgreementGate`/`useWizardGate` 单例风险） | 分小批；每批 accept 绿；UI 行为不变 | 8–10 天 |
 | A4 | **兼容元数据与状态 schema** | `apiVersion` / `engines.host`；状态文件 schema 版本；不兼容拒绝 | 老状态可迁移；错误码明确 | 2–3 天 |
@@ -165,10 +166,10 @@ renderer
 
 | WP | 工作 | 产出 | 验收 | 预估 |
 | --- | --- | --- | --- | --- |
-| B1 | **插件进程骨架** | supervisor、child entry（CJS 优先，ESM 需实测）、RPC、ctx 代理、生命周期、日志隔离、崩溃状态机 | hello 子进程 activate/deactivate；崩溃/死循环可恢复；宿主不动 | 3 周 |
-| B2 | **权限模型** | manifest allowlist、授权 UI、broker、审计、撤销 | 未授权调用 `PLUGIN_PERMISSION_DENIED`；撤销立即生效 | 3 周 |
+| B1 | **插件进程骨架** | supervisor、child entry（CJS canonical；CJS 可 `import()` ESM）、RPC、ctx 代理、生命周期、日志隔离、崩溃状态机（`stopped/starting/running/stopping/crashed/disabled`；退避 1/2/4s，5min≥3 次熔断；配置/权限错误直接 disabled 不重试；监听 `UtilityProcess.exit` + 心跳，不依赖 `child-process-gone`） | hello 子进程 activate/deactivate；崩溃/死循环可恢复；宿主不动 | 3 周 |
+| B2 | **权限模型** | manifest allowlist、授权 UI、broker、审计、撤销；**只走 `env.NODE_OPTIONS` 注入**（禁 `execArgv`）；`--allow-fs-read` 必须含插件包入口目录；子进程 env 显式白名单 | 未授权调用 `PLUGIN_PERMISSION_DENIED`；撤销立即生效；缺 allowlist 时入口加载失败可见 | 3 周 |
 | B3 | **服务桥接** | db（宿主托管）、openclaw（会话命名空间 + 模型代理 + 配额）、config、notifications、secrets、kv、http（域名白名单）、dialog.pickFile | 示例插件全链路；拿不到宿主路径/密钥/渠道/其他插件数据 | 3 周 |
-| B4 | **安全与性能** | 负向测试：越权 fs、读别的插件、spawn、直连 net（记录残余风险）、恶意 configSchema、死循环 | 可拦的拦住；不可拦的写清残余风险；宿主存活；激活预算 | 2 周 |
+| B4 | **安全与性能** | 负向测试：越权 fs、读别的插件、spawn、worker/native、env 泄漏、**直连 net（预期仍成功，记录残余风险）**、`_linkedBinding` 残余、恶意 configSchema、死循环 | 可拦的拦住；不可拦的写清残余风险；宿主存活；单进程启动中位 ~140–180ms、IPC <0.5ms、RSS ~45–50MB | 2 周 |
 | B5 | **开发者模式** | `UMI_DEV_PLUGINS=1` + `UMI_DEV_BUILD=1`；打包版即使设 env 也拒绝 | 打包版拒绝；dev 有显式风险提示 | 1 周 |
 
 ### 4.1 Phase 1 出口判据
@@ -298,10 +299,10 @@ renderer
 
 | # | 待定 | 何时定 | 判据 |
 | --- | --- | --- | --- |
-| 1 | utilityProcess CJS/ESM 入口 | B0 | 实测 + ADR |
-| 2 | Node permission model 的 fs/子进程边界 | B0 | 负向测试 |
-| 3 | 网络残余风险的接受方式 | B0/A1 | ADR + 用户提示 |
-| 4 | 进程粒度：单插件 vs 信任组 | B0 | 启动/IPC/内存 |
+| 1 | utilityProcess CJS/ESM 入口 | **B0 实测（ADR 草案待评审）** | CJS canonical；`.mjs`/ESM 可用；CJS 可 `import()` ESM |
+| 2 | Node permission model 的 fs/子进程边界 | **B0 实测（ADR 草案待评审）** | `NODE_OPTIONS` 生效、`execArgv` 无效；入口目录必须在 allowlist |
+| 3 | 网络残余风险的接受方式 | **B0 实测（ADR 草案待评审）** | 不承诺网络；签名/审核/代理白名单降险；对外不写“沙箱” |
+| 4 | 进程粒度：单插件 vs 信任组 | **B0 实测（ADR 草案待评审）** | 单插件单进程；懒激活 + 并发上限 4–6；不做信任组共享 |
 | 5 | 第三方 DB 迁移 DDL 白名单 | A1/A3a | 官方迁移全通过 |
 | 6 | 签名发布者模型（官方/伙伴/自签） | C1 前 | keyring/吊销可验证 |
 | 7 | configSchema 子集与渲染安全 | A1/C6 | 恶意 schema 用例 |
@@ -368,7 +369,7 @@ interface PluginContextV1 {
 ```text
 example-1.0.0.umi-plugin (zip)
 ├── plugin.json
-├── main.js            # CJS 优先；ESM 待 B0 结论
+├── main.js            # CJS canonical；ESM（.mjs / type=module）实测可用
 ├── migrations/        # 可选；DDL 白名单
 ├── icon.png
 └── SIGNATURE          # keyId + alg + 内容 hash
