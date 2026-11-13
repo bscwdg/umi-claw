@@ -11,16 +11,24 @@ export interface PluginStateStore {
   save(state: Record<string, boolean>): Promise<void>
 }
 
+/** 状态文件 schema 版本（v1 起带 wrapper；旧 flat map 仍可读） */
+const STATE_SCHEMA_VERSION = 1
+
 export function createJsonStateStore(filePath: string): PluginStateStore {
   return {
     async load() {
       try {
         if (!existsSync(filePath)) return {}
         const raw = JSON.parse(readFileSync(filePath, 'utf-8')) as unknown
-        // 数组也是 object：JSON.parse('[true]') 会被误当成 map（审查 D6），显式排除
         if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+        const wrapper = raw as Record<string, unknown>
+        // v1: { schema: 1, plugins: { id: boolean } }；旧版: { id: boolean }
+        const bucket =
+          wrapper.schema === STATE_SCHEMA_VERSION && wrapper.plugins && typeof wrapper.plugins === 'object'
+            ? (wrapper.plugins as Record<string, unknown>)
+            : (raw as Record<string, unknown>)
         const out: Record<string, boolean> = {}
-        for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+        for (const [id, value] of Object.entries(bucket)) {
           if (typeof value === 'boolean') out[id] = value
         }
         return out
@@ -33,7 +41,8 @@ export function createJsonStateStore(filePath: string): PluginStateStore {
       mkdirSync(dirname(filePath), { recursive: true })
       // 原子写：先写临时文件再 rename，避免半截文件把启停状态洗掉
       const tmp = `${filePath}.tmp-${process.pid}`
-      writeFileSync(tmp, JSON.stringify(state, null, 2), 'utf-8')
+      const payload = { schema: STATE_SCHEMA_VERSION, plugins: state }
+      writeFileSync(tmp, JSON.stringify(payload, null, 2), 'utf-8')
       renameSync(tmp, filePath)
     }
   }

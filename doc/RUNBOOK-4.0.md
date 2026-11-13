@@ -110,8 +110,8 @@ npm run plugin:gen          # 生成插件入口 + 复制清单/migrations 到 r
 npm run build               # 生成 + 构建（含插件代码）
 npm run typecheck:node      # 主进程
 npm run typecheck:web       # 渲染端（tsc 只管 .ts；.vue 由构建期 vite/vue 编译检查）
-node test/plugin.accept.mjs # 插件内核 + 两个域装箱 + 加固（68 项）
-npm run accept               # 全量验收（2026-11-13 干净基线：45 套 = ACCEPT 43 + e2e + smoke；846 条断言 + config-writer node:test 21 条另计）
+node test/plugin.accept.mjs # 插件内核 + 两个域装箱 + 加固（71 项）
+npm run accept               # 全量验收（2026-11-13 干净基线：46 套 = ACCEPT 44 + e2e + smoke；852 条断言 + config-writer node:test 21 条另计）
 node test/packaged.smoke.mjs# 打包态静态冒烟
 node test/one-day.e2e.mjs   # 「一天」端到端
 ```

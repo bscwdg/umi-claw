@@ -1,10 +1,13 @@
 // kernel/index.ts —— 内核出口。宿主只从这里取东西；插件只从这里取**类型**。
 
 export {
+  HOST_API_VERSION,
   HOST_CAPABILITIES,
+  isValidHostRange,
   missingCapabilities,
   parseManifest,
   PluginManifestError,
+  satisfiesHostRange,
   type ManifestErrorCode,
   type PluginContributes,
   type PluginId,

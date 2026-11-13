@@ -26,6 +26,10 @@ export interface PluginManifest {
   id: PluginId
   name: string
   version: string
+  /** 插件 API major（缺省 1；宿主 API 版本见 HOST_API_VERSION） */
+  apiVersion: number
+  /** 宿主版本范围（如 ">=4.3.0 <6.0.0"；缺省不限制） */
+  engines?: { host?: string }
   /** 需要宿主提供的能力版本，如 host.db.v1 */
   capabilities: string[]
   /** 需要注入的服务名，如 db / openclaw / host */
@@ -73,6 +77,86 @@ const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
 
 const KNOWN_ACTIVATIONS = new Set(['onStartup', 'onDemand'])
 
+/** 宿主当前插件 API major（apiVersion 只允许 <= 此值） */
+export const HOST_API_VERSION = 1
+
+interface SemVer {
+  major: number
+  minor: number
+  patch: number
+}
+
+function parseSemVer(value: string): SemVer | null {
+  // 预发布/构建元数据暂不支持：拒绝比「静默当成正式版」安全（兼容面只认稳定版）
+  const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(value.trim())
+  if (!m) return null
+  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]) }
+}
+
+function cmpSemVer(a: SemVer, b: SemVer): number {
+  if (a.major !== b.major) return a.major - b.major
+  if (a.minor !== b.minor) return a.minor - b.minor
+  return a.patch - b.patch
+}
+
+/** 支持 "*"、">=x.y.z"、"<x.y.z"、">=x <y"、">x"、"<=x"、"=x"、"^x.y.z" */
+export function isValidHostRange(range: string): boolean {
+  const trimmed = range.trim()
+  if (trimmed === '*') return true
+  const parts = trimmed.split(/\s+/).filter(Boolean)
+  if (!parts.length) return false
+  for (const part of parts) {
+    const caret = /^\^(\d+\.\d+\.\d+)$/.exec(part)
+    if (caret) {
+      if (!parseSemVer(caret[1])) return false
+      continue
+    }
+    const m = /^(>=|<=|>|<|=)?v?(\d+\.\d+\.\d+)$/.exec(part)
+    if (!m || !parseSemVer(m[2])) return false
+  }
+  return true
+}
+
+/** 宿主版本是否满足范围；无法解析的范围视为不满足（fail-closed） */
+export function satisfiesHostRange(hostVersion: string, range: string): boolean {
+  const host = parseSemVer(hostVersion)
+  if (!host) return false
+  const trimmed = range.trim()
+  if (!trimmed) return false
+  if (trimmed === '*') return true
+  const parts = trimmed.split(/\s+/).filter(Boolean)
+  if (!parts.length) return false
+  for (const part of parts) {
+    const caret = /^\^(\d+\.\d+\.\d+)$/.exec(part)
+    if (caret) {
+      const base = parseSemVer(caret[1])!
+      // caret 的 major=0 特例：^0.3.0 = >=0.3.0 <0.4.0；^0.0.3 = >=0.0.3 <0.0.4
+      if (base.major === 0 && base.minor === 0) {
+        if (host.major !== 0 || host.minor !== 0 || host.patch !== base.patch) return false
+        continue
+      }
+      if (base.major === 0) {
+        if (host.major !== 0 || host.minor !== base.minor || host.patch < base.patch) return false
+        continue
+      }
+      if (host.major !== base.major || cmpSemVer(host, base) < 0) return false
+      continue
+    }
+    const m = /^(>=|<=|>|<|=)?v?(\d+\.\d+\.\d+)$/.exec(part)
+    if (!m) return false
+    const target = parseSemVer(m[2])!
+    const op = m[1] ?? '='
+    const c = cmpSemVer(host, target)
+    if (op === '>=' && c < 0) return false
+    if (op === '>' && c <= 0) return false
+    if (op === '<=' && c > 0) return false
+    if (op === '<' && c >= 0) return false
+    if (op === '=' && c !== 0) return false
+  }
+  return true
+}
+
+
 function fail(message: string, field: string, pluginId?: string): never {
   throw new PluginManifestError('MANIFEST_INVALID', message, { field, pluginId })
 }
@@ -104,6 +188,25 @@ export function parseManifest(raw: unknown, source = '<inline>'): PluginManifest
   const version = obj.version
   if (typeof version !== 'string' || !VERSION_PATTERN.test(version)) {
     fail(`version 必须是 x.y.z 形式（实际 ${JSON.stringify(version)}）`, 'version', id)
+  }
+
+  const apiVersion = obj.apiVersion === undefined ? 1 : obj.apiVersion
+  if (!Number.isInteger(apiVersion) || (apiVersion as number) < 1) {
+    fail('apiVersion 必须是 >=1 的整数', 'apiVersion', id)
+  }
+
+  let engines: { host?: string } | undefined
+  if (obj.engines !== undefined) {
+    if (!obj.engines || typeof obj.engines !== 'object' || Array.isArray(obj.engines)) {
+      fail('engines 必须是对象', 'engines', id)
+    }
+    const host = (obj.engines as Record<string, unknown>).host
+    if (host !== undefined) {
+      if (typeof host !== 'string' || !isValidHostRange(host)) {
+        fail(`engines.host 非法版本范围：${JSON.stringify(host)}`, 'engines.host', id)
+      }
+      engines = { host }
+    }
   }
 
   const capabilities = asStringArray(obj.capabilities, 'capabilities', id)
@@ -173,6 +276,8 @@ export function parseManifest(raw: unknown, source = '<inline>'): PluginManifest
     id,
     name,
     version,
+    apiVersion: apiVersion as number,
+    engines,
     capabilities,
     inject,
     channels,

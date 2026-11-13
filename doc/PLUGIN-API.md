@@ -9,16 +9,16 @@
 
 | 能力 | 当前 | 目标 WP |
 | --- | --- | --- |
-| SDK 三层骨架（public/official/client/testing） | ✅ 骨架（无 alias/注入） | A2 → A3b |
-| manifest `apiVersion` / `engines.host` 校验 | ❌ | A4 |
+| SDK 分层（public/official-*/client*/testing） | ✅ 骨架（无 alias/注入） | A2 → A3b |
+| manifest `apiVersion` / `engines.host` 校验 | ✅ A4（hostVersion 注入；缺省不限制） | A4 |
 | permissions allowlist / 未知键 fail-closed | ❌ | A3a/B2 |
-| migrations DDL 白名单 / 禁 ATTACH/VACUUM | ❌ | A3a |
-| `ctx.db.request` 收窄（官方 `<table>.<op>`） | ❌ | A3a |
+| migrations DDL 白名单 / 禁 ATTACH/VACUUM | ✅ A3a | A3a |
+| `ctx.db.request` 收窄（官方 `<table>.<op>`） | ✅ A3a（禁 migrate/maintenance/shutdown） | A3a |
 | async 第三方可见面 / 事件流 RPC | ❌ | A3a/A1 |
 | configSchema / config.onChange | ❌ | A4/B2 |
 | 插件 IPC 统一 `{ok,data}` 信封 | ⚠️ 官方插件手工包 | A3a |
-| `test/plugin-contract.accept.mjs` | ❌ | A5 |
-| 状态文件 schema 版本 | ❌ | A4 |
+| `test/plugin-contract.accept.mjs` | ✅ A5（templates/plugin） | A5 |
+| 状态文件 schema 版本 | ✅ A4（v1 wrapper + 旧 flat 兼容） | A4 |
 | `onDemand` 懒激活 | ❌ | A3a |
 
 ---
@@ -44,7 +44,7 @@ export interface PluginModule {
 | 阶段 | 行为 |
 | --- | --- |
 | `discovered` | 宿主发现入口；不执行代码 |
-| `validated` | manifest / apiVersion / engines / permissions / configSchema 校验通过（**A4 目标**） |
+| `validated` | manifest / apiVersion / engines / permissions / configSchema 校验通过（A4：apiVersion/engines 已实现；permissions/configSchema 待 A3a/B2） |
 | `activated` | 注册物生效；状态可查询 |
 | `deactivated` / `disabled` / `failed` | 不服务；保留数据；错误带 code/stage |
 | `activating` / `deactivating` | **A3a/B1 目标**：当前实现为同步状态迁移 + disposer 栈；进程版增加显式过渡态 |
@@ -90,7 +90,7 @@ export interface PluginModule {
 校验规则：
 
 - `id`：`^[a-z][a-z0-9-]*$`；保留字 `host`/`plugin`/`system`/`app`/`umi` 及后续登记项禁止。
-- `apiVersion` 必须为整数；`engines.host` 必须可解析；缺失视为不兼容。
+- `apiVersion` 必须为 >=1 的整数（**缺省 1**）；`engines.host` 若声明必须可解析（缺省不限制）；声明了但宿主不满足 → 注册期拒绝（`MANIFEST_INVALID`，field=apiVersion/engines.host）。
 - `permissions` 未知键 **fail-closed**（拒绝），不做静默忽略。
 - `configSchema` 仅 JSON Schema 子集（见 §七）；超限拒绝。
 - 官方插件可省略 `permissions`（可信默认），第三方必须显式声明。
@@ -267,7 +267,7 @@ interface PluginDbApiV1 {
 | --- | --- |
 | `PLUGIN_NOT_FOUND` | 未注册/已卸载 |
 | `PLUGIN_DISABLED` | 已停用/未启用 |
-| `PLUGIN_API_INCOMPATIBLE` | apiVersion/engines 不满足 |
+| `PLUGIN_API_INCOMPATIBLE` | 保留（v1 注册期用 MANIFEST_INVALID + field=apiVersion/engines.host；运行时兼容错误走此码） |
 | `PLUGIN_PERMISSION_DENIED` | 未授权能力 |
 | `PLUGIN_QUOTA_EXCEEDED` | 模型/资源配额 |
 | `PLUGIN_TIMEOUT` | 调用超时 |
@@ -311,8 +311,8 @@ interface PluginDbApiV1 {
 - `apiVersion` major：v1 插件只能在声明 `engines.host` 匹配的宿主运行。
 - 宿主升级：N/N-1 兼容；不兼容明确拒绝，不静默加载。
 - 弃用：至少 6 个月/两个 minor；弃用告警写入日志与插件详情。
-- 契约测试：`test/plugin-contract.accept.mjs` 用 v1 样例跑 N/N-1（**A5 目标**，当前不存在）。
-- 状态：`plugin-install-state.json` / `plugins-state.json` 带 schema 版本，迁移可回滚（**A4 目标**，当前只有 boolean）。
+- 契约测试：`test/plugin-contract.accept.mjs` 用 `templates/plugin` 跑 v1 公开面（A5 已落地；N/N-1 矩阵待 Phase 1）。
+- 状态：`plugins-state.json` 带 `schema: 1` wrapper，旧 flat 格式可读（A4 已落地）。
 
 ---
 

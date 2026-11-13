@@ -86,7 +86,10 @@ const {
   createJsonStateStore,
   createPluginConfigStore,
   availableServices,
-  pluginIpcChannel
+  pluginIpcChannel,
+  HOST_API_VERSION,
+  isValidHostRange,
+  satisfiesHostRange
 } = kernelMod
 
 const kvMod = await import(
@@ -3152,6 +3155,86 @@ await r.check(
     assert(!/hostIpcMain/.test(hostUi), 'hostUi 不再导出裸 ipcMain')
   }
 )
+
+await r.check(
+  'P63',
+  'apiVersion / engines.host 兼容检查：解析、范围匹配、注册期拒绝（A4）',
+  async () => {
+    const parsed = parseManifest(
+      { ...manifest, apiVersion: 1, engines: { host: '>=4.3.0 <6.0.0' } },
+      '<test>'
+    )
+    assertEq(parsed.apiVersion, 1, '解析 apiVersion')
+    assertEq(parsed.engines.host, '>=4.3.0 <6.0.0', '解析 engines.host')
+
+    assertEq(HOST_API_VERSION >= 1, true, '宿主 API 版本存在')
+    assertEq(isValidHostRange('>=4.3.0 <6.0.0'), true, '范围合法')
+    assertEq(isValidHostRange('>=4.3'), false, '非法范围拒绝')
+    assertEq(satisfiesHostRange('4.3.0', '>=4.3.0 <6.0.0'), true, '4.3.0 满足')
+    assertEq(satisfiesHostRange('4.2.9', '>=4.3.0 <6.0.0'), false, '4.2.9 不满足')
+    assertEq(satisfiesHostRange('6.0.0', '>=4.3.0 <6.0.0'), false, '6.0.0 不满足')
+    assertEq(satisfiesHostRange('4.5.1', '^4.3.0'), true, '^4.3.0 匹配 4.5.1')
+    assertEq(satisfiesHostRange('5.0.0', '^4.3.0'), false, '^4.3.0 不匹配 5.0.0')
+    assertEq(satisfiesHostRange('4.3.0', '*'), true, '* 放行稳定版')
+    assertEq(satisfiesHostRange('', '*'), false, '空宿主版本 fail-closed')
+    assertEq(isValidHostRange('>=4.3.0-rc.1'), false, '预发布范围拒绝（暂不支持）')
+    assertEq(satisfiesHostRange('4.3.0-rc.1', '>=4.3.0'), false, '预发布宿主不满足稳定范围')
+    assertEq(satisfiesHostRange('0.3.5', '^0.3.0'), true, '^0.3.0 匹配 0.3.5')
+    assertEq(satisfiesHostRange('0.4.0', '^0.3.0'), false, '^0.3.0 不匹配 0.4.0')
+    assertEq(satisfiesHostRange('0.0.4', '^0.0.3'), false, '^0.0.3 不匹配 0.0.4')
+
+    let hostThrew = null
+    try {
+      const reg = new PluginRegistry({ hostVersion: '4.2.0' })
+      reg.register(makeSource({ engines: { host: '>=4.3.0' } }))
+    } catch (e) {
+      hostThrew = e
+    }
+    assert(hostThrew, '低宿主版本应拒绝')
+    assertEq(hostThrew?.field, 'engines.host', '错误字段 engines.host')
+
+    let apiThrew = null
+    try {
+      const reg = new PluginRegistry({ hostVersion: '4.3.0', hostApiVersion: 1 })
+      reg.register(makeSource({ apiVersion: HOST_API_VERSION + 1 }))
+    } catch (e) {
+      apiThrew = e
+    }
+    assert(apiThrew, '高 apiVersion 应拒绝')
+    assertEq(apiThrew?.field, 'apiVersion', '错误字段 apiVersion')
+    return 'apiVersion/engines 兼容检查 ✓'
+  }
+)
+
+await r.check('P64', '状态文件 schema 版本：新格式可读、旧 flat 兼容、坏文件回落（A4）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'umi-pluginst-'))
+  const file = join(dir, 'plugins-state.json')
+  try {
+    const store = createJsonStateStore(file)
+    await store.save({ work: true, marketing: false })
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    assertEq(raw.schema, 1, '写盘带 schema=1')
+    assertEq(raw.plugins.work, true, 'plugins.work 写入')
+    assertEq(JSON.stringify(await createJsonStateStore(file).load()), JSON.stringify({ work: true, marketing: false }), 'v1 可读')
+
+    // 旧 flat 格式（升级兼容）
+    writeFileSync(file, JSON.stringify({ work: false, hello: true }), 'utf8')
+    assertEq(JSON.stringify(await createJsonStateStore(file).load()), JSON.stringify({ work: false, hello: true }), '旧 flat 可读')
+
+    // 坏文件回落空
+    writeFileSync(file, '{bad json', 'utf8')
+    assertEq(JSON.stringify(await createJsonStateStore(file).load()), '{}', '坏文件回落空')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+  return '状态 schema ✓'
+})
+
+await r.check('P65', '生产接线：pluginRuntime 把 appInfo().version 注入 registry（防 engines 静默失效）', async () => {
+  const src = readFileSync(join(repoRoot, 'electron', 'main', 'services', 'pluginRuntime.ts'), 'utf8')
+  assert(/hostVersion:\s*deps\.appInfo\(\)\.version/.test(src), 'registry 构造带 hostVersion=appInfo().version')
+  return 'hostVersion 注入 ✓'
+})
 
 const result = r.toJSON()
 const ok = printResult(result)

@@ -1,0 +1,16 @@
+{
+  "id": "example",
+  "name": "示例插件",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "engines": { "host": ">=4.3.0 <6.0.0" },
+  "description": "最小插件模板：只依赖 plugin-sdk/public，注册一个 IPC + 一个定时任务",
+  "capabilities": ["host.ipc.v1", "host.jobs.v1"],
+  "inject": ["host"],
+  "activation": ["onStartup"],
+  "contributes": {
+    "navGroup": { "id": "example", "label": "示例", "order": 100 },
+    "routes": ["/example"]
+  },
+  "defaultEnabled": false
+}

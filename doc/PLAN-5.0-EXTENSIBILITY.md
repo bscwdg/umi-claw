@@ -158,7 +158,7 @@ renderer
 - host→plugin 反向依赖：会话键 resolver 注册表（marketing activate 注册、onDispose 摘除）
 - 删除 work 插件原始 `ipcMain` fallback、`hostUi` 不再导出裸 `ipcMain`
 - `scripts/check-plugin-api.mjs` + baseline + `test/plugin-api.accept.mjs`（ratchet 已注册 run-all）
-- 验收：45 套 / 846 条 + node:test 21（全绿）
+- 验收：46 套 / 852 条 + node:test 21（全绿）
 
 未完成（下次 A3a 续）：
 - 第三方可见面 async 化 + 事件/流式 RPC（依赖 B1）
@@ -173,7 +173,14 @@ renderer
 - 79 处 `electron/main/**` import / 38 文件已迁到 `plugin-sdk/src/official-*`（按宿主模块拆子路径，避免 barrel 把 mammoth/electron 链进 domain bundle）。
 - `check-plugin-api` ratchet：**host import 0**（值 0 / type 0）；UI host import 23→4（+2 type；4 处 ConfirmDialog .vue 直连属测试管线例外）；hostBridge consumers 13（useWorkStream 移入插件后必须经 hostBridge；官方 UI 内部，Phase 1 前不动）。
 - 未完成：UI 的 `@/` 宿主 import 仅剩 4 处 ConfirmDialog（等 UI 测试管线支持跨 .vue 或组件下沉）；hostBridge 收窄/下沉留 Phase 1；`@umi/plugin-sdk/*` alias/宿主注入（B1）。
-- 验收：plugin.accept 68/68、plugin-api 3/3、ui 28/28、build 通过；全量 accept 45 套/846 条全绿。
+- 验收：plugin.accept 71/71、plugin-contract 3/3、plugin-api 3/3、ui 28/28、build 通过；全量 accept 46 套/852 条全绿。
+
+### 3.1.3 A4/A5 兼容与契约（2026-11-13）
+
+- A4：`apiVersion`（缺省 1，<= HOST_API_VERSION）+ `engines.host` 范围解析/注册期拒绝；`plugins-state.json` v1 wrapper（旧 flat 兼容）。
+- A5：`templates/plugin/`（manifest/main/migrations/README）+ `test/plugin-contract.accept.mjs`（3 项），已注册 run-all。
+- 官方 plugin.json 加 `apiVersion: 1`；契约测试验证模板只依赖 public SDK、activate→IPC→jobs→dispose 全链路。
+- 剩余：第三方权限/configSchema（A3a/B2）、N/N-1 兼容矩阵（Phase 1）。
 
 ### 3.2 Phase 0 出口判据
 
@@ -273,7 +280,7 @@ renderer
 | 打包 | `npm run build` + packaged smoke |
 | 审查 | AGENTS §12：每 commit 对抗审查；每 WP 两次独立检查 |
 
-**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**45 套**（ACCEPT 43 + e2e + smoke）、accept result **846 条** + `node:test` **21 条** = **867**。AGENTS/RUNBOOK 已同步该口径；release/4.0 在 voice 合并后复核。后续以每次留档为准。
+**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**46 套**（ACCEPT 44 + e2e + smoke）、accept result **852 条** + `node:test` **21 条** = **873**。AGENTS/RUNBOOK 已同步该口径；release/4.0 在 voice 合并后复核。后续以每次留档为准。
 
 ---
 

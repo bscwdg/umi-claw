@@ -216,7 +216,8 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
         const serviceFactories = buildServiceFactories(dataDir)
         const reg = new PluginRegistry({
           persistedEnabled: await stateStore.load(),
-          hostServices: availableServices(serviceFactories)
+          hostServices: availableServices(serviceFactories),
+          hostVersion: deps.appInfo().version
         })
 
         const discovered = discoverPlugins({

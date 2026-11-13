@@ -2,6 +2,7 @@
   "id": "work",
   "name": "工作域",
   "version": "1.0.0",
+  "apiVersion": 1,
   "description": "工作记录 / 事项 / 待办 / 今日 / 报告 / 问答 / 知识库（官方内置插件）",
   "capabilities": [
     "host.ipc.v1",

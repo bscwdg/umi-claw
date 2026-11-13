@@ -13,7 +13,7 @@
 cd D:\work2026\umi-claw
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 45 套验收（ACCEPT 43 + e2e + smoke，846 条断言；node:test 21 条另计）— 2026-11-13 codex/voice HEAD 实测；release/4.0 为 40/822，voice 合并后复核
+npm run accept         # 46 套验收（ACCEPT 44 + e2e + smoke，852 条断言；node:test 21 条另计）— 2026-11-13 codex/voice HEAD 实测；release/4.0 为 40/822，voice 合并后复核
 npm run build          # 构建（含 plugin:gen）
 ```
 
@@ -71,6 +71,7 @@ resources/           # 打包为 extraResources（只放数据与脚本，不放
 ├── openclaw-plugins/ # 随包 OpenClaw 原生插件（feiyu-guard：QQ 群聊硬策略 + feiyu 语音通道合规，plugins.load.paths 加载）
 └── ...              # character 内容包 / database db-worker / pdfjs 等数据与脚本
 test/                # accept 验收脚本（零 npm 依赖）
+templates/           # 插件模板（templates/plugin，不进 plugins 扫描）
 scripts/             # 构建/验收脚本
 doc/                 # 计划、施工日志、运维手册、调研
 ```
@@ -113,7 +114,7 @@ doc/                 # 计划、施工日志、运维手册、调研
 
 **规则**：`plugins/<id>/domain/**/*Manager.ts` 与 `contextEngine.ts` **禁止** `import ... from 'electron'`（WP3 起域代码住在 `plugins/<id>/domain/`；宿主 `electron/main/{work,marketing}` 已删除）。
 
-**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 45 套验收能在纯 Node 里跑真源码的前提。
+**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 46 套验收能在纯 Node 里跑真源码的前提。
 
 **写法**：工厂函数 + 显式 options，不 `new`、不单例、不从全局推。
 
@@ -207,7 +208,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 - 禁止运行时从磁盘/网络加载可执行模块（`PLAN-4.0 §十七第3条`）。**例外**：§5.4 的随包 OpenClaw 原生插件由网关 `plugins.load.paths` 加载，不属于 Umi 插件入口表；路径固定随包、4.x 不提供第三方安装。5.0 受控第三方方向见 [doc/PLAN-5.0-EXTENSIBILITY.md](doc/PLAN-5.0-EXTENSIBILITY.md)（**4.x 仍禁止**）。
 - 注册物一律返回 disposer，停用由宿主 LIFO 清理；不要在 `deactivate` 里才擦屁股
 
-**现状证据**：`lifecycle.ts` 已实现 LIFO + 激活超时 + 迟到注册拒绝 + 失败隔离；`plugin.accept` **68 项**（P58 锁「ctx.services 使用 ⊆ inject」）。
+**现状证据**：`lifecycle.ts` 已实现 LIFO + 激活超时 + 迟到注册拒绝 + 失败隔离；`plugin.accept` **71 项**（P58 锁「ctx.services 使用 ⊆ inject」）。
 
 ### 5.3 大肥鱼为什么不是插件
 
@@ -260,7 +261,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 - 验收脚本**零 npm 依赖**，只用 `node:` 内置 + `test/_lib.mjs`
 - 断言打**真源码**：`bundleEntry('electron/main/work/todoManager.ts', 'todo-todo.mjs')` 后 `import()`，不 mock 被测逻辑
 
-**现状证据**：44 个 `.accept.mjs`、run-all `ACCEPT` 43 项；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。2026-11-13 干净基线（codex/voice HEAD；release/4.0 为 40/822，voice 合并后复核）：45 套（含 e2e + smoke）、846 条断言 + `node:test` 21 条。
+**现状证据**：45 个 `.accept.mjs`、run-all `ACCEPT` 44 项；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。2026-11-13 干净基线（codex/voice HEAD；release/4.0 为 40/822，voice 合并后复核）：46 套（含 e2e + smoke）、852 条断言 + `node:test` 21 条。
 
 ### 7.2 `_lib.mjs` 提供的工具
 
@@ -353,7 +354,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 45 套（ACCEPT 43 + e2e + smoke，846 条断言；node:test 21 条另计）
+# ② 全量验收 46 套（ACCEPT 44 + e2e + smoke，852 条断言；node:test 21 条另计）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）

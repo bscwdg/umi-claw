@@ -4,10 +4,12 @@
 // 喂进来，测试也可以直接喂假数据。
 
 import {
+  HOST_API_VERSION,
   HOST_CAPABILITIES,
   missingCapabilities,
   parseManifest,
   PluginManifestError,
+  satisfiesHostRange,
   type PluginManifest
 } from './manifest'
 import type { PluginModule } from './plugin'
@@ -59,6 +61,10 @@ export interface PluginRegistryOptions {
   hostServices?: readonly string[]
   /** 持久化的启停状态（缺省用清单的 defaultEnabled） */
   persistedEnabled?: Record<string, boolean>
+  /** 宿主版本（用于 engines.host 校验；缺省跳过兼容检查，测试/零插件场景） */
+  hostVersion?: string
+  /** 宿主支持的插件 API major；缺省 HOST_API_VERSION */
+  hostApiVersion?: number
 }
 
 export class PluginRegistry {
@@ -68,11 +74,15 @@ export class PluginRegistry {
   private readonly hostCapabilities: readonly string[]
   private readonly hostServices: readonly string[]
   private readonly persistedEnabled: Record<string, boolean>
+  private readonly hostVersion: string | null
+  private readonly hostApiVersion: number
 
   constructor(opts: PluginRegistryOptions = {}) {
     this.hostCapabilities = opts.hostCapabilities ?? HOST_CAPABILITIES
     this.hostServices = opts.hostServices ?? HOST_SERVICES
     this.persistedEnabled = { ...(opts.persistedEnabled ?? {}) }
+    this.hostVersion = opts.hostVersion ?? null
+    this.hostApiVersion = opts.hostApiVersion ?? HOST_API_VERSION
   }
 
   /**
@@ -93,6 +103,20 @@ export class PluginRegistry {
         pluginId: manifest.id,
         field: 'id'
       })
+    }
+    if (manifest.apiVersion > this.hostApiVersion) {
+      throw new PluginManifestError(
+        'MANIFEST_INVALID',
+        `插件 ${manifest.id} 需要 apiVersion=${manifest.apiVersion}，宿主只支持 <=${this.hostApiVersion}`,
+        { pluginId: manifest.id, field: 'apiVersion' }
+      )
+    }
+    if (this.hostVersion && manifest.engines?.host && !satisfiesHostRange(this.hostVersion, manifest.engines.host)) {
+      throw new PluginManifestError(
+        'MANIFEST_INVALID',
+        `插件 ${manifest.id} 要求宿主版本 ${manifest.engines.host}，当前宿主 ${this.hostVersion}`,
+        { pluginId: manifest.id, field: 'engines.host' }
+      )
     }
     const missing = missingCapabilities(manifest, this.hostCapabilities)
     if (missing.length) {
@@ -161,6 +185,7 @@ export class PluginRegistry {
         id: entryId,
         name: entryId,
         version: '0.0.0',
+        apiVersion: 1,
         capabilities: [],
         inject: [],
         channels: [],

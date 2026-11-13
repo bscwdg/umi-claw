@@ -2593,3 +2593,13 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 - 验证：双 typecheck 0 错、build 通过、boundary 0/0/0、plugin.accept 68/68、plugin-api 3/3、ui 28/28、全量 45 套/846 条全绿。
 - 对抗审查：a3b-reviewer（P0=0/P1=0/P2=10，可提交）与 UI 复审（P0=0/P1=2：U10 旧路径、hostBridge 13 口径；均已修）。
 - 未完成：hub/UI 剩余（hostBridge 13 收窄留 Phase 1）；A3a 剩余；A4/A5/A7；Phase 1。
+
+---
+
+## 2026-11-13 · PLAN-5.0 A4/A5（兼容元数据 + 契约测试）
+
+- A4：manifest `apiVersion`（缺省 1、上限 HOST_API_VERSION）+ `engines.host` 范围解析/注册期拒绝（`MANIFEST_INVALID` field）；`pluginRuntime` 注入 `hostVersion=appInfo().version`；`plugins-state.json` v1 wrapper（旧 flat 兼容）；官方 plugin.json 加 `apiVersion: 1`。
+- A5：`templates/plugin/`（manifest/main/migrations/README）+ `test/plugin-contract.accept.mjs`（真 PluginRegistry/PluginHost，3 项）注册 run-all；模板只依赖 `plugin-sdk/src/public`，ping 走统一信封。
+- 对抗审查：a4a5-reviewer（P0=0/P1=0/P2=7，可提交）；已修 semver 预发布/`^0.x`、文档错误码/缺省口径、模板 engines/信封、hostVersion 注入断言。
+- 验证：双 typecheck 0 错、build 通过、boundary 0/0/0、plugin.accept 71/71、plugin-contract 3/3、全量 46 套/852 条全绿。
+- 未完成：A3a 剩余（async/事件 RPC、onDemand、settings/commands、capabilities、ctx.host 拆分）；A7（4.3.0）；Phase 1。

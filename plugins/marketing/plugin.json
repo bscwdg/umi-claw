@@ -2,6 +2,7 @@
   "id": "marketing",
   "name": "营销域",
   "version": "1.0.0",
+  "apiVersion": 1,
   "description": "项目管理 / 商业大脑 / 知识库 / 内容中心 / 热点雷达 / AI 顾问（官方内置插件）",
   "capabilities": [
     "host.ipc.v1",

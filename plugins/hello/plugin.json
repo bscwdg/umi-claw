@@ -2,6 +2,7 @@
   "id": "hello",
   "name": "Hello 插件",
   "version": "0.1.0",
+  "apiVersion": 1,
   "description": "Phase 0/1 契约演示插件：验证 manifest / activate / IPC / 路由 / 插槽 / 定时任务 / 服务注入 / 启停",
   "capabilities": ["host.ipc.v1", "host.jobs.v1", "host.config.v1", "host.ui.slot.v1"],
   "inject": ["host", "config", "db"],
