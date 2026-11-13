@@ -5,7 +5,7 @@
 // （能停网关/开终端/改配置），插件只该拿到 host.invoke。
 
 import { defineComponent, h, ref } from 'vue'
-import type { PluginUiHost, PluginUiModule } from '../../src/renderer/pluginUi'
+import type { PluginUiHost, PluginUiModule } from '../../plugin-sdk/src/client'
 
 let hostApi: PluginUiHost | null = null
 

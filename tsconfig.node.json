@@ -3,6 +3,9 @@
   "include": [
     "electron.vite.config.*",
     "electron/**/*",
+    "plugin-sdk/src/public.ts",
+    "plugin-sdk/src/official.ts",
+    "plugin-sdk/src/testing.ts",
     "plugins/*/main.ts",
     "plugins/*/domain/**/*.ts"
   ],

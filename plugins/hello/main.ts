@@ -2,14 +2,14 @@
 //
 // 验证点：manifest 校验、activate、注册 IPC、注册定时任务、按 inject 拿服务
 // （config 配置 + db 独立库）、停用时全部回收。
-// 只从 kernel 取类型与 definePlugin，不 import electron / 任何 manager。
+// 只从 SDK 取 definePlugin（A2 骨架），不 import electron / 任何 manager。
 
-import { definePlugin } from '../../electron/main/kernel'
+import { definePlugin } from '../../plugin-sdk/src/public'
 
 export default definePlugin({
   activate: async (ctx) => {
     // 注入的服务：manifest.inject 里声明了才有；没声明这里就是 undefined
-    const config = ctx.services.config
+    const config = ctx.config
     const db = ctx.services.db
 
     const activations = (config?.get<number>('activations', 0) ?? 0) + 1
@@ -19,7 +19,7 @@ export default definePlugin({
     if (db) {
       await db.migrate()
       const notes = await db.list('notes')
-      ctx.logger.info(`插件库就绪：${db.path}（notes ${notes.length} 条）`)
+      ctx.logger.info(`插件库就绪（notes ${notes.length} 条）`)
     }
 
     ctx.registerIpc('ping', (payload) => ({

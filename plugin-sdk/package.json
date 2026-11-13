@@ -1,0 +1,13 @@
+{
+  "name": "@umi/plugin-sdk",
+  "version": "1.0.0-rc.0",
+  "private": true,
+  "type": "module",
+  "description": "Umi Claw 插件 SDK：公开面 / 官方 internal / 客户端类型 / 契约测试工具",
+  "exports": {
+    "./public": "./src/public.ts",
+    "./official": "./src/official.ts",
+    "./client": "./src/client.ts",
+    "./testing": "./src/testing.ts"
+  }
+}
