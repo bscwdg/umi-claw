@@ -13,7 +13,7 @@
 cd D:\work2026\umi-claw
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 40 套验收（accept×38 + e2e + smoke，773 条断言；node:test 21 条另计）
+npm run accept         # 44 套验收（ACCEPT 42 + e2e + smoke，839 条断言；node:test 21 条另计）— 2026-11-13 codex/voice HEAD 实测；release/4.0 为 40/822，voice 合并后复核
 npm run build          # 构建（含 plugin:gen）
 ```
 
@@ -32,7 +32,7 @@ npm run build          # 构建（含 plugin:gen）
 | `work` | 新的一天 / 工作记录 / 日报周报 / 工作问答 / 工具箱 / 知识库 / 到点提醒 | 官方内置插件 |
 | `character` | 大肥鱼：桌宠 / 聊天 / 关系 / 生活 / 日记 / 语音 | **宿主模块**（不是插件，见 §5.3） |
 
-**只做官方内置插件**：插件代码随宿主构建进安装包，`resources/plugins/` 只放 `plugin.json` + `migrations/`。不提供第三方安装。
+**4.x 只做官方内置插件**：插件代码随宿主构建进安装包，`resources/plugins/` 只放 `plugin.json` + `migrations/`。4.x 不提供第三方安装；5.0 受控第三方方向见 [doc/PLAN-5.0-EXTENSIBILITY.md](doc/PLAN-5.0-EXTENSIBILITY.md)。
 
 ---
 
@@ -111,7 +111,7 @@ doc/                 # 计划、施工日志、运维手册、调研
 
 **规则**：`plugins/<id>/domain/**/*Manager.ts` 与 `contextEngine.ts` **禁止** `import ... from 'electron'`（WP3 起域代码住在 `plugins/<id>/domain/`；宿主 `electron/main/{work,marketing}` 已删除）。
 
-**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 40 套验收能在纯 Node 里跑真源码的前提。
+**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 44 套验收能在纯 Node 里跑真源码的前提。
 
 **写法**：工厂函数 + 显式 options，不 `new`、不单例、不从全局推。
 
@@ -202,7 +202,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 
 - `plugin.json` 的 `id` **必须等于目录名**（`scripts/gen-plugin-entries.mjs` 强制校验）
 - 入口表由脚本生成，**禁止手改** `kernel/plugins.main.generated.ts` 与 `src/renderer/plugins.renderer.generated.ts`
-- 禁止运行时从磁盘/网络加载可执行模块（`PLAN-4.0 §17.3`）。**例外**：§5.4 的随包 OpenClaw 原生插件由网关 `plugins.load.paths` 加载，不属于 Umi 插件入口表；路径固定随包、不提供第三方安装。
+- 禁止运行时从磁盘/网络加载可执行模块（`PLAN-4.0 §十七第3条`）。**例外**：§5.4 的随包 OpenClaw 原生插件由网关 `plugins.load.paths` 加载，不属于 Umi 插件入口表；路径固定随包、4.x 不提供第三方安装。5.0 受控第三方方向见 [doc/PLAN-5.0-EXTENSIBILITY.md](doc/PLAN-5.0-EXTENSIBILITY.md)（**4.x 仍禁止**）。
 - 注册物一律返回 disposer，停用由宿主 LIFO 清理；不要在 `deactivate` 里才擦屁股
 
 **现状证据**：`lifecycle.ts` 已实现 LIFO + 激活超时 + 迟到注册拒绝 + 失败隔离；`plugin.accept` **64 项**（P58 锁「ctx.services 使用 ⊆ inject」）。
@@ -258,7 +258,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 - 验收脚本**零 npm 依赖**，只用 `node:` 内置 + `test/_lib.mjs`
 - 断言打**真源码**：`bundleEntry('electron/main/work/todoManager.ts', 'todo-todo.mjs')` 后 `import()`，不 mock 被测逻辑
 
-**现状证据**：39 个 `.accept.mjs`、run-all `ACCEPT` 38 项；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。
+**现状证据**：43 个 `.accept.mjs`、run-all `ACCEPT` 42 项；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。2026-11-13 干净基线（codex/voice HEAD；release/4.0 为 40/822，voice 合并后复核）：44 套（含 e2e + smoke）、839 条断言 + `node:test` 21 条。
 
 ### 7.2 `_lib.mjs` 提供的工具
 
@@ -338,7 +338,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 4. 渲染端 `/plugins` 之外出现运行时动态加载插件代码
 5. `window.confirm` / `window.alert`（用 `ConfirmDialog`）
 6. `error.message.includes()` 判断错误（用 `code`）
-7. 为「架构完整」新增状态表 / 新增第三方插件安装入口
+7. 为「架构完整」新增状态表 / 新增第三方插件安装入口（**5.0 起按 [doc/PLAN-5.0-EXTENSIBILITY.md](doc/PLAN-5.0-EXTENSIBILITY.md) 的签名/权限/隔离约束受控开放；4.x 仍禁止**）
 8. 全仓格式化式提交（会淹没真实改动）
 9. 密钥写进配置、日志、导出包
 10. 改了 `test/*.accept.mjs` 的断言却不单独提交并说明理由
@@ -351,7 +351,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 40 套（accept×38 + e2e + smoke，773 条断言；node:test 21 条另计）
+# ② 全量验收 44 套（ACCEPT 42 + e2e + smoke，839 条断言；node:test 21 条另计）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）
@@ -450,6 +450,7 @@ Select-String doc\PROGRESS-4.0.md -Pattern '事实核对|对抗复核'
 ## 13. 相关文档
 
 - 架构契约：[PLAN-4.0.md](PLAN-4.0.md)
+- 扩展性/第三方路线：[doc/PLAN-5.0-EXTENSIBILITY.md](doc/PLAN-5.0-EXTENSIBILITY.md)
 - 当前欠账执行：[doc/PLAN-4.2.md](doc/PLAN-4.2.md)
 - 欠账历史：[doc/PLAN-4.1-DEBT.md](doc/PLAN-4.1-DEBT.md)
 - 施工日志：[doc/PROGRESS-4.0.md](doc/PROGRESS-4.0.md)
