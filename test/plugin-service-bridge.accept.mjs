@@ -239,6 +239,87 @@ await r.check('S6', 'createUtilityProcessFork 缺 env 时 fail-closed（不默�
   return 'env fail-closed ✓'
 })
 
+await r.check('S7', 'child 服务调用超时：宿主不回包时按 serviceTimeoutMs 失败，不永久挂起', async () => {
+  const childMod = await import(
+    pathToFileURL(bundleCjs('electron/main/kernel/pluginProcessChild.ts', 'svc-child-timeout.cjs')).href
+  )
+  const messages = []
+  const runtime = childMod.createChildRuntime({ send: (m) => messages.push(m) })
+  try {
+    await runtime.handle({
+      type: 'init',
+      pluginId: 'timeout',
+      mainPath: join(repoRoot, 'test', 'fixtures', 'timeout-plugin.cjs'),
+      dataDir: join(tmpdir(), 'umi-svc-timeout'),
+      hostVersion: '4.3.0',
+      services: ['kv'],
+      serviceTimeoutMs: 150
+    })
+    await runtime.handle({ type: 'activate' })
+    const started = Date.now()
+    await runtime.handle({ type: 'invoke', id: 7, method: 'go' })
+    const result = await waitFor(() => messages.find((m) => m.type === 'result' && m.id === 7), {
+      timeout: 2000
+    })
+    assertEq(result.ok, false, '超时返回失败')
+    assertEq(result.error?.code, 'PLUGIN_OPERATION_FAILED', '超时错误码')
+    assert(/超时/.test(result.error?.message ?? ''), '超时消息')
+    assert(Date.now() - started < 1500, '未永久挂起')
+    return '服务超时 ✓'
+  } finally {
+    runtime.dispose()
+  }
+})
+
+await r.check('S8', 'supervisor 宿主 onService 超时：不回包时回 service-result 错误，不让宿主 Promise 永久挂起', async () => {
+  const { EventEmitter } = await import('node:events')
+  const supMod = await import(
+    pathToFileURL(bundleEntry('electron/main/kernel/pluginSupervisor.ts', 'svc-supervisor-timeout.mjs')).href
+  )
+  class FakeChild extends EventEmitter {
+    sent = []
+    postMessage(m) {
+      this.sent.push(m)
+    }
+    kill() {
+      this.emit('exit', 0)
+    }
+  }
+  let child = null
+  const sup = supMod.createPluginSupervisor({
+    fork: () => {
+      child = new FakeChild()
+      return child
+    },
+    serviceTimeoutMs: 80,
+    onService: () => new Promise(() => {})
+  })
+  try {
+    const started = sup.start({
+      pluginId: 'p',
+      entry: '/x/child.js',
+      mainPath: '/x/main.cjs',
+      dataDir: '/x/data',
+      hostVersion: '4.3.0'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    child.emit('message', { type: 'ready', version: '4.3.0' })
+    await waitFor(() => child.sent.find((m) => m.type === 'activate'), { timeout: 1000 })
+    child.emit('message', { type: 'activated' })
+    await started
+    child.emit('message', { type: 'service', id: 9, service: 'kv', method: 'get', args: ['k'] })
+    const result = await waitFor(() => child.sent.find((m) => m.type === 'service-result' && m.id === 9), {
+      timeout: 2000
+    })
+    assertEq(result.ok, false, '超时回包失败')
+    assertEq(result.error?.code, 'PLUGIN_OPERATION_FAILED', '超时错误码')
+    assert(/超时/.test(result.error?.message ?? ''), '超时消息')
+    return 'supervisor onService 超时 ✓'
+  } finally {
+    await sup.stop()
+  }
+})
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin-service-bridge.json'), result)

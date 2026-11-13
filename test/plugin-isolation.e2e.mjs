@@ -25,7 +25,8 @@ await r.check('E1', '真实 utilityProcess：activate → ctx.services.kv.get �
     CLAW_DATA_DIR: dataDir,
     UMI_ISOLATION_PROBE: '1',
     UMI_ISOLATION_PLUGIN_DIR: join(repoRoot, 'test', 'fixtures'),
-    UMI_ISOLATION_MAIN: join(repoRoot, 'test', 'fixtures', 'service-plugin.cjs')
+    UMI_ISOLATION_MAIN: join(repoRoot, 'test', 'fixtures', 'security-plugin.cjs'),
+    UMI_SECRET_SENTINEL: 'should-not-leak'
   }
   delete env.ELECTRON_RUN_AS_NODE
   try {
@@ -57,6 +58,24 @@ await r.check('E1', '真实 utilityProcess：activate → ctx.services.kv.get �
     assertEq(probe.ok, true, `探针失败：${probe.error ?? ''}；stderr=${stderr.slice(-1200)}`)
     assertEq(probe.result, 'host-value', '插件读到宿主服务返回值')
     assertEq(probe.state, 'running', 'invoke 时处于 running')
+    const sec = probe.security ?? {}
+    assertEq(sec.escape?.ok, true, 'escape 方法执行')
+    assertEq(sec.escape?.value?.code, 'ERR_ACCESS_DENIED', 'fs 越界被 Node 权限拒绝')
+    assertEq(sec.spawn?.value?.ok, false, 'spawn 被拒绝')
+    assertEq(sec.spawn?.value?.code, 'ERR_ACCESS_DENIED', 'spawn 错误码')
+    assertEq(sec.worker?.value?.ok, false, 'worker 被拒绝')
+    assertEq(sec.worker?.value?.code, 'ERR_ACCESS_DENIED', 'worker 错误码')
+    assertEq(sec.native?.ok, true, 'native 方法执行')
+    assert(
+      sec.native?.value?.code === 'ERR_ACCESS_DENIED' || sec.native?.value?.code === 'ERR_DLOPEN_DISABLED',
+      `dlopen 错误码=${sec.native?.value?.code}`
+    )
+    assertEq(sec.env?.value?.sentinel, null, '宿主 env 不泄漏')
+    assertEq(sec.env?.value?.path, true, 'PATH 保留')
+    assertEq(sec.env?.value?.home ?? null, null, 'HOME 不传')
+    assertEq(sec.env?.value?.userProfile ?? null, null, 'USERPROFILE 不传')
+    assertEq(sec.env?.value?.appData ?? null, null, 'APPDATA 不传')
+    assertEq(sec.env?.value?.dataDir ?? null, null, 'CLAW_DATA_DIR 不传')
     return 'utilityProcess 全链路 ✓'
   } finally {
     rmSync(dataDir, { recursive: true, force: true })

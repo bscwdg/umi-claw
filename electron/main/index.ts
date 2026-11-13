@@ -1315,6 +1315,8 @@ app.whenReady().then(async () => {
     const pluginDir = process.env.UMI_ISOLATION_PLUGIN_DIR || process.cwd()
     const mainPath = process.env.UMI_ISOLATION_MAIN
     const dataDir = join(probeDir, 'plugin-data')
+    const hostSecretPath = join(probeDir, 'host-secret.txt')
+    writeFileSync(hostSecretPath, 'host-only', 'utf8')
     // 走真实权限 broker + service bridge（不是 stub）：E2E 要证明 B2/B3 串联
     const permStore = createPermissionStore(join(probeDir, 'permissions.json'))
     permStore.grant('probe', { services: ['kv'] })
@@ -1356,12 +1358,34 @@ app.whenReady().then(async () => {
         hostVersion: app.getVersion(),
         cwd: process.cwd(),
         services: ['kv'],
+        config: {
+          secretPath: hostSecretPath,
+          nativePath: join(
+            app.getAppPath(),
+            'node_modules',
+            '@rollup',
+            'rollup-win32-x64-msvc',
+            'rollup.win32-x64-msvc.node'
+          )
+        },
         env
       })
       const result = await supervisor.invoke('read')
+      const security: Record<string, unknown> = {}
+      for (const method of ['escape', 'spawn', 'worker', 'native', 'env']) {
+        try {
+          security[method] = { ok: true, value: await supervisor.invoke(method) }
+        } catch (e) {
+          security[method] = {
+            ok: false,
+            code: (e as { code?: string })?.code,
+            message: (e as Error)?.message
+          }
+        }
+      }
       writeFileSync(
         join(probeDir, 'isolation-probe.json'),
-        JSON.stringify({ ok: true, result, state: supervisor.state, at: Date.now() })
+        JSON.stringify({ ok: true, result, security, state: supervisor.state, at: Date.now() })
       )
     } catch (e) {
       writeFileSync(

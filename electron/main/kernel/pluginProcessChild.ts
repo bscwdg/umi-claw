@@ -59,6 +59,7 @@ export function createChildRuntime(options: ChildRuntimeOptions): ChildRuntime {
   let plugin: Record<string, unknown> | null = null
   let disposed = false
   let nextServiceId = 1
+  let serviceTimeoutMs = 30_000
   const servicePending = new Map<
     number,
     { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
@@ -72,7 +73,7 @@ export function createChildRuntime(options: ChildRuntimeOptions): ChildRuntime {
         const error = new Error(`服务调用超时：${service}.${method}`)
         ;(error as Error & { code?: string }).code = 'PLUGIN_OPERATION_FAILED'
         reject(error)
-      }, 30_000)
+      }, serviceTimeoutMs)
       servicePending.set(id, { resolve, reject, timer })
       send({ type: 'service', id, service, method, args })
     })
@@ -122,6 +123,9 @@ export function createChildRuntime(options: ChildRuntimeOptions): ChildRuntime {
     ctx.config = message.config
     ctx.host.version = message.hostVersion
     ctx.services = Object.fromEntries((message.services ?? []).map((name) => [name, serviceProxy(name)]))
+    if (typeof message.serviceTimeoutMs === 'number' && message.serviceTimeoutMs > 0) {
+      serviceTimeoutMs = message.serviceTimeoutMs
+    }
     plugin = await loadMain(message.mainPath)
     const mod = plugin as unknown as {
       activate?: unknown

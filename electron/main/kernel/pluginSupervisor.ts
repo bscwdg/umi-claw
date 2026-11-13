@@ -30,6 +30,8 @@ export interface PluginSupervisorOptions {
   crashWindowMs?: number
   crashLimit?: number
   stopTimeoutMs?: number
+  /** 宿主 onService 超时（默认 30s；避免插件服务调用把宿主 Promise 永久挂住） */
+  serviceTimeoutMs?: number
   /** B3 服务桥：子进程 ctx.services.* 转发到宿主；返回 undefined 表示服务不存在 */
   onService?: (pluginId: string, service: string, method: string, args: unknown[]) => Promise<unknown>
   logger?: (line: string) => void
@@ -71,7 +73,8 @@ export class PluginSupervisor extends EventEmitter {
       crashWindowMs: 5 * 60_000,
       crashLimit: 3,
       stopTimeoutMs: 3000,
-      ...options
+      ...options,
+      serviceTimeoutMs: options.serviceTimeoutMs ?? 30_000
     }
     // 心跳必须「发一次后等超时，再发下一次」；interval <= timeout 会让 deadline 永远被下一次 ping 清掉
     if (this.opts.heartbeatIntervalMs <= this.opts.heartbeatTimeoutMs) {
@@ -158,7 +161,9 @@ export class PluginSupervisor extends EventEmitter {
         mainPath: spec.mainPath,
         dataDir: spec.dataDir,
         hostVersion: spec.hostVersion,
-        services: spec.services ?? []
+        config: spec.config,
+        services: spec.services ?? [],
+        serviceTimeoutMs: spec.serviceTimeoutMs
       })
     })
   }
@@ -228,16 +233,30 @@ export class PluginSupervisor extends EventEmitter {
     }
   }
 
+  private async withServiceTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+    let timer: NodeJS.Timeout | null = null
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            reject(Object.assign(new Error(`宿主服务调用超时：${label}`), { code: 'PLUGIN_OPERATION_FAILED' }))
+          }, this.opts.serviceTimeoutMs)
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
   private async handleService(message: Extract<ChildToHostMessage, { type: 'service' }>): Promise<void> {
     const child = this.child
     if (!child) return
     try {
       if (!this.opts.onService) throw Object.assign(new Error('宿主未提供服务桥'), { code: 'PLUGIN_OPERATION_FAILED' })
-      const data = await this.opts.onService(
-        this.spec?.pluginId ?? '',
-        message.service,
-        message.method,
-        message.args
+      const data = await this.withServiceTimeout(
+        this.opts.onService(this.spec?.pluginId ?? '', message.service, message.method, message.args),
+        `${message.service}.${message.method}`
       )
       if (this.child !== child) return
       try {

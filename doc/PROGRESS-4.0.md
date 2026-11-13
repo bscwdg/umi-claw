@@ -2608,10 +2608,10 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 
 ## 2026-11-13 · Phase 0 收尾（4.3.0）
 
-- 版本：`package.json` / `package-lock.json` 升 4.3.0；CHANGELOG 增「插件化 Phase 0」并同步 51 套/888 项口径。
+- 版本：`package.json` / `package-lock.json` 升 4.3.0；CHANGELOG 增「插件化 Phase 0」并同步 51 套/890 项口径。
 - B0 ADR 定稿入 PLAN §3.1.4（utilityProcess 单进程/非沙箱、NODE_OPTIONS、CJS canonical、exit+心跳状态机、网络残余、flag 默认 off）。
 - 启动级 E2E：`test/startup.e2e.mjs` 用 `UMI_STARTUP_PROBE=1` 启动真实 Electron app 到 `whenReady`，写版本标记并退出 0；加入 run-all `e2e×2`。
-- Phase 0 出口：accept 51 套/888 项（+ node:test 21）全绿；双 typecheck 0；boundary 0/0/0；host import 0/0；UI `@/` 仅 4 处 ConfirmDialog；plugin-contract 已注册；one-day + startup E2E 全绿。
+- Phase 0 出口：accept 51 套/890 项（+ node:test 21）全绿；双 typecheck 0；boundary 0/0/0；host import 0/0；UI `@/` 仅 4 处 ConfirmDialog；plugin-contract 已注册；one-day + startup E2E 全绿。
 - 基线：分支 `codex/voice-local-external-conversation`；命令 `node scripts/run-all-accept.mjs`；`TEMP/TMP=%LOCALAPPDATA%\Temp` 且 `git clean -fdX -- test/.tmp`；日志 `data/tmp/analysis/accept-phase0-final.log`；4.3.0 提交见本条目所在 commit。
 - 收尾检查：事实核对（`phase0-factcheck*.md`）+ 对抗复核（`phase0-adversarial.md`）；P0 文档/基线问题已在本批处置；A3a 剩余与权限/configSchema 明确列 Phase 1。
 - 审查处置（属实→已修）：API v1 冻结口径改为「官方插件面」并写信任边界；§3.2 判据/勾选/基线记录补齐；4.3.0 只升版本不生成 tag/安装包已注明；startup E2E 补入 run-all；P32 三类绕过正则修正 + 合成探针；SDK 门禁盲区加 A4 白名单（15 个宿主 re-export）；K8 改为显式 SKIP（不计 PASS）；CHANGELOG character 90→110。
@@ -2627,7 +2627,7 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 - supervisor：`pluginSupervisor.ts`（状态机 stopped/starting/running/stopping/crashed/disabled；仅监听 exit；心跳 ping/pong；启动失败 disabled；退避 1/2/4s；5min≥3 次熔断；stop 取消待重启）。
 - 开关：`pluginIsolation.ts` `UMI_PLUGIN_ISOLATION=1`，默认 off；`pluginRuntime.isolationEnabled()` 暴露但 B1 不 fork（B2/B3 接服务桥后启用）。
 - 构建：electron-vite main 双入口，产出 `dist-electron/main/pluginProcessChild.js`（6.9KB）。
-- 验收：`test/plugin-isolation.accept.mjs` 17/17（状态机/invoke/崩溃重启/启动失败/心跳 hang/pong id/熔断/stop 竞态/stale generation/disabled-reset/真 Node child 协议/parentPort MessageEvent/flag off/生产接线）；全量 51 套/888 项（887 通过 + 1 显式跳过）全绿。
+- 验收：`test/plugin-isolation.accept.mjs` 17/17（状态机/invoke/崩溃重启/启动失败/心跳 hang/pong id/熔断/stop 竞态/stale generation/disabled-reset/真 Node child 协议/parentPort MessageEvent/flag off/生产接线）；全量 51 套/890 项（889 通过 + 1 显式跳过）全绿。
 - 对抗审查（task-13，`data/tmp/analysis/phase1-b1-review.md`）：P0=0、P1=5、P2=9；已处置：
   - P1-1 parentPort message 是 MessageEvent：transport 解包 `.data` + I12 真路径；ready.version 用 init 的 hostVersion。
   - P1-2 启动失败 kill 的 exit 被当 crash 重启：start catch 置 intentional + disabled 终态守卫；I10 ready 超时验证不重启。
@@ -2645,7 +2645,7 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 - 授权：`<dataDir>/plugin-permissions.json`（schema v1，坏文件未授权）；`plugin:permissions:list/grant/revoke` IPC；grant 只授予 manifest 已申请权限；`PluginManager.vue` 权限提示/授权/撤销按钮；preload 三方法。
 - broker：默认拒绝；fs 读含插件包目录，写只允许 dataDir 子路径；network/services allowlist；每次判定写 `plugin-audit.log`（无 payload/密钥）。
 - env：`NODE_OPTIONS` 注入 `--experimental-permission --allow-fs-read/--allow-fs-write`；子进程 env 白名单，不透传宿主 dataDir/API key/云密钥。
-- 测试：`test/plugin-permissions.accept.mjs` 10/10；全量 51 套/888 项（887 通过 + 1 显式跳过）全绿。
+- 测试：`test/plugin-permissions.accept.mjs` 10/10；全量 51 套/890 项（889 通过 + 1 显式跳过）全绿。
 - 对抗审查（task-14，`data/tmp/analysis/phase1-b2-review.md`）：P0=1、P1=2、P2=8；已处置：
   - P0 manifest 权限路径越界/NODE_OPTIONS 注入：拒绝任何盘符（C:/C:..）、空白/控制字符/Windows 非法字符；broker pathFromData 再校验在 dataDir 内；env 路径只接受相对 cwd 且无空白。
   - P1 空格安装路径：NODE_OPTIONS 改用 cwd 相对路径（`.`/`../data/...`），真 Electron 子进程验证 Program Files 风格路径可读入口；data fs 路径含空格仍 fail-closed，B3 服务桥解决。
@@ -2661,11 +2661,24 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 - 服务桥：`pluginServiceBridge.ts` 先过 B2 broker（`PLUGIN_PERMISSION_DENIED`），再按 method 调宿主服务；未知服务/方法/`constructor`/`_secret` 一律 NOT_FOUND；AppError 跨 bundle 按 code 透传。
 - 生产 fork：`createUtilityProcessFork`（utilityProcess + cwd + 权限 env）；supervisor 接 `onService`；`pluginRuntime.callPluginService` 用 serviceFactories 解析宿主服务。
 - 错误码：新增 `PLUGIN_PERMISSION_DENIED`（ERROR_CODES 15 项，db-worker W13 同步）。
-- 测试：`plugin-service-bridge` 6/6（权限/方法边界/错误映射/真 Node child RPC/生产接线）；`plugin-isolation.e2e` 1/1 **真 Electron utilityProcess + 权限 NODE_OPTIONS + 服务桥**。
-- 全量：51 套/888 项（887 通过 + 1 显式跳过）+ node:test 21 全绿（`accept-phase1-b3.log`）。
+- 测试：`plugin-service-bridge` 8/8（权限/方法边界/错误映射/真 Node child RPC/生产接线）；`plugin-isolation.e2e` 1/1 **真 Electron utilityProcess + 权限 NODE_OPTIONS + 服务桥**。
+- 全量：51 套/890 项（889 通过 + 1 显式跳过）+ node:test 21 全绿（`accept-phase1-b3.log`）。
 - 对抗审查（task-15，`data/tmp/analysis/phase1-b3-review.md`）：P0=0、P1=3、P2=9；已处置：
   - P1-1 多参数服务断链：协议改 `args: unknown[]`，child Proxy 收全参数、bridge `fn.apply(target,args)`；测试 set/get 两参数。
   - P1-2 假绿：E2E 改为真实权限 broker + serviceBridge（非 stub）；pluginDir 收窄到 fixtures + Electron bootstrap/child 入口只读；新增 S3 真 child 两参数。
   - P1-3 fork env 缺失：`createUtilityProcessFork` 缺 env 直接抛 `PLUGIN_PERMISSION_CONFIG_INVALID`。
   - P2：child pending 30s 超时/错误码保留/thenable 防护/dispose 不 reject；supervisor stopping 不执 service + 回包 try/catch；bridge toString/__ 禁调、getter 包装、serviceFactories own-property。
 - 未完成（B4）：生产 pluginRuntime 真正启动 supervisor、service onService 超时、事件流、HTTP/dialog 完整代理、越权负向/性能。
+
+---
+
+## 2026-11-14 · Phase 1 B4（负向隔离/超时/env）
+
+- 真机负向：security-plugin.cjs 在 utilityProcess 内尝试 fs 越界（host secret）、child_process.execSync、worker_threads、process.dlopen，全部被 Node permission 拒绝（ERR_ACCESS_DENIED / 失败）；UMI_SECRET_SENTINEL 未泄漏、HOME/CLAW_DATA_DIR 未传、PATH 保留。
+- child 服务超时：serviceTimeoutMs 可注入（默认 30s），S7 验证宿主不回包时按 PLUGIN_OPERATION_FAILED 失败，不永久挂起。
+- probe 通过 config 传 secretPath（不作为 env，避免污染白名单）；Electron bootstrap 读根 = child 入口目录 + resources + dist + app path（app path 是 dev 必需，登记为安装期只读面）。
+- 全量 51 套/890 项（889 通过 + 1 显式跳过）+ node:test 21 全绿（`accept-phase1-b4.log`）。
+- 对抗审查（task-16，`data/tmp/analysis/phase1-b4-review.md`）：P0=0、P1=1、P2=6；已处置：
+  - P1 dlopen 假绿：fixture 改真实 `.node`（config.nativePath），e2e 断言 `ERR_DLOPEN_DISABLED`/`ERR_ACCESS_DENIED` + wrapper ok。
+  - P2：worker 锁 `ERR_ACCESS_DENIED`；补 USERPROFILE/APPDATA 不传；supervisor `onService` 超时（默认 30s）+ S8；S7 60ms→150ms；文档措辞改为「native 按错误码验证」。
+- 未完成（B5/Phase 2）：开发者模式、生产 installer 启动 supervisor、事件流/HTTP/dialog、性能上限；dev app path 读根待安装期收窄。

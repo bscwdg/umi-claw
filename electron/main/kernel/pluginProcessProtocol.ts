@@ -26,6 +26,10 @@ export interface PluginProcessSpec {
   cwd?: string
   /** manifest.inject 声明的服务名；子进程按此建 ctx.services 代理 */
   services?: string[]
+  /** 子进程服务调用超时（默认 30s；B4 测试可注入短值） */
+  serviceTimeoutMs?: number
+  /** 插件配置（init 时传给 child ctx.config） */
+  config?: unknown
   /** 额外 env 白名单（B2 权限注入用；不得透传整份 process.env） */
   env?: Record<string, string>
 }
@@ -38,6 +42,7 @@ export interface PluginInitMessage {
   hostVersion: string
   config?: unknown
   services?: string[]
+  serviceTimeoutMs?: number
 }
 
 export interface PluginActivateMessage {
