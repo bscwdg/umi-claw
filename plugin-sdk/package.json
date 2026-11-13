@@ -7,7 +7,15 @@
   "exports": {
     "./public": "./src/public.ts",
     "./official": "./src/official.ts",
+    "./official-errors": "./src/official-errors.ts",
+    "./official-gateway": "./src/official-gateway.ts",
+    "./official-context": "./src/official-context.ts",
+    "./official-knowledge": "./src/official-knowledge.ts",
+    "./official-import": "./src/official-import.ts",
+    "./official-db": "./src/official-db.ts",
+    "./official-host": "./src/official-host.ts",
     "./client": "./src/client.ts",
+    "./client-official": "./src/client-official.ts",
     "./testing": "./src/testing.ts"
   }
 }

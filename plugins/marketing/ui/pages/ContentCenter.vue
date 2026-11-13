@@ -292,8 +292,8 @@ import {
   type ContentVersion
 } from '../store'
 import { useProjectSwitcher } from '../composables/useProjectSwitcher'
-import { useToast } from '@/composables/useToast'
-import { consumeContentPrefill, type HotTopicPayload } from '@/composables/useContentPrefill'
+import { useToast } from '../../../../plugin-sdk/src/client-official'
+import { consumeContentPrefill, type HotTopicPayload } from '../../../../plugin-sdk/src/client-official'
 
 const marketing = useMarketingStore()
 const switcher = useProjectSwitcher()

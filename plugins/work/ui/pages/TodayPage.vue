@@ -170,7 +170,7 @@ type SummaryRunToday = () => Promise<{ date: string; proposed: number; empty: bo
 import { useRouter } from 'vue-router'
 import type { TodayView } from '../../domain/todayManager'
 import type { SummaryStatus } from '../../domain/openclawSummaryManager'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '../../../../plugin-sdk/src/client-official'
 
 const router = useRouter()
 const { toast, showToast } = useToast()

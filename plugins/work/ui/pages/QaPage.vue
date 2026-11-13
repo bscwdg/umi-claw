@@ -46,8 +46,8 @@
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { workApi } from '../../../shared/hostBridge'
 import { useRoute } from 'vue-router'
-import { useWorkStream } from '@/composables/useWorkStream'
-import { useToast } from '@/composables/useToast'
+import { useWorkStream } from '../composables/useWorkStream'
+import { useToast } from '../../../../plugin-sdk/src/client-official'
 
 interface Msg {
   role: 'user' | 'assistant'

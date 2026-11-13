@@ -295,13 +295,14 @@ interface PluginDbApiV1 {
 | `@umi/plugin-sdk/official-import` | 旧库一次性导入 | 仅官方 |
 | `@umi/plugin-sdk/official-db` | 数据库共享窄类型 | 仅官方 |
 | `@umi/plugin-sdk/official-host` | 宿主 electron 适配（仅 main/ipc） | 仅官方 |
-| `@umi/plugin-sdk/client` | 官方 UI 的 `PluginUiModule`/`PluginUiHost` | 仅官方 |
+| `@umi/plugin-sdk/client` | 官方 UI 的 `PluginUiModule`/`PluginUiHost` 类型 | 仅官方 |
+| `@umi/plugin-sdk/client-official` | 官方 UI 运行时共享（useToast / agreementGate / wizardGate / contentPrefill / photographyPresets） | 仅官方 |
 | `@umi/plugin-sdk/testing` | 契约测试工具（fake host、断言） | 测试 |
 
 - 第三方包构建时 SDK **不随包**：宿主注入 `definePlugin`（identity）与类型；运行时对象由宿主提供。
 - **A2/A3b 当前是相对路径骨架**：`@umi/plugin-sdk/*` 的 alias/宿主注入尚未实现；仓内插件暂用 `../../plugin-sdk/src/*`。B1 前不得依赖全局变量。
 - official 拆成多个子路径而不是一个 barrel：避免 knowledge（mammoth/exceljs）、hostUi（electron）链进每个 domain bundle。
-- 官方插件迁移期间允许 official-*；迁移完成后门禁只允许 SDK。当前 ratchet：host import 0，UI host import 23(+2 type)，hostBridge 12。
+- 官方插件迁移期间允许 official-* / client-official；迁移完成后门禁只允许 SDK。当前 ratchet：host import 0，UI host import 4(+2 type；ConfirmDialog 是 .vue，保留直连), hostBridge 13（useWorkStream 移入插件后必须经 hostBridge；官方 UI 内部，Phase 1 前不动）。
 
 ---
 

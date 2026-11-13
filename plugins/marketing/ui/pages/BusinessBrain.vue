@@ -198,7 +198,7 @@ import {
   WATCHLIST_PRESET_TYPES
 } from '../store'
 import { useProjectSwitcher } from '../composables/useProjectSwitcher'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '../../../../plugin-sdk/src/client-official'
 import {
   BUSINESS_FIELD_LABELS,
   BUSINESS_POSITIONING_PRESETS,
@@ -206,7 +206,7 @@ import {
   BUSINESS_TONE_PRESETS,
   WATCHLIST_INDUSTRY_PRESETS,
   WATCHLIST_TYPE_LABELS
-} from '@/constants/photographyPresets'
+} from '../../../../plugin-sdk/src/client-official'
 
 const marketing = useMarketingStore()
 const switcher = useProjectSwitcher()

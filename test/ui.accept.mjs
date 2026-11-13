@@ -453,7 +453,7 @@ try {
   await r.check('U10', 'useWorkStream：早期 chunk 缓冲 / 累积 / done 收口', async () => {
     // 直接用真 composable 源码（esbuild 打包后 import）
     const bundle = esbuildBundle(
-      repoRoot + '/src/composables/useWorkStream.ts',
+      repoRoot + '/plugins/work/ui/composables/useWorkStream.ts',
       'ui-stream.bundle.mjs',
       { externals: ['vue'] }
     )

@@ -244,7 +244,7 @@ import { shellApi } from '../../../shared/hostBridge'
 import { useRouter } from 'vue-router'
 import { useMarketingStore, type HotTopic } from '../store'
 import { useProjectSwitcher } from '../composables/useProjectSwitcher'
-import { setContentPrefill } from '@/composables/useContentPrefill'
+import { setContentPrefill } from '../../../../plugin-sdk/src/client-official'
 
 const marketing = useMarketingStore()
 const switcher = useProjectSwitcher()

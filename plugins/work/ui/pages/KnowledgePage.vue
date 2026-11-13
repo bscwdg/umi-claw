@@ -112,7 +112,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { workApi } from '../../../shared/hostBridge'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '../../../../plugin-sdk/src/client-official'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 
 interface KRow {

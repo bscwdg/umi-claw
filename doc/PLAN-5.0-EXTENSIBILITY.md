@@ -171,8 +171,8 @@ renderer
 ### 3.1.2 A3b 官方插件迁移（2026-11-13）
 
 - 79 处 `electron/main/**` import / 38 文件已迁到 `plugin-sdk/src/official-*`（按宿主模块拆子路径，避免 barrel 把 mammoth/electron 链进 domain bundle）。
-- `check-plugin-api` ratchet：**host import 0**（值 0 / type 0）；仍剩 UI host import 23(+2 type)、hostBridge consumers 12。
-- 未完成：UI 的 `@/` 宿主 import 收敛（23 处）、hostBridge 收窄（12 文件）、`@umi/plugin-sdk/*` alias/宿主注入（B1）。
+- `check-plugin-api` ratchet：**host import 0**（值 0 / type 0）；UI host import 23→4（+2 type；4 处 ConfirmDialog .vue 直连属测试管线例外）；hostBridge consumers 13（useWorkStream 移入插件后必须经 hostBridge；官方 UI 内部，Phase 1 前不动）。
+- 未完成：UI 的 `@/` 宿主 import 仅剩 4 处 ConfirmDialog（等 UI 测试管线支持跨 .vue 或组件下沉）；hostBridge 收窄/下沉留 Phase 1；`@umi/plugin-sdk/*` alias/宿主注入（B1）。
 - 验收：plugin.accept 68/68、plugin-api 3/3、ui 28/28、build 通过；全量 accept 45 套/846 条全绿。
 
 ### 3.2 Phase 0 出口判据

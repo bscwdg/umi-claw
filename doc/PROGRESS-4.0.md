@@ -2583,3 +2583,13 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 - A3a 首批：DDL 白名单 + request 白名单 + gen 清理 + 会话键 resolver + 删 raw ipcMain + ratchet（plugin.accept 68/68、plugin-api 3/3、ui 28/28；全量 45 套绿）。
 - 对抗审查：`a1a2-reviewer`（P0-1/P0-2 已修，A2 标骨架）；`a3a-reviewer`（P0=0/P1=3，三条 P1 已修；P2 登记：DDL 前缀反例、STRICT、knowledge.search pre-existing、consent 反向读、release.zip 不提交）。
 - 未完成：A3a 剩余项（async/事件 RPC/onDemand/settings-commands/capabilities/ctx.host 拆分/hostBridge 收窄）、A3b/A6、A4/A5、Phase 1。
+
+---
+
+## 2026-11-13 · PLAN-5.0 A3b（官方插件迁 SDK）
+
+- 主进程侧：38 文件 / 79 处 `electron/main/**` import → `plugin-sdk/src/official-*` 子路径；`official` 只 re-export kernel，另有 official-errors/gateway/context/knowledge/import/db/host 子路径，避免 barrel 把 mammoth/exceljs/electron 链进 domain bundle。ratchet host 62(+17 type)→0。
+- UI 侧：23 处 `@/` 宿主 import → `plugin-sdk/src/client-official`（useToast / agreementGate / wizardGate / contentPrefill / photographyPresets）；`useWorkStream` 移入 `plugins/work/ui/composables/` 并改走 hostBridge；ConfirmDialog 保留 4 处 `.vue` 直连（SDK `.ts` 不能 re-export SFC）。ratchet UI 23→4(+2 type)，hostBridge 12→13（useWorkStream 合规新增）。
+- 验证：双 typecheck 0 错、build 通过、boundary 0/0/0、plugin.accept 68/68、plugin-api 3/3、ui 28/28、全量 45 套/846 条全绿。
+- 对抗审查：a3b-reviewer（P0=0/P1=0/P2=10，可提交）与 UI 复审（P0=0/P1=2：U10 旧路径、hostBridge 13 口径；均已修）。
+- 未完成：hub/UI 剩余（hostBridge 13 收窄留 Phase 1）；A3a 剩余；A4/A5/A7；Phase 1。

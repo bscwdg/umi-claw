@@ -58,7 +58,7 @@ plugins/             # 官方内置插件（同仓源码，参与宿主构建）
 ├── hello/           # 内核演示插件
 └── shared/
 
-plugin-sdk/          # 插件 SDK（public/official-*/client/testing；A2/A3b 骨架，alias/注入待 B1）
+plugin-sdk/          # 插件 SDK（public/official-*/client*/testing；A3b 骨架，alias/注入待 B1）
 
 src/                 # 渲染端（Vue3 + Pinia + vue-router）
 ├── views/           # 宿主页面
@@ -170,7 +170,7 @@ export const WORK_TODOS_CHANNELS = {
 
 ### 5.1 插件只能经 `ctx` 访问宿主
 
-**允许 import**：`electron/main/kernel/**`、`electron/main/services/**`、本插件目录内文件。
+**允许 import**：`plugin-sdk/**`（新代码唯一入口；public/official-*/client*）、本插件目录内文件。过渡期仍允许 `electron/main/kernel/**`、`electron/main/services/**`，A3b 迁移完成后只允许 SDK。
 **禁止 import**：其余一切 `electron/main/*`（`runtime`、`ipc`、域实现、`pluginDataImport` 等）。
 
 **现状**：**非 type 越界 0 条、type-only 越界 0 条**（4.1 WP6-b/c：域 ipc 已搬进 `plugins/<id>/main/ipc/`，gateway 流助手/宿主 UI 适配下沉 `services`；4.2 B4 已把 14 处 type-only 宿主类型引用清零，门禁新增 `pluginHostTypeOnly` 分级计数、基线 0；裸 `electron` 包也只有非 type 引用才判违规）。门禁：`npm run check:boundary`（零依赖脚本，已接入 `npm run accept` 首套与 CI verify job）。

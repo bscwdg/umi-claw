@@ -235,7 +235,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { marketingApi } from '../../../shared/hostBridge'
 import { useMarketingStore, MarketingIpcError, PRICE_SUSPECT_REGEX } from '../store'
 import { useProjectSwitcher } from '../composables/useProjectSwitcher'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '../../../../plugin-sdk/src/client-official'
 
 const marketing = useMarketingStore()
 const switcher = useProjectSwitcher()

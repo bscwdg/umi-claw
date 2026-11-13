@@ -19,7 +19,6 @@ import {
 import { readBaseline, scanPluginApi } from '../scripts/check-plugin-api.mjs'
 
 const r = new Recorder('Phase 0 · 插件 API ratchet（SDK 迁移）')
-
 const KEYS = [
   'pluginHostImport',
   'pluginHostTypeOnly',
@@ -71,7 +70,7 @@ await r.check('A3', 'SDK 四入口齐备（public/official/client/testing）', a
   }
   const official = readFileSync(join(repoRoot, 'plugin-sdk', 'src', 'official.ts'), 'utf8')
   assert(/electron\/main\/kernel/.test(official), 'official 承接 kernel（internal）')
-  for (const sub of ['official-errors.ts', 'official-gateway.ts', 'official-context.ts', 'official-knowledge.ts', 'official-import.ts', 'official-db.ts', 'official-host.ts']) {
+  for (const sub of ['official-errors.ts', 'official-gateway.ts', 'official-context.ts', 'official-knowledge.ts', 'official-import.ts', 'official-db.ts', 'official-host.ts', 'client-official.ts']) {
     assert(existsSync(join(repoRoot, 'plugin-sdk', 'src', sub)), `official 子路径 ${sub} 存在`)
   }
   return 'SDK 入口齐备 ✓'

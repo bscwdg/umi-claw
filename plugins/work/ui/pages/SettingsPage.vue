@@ -338,15 +338,15 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { workApi, clawApi, consentApi } from '../../../shared/hostBridge'
 import { useRouter, useRoute } from 'vue-router'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '../../../../plugin-sdk/src/client-official'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 import {
   consentGranted,
   consentAt,
   openAgreementReview,
   syncConsent
-} from '@/composables/useAgreementGate'
-import { openWizard } from '@/composables/useWizardGate'
+} from '../../../../plugin-sdk/src/client-official'
+import { openWizard } from '../../../../plugin-sdk/src/client-official'
 
 const router = useRouter()
 const route = useRoute()

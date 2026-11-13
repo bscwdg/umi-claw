@@ -1,4 +1,4 @@
-// composables/useWorkStream.ts —— work 域 SSE 流式归并
+// plugins/work/ui/composables/useWorkStream.ts —— work 域 SSE 流式归并
 //
 // 订阅 work:stream:{chunk,done,error}（preload 桥），按 runId 过滤，
 // 累积 delta 成文本；done/error 收口。多个组件各自 new 一个、只听自己的 runId。
@@ -14,6 +14,7 @@
 // 或用 start() 先订阅再 invoke（推荐后者，见 useOneShotRun）。
 
 import { ref } from 'vue'
+import { workApi } from '../../../shared/hostBridge'
 
 export interface StreamDonePayload {
   runId: string
@@ -72,9 +73,10 @@ export function useWorkStream() {
     }
   }
 
-  const offChunk = window.api.work.stream.onChunk(onChunk)
-  const offDone = window.api.work.stream.onDone(onDone)
-  const offError = window.api.work.stream.onError(onError)
+  const api = workApi()
+  const offChunk = api.stream.onChunk(onChunk)
+  const offDone = api.stream.onDone(onDone)
+  const offError = api.stream.onError(onError)
 
   function finish(payload: StreamDonePayload): void {
     if (settled) return

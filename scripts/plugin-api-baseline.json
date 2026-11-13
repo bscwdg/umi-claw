@@ -1,8 +1,8 @@
 {
   "pluginHostImport": 0,
   "pluginHostTypeOnly": 0,
-  "pluginUiHostImport": 23,
+  "pluginUiHostImport": 4,
   "pluginUiHostTypeOnly": 2,
-  "hostBridgeConsumers": 12,
-  "_note": "2026-11-13 A3b: official plugins migrated to plugin-sdk official-*; host import 0/0; remaining UI 23(+2 type), hostBridge 12 (A3b next)"
+  "hostBridgeConsumers": 13,
+  "_note": "2026-11-13 A3b UI: official UI migrated to SDK official-*/client-official; host import 0/0; UI host import 4 (+2 type, ConfirmDialog .vue exception); hostBridge 13 accepted (useWorkStream moved into plugin and must go through hostBridge per P32)"
 }

@@ -166,7 +166,7 @@ import { marketingApi } from '../../../shared/hostBridge'
 import { useRouter } from 'vue-router'
 import { ADVISOR_PLATFORMS, ERROR_TEXT, WATCHLIST_MAX, WATCHLIST_PRESET_TYPES, useMarketingStore } from '../store'
 import { useProjectSwitcher } from '../composables/useProjectSwitcher'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '../../../../plugin-sdk/src/client-official'
 
 const marketing = useMarketingStore()
 const switcher = useProjectSwitcher()

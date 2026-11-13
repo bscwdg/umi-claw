@@ -159,7 +159,7 @@ import { computed, onMounted, ref } from 'vue'
 import { workApi } from '../../../shared/hostBridge'
 import type { RecordRow } from '../../domain/recordManager'
 import type { MatterRow } from '../../domain/matterManager'
-import { useToast } from '@/composables/useToast'
+import { useToast } from '../../../../plugin-sdk/src/client-official'
 import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 
 const { toast, showToast } = useToast()
