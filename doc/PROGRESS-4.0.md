@@ -2449,3 +2449,63 @@ TTS→SILK→msg_type=7 语音气泡投递（deliver-pipeline.handleVoiceIntent�
 - main agent 的普通 exec（含 edge-tts 字样的排查命令）不受影响。
 - 待用户确认：① 是否 reset 旧 feiyu session（持有旧 bootstrap/技能快照，正规入口是 WS RPC
  `sessions.reset`，key `agent:feiyu:main`）；② 是否归档工作区野工具。
+
+### 2026-11-13 · feiyu 语音通道补面（端点 marker + C2C 平台 API 阻断）+ 语音投递可观测
+
+背景：feiyu 把野脚本改名 `probe2.cjs/probe3.cjs` 后绕过 exec 名字 marker 直连 QQ OpenAPI；
+另发现 feiyu 可改用 `qqbot_platform_api` 工具直传 C2C 语音，私聊场景下守卫的群判定早返回形成空档；
+同时 QQ 平台 `/files` 500「系统繁忙」导致语音条静默降级文件，UI 无感知。
+
+**改了什么（四项，按施工顺序）**
+
+- P1 端点级 marker（`resources/openclaw-plugins/feiyu-guard/policy.mjs`）：
+  `detectWildVoiceCommand` 在名字 marker 后追加 `WILD_VOICE_ENDPOINT_MARKERS`
+  （`api.sgroup.qq.com`/`bots.qq.com/app/getappaccesstoken`/`api.bot.qq.com`，命令先 toLowerCase）
+  与 `WILD_VOICE_FILES_PATH_RE`（`/v2/users|groups/<id>/files`，host 拆变量补面）；
+  feiyu 会话门控与 fail-open 三层不变，原因码仍统一是 `wild-voice-path-blocked`。
+- P2 C2C 平台 API 阻断：新增纯函数 `voiceUploadUserId`（与 `voiceUploadGroupId` 同构），
+  `guard.mjs` 在群判定早返回之前、仅对 feiyu 会话拦 `qqbot_platform_api` 的
+  `/v2/users/<id>/files` + `file_type=3`；群路径仍走群策略，两分支互不影响。
+  **契约变更**：G3 原「feiyu 私聊 c2c 语音上传放行」改为 block（有意收紧，新断言 G22 钉死）。
+- P3 宿主可观测（`electron/main/clawManager.ts`）：`_noteGatewayVoiceMarker` 统一识别
+  stderr 的 `falling back to sendFile`/`wild voice path blocked`，计数
+  （`getVoiceDeliveryStats`，每轮 spawn 归零）+ 中文 system 行；管道 data 事件与 detached
+  文件 tail 两个互斥入口都接入，只观测不参与发送判定，不接 IPC（预留，注释写明）。
+- P4 文档：`doc/RUNBOOK-4.0.md` §9 标注人工脚本的会话限制、§10 补三类 marker 与 C2C 分支、
+  新增 §11「语音条变成文件」（500 平台繁忙判据/JSONL 位置/TraceId 提取/工单口径）；
+  `doc/voice/QQBOT-VOICE.md` 补第三域名；插件 `index.mjs`/`openclaw.plugin.json` 描述同步；
+  `AGENTS.md` §5.4 规则枚举同步。
+
+**验收（真实输出）**
+
+- `accept:guard-plugin` 44/44（新增 G22 与 M9/M10/M11 三条变异；MUTATION 头注释 8→11）；
+  `accept:gateway-log` 10/10（新增 GL9 含幽灵进程归属断言、GL10 detached tail 入口）；
+  双 typecheck 0 错；`check:boundary` 三项 0；`e2e:day` 11/11；`smoke` 7/7；`npm run build` 通过。
+- 全量 accept 两套环境红（stash 干净树对照复现，与本次改动无关）：
+  `maintenance/plugin-captures-cleanup`（248 字符深路径 + `\\?\Global\` 前缀 mklink 失败，29/30）、
+  `hot`（libuv `UV_HANDLE_CLOSING` 真 worker 句柄断言，2/16）；便携 Node 低完整性标签导致的
+  db-worker 只读问题用 `UMI_ACCEPT_NODE` 指系统 Node 后 38/38。其余 36 套全绿。
+
+**对抗审查（只读子代理，均带可复查命令/行号）**
+
+- P1 对抗复核 Noether（runId 01a1d362-5f71-74b0-9e1e-ed716e331ce1）：3 条属实全部处置——
+  ① G21 端点断言被 files 正则兜底 → **属实→已修**：改纯域名独占命令并修 M9 文案；
+  ② 第三域名 `api.bot.qq.com` 未覆盖（社区 SDK 证实为现 wiki 新主机族）→ **属实→已修**：
+  补 marker + P9 断言 + 两处文档；③ M9 标题误导 → **属实→已修**。
+  其「前提不成立」矩阵（G3 不受影响、M8 锚点唯一、大小写/scheme 不绕过、fail-open 保持）附实测接受。
+- P2 对抗复核 Meitner（runId 01a1d375-f1ea-7e40-9300-039cb600a416）：核心实现无推翻项；
+  4 条文档/覆盖项全部处置——测试头 8→11、两处插件描述、PROGRESS 本条、G22 补群会话 c2c 与
+  JSON 字符串 body 两条断言。query/反斜杠绕过经工具 `validatePath` 白名单证实为不可达，登记接受。
+- P3 对抗复核 Franklin（runId 01a1d375-f340-7620-86d8-2ef7a10aa8b7）：3 条属实——
+  ① 归属守卫/重置无断言 → **属实→已修**：GL9 补幽灵进程 marker 不计数（重置点继承
+  maintenance 盲区，注释登记）；② getter 无 IPC 消费 → **属实→已修**：注释明确「预留、无 IPC 义务」；
+  ③ 管道无 carry 跨 chunk 漏计 → **属实→登记**：与 maintenanceMarker 同模式，只少计不错计，写入已知边界。
+  审查中发现的 detached 静默失效（初版只挂管道）→ **属实→已修**：抽 `_noteGatewayVoiceMarker`
+  并接 tail 入口 + GL10。stderr 硬编码、tail JSON 耦合等按已知边界接受。
+
+**已知边界（摩擦层，不是绝对阻断）**
+
+- 端点/路径 marker 与名字 marker 同级：变量分段拼接、百分号编码、反斜杠、换行切断仍可绕过；
+  真正减面靠归档工作区野工具（运行时数据不进 git，删前待用户确认）。
+- P3 只认 stderr、管道入口无 carry、detached 依赖文件 tail 的文本格式；失效模式都是少计不错计。
+- C2C 分支只覆盖 `/v2/users/<id>/files` 语音；频道 `/v2/channels/...` 与 `/messages` 不在本次范围。
