@@ -14,7 +14,7 @@ import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { Recorder, assert, assertEq, bundleEntry, printResult, tmpDir, writeJson } from './_lib.mjs'
+import { Recorder, assert, assertDeepEq, assertEq, bundleEntry, printResult, tmpDir, writeJson } from './_lib.mjs'
 
 const suite = '网关日志落盘（管道 tee / detached / fd 生命周期）'
 const rec = new Recorder(suite)
@@ -239,6 +239,76 @@ await rec.check('GL8', '进程归属守卫：非 tracked 旧进程的输出不�
   }
   assertEq(threw, false, '重复关闭不抛异常')
   return '归属守卫与幂等关闭正确'
+})
+
+// ── 9. QQ 语音 marker：fallback/野链路 warn → 计数 + 中文 system 行 ───────────
+await rec.check('GL9', 'QQ 语音 fallback/野链路拦截 stderr marker：计数+system 行；stdout 与无关 warn 不触发', async () => {
+  const dataDir = join(runDir, 'gl9')
+  const { cm } = makeManager(dataDir)
+  const proc = new FakeGatewayProcess()
+  cm.process = proc
+  cm._setupProcessEvents(proc)
+
+  assertDeepEq(cm.getVoiceDeliveryStats(), { voiceFallbackCount: 0, wildVoiceBlockCount: 0 }, '初始计数为 0')
+
+  proc.stderr.emit('data', Buffer.from('[deliver][media] sendVoice failed (API Error [/v2/users/x/files]: 系统繁忙), falling back to sendFile\n'))
+  proc.stderr.emit('data', Buffer.from('[feiyu-guard] wild voice path blocked via exec marker: say.py\n'))
+  proc.stderr.emit('data', Buffer.from('warn: something else entirely\n'))
+  proc.stdout.emit('data', Buffer.from('falling back to sendFile\n'))
+
+  assertDeepEq(cm.getVoiceDeliveryStats(), { voiceFallbackCount: 1, wildVoiceBlockCount: 1 }, '两类 marker 各计一次，无关 warn 不计数')
+  const lines = cm.getLogs().map((entry) => `${entry.type}:${entry.line}`)
+  assertEq(lines.some((line) => line.startsWith('system:') && line.includes('降级为文件')), true, 'fallback 补中文 system 行')
+  assertEq(lines.some((line) => line.startsWith('system:') && line.includes('野链路')), true, '野链路拦截补中文 system 行')
+  assertEq(lines.filter((line) => line.startsWith('system:')).length, 2, '只有两条 system 行，无关 warn 不产生')
+  assertEq(lines.includes('stdout:falling back to sendFile'), true, 'stdout 同文案只进 ring buffer，不触发 marker')
+
+  // 进程归属守卫：非 tracked 的旧实例吐出同文案 marker 不能计数（与 GL8 同口径）
+  const ghost = new FakeGatewayProcess()
+  cm._setupProcessEvents(ghost)
+  assertEq(cm.process, proc, 'tracked 引用仍是当前进程，ghost 只是挂了监听')
+  ghost.stderr.emit('data', Buffer.from('falling back to sendFile\n'))
+  ghost.stderr.emit('data', Buffer.from('wild voice path blocked via exec marker: x\n'))
+  assertDeepEq(cm.getVoiceDeliveryStats(), { voiceFallbackCount: 1, wildVoiceBlockCount: 1 }, '旧实例 marker 行不计数')
+
+  proc.emit('exit', 0, null)
+  return 'marker 计数/中文行/流归属/进程归属都正确'
+})
+
+// ── 10. detached tail 入口：文件 tail 与管道 data 事件的 marker 行为一致 ───────
+await rec.check('GL10', 'detached tail：stderr 关键行经文件 tail 同样计数+system 行；stdout tail 与多轮 drain 正确', async () => {
+  const dataDir = join(runDir, 'gl10')
+  const { cm } = makeManager(dataDir)
+  const errFile = join(dataDir, 'logs', ERR_NAME)
+  const outFile = join(dataDir, 'logs', LOG_NAME)
+  cm._startGatewayLogTails([
+    { file: errFile, type: 'stderr' },
+    { file: outFile, type: 'stdout' }
+  ])
+  // tail 启动后再追加，模拟 detached 子进程 stdio 直写文件
+  writeFileSync(
+    errFile,
+    '[deliver][media] sendVoice failed (API Error [/v2/users/x/files]: 系统繁忙), falling back to sendFile\n',
+    { flag: 'a' }
+  )
+  writeFileSync(outFile, 'wild voice path blocked via exec marker: say.py\n', { flag: 'a' })
+  cm._drainGatewayLogTails()
+  assertDeepEq(
+    cm.getVoiceDeliveryStats(),
+    { voiceFallbackCount: 1, wildVoiceBlockCount: 0 },
+    'stderr tail 计 fallback；stdout tail 同文案不触发 marker'
+  )
+  writeFileSync(errFile, '[feiyu-guard] wild voice path blocked via exec marker: edge-tts\n', { flag: 'a' })
+  cm._drainGatewayLogTails()
+  assertDeepEq(
+    cm.getVoiceDeliveryStats(),
+    { voiceFallbackCount: 1, wildVoiceBlockCount: 1 },
+    '第二轮 drain 增量计数，不重复读旧行'
+  )
+  const systemLines = cm.getLogs().filter((entry) => entry.type === 'system').length
+  assertEq(systemLines, 2, '两个 marker 各补一条中文 system 行')
+  cm._stopGatewayLogTails()
+  return 'detached tail 与管道入口行为一致'
 })
 
 // ── 清理与结果 ─────────────────────────────────────────────────────────────────

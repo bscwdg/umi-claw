@@ -208,3 +208,35 @@ node scripts/qqbot-voice-send.cjs media/voice.silk --openid <openid> --msg-id <m
   绑定；读不到 bindings 会保留旧条目等下次同步。旧 `workspace-feiyu-group/`、`agents/feiyu-group/`
   与 guard 计数状态只会在「删除全部数据」时清理；**openclaw.json 里的 guard 条目/groups 配置不会随
   「删除全部数据」回滚**（配置不属于用户数据）。
+
+## 11. 语音条变成文件（QQ 平台 500「系统繁忙」）
+
+症状：feiyu 回复的语音在 QQ 里显示为文件而不是语音条。网关日志出现
+`sendVoice failed (API Error [/v2/users/<openid>/files]: 系统繁忙，请稍后重试),
+falling back to sendFile`，随后同一份音频以 `file_type=4` 文件形式投递成功。
+
+成因与判据：
+
+- 失败点固定在 QQ 平台媒体接口 `POST /v2/users|groups/<id>/files`（`file_type=3` 语音），
+  qqbot 插件按 `UPLOAD_RETRY_POLICY` 重试 3 次（1s/2s 指数退避）耗尽后**静默降级为文件**，
+  上层 `handleVoiceIntent` 只看 `result.error`，不感知 `fallback: true`。
+- 这是**平台侧瞬时繁忙/频控**，不是本地配置问题：同一秒内其它 qqbot 接口仍回 200
+  （200/500 交错），同进程同 token，可排除 token、网络、base URL、TTS 实例。
+- 2026-11-13 实测两个故障窗（09:37、12:39–12:40，共 12 个 500）均在几分钟内自行恢复；
+  feiyu 事后用手工脚本打同一接口回 200，是因为窗口已过，不代表 SDK 封装有 bug。
+
+排障步骤：
+
+1. 截断日志看本轮进程：`<dataDir>/logs/openclaw-gateway.err.log` 搜 `falling back to sendFile`
+   与 `<<< Status: 500`；该文件每次拉起网关截断重写，跨重启的历史在结构化按天日志
+   `<dataDir>/tmp/openclaw/openclaw-YYYY-MM-DD.log`（JSONL，按天保留）。
+2. 提 500 的 TraceId（QQ 工单材料）：
+   ```powershell
+   node -e "const fs=require('fs');const f='data/tmp/openclaw/openclaw-2026-11-13.log';for(const l of fs.readFileSync(f,'utf8').split(/\r?\n/)){if(l.includes('Internal Server Error')){const r=JSON.parse(l);console.log(r.time,(r.message.match(/TraceId:\s*([0-9a-f]+)/i)||[])[1])}}"
+   ```
+   文件名日期按本地时区，替换成故障当天；JSONL 按天滚动且跨重启保留。
+3. 处置：平台繁忙通常自行恢复，先观察复现频率；复发时带 TraceId 提 QQ 工单查频控/配额。
+   不要为此绕过 `gw.sendVoice` 手搓 `/files`+`/messages`——同一端点仍会撞限流，还会丢掉
+   SDK 的 token 缓存与重试。
+4. 若日志是 `wild voice path blocked`：那是 feiyu-guard 在拦野链路（见 §10），与平台 500
+   无关，说明 agent 没走网关 `tts` 工具，按通道合规问题处理。

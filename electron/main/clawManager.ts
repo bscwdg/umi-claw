@@ -118,6 +118,10 @@ export class ClawManager extends EventEmitter {
   private maintenanceAutoFixInFlight = false
   private maintenanceAutoFixUsed = false
   private maintenanceMarkerSeen = false
+  // QQ 语音投递可观测计数（本轮网关进程）：只记录、不参与任何发送判定。
+  // voiceFallback=语音条被平台拒后降级文件的次数；wildVoiceBlock=feiyu-guard 拦野链路次数。
+  private voiceFallbackCount = 0
+  private wildVoiceBlockCount = 0
   private healthyResetTimer?: ReturnType<typeof setTimeout>
   // probeStartup 进行中：期间禁止退出码 78 触发自动 doctor，决策权交给探针调用方
   private probeInFlight = false
@@ -279,6 +283,8 @@ export class ClawManager extends EventEmitter {
     console.log('启动 OpenClaw...', new Date().toISOString())
 
     this.maintenanceMarkerSeen = false
+    this.voiceFallbackCount = 0
+    this.wildVoiceBlockCount = 0
 
     const currentConfig = this.configManager.getConfig()
     this.port = currentConfig.port || 3213
@@ -698,6 +704,9 @@ export class ClawManager extends EventEmitter {
     drainGatewayLogTails(this.logTails, (text, type) => {
       this._addLog(text, type)
       this.emit('log', text, type)
+      // detached 模式（stdio 直写文件、父进程无 data 事件）走这条入口，
+      // 与管道模式的 stderr data 事件互斥，marker 两边都要能观测到
+      if (type === 'stderr') this._noteGatewayVoiceMarker(text)
     })
   }
 
@@ -1077,6 +1086,18 @@ export class ClawManager extends EventEmitter {
     return this.logs.slice(-500)
   }
 
+  /**
+   * QQ 语音投递观测计数：供验收与排障读取，没有任何发送路径依赖它。
+   * 定位是 ring 内可追溯的最小可观测版：当前不接 IPC、UI 无 badge（接 IPC 须走
+   * ipc/host/misc.ts，是后续独立工作项）；用户可见面是日志面板里的中文 system 行。
+   */
+  getVoiceDeliveryStats(): { voiceFallbackCount: number; wildVoiceBlockCount: number } {
+    return {
+      voiceFallbackCount: this.voiceFallbackCount,
+      wildVoiceBlockCount: this.wildVoiceBlockCount
+    }
+  }
+
   clearLogs(): void {
     this.logs = []
   }
@@ -1402,6 +1423,9 @@ export class ClawManager extends EventEmitter {
         ) {
           this.maintenanceMarkerSeen = true
         }
+        // QQ 语音条降级/野链路拦截原本只埋在网关英文 warn 里，UI 无感知；
+        // 补中文 system 行与计数，日志面板可直接看到「为什么收到的是文件」。
+        if (this.process === proc) this._noteGatewayVoiceMarker(line)
       })
     })
 
@@ -1475,6 +1499,28 @@ export class ClawManager extends EventEmitter {
     this.logs.push(entry)
     if (this.logs.length > this.maxLogs) {
       this.logs = this.logs.slice(-this.maxLogs)
+    }
+  }
+
+  /**
+   * 网关 stderr 关键行观测：QQ 语音条降级文件 / feiyu-guard 拦野链路。
+   * 两个调用入口互斥——管道模式在 stderr data 事件、detached 模式在文件 tail drain；
+   * 只做计数与中文 system 行，不参与任何发送/重试判定，识别不到就什么都不做。
+   * 已知边界（失效模式都只可能少计、绝不错计）：
+   * - 只认 stderr：上游若把这两类 warn 改到 stdout 会静默少计，换流需同步改这里与 GL9/GL10；
+   * - 管道入口按 chunk 切行无 carry（与 maintenanceMarkerSeen 同模式），一条 marker 被拆进
+   *   两个 data 事件时漏计；tail 入口有 carry 拼接，两入口健壮性不对称；
+   * - 计数在每次 _spawnGateway 随 maintenanceMarkerSeen 一起归零，语义是「本轮网关进程」，
+   *   该重置点与既有 maintenance 标记同生命周期，验收不直接驱动真实 spawn（继承性盲区）。
+   */
+  private _noteGatewayVoiceMarker(line: string): void {
+    if (/falling back to sendFile/i.test(line)) {
+      this.voiceFallbackCount += 1
+      this._addLog('QQ 语音条发送失败，已降级为文件投递（平台 /files 接口繁忙，详见上方网关日志）', 'system')
+    }
+    if (/wild voice path blocked/i.test(line)) {
+      this.wildVoiceBlockCount += 1
+      this._addLog('feiyu-guard 拦截了一条语音野链路（agent 未走网关 tts 工具，详见上方网关日志）', 'system')
     }
   }
 
