@@ -99,7 +99,7 @@ await r.check('I1', 'supervisor：start→running / invoke 往返 / stop→stopp
     fork: () => (child = new FakeChild()),
     readyTimeoutMs: 500,
     heartbeatIntervalMs: 60_000,
-    heartbeatTimeoutMs: 60_000
+    heartbeatTimeoutMs: 10_000
   })
   await sup.start(spec)
   assertEq(sup.state, 'running', '启动后 running')
@@ -123,7 +123,7 @@ await r.check('I2', 'supervisor：崩溃后按退避重启（crashed→starting�
     },
     readyTimeoutMs: 500,
     heartbeatIntervalMs: 60_000,
-    heartbeatTimeoutMs: 60_000,
+    heartbeatTimeoutMs: 10_000,
     backoffMs: [10]
   })
   await sup.start(spec)
@@ -145,7 +145,7 @@ await r.check('I3', 'supervisor：启动阶段退出 → disabled，不自动重
     },
     readyTimeoutMs: 500,
     heartbeatIntervalMs: 60_000,
-    heartbeatTimeoutMs: 60_000,
+    heartbeatTimeoutMs: 10_000,
     backoffMs: [10]
   })
   let threw = null
@@ -171,8 +171,8 @@ await r.check('I4', 'supervisor：心跳 hang → kill → crashed（不拖垮�
       return c
     },
     readyTimeoutMs: 500,
-    heartbeatIntervalMs: 15,
-    heartbeatTimeoutMs: 15,
+    heartbeatIntervalMs: 30,
+    heartbeatTimeoutMs: 10,
     backoffMs: [10]
   })
   await sup.start(spec)
@@ -192,7 +192,7 @@ await r.check('I5', 'supervisor：5min 内连续崩溃达到上限 → disabled�
     },
     readyTimeoutMs: 500,
     heartbeatIntervalMs: 60_000,
-    heartbeatTimeoutMs: 60_000,
+    heartbeatTimeoutMs: 10_000,
     backoffMs: [5],
     crashLimit: 2,
     crashWindowMs: 5000
@@ -207,7 +207,7 @@ await r.check('I5', 'supervisor：5min 内连续崩溃达到上限 → disabled�
   return '崩溃熔断 ✓'
 })
 
-await r.check('I6', 'child 入口真进程：init→ready→activate→registerIpc→invoke→shutdown', async () => {
+ await r.check('I6', 'child 入口真进程：init→ready→activate→registerIpc→invoke→shutdown', async () => {
   const childBundle = bundleCjs('electron/main/kernel/pluginProcessChild.ts', 'isolation-child-bundle.cjs')
   const wrapper = join(__dirname, '.tmp', 'isolation-child-wrapper.cjs')
   writeFileSync(
@@ -219,6 +219,7 @@ await r.check('I6', 'child 入口真进程：init→ready→activate→registerI
   const node = resolveNodePath() ?? process.execPath
   const env = { ...process.env, ELECTRON_RUN_AS_NODE: undefined }
   delete env.ELECTRON_RUN_AS_NODE
+  const childData = mkdtempSync(join(tmpdir(), 'umi-child-'))
   const child = spawn(node, [wrapper], { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })
   const messages = []
   child.on('message', (m) => messages.push(m))
@@ -228,7 +229,7 @@ await r.check('I6', 'child 入口真进程：init→ready→activate→registerI
       type: 'init',
       pluginId: 'fixture',
       mainPath: fixture,
-      dataDir: mkdtempSync(join(tmpdir(), 'umi-child-')),
+      dataDir: childData,
       hostVersion: '4.3.0'
     })
     await waitMessage('ready')
@@ -246,6 +247,7 @@ await r.check('I6', 'child 入口真进程：init→ready→activate→registerI
     return `child 协议全链路 ✓（${messages.length} 条消息）`
   } finally {
     if (!child.killed) child.kill()
+    rmSync(childData, { recursive: true, force: true })
   }
 })
 
@@ -275,7 +277,7 @@ await r.check('I9', 'stop 在 crashed/待重启时取消 restartTimer，不再�
     },
     readyTimeoutMs: 500,
     heartbeatIntervalMs: 60_000,
-    heartbeatTimeoutMs: 60_000,
+    heartbeatTimeoutMs: 10_000,
     backoffMs: [200]
   })
   await sup.start(spec)
@@ -299,7 +301,7 @@ await r.check('I10', 'ready 超时 → disabled 且不因 kill 后的 exit 误�
     },
     readyTimeoutMs: 30,
     heartbeatIntervalMs: 60_000,
-    heartbeatTimeoutMs: 60_000,
+    heartbeatTimeoutMs: 10_000,
     backoffMs: [10]
   })
   let threw = null
@@ -347,8 +349,7 @@ await r.check('I12', 'Electron parentPort 的 MessageEvent（.data）路径也�
   postMessage: (m) => process.send(m),
   on: (_event, cb) => process.on('message', (m) => cb({ data: m }))
 }
-const { startPluginProcessChild } = require(${JSON.stringify(childBundle)})
-startPluginProcessChild()
+require(${JSON.stringify(childBundle)})
 `,
     'utf8'
   )
@@ -356,6 +357,7 @@ startPluginProcessChild()
   const node = resolveNodePath() ?? process.execPath
   const env = { ...process.env }
   delete env.ELECTRON_RUN_AS_NODE
+  const childData = mkdtempSync(join(tmpdir(), 'umi-parentport-'))
   const child = spawn(node, [wrapper], { cwd: repoRoot, env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] })
   const messages = []
   child.on('message', (m) => messages.push(m))
@@ -365,7 +367,7 @@ startPluginProcessChild()
       type: 'init',
       pluginId: 'fixture',
       mainPath: fixture,
-      dataDir: mkdtempSync(join(tmpdir(), 'umi-child-')),
+      dataDir: childData,
       hostVersion: '4.3.0'
     })
     const ready = await waitMessage('ready')
@@ -391,7 +393,7 @@ await r.check('I13', '旧 generation 的迟到 exit/message 不影响新 child',
     },
     readyTimeoutMs: 500,
     heartbeatIntervalMs: 60_000,
-    heartbeatTimeoutMs: 60_000
+    heartbeatTimeoutMs: 10_000
   })
   await sup.start(spec)
   await sup.dispose()
@@ -417,7 +419,7 @@ await r.check('I14', 'disabled 是终态：stop 不能洗白，reset 才能恢�
     },
     readyTimeoutMs: 500,
     heartbeatIntervalMs: 60_000,
-    heartbeatTimeoutMs: 60_000,
+    heartbeatTimeoutMs: 10_000,
     crashLimit: 1,
     crashWindowMs: 5000,
     backoffMs: [10]
@@ -460,6 +462,50 @@ await r.check('I15', '心跳 postMessage 抛错不崩宿主，按 hang 处理', 
   assertEq(children[0].killed, true, '抛错后 kill')
   await sup.dispose()
   return 'postMessage 异常兜底 ✓'
+})
+
+await r.check('I16', 'stop 期间 start 被拒绝；stop 不 kill 新 child', async () => {
+  const children = []
+  const sup = new supervisorMod.PluginSupervisor({
+    fork: () => {
+      const c = new FakeChild({ killDelayMs: 50 })
+      children.push(c)
+      return c
+    },
+    readyTimeoutMs: 500,
+    heartbeatIntervalMs: 60_000,
+    heartbeatTimeoutMs: 10_000,
+    stopTimeoutMs: 100
+  })
+  await sup.start(spec)
+  const stopping = sup.stop()
+  let startThrew = null
+  try {
+    await sup.start(spec)
+  } catch (e) {
+    startThrew = e
+  }
+  assert(startThrew, 'stopping 中 start 应拒绝')
+  await stopping
+  assertEq(sup.state, 'stopped', 'stop 收敛到 stopped')
+  assertEq(children.length, 1, '没有额外 fork')
+  await sup.dispose()
+  return 'stop/start 竞态 ✓'
+})
+
+await r.check('I17', '心跳配置非法（interval <= timeout）在构造期拒绝', async () => {
+  let threw = null
+  try {
+    new supervisorMod.PluginSupervisor({
+      fork: () => new FakeChild(),
+      heartbeatIntervalMs: 10,
+      heartbeatTimeoutMs: 20
+    })
+  } catch (e) {
+    threw = e
+  }
+  assert(threw, 'interval<=timeout 应抛错')
+  return '心跳配置校验 ✓'
 })
 
 const result = r.toJSON()

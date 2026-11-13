@@ -69,6 +69,12 @@ export class PluginSupervisor extends EventEmitter {
       stopTimeoutMs: 3000,
       ...options
     }
+    // 心跳必须「发一次后等超时，再发下一次」；interval <= timeout 会让 deadline 永远被下一次 ping 清掉
+    if (this.opts.heartbeatIntervalMs <= this.opts.heartbeatTimeoutMs) {
+      throw new Error(
+        `heartbeatIntervalMs(${this.opts.heartbeatIntervalMs}) 必须大于 heartbeatTimeoutMs(${this.opts.heartbeatTimeoutMs})`
+      )
+    }
   }
 
   get state(): PluginProcessState {
@@ -88,6 +94,7 @@ export class PluginSupervisor extends EventEmitter {
 
   async start(spec: PluginProcessSpec): Promise<void> {
     if (this._state === 'running' || this._state === 'starting') return
+    if (this._state === 'stopping') throw new Error('插件进程正在停止，稍后再启动')
     if (this._state === 'disabled') throw new Error('插件进程已熔断（disabled），需手动恢复')
     if (this.restartTimer) {
       clearTimeout(this.restartTimer)
@@ -334,6 +341,7 @@ export class PluginSupervisor extends EventEmitter {
       return
     }
     this.setState('stopping')
+    const stoppingChild = this.child
     const done = new Promise<void>((resolve) => {
       this.stoppedResolve = resolve
     })
@@ -346,13 +354,14 @@ export class PluginSupervisor extends EventEmitter {
       done,
       new Promise<void>((resolve) =>
         setTimeout(() => {
-          this.killChild()
+          // 只 kill 本次 stop 启动时的 child；若已被换代，绝不动新 child
+          if (this.child === stoppingChild) this.killChild()
           resolve()
         }, this.opts.stopTimeoutMs)
       )
     ])
     this.stoppedResolve = null
-    if (this._state !== 'disabled') this.setState('stopped')
+    if (this.child === null && this._state !== 'disabled') this.setState('stopped')
   }
 
   /** 显式恢复：清空崩溃窗口后允许从 disabled 重新 start */
