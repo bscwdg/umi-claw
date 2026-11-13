@@ -52,6 +52,7 @@ import type { SkillInfo } from './claw/skills'
 import { readSchemaVersions } from './claw/schema'
 import type { SchemaVersionEntry } from './claw/schema'
 import { markStartupMigrationsComplete, repairManagedPluginPeerLinks } from './claw/migrations'
+import { emptyQqVoicePatchSummary, ensureQqBotVoicePatch } from './claw/qqVoicePatch'
 import {
   DOCTOR_CONTENTION_RE,
   autoFixMaintenance,
@@ -322,6 +323,34 @@ export class ClawManager extends EventEmitter {
       `[gateway] 启动前清理完成（${((Date.now() - prepareStartedAt) / 1000).toFixed(1)}s）`,
       'system'
     )
+
+    // QQ 语音本地路径热修：openclaw-qqbot 装在 data/ 下不受 git 管理，
+    // 重装/升级会覆盖修复，故每轮网关启动前幂等自检（锚点不匹配只告警不改）。
+    // best-effort：补丁失败或超时都不阻断启动，fail-open 口径与 peer-link 修复一致。
+    // 已知边界：withTimeoutValue 不取消底层 promise，30s 超时后迟到的 rename 理论上
+    // 可能与网关插件 capture 拷贝交错；正常补丁是毫秒级本地 IO，概率极低，登记不改。
+    // 超时兜底与模块返回同形状，直接复用工厂，避免两处字段以后漂移。
+    const emptyVoicePatch = emptyQqVoicePatchSummary()
+    const voicePatch = await this._withTimeoutValue(
+      ensureQqBotVoicePatch({ log: this._logSink() }, dataDir),
+      30_000,
+      'QQ 语音路径补丁',
+      emptyVoicePatch
+    )
+    if (voicePatch.patched > 0) {
+      this._addLog(
+        `[gateway] QQ 语音路径补丁已应用（${voicePatch.patched} 个插件副本）`,
+        'system'
+      )
+    }
+    for (const result of voicePatch.results) {
+      if (result.status === 'unsupported' || result.status === 'error') {
+        this._addLog(
+          `[gateway] QQ 语音补丁未应用：${result.file}（${result.detail ?? result.status}）`,
+          'stderr'
+        )
+      }
+    }
 
     const targetConfigDir = toPosix(openClawPaths.configDir(dataDir))
 

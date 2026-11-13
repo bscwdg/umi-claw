@@ -20,6 +20,8 @@
     "accept:node-runtime": "node test/node-runtime.accept.mjs",
     "accept:maintenance": "node test/claw-maintenance.accept.mjs",
     "accept:gateway-log": "node test/gateway-log-files.accept.mjs",
+    "accept:qqbot-voice-patch": "node test/qqbot-voice-patch.accept.mjs",
+    "patch:qqbot-voice": "node scripts/patch-qqbot-voice-path.mjs",
     "accept:terminal-sessions": "node test/terminal-sessions.accept.mjs",
     "accept:host-ipc": "node test/host-ipc.accept.mjs",
     "accept:group-policy": "node test/group-policy.accept.mjs",
