@@ -6,6 +6,29 @@
 
 ---
 
+## [5.0.0]（GA，2026-11-14）
+
+> 5.0 GA：受控第三方插件（`.umi-plugin`）安装/更新/回滚/卸载；官方内置插件与 4.x 行为不变。
+> 第三方默认运行在 `utilityProcess` 隔离进程，NODE_OPTIONS 权限 + 显式 env 白名单；4.x 不开放安装入口。
+
+### 新增
+- **C1 签名包**：Ed25519 keygen/pack/verify/keyring/TOFU；canonical 签名原文 + golden vector；`umi-plugin` CLI（keygen/pack/verify）。
+- **C2 安装/回滚**：验签→安全解包→`plugin-packages/<id>/<version>`→数据快照→install-state；更新保留 previous、回滚恢复版本与数据；卸载保留/删除数据；真机安装→启动→更新→回滚 e2e。
+- **C3 兼容**：`apiVersion`/`engines.host` 安装期拒绝；4.x/5.x 矩阵。
+- **C4 静态索引/吊销**：官方/伙伴签名索引验签；`plugin:index`；吊销 keyId 拒绝安装。
+- **C6 设置页**：安装包选择、自签指纹展示/TOFU 确认、已安装列表、回滚/卸载、configSchema 渲染与保存；配置写 `plugin-data/<id>/config.json`。
+- **C8 运维**：安装/更新/回滚/卸载审计 JSONL、诊断（安装/备份/审计计数）、备份保留 5 份。
+- **隔离默认**：5.x 默认开启（`UMI_PLUGIN_ISOLATION=0` 可显式关）；4.x 默认关。
+
+### 验收
+- 59 套 / 938 项（937 通过 + 1 显式跳过）+ `node:test` 21 条；双 typecheck 0；build 绿。
+- C5 真机：安装→启动→更新→回滚（utilityProcess 全链路）。
+
+### 已知限制
+- Windows 下插件子进程 cwd 锁安装目录，真机卸载 e2e 由 installer 单测覆盖。
+- C4 索引目前为本地静态文件导入，无在线市场。
+- 第三方 UI 隔离/市场属 Phase 3。
+
 ## [5.0.0-beta.2]（内部基线）— 2026-11-14
 
 > C3/C4/C6/C8 收尾：兼容门、静态签名索引、管理页安装入口、审计/诊断/备份保留。
@@ -15,7 +38,7 @@
 - C4：`pluginIndex` 静态签名索引（canonical + Ed25519 验签），篡改/未知 key/非法 entry fail-closed。
 - C6：管理页「第三方插件」区块：选择安装包、确认自签、安装、已安装列表、回滚/卸载；`pickPackage` 经 runtime IPC。
 - C8：`plugin-audit.log`、`collectPluginDiagnostics`、备份默认保留 5 份。
-- 测试：C2 7/7、C4 3/3；全量 58 套/937 项（936 通过 + 1 显式跳过）。
+- 测试：C2 7/7、C4 3/3；全量 58 套/938 项（937 通过 + 1 显式跳过）。
 
 ## [5.0.0-beta.1]（内部基线）— 2026-11-14
 
@@ -26,7 +49,7 @@
 - child 入口 staging 到 `<dataDir>/plugin-runtime/<hostVersion>/`，避开 `Program Files` 空格路径。
 - `pluginRuntime`：`installFromPackage / rollbackInstalled / uninstallInstalled / installedPlugins`；安装后自动启动隔离插件。
 - IPC：`plugin:install/update/rollback/uninstall/installed` + preload；C2/R4 全链路测试。
-- 验收：57 套/937 项（936 通过 + 1 显式跳过）+ node:test 21。
+- 验收：57 套/938 项（937 通过 + 1 显式跳过）+ node:test 21。
 
 ## [5.0.0-alpha.2]（内部基线）— 2026-11-14
 
@@ -36,7 +59,7 @@
 - `pluginPackage`：Ed25519 keygen / pack / verify / keyring / TOFU；zip-slip、重复条目、缺签名、哈希不符、指纹变化全部 fail-closed。
 - `pluginPackageFormat`：canonical 签名原文、files 排序/路径校验、文件集精确一致、sha256/fingerprint；F1–F5 golden vector。
 - `scripts/umi-plugin.mjs`：keygen / pack / verify CLI，复用宿主同一套 canonical（不另写签名原文）。
-- 测试：plugin-package 6/6；全量 56 套/937 项（936 通过 + 1 显式跳过）。
+- 测试：plugin-package 6/6；全量 56 套/938 项（937 通过 + 1 显式跳过）。
 
 ## [5.0.0-alpha.1]（内部基线）— 2026-11-14
 
@@ -46,7 +69,7 @@
 - P0：冻结 `.umi-plugin` 包布局、Ed25519 签名/SIGNATURE 规范、三档信任（official/partner/self-TOFU）、keyring/吊销/安装态路径、权限只收窄、4.x 边界。
 - P1：`pluginRuntime` 真正管理隔离插件（start/stop/invoke/statuses）；启动失败回收、停止日志；真机 e2e 走 manager；新增 runtime 级测试。
 - P2：授权升级求交（新增权限不继承，空交集撤销）；撤销授权停隔离进程；junction/symlink 检测；`PLUGIN_PERMISSION_CONFIG_INVALID` / `PLUGIN_TIMEOUT`；`supervisor.invoke` 保留错误码；服务能力面禁 `db.backup/forPlugin/dispose`；隔离状态 IPC。
-- 验收：54 套 / 937 项（936 通过 + 1 显式跳过）+ node:test 21。
+- 验收：54 套 / 938 项（937 通过 + 1 显式跳过）+ node:test 21。
 
 ## [4.4.0-dev]（未发布，4.3 之后）— 2026-11-14
 
@@ -203,7 +226,7 @@
 - **边界**：4.x 仍只支持官方内置插件；**不开放第三方安装**，第三方签名/权限/隔离在 5.0 Phase 1+ 继续。
 
 ### 测试
-- 全量 **54 套 / 937 项检查（936 通过 + 1 显式跳过） / 0 失败**；plugin 71/71；plugin-contract 3/3；plugin-api 3/3；ui 28/28；character 110/110；启动级 E2E 1/1。
+- 全量 **54 套 / 938 项检查（937 通过 + 1 显式跳过） / 0 失败**；plugin 71/71；plugin-contract 3/3；plugin-api 3/3；ui 28/28；character 110/110；启动级 E2E 1/1。
 
 ---
 

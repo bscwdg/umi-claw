@@ -45,7 +45,7 @@
         <div v-if="schemaFields(item).length" class="config-form">
           <label v-for="field in schemaFields(item)" :key="field.key" class="meta">
             {{ field.label }}（{{ field.type }}）
-            <input v-model="configValues[String(item.id)][field.key]" class="input" />
+            <select v-if="field.enumValues.length" v-model="configValues[String(item.id)][field.key]" class="input"><option v-for="v in field.enumValues" :key="String(v)" :value="v">{{ v }}</option></select><input v-else-if="field.type === 'boolean'" v-model="configValues[String(item.id)][field.key]" type="checkbox" /><input v-else v-model="configValues[String(item.id)][field.key]" class="input" :type="field.type === 'number' ? 'number' : 'text'" />
           </label>
           <button class="btn btn-sm" @click="saveConfig(item.id)">保存配置</button>
         </div>
@@ -208,9 +208,9 @@ const isolatedPlugins = ref<Array<{ pluginId: string; name: string; version: str
 const installed = ref<{ schema: 1; plugins: Record<string, Record<string, unknown>> }>({ schema: 1, plugins: {} })
 const installedList = computed(() => Object.values(installed.value.plugins ?? {}))
 const configValues = ref<Record<string, Record<string, unknown>>>({})
-function schemaFields(item: Record<string, unknown>): Array<{ key: string; label: string; type: string }> {
-  const schema = item.configSchema as { properties?: Record<string, { type?: string; title?: string }> } | undefined
-  return Object.entries(schema?.properties ?? {}).map(([key, value]) => ({ key, label: value.title ?? key, type: value.type ?? 'string' }))
+function schemaFields(item: Record<string, unknown>): Array<{ key: string; label: string; type: string; enumValues: unknown[] }> {
+  const schema = item.configSchema as { properties?: Record<string, { type?: string; title?: string; enum?: unknown[] }> } | undefined
+  return Object.entries(schema?.properties ?? {}).map(([key, value]) => ({ key, label: value.title ?? key, type: value.type ?? 'string', enumValues: value.enum ?? [] }))
 }
 async function saveConfig(id: unknown): Promise<void> {
   installError.value = ''

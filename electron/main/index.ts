@@ -1344,7 +1344,7 @@ app.whenReady().then(async () => {
         buildPluginPermissionEnv({
           pluginDir: spec.packageDir,
           dataDir: spec.dataDir,
-          cwd: spec.packageDir,
+          cwd: dirname(spec.entry),
           permissions: spec.permissions ?? {},
           extraReadDirs: [dirname(spec.entry), process.resourcesPath, dirname(process.resourcesPath), app.getAppPath()]
         }),
@@ -1462,7 +1462,7 @@ app.whenReady().then(async () => {
         buildPluginPermissionEnv({
           pluginDir: spec.packageDir,
           dataDir: spec.dataDir,
-          cwd: dirname(spec.mainPath),
+          cwd: dirname(spec.entry),
           permissions: {},
           extraReadDirs: [
             dirname(spec.entry),

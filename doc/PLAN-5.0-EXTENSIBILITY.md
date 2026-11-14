@@ -146,7 +146,7 @@ renderer
 12. **宿主反向读插件库清零**：`index.ts` 的 `conversation_key`、`consent.ts` 的 `wizard_consent` 改为插件注册 provider；注意 consent 在插件激活前/停用后仍需可读（U27）。
 13. **通道租约**：work 76 条租约通道（P37 实测）；marketing 通道 A3a 前重新统计；第三方不租历史命名空间；宿主只保留 `work:gateway:*` 这一套。
 14. **gen/三份真相**：清理已删插件的 `resources/plugins/<id>`；生成表/清单/state 一致性校验。
-15. **插件 id 保留字与数据根**：第三方数据根统一为 `<dataDir>/plugins/<id>/`（与官方插件命名空间一致，旧 `plugin-data/` 从未落地、已废弃）；保留 id（host/plugin/system/...）；覆盖「删除全部数据」、宿主备份、卸载导出。
+15. **插件 id 保留字与数据根**：官方数据根 `<dataDir>/plugins/<id>/`；第三方 `<dataDir>/plugin-data/<id>/`（隔离，防止卸载/删除碰官方数据）；保留 id（host/plugin/system/...）；覆盖「删除全部数据」、宿主备份、卸载导出。
 16. **门禁扩容**：renderer 插件→宿主 `src/**`；`plugins/**` 的 `node:fs`/`node:child_process`/裸 electron；`templates/`、`plugin-sdk/` 纳入 typecheck。
 
 ### 3.1.1 A3a 实施状态（2026-11-13）
@@ -285,7 +285,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - `devMode.ts`：`UMI_DEV_PLUGINS=1` 才开 plugins，`UMI_DEV_BUILD=1` 且 plugins 开才开 build；**打包版即使设 env 也拒绝**。
 - 接线：`plugin:dev-mode`（`{ok,data}` 信封）+ preload `plugins.devMode()` + 管理页风险横幅。
 - 本批只做闸门与提示，不扫描/不加载 dev-plugins、不新增安装入口；扫描/源码构建留 Phase 2。
-- 测试：`plugin-dev-mode` 4/4；全量 54 套/937 项（936 通过 + 1 显式跳过）。
+- 测试：`plugin-dev-mode` 4/4；全量 54 套/938 项（937 通过 + 1 显式跳过）。
 - 未做/登记：UI 横幅可达性无 E2E；dev-plugins 扫描/源码构建 Phase 2。
 
 ### 4.7 Phase 2 起点提醒
@@ -352,9 +352,9 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
    - 自签 TOFU：`<dataDir>/plugin-trust.json` 记录 fingerprint firstSeen/lastSeen；首次确认后指纹变更必须二次确认。
 5. **路径布局**
    - 官方 builtin：包 `<resources>/plugins/<id>/`（不参与安装器）；第三方包：`<dataDir>/plugin-packages/<id>/<version>/`（版本目录不可原地修改）。
-   - 数据：官方/第三方统一 `<dataDir>/plugins/<id>/`（`data.db`/`kv`/`secrets` 命名空间不变）；旧 `plugin-data/` 从未落地，废弃。
+   - 数据：官方 `<dataDir>/plugins/<id>/`；**第三方 `<dataDir>/plugin-data/<id>/`**（与官方命名空间隔离，卸载/删除不会碰官方数据）。
    - 快照：`<dataDir>/plugin-backups/<id>/<timestamp>/`（默认保留最近 5 份）；安装态：`<dataDir>/plugin-install-state.json`。
-   - **child 入口与权限注入**：实际启动入口用宿主 app 内 `pluginProcessChild.js`（Electron utilityProcess 不能从 dataDir 外部入口启动）；安装时仍复制一份到 `<dataDir>/plugin-runtime/<hostVersion>/` 作备份/诊断。权限用 `execArgv` **绝对路径数组**（`--allow-fs-read/write`），不再依赖 `NODE_OPTIONS` 字符串，支持 `Program Files` 空格与中文用户名。
+   - **child 入口与权限注入**：实际启动入口用宿主 app 内 `pluginProcessChild.js`（Electron utilityProcess 不能从 dataDir 外部入口启动）；安装时复制一份到 `<dataDir>/plugin-runtime/<hostVersion>/` 作备份/诊断。权限用 **`NODE_OPTIONS` + 相对 cwd（child 入口目录）** 注入；`execArgv` 在 Electron 30 utilityProcess 下实测不生效。
    - 所有路径解析后必须 `realpath` 校验在允许根内；reparse point 在安装期拒绝。
 6. **权限与状态**
    - `permissions` 只允许公开服务 `db/openclaw/notifications/config/kv/secrets/voice`；`http/dialog` 在 C6 实现后再追加；`consent/abort/hostOps/legacyDb` 永不对第三方开放。
@@ -418,7 +418,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 | 打包 | `npm run build` + packaged smoke |
 | 审查 | AGENTS §12：每 commit 对抗审查；每 WP 两次独立检查 |
 
-**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**54 套**（ACCEPT 50 + e2e×4 + smoke）、accept result **937 项（936 通过 + 1 显式跳过）** + `node:test` **21 条** = **953**。AGENTS/RUNBOOK 已同步该口径（2026-11-14 Phase 1 收尾）；release/4.0 在 voice 合并后复核。后续以每次留档为准。
+**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**54 套**（ACCEPT 50 + e2e×4 + smoke）、accept result **938 项（937 通过 + 1 显式跳过）** + `node:test` **21 条** = **953**。AGENTS/RUNBOOK 已同步该口径（2026-11-14 Phase 1 收尾）；release/4.0 在 voice 合并后复核。后续以每次留档为准。
 
 ---
 

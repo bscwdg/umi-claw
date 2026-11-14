@@ -5,7 +5,7 @@
 
 import AdmZip from 'adm-zip'
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { verifyPluginPackage, type PluginKeyring } from './pluginPackage'
 import type { PluginPermissions } from '../kernel/manifest'
 import { satisfiesHostRange } from '../kernel/manifest'
@@ -344,7 +344,34 @@ export function inspectPluginPackage(options: {
     return { ok: false, code: 'PACKAGE_MANIFEST_INVALID', message: (e as Error).message }
   }
 }
+/** C8：kill switch（存在即拒绝所有第三方安装/更新） */
+export function setPluginKillSwitch(dataDir: string, enabled: boolean, reason = ''): void {
+  const file = join(dataDir, 'plugin-kill-switch.json')
+  if (enabled) {
+    mkdirSync(dataDir, { recursive: true })
+    writeFileSync(file, JSON.stringify({ enabledAt: new Date().toISOString(), reason }, null, 2), 'utf8')
+  } else {
+    rmSync(file, { force: true })
+  }
+}
+
 export function installPlugin(options: InstallOptions): InstallResult {
+  const result = installPluginImpl(options)
+  if (!result.ok) {
+    appendPluginAudit(options.dataDir, {
+      action: 'install',
+      id: basename(options.packageFile),
+      ok: false,
+      code: result.code
+    })
+  }
+  return result
+}
+
+function installPluginImpl(options: InstallOptions): InstallResult {
+  if (existsSync(join(options.dataDir, 'plugin-kill-switch.json'))) {
+    return { ok: false, code: 'PLUGIN_KILL_SWITCH', message: '第三方插件安装已停用（kill switch）' }
+  }
   const verified = verifyPluginPackage(options.packageFile, {
     keyring: options.keyring,
     allowSelfSigned: options.allowSelfSigned,

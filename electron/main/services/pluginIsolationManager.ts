@@ -102,7 +102,7 @@ export function createPluginIsolationManager(
           mainPath: spec.mainPath,
           dataDir: spec.dataDir,
           hostVersion: options.hostVersion,
-          cwd: dirname(spec.mainPath),
+          cwd: dirname(spec.entry),
           services: spec.services ?? [],
           serviceTimeoutMs: spec.serviceTimeoutMs,
           config: spec.config,

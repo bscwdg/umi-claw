@@ -369,7 +369,7 @@ export default definePlugin({
 | 3 | 签名 | `SIGNATURE` 为 Ed25519；覆盖排序文件哈希；keyId/指纹/等级由宿主 keyring 校验 |
 | 4 | 信任 | official / partner / self(TOFU)；未签名包仅 dev；指纹变更需二次确认 |
 | 5 | 权限 | 首批只允许 db/openclaw/notifications/config/kv/secrets/voice；http/dialog 由 C6 实现后追加；升级只收窄，新增权限重新授权 |
-| 6 | 路径 | 包 `<dataDir>/plugin-packages/<id>/<version>/`；数据 `<dataDir>/plugins/<id>/`；快照 `<dataDir>/plugin-backups/<id>/<timestamp>/` |
+| 6 | 路径 | 包 `<dataDir>/plugin-packages/<id>/<version>/`；数据官方 `<dataDir>/plugins/<id>/`、第三方 `<dataDir>/plugin-data/<id>/`；快照 `<dataDir>/plugin-backups/<id>/<timestamp>/` |
 | 7 | 状态 | 进程六态不变；安装态 `installing/broken` 由 C2 引入 |
 | 8 | configSchema | 设置页只渲染白名单子集（类型/默认/label/枚举）；禁 HTML/脚本 |
 
@@ -387,7 +387,7 @@ node scripts/umi-plugin.mjs verify --file my-plugin-1.0.0.umi-plugin --allow-sel
 
 ### 15.2 安装态与审计
 
-- 安装：`<dataDir>/plugin-packages/<id>/<version>/`；数据 `<dataDir>/plugins/<id>/`；快照 `<dataDir>/plugin-backups/<id>/` 默认保留 5 份。
+- 安装：`<dataDir>/plugin-packages/<id>/<version>/`；数据官方 `<dataDir>/plugins/<id>/`、第三方 `<dataDir>/plugin-data/<id>/`；快照 `<dataDir>/plugin-backups/<id>/` 默认保留 5 份。
 - 安装/更新/回滚/卸载写 `<dataDir>/plugin-audit.log`（JSONL，无密钥/绝对用户路径）。
 - 回滚恢复上一版本与对应数据快照；卸载默认保留数据。
 

@@ -514,7 +514,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
               return buildPluginPermissionEnv({
                 pluginDir: spec.packageDir,
                 dataDir: spec.dataDir,
-                cwd: spec.packageDir,
+                cwd: dirname(spec.entry),
                 permissions: spec.permissions ?? {},
                 extraReadDirs: [dirname(spec.entry), info.resourcesPath, dirname(info.resourcesPath), info.appPath]
               })
@@ -533,6 +533,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
                   version?: string
                   name?: string
                   packageDir?: string
+                  dataDir?: string
                   entry?: string
                   permissions?: import('../kernel/manifest').PluginPermissions
                   config?: unknown
@@ -557,7 +558,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
                       entry,
                       mainPath: join(record.packageDir, 'main.js'),
                       packageDir: record.packageDir,
-                      dataDir: join(dataDir, 'plugins', pluginId),
+                      dataDir: record.dataDir ?? join(dataDir, 'plugin-data', pluginId),
                       services: record.permissions?.services ?? [],
                       permissions: record.permissions,
                       config: record.config

@@ -297,6 +297,28 @@ await r.check('C2-11', 'C4 吊销：plugin-revocations.json 命中的 keyId 拒�
   }
 })
 
+await r.check('C2-12', 'C8 失败审计 + kill switch：失败写 JSONL；开关存在时拒绝安装', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'umi-inst-'))
+  try {
+    const dataDir = join(root, 'data')
+    const src = join(root, 'src')
+    makeSource(src, '1.0.0')
+    const p = await pack(root, src, '1.0.0')
+    const denied = mod.installPlugin({ dataDir, packageFile: p.out })
+    assertEq(denied.ok, false, '未信任拒绝')
+    const audit = readFileSync(join(dataDir, 'plugin-audit.log'), 'utf8').split('\n').filter(Boolean)
+    assert(audit.some((line) => JSON.parse(line).ok === false && JSON.parse(line).code === 'PACKAGE_UNTRUSTED_KEY'), '失败审计')
+    mod.setPluginKillSwitch(dataDir, true, 'test')
+    const killed = mod.installPlugin({ dataDir, packageFile: p.out, allowSelfSigned: true })
+    assertEq(killed.code, 'PLUGIN_KILL_SWITCH', 'kill switch 拒绝')
+    mod.setPluginKillSwitch(dataDir, false)
+    assertEq(mod.installPlugin({ dataDir, packageFile: p.out, allowSelfSigned: true }).ok, true, '关闭后可安装')
+    return '失败审计/kill switch ✓'
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin-installer.json'), result)
