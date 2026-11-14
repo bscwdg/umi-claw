@@ -70,10 +70,10 @@
           <button class="btn btn-success btn-lg" @click="handleFetchToken" :disabled="loading">
             {{ loading ? '正在获取...' : '获取 Token(网关令牌)' }}
           </button>
-          <button class="btn btn-danger" @click="handleStop" :disabled="actionLoading">
+          <button class="btn btn-danger btn-lg" @click="handleStop" :disabled="actionLoading">
             {{ pendingAction === 'stop' ? '停止中...' : '⏹ 停止' }}
           </button>
-          <button class="btn" @click="handleRestart" :disabled="actionLoading || clawStore.starting">
+          <button class="btn btn-lg" @click="handleRestart" :disabled="actionLoading || clawStore.starting">
             {{ pendingAction === 'restart' ? '重启中…' : '🔄 重启' }}
           </button>
         </template>
