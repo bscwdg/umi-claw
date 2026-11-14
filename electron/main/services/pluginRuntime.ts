@@ -241,7 +241,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     requested: unknown
   }> => {
     const records = registry?.list() ?? []
-    return records.map((record) => {
+    const builtin = records.map((record) => {
       const grant = permissionStore?.get(record.manifest.id)
       return {
         id: record.manifest.id,
@@ -250,6 +250,16 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
         requested: record.manifest.permissions ?? null
       }
     })
+    const installed = Object.values(readInstallState(deps.dataDir()).plugins).map((record) => {
+      const grant = permissionStore?.get(record.id)
+      return {
+        id: record.id,
+        granted: Boolean(grant),
+        grantedAt: grant?.grantedAt ?? null,
+        requested: record.permissions ?? null
+      }
+    })
+    return [...builtin, ...installed]
   }
 
   const installFromPackageInternal = async (input: {
@@ -296,6 +306,20 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       ok: true,
       data: isolationManager?.statuses() ?? []
     }))
+
+    deps.ipc.removeHandler('plugin:isolated:invoke')
+    deps.ipc.handle('plugin:isolated:invoke', async (_e, payload: { id?: string; method?: string; payload?: unknown }) => {
+      const id = String(payload?.id ?? '')
+      const method = String(payload?.method ?? '')
+      if (!id || !method || /[\s:]/.test(method)) {
+        return { ok: false, error: { code: 'VALIDATION_ERROR', message: 'id/method 非法' } }
+      }
+      try {
+        return { ok: true, data: await isolationManager!.invoke(id, method, payload?.payload) }
+      } catch (e) {
+        return { ok: false, error: { code: 'PLUGIN_OPERATION_FAILED', message: (e as Error)?.message ?? '调用失败' } }
+      }
+    })
 
     deps.ipc.removeHandler('plugin:install')
     deps.ipc.handle('plugin:install', async (_e, payload: { packageFile?: string; allowSelfSigned?: boolean; tofuFingerprint?: string }) => {
@@ -510,7 +534,9 @@ function readInstalledConfig(record: { dataDir?: string; config?: unknown }): un
             if (!Object.prototype.hasOwnProperty.call(serviceFactories, name)) return undefined
             const factory = serviceFactories[name as keyof typeof serviceFactories]
             if (typeof factory !== 'function') return undefined
-            return factory({ id: pluginId, dir: join(deps.resourcesRoot(), 'plugins', pluginId) })
+            const installed = readInstallState(deps.dataDir()).plugins[pluginId]
+            const dir = installed?.packageDir ?? join(deps.resourcesRoot(), 'plugins', pluginId)
+            return factory({ id: pluginId, dir })
           },
           logger: deps.logger
         })

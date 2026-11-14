@@ -454,6 +454,8 @@ const api = {
     revokePermissions: (id: string) => call<unknown>('plugin:permissions:revoke', { id }),
     devMode: () => call<{ plugins: boolean; build: boolean; reason: string; warning: string | null }>('plugin:dev-mode'),
     isolatedStatuses: () => call<Array<{ pluginId: string; state: string }>>('plugin:isolated:list'),
+    invokeIsolated: <T = unknown>(id: string, method: string, payload?: unknown): Promise<T> =>
+      call<T>('plugin:isolated:invoke', { id, method, payload }),
     install: (packageFile: string, options?: { allowSelfSigned?: boolean; tofuFingerprint?: string }) =>
       call<unknown>('plugin:install', { packageFile, ...options }),
     update: (packageFile: string, options?: { allowSelfSigned?: boolean; tofuFingerprint?: string }) =>
