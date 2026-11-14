@@ -115,6 +115,7 @@ export interface PluginRuntimeDeps {
   logger: (line: string) => void
 }
 
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 export interface PluginRuntime {
@@ -353,6 +354,56 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
             },
             logger: deps.logger
           })
+
+          // C2 之前的产品接线：安装器写入 plugin-install-state.json 后，runtime 启动
+          // 启用中的隔离插件；C2 只需写状态文件与 staging child，不再改 runtime。
+          const installStatePath = join(dataDir, 'plugin-install-state.json')
+          if (existsSync(installStatePath)) {
+            try {
+              const raw = JSON.parse(readFileSync(installStatePath, 'utf8')) as {
+                schema?: number
+                plugins?: Record<string, {
+                  version?: string
+                  name?: string
+                  packageDir?: string
+                  entry?: string
+                  permissions?: import('../kernel/manifest').PluginPermissions
+                  config?: unknown
+                  enabled?: boolean
+                }>
+              }
+              if (raw.schema === 1 && raw.plugins) {
+                for (const [pluginId, record] of Object.entries(raw.plugins)) {
+                  if (record.enabled === false || !record.packageDir) continue
+                  const entry =
+                    record.entry ??
+                    join(dataDir, 'plugin-runtime', deps.appInfo().version, 'pluginProcessChild.js')
+                  if (!existsSync(entry)) {
+                    deps.logger(`[plugin:${pluginId}] 隔离入口不存在，跳过：${entry}`)
+                    continue
+                  }
+                  try {
+                    await isolationManager.start({
+                      pluginId,
+                      name: record.name ?? pluginId,
+                      version: record.version ?? '',
+                      entry,
+                      mainPath: join(record.packageDir, 'main.js'),
+                      packageDir: record.packageDir,
+                      dataDir: join(dataDir, 'plugins', pluginId),
+                      services: record.permissions?.services ?? [],
+                      permissions: record.permissions,
+                      config: record.config
+                    })
+                  } catch (e) {
+                    deps.logger(`[plugin:${pluginId}] 隔离启动失败：${(e as Error)?.message ?? e}`)
+                  }
+                }
+              }
+            } catch (e) {
+              deps.logger(`读取 plugin-install-state.json 失败：${(e as Error)?.message ?? e}`)
+            }
+          }
         }
         const reg = new PluginRegistry({
           persistedEnabled: await stateStore.load(),

@@ -16,6 +16,8 @@ import { findReparsePoint } from './pluginPermissions'
 
 export interface IsolatedPluginSpec {
   pluginId: string
+  name?: string
+  version?: string
   /** child 入口（dist-electron/main/pluginProcessChild.js） */
   entry: string
   /** 插件 main.js 绝对路径 */
@@ -32,6 +34,8 @@ export interface IsolatedPluginSpec {
 
 export interface IsolatedPluginStatus {
   pluginId: string
+  name: string
+  version: string
   state: PluginProcessState
 }
 
@@ -57,6 +61,7 @@ export function createPluginIsolationManager(
   options: PluginIsolationManagerOptions
 ): PluginIsolationManager {
   const supervisors = new Map<string, PluginSupervisor>()
+  const specs = new Map<string, IsolatedPluginSpec>()
 
   const get = (pluginId: string): PluginSupervisor => {
     const supervisor = supervisors.get(pluginId)
@@ -86,6 +91,7 @@ export function createPluginIsolationManager(
           options.serviceCall(pluginId, service, method, args)
       })
       supervisors.set(spec.pluginId, supervisor)
+      specs.set(spec.pluginId, spec)
       try {
         await supervisor.start({
           pluginId: spec.pluginId,
@@ -101,6 +107,7 @@ export function createPluginIsolationManager(
         })
       } catch (e) {
         supervisors.delete(spec.pluginId)
+        specs.delete(spec.pluginId)
         await supervisor.stop().catch(() => undefined)
         options.logger?.(`[plugin:${spec.pluginId}] 隔离启动失败：${(e as Error)?.message ?? e}`)
         throw e
@@ -111,6 +118,7 @@ export function createPluginIsolationManager(
       const supervisor = supervisors.get(pluginId)
       if (!supervisor) return
       supervisors.delete(pluginId)
+      specs.delete(pluginId)
       await supervisor.stop().catch((e) => {
         options.logger?.(`[plugin:${pluginId}] 隔离停止失败：${(e as Error)?.message ?? e}`)
       })
@@ -119,6 +127,7 @@ export function createPluginIsolationManager(
     async stopAll() {
       const entries = [...supervisors.entries()]
       supervisors.clear()
+      specs.clear()
       const results = await Promise.allSettled(entries.map(([, supervisor]) => supervisor.stop()))
       for (const [index, result] of results.entries()) {
         if (result.status === 'rejected') {
@@ -134,10 +143,15 @@ export function createPluginIsolationManager(
     },
 
     statuses() {
-      return [...supervisors.entries()].map(([pluginId, supervisor]) => ({
-        pluginId,
-        state: supervisor.state
-      }))
+      return [...supervisors.entries()].map(([pluginId, supervisor]) => {
+        const spec = specs.get(pluginId)
+        return {
+          pluginId,
+          name: spec?.name ?? pluginId,
+          version: spec?.version ?? '',
+          state: supervisor.state
+        }
+      })
     }
   }
 }

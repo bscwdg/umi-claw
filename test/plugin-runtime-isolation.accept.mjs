@@ -5,7 +5,7 @@
 // 证明 manager 不是未使用的 seam。
 
 import { EventEmitter } from 'node:events'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -130,6 +130,49 @@ await r.check('R2', 'flag on：runtime.startIsolatedPlugin → invoke → status
     assertEq((await invoked).pong, true, 'runtime invoke')
     await runtime.disposeHost()
     assertEq(runtime.isolatedStatuses().length, 0, 'disposeHost 后为空')
+  } finally {
+    process.env.UMI_PLUGIN_ISOLATION = '0'
+    await runtime.disposeHost()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await r.check('R3', '安装态文件驱动：runtime.init 自动启动 enabled 隔离插件（C2 产品接线）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'umi-rt-'))
+  const resources = join(dir, 'resources')
+  const pkg = join(dir, 'plugin-packages', 'p', '1.0.0')
+  const entry = join(dir, 'plugin-runtime', '5.0.0', 'pluginProcessChild.js')
+  mkdirSync(join(resources, 'plugins'), { recursive: true })
+  mkdirSync(pkg, { recursive: true })
+  mkdirSync(join(dir, 'plugin-runtime', '5.0.0'), { recursive: true })
+  writeFileSync(join(pkg, 'main.js'), 'module.exports={}', 'utf8')
+  writeFileSync(entry, '// fake child', 'utf8')
+  writeFileSync(
+    join(dir, 'plugin-install-state.json'),
+    JSON.stringify({
+      schema: 1,
+      plugins: {
+        p: { version: '1.0.0', name: 'P', packageDir: pkg, entry, enabled: true }
+      }
+    }),
+    'utf8'
+  )
+  let child = null
+  process.env.UMI_PLUGIN_ISOLATION = '1'
+  const runtime = runtimeMod.createPluginRuntime(
+    createDeps(dir, resources, () => {
+      child = new FakeChild()
+      return child
+    })
+  )
+  try {
+    const init = runtime.init()
+    await waitFor(() => child, { timeout: 2000 })
+    await driveReady(child)
+    await init
+    assertEq(runtime.isolatedStatuses().length, 1, 'init 自动启动')
+    assertEq(runtime.isolatedStatuses()[0].pluginId, 'p', 'pluginId')
+    assertEq(runtime.isolatedStatuses()[0].version, '1.0.0', 'version')
   } finally {
     process.env.UMI_PLUGIN_ISOLATION = '0'
     await runtime.disposeHost()

@@ -327,31 +327,53 @@ export function intersectPermissions(
   return out
 }
 
-/** 安装期拒绝 reparse point：Node 权限模型不解析 junction/symlink，包内预置链接可越界 */
-export function findReparsePoint(root: string): string | null {
-  let stat
-  try {
-    stat = lstatSync(root)
-  } catch {
-    return null
-  }
-  if (stat.isSymbolicLink()) return root
-  if (!stat.isDirectory()) return null
-  let entries
-  try {
-    entries = readdirSync(root, { withFileTypes: true })
-  } catch {
-    return null
-  }
-  for (const entry of entries) {
-    const child = join(root, entry.name)
-    if (entry.isSymbolicLink()) return child
-    if (entry.isDirectory()) {
-      const found = findReparsePoint(child)
-      if (found) return found
+/** 安装期拒绝 reparse point：Node 权限模型不解析 junction/symlink，包内预置链接可越界。
+ *  读取失败/超限 fail-closed，避免“无法检查”被当成“没有链接”。 */
+export function findReparsePoint(
+  root: string,
+  limits: { maxEntries?: number; maxDepth?: number } = {}
+): string | null {
+  const maxEntries = limits.maxEntries ?? 5000
+  const maxDepth = limits.maxDepth ?? 20
+  const state = { count: 0 }
+  const walk = (current: string, depth: number): string | null => {
+    if (depth > maxDepth) {
+      throw Object.assign(new Error(`插件包目录过深：${current}`), { code: 'PLUGIN_PERMISSION_CONFIG_INVALID' })
     }
+    let stat
+    try {
+      stat = lstatSync(current)
+    } catch (e) {
+      if ((e as { code?: string })?.code === 'ENOENT') return null
+      throw Object.assign(new Error(`无法检查 reparse point：${current}`), {
+        code: 'PLUGIN_PERMISSION_CONFIG_INVALID'
+      })
+    }
+    if (stat.isSymbolicLink()) return current
+    if (!stat.isDirectory()) return null
+    let entries
+    try {
+      entries = readdirSync(current, { withFileTypes: true })
+    } catch {
+      throw Object.assign(new Error(`无法读取插件包目录：${current}`), {
+        code: 'PLUGIN_PERMISSION_CONFIG_INVALID'
+      })
+    }
+    for (const entry of entries) {
+      state.count += 1
+      if (state.count > maxEntries) {
+        throw Object.assign(new Error(`插件包条目过多：${root}`), { code: 'PLUGIN_PERMISSION_CONFIG_INVALID' })
+      }
+      const child = join(current, entry.name)
+      if (entry.isSymbolicLink()) return child
+      if (entry.isDirectory()) {
+        const found = walk(child, depth + 1)
+        if (found) return found
+      }
+    }
+    return null
   }
-  return null
+  return walk(root, 0)
 }
 
 /** 升级 reconcile：交集为空则撤销，避免「已授权但权限为空」的假授权；返回是否仍授权 */

@@ -14,6 +14,13 @@
       ⚠️ {{ devMode.warning }}<span v-if="devMode.build"> 已允许源码构建。</span>
     </p>
 
+    <section v-if="isolatedPlugins.length" class="plugin-card">
+      <h2 class="section-title">隔离插件（第三方进程）</h2>
+      <p v-for="item in isolatedPlugins" :key="item.pluginId" class="meta">
+        <strong>{{ item.name }}</strong> {{ item.version }} · {{ item.state }}
+      </p>
+    </section>
+
     <p v-if="loadError" class="error-banner">
       {{ loadError }}
       <button class="btn btn-sm" @click="reload">重试</button>
@@ -166,6 +173,7 @@ const permissionMap = ref<Record<string, { granted: boolean; requested: unknown 
 const loading = ref(false)
 const loadError = ref('')
 const devMode = ref<{ plugins: boolean; build: boolean; reason: string; warning: string | null } | null>(null)
+const isolatedPlugins = ref<Array<{ pluginId: string; name: string; version: string; state: string }>>([])
 const busy = ref('')
 const confirmVisible = ref(false)
 const confirmMessage = ref('')
@@ -345,6 +353,14 @@ async function loadDevMode(): Promise<void> {
   }
 }
 
+async function loadIsolated(): Promise<void> {
+  try {
+    isolatedPlugins.value = await window.api.plugins.isolatedStatuses()
+  } catch {
+    isolatedPlugins.value = []
+  }
+}
+
 async function togglePermission(status: PluginStatus): Promise<void> {
   busy.value = status.id
   try {
@@ -414,6 +430,7 @@ onMounted(async () => {
   await reload()
   await loadPermissions()
   await loadDevMode()
+  await loadIsolated()
 })
 
 onUnmounted(() => {

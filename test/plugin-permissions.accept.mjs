@@ -341,7 +341,8 @@ await r.check('P13', '安装期 reparse point 检测：junction 被识别并拒�
   const res = spawnSync('cmd', ['/c', 'mklink', '/J', link, target], { encoding: 'utf8' })
   try {
     if (res.status !== 0) return '跳过：当前环境不允许创建 junction'
-    assertEq(permMod.findReparsePoint(dir), link, 'junction 被识别')
+  assertEq(permMod.findReparsePoint(dir), link, 'junction 被识别')
+  assertEq(permMod.findReparsePoint(join(dir, 'missing')) ?? null, null, '不存在目录不误报')
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
