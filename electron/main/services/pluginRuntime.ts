@@ -501,7 +501,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
         })
 
         // P1：生产 runtime 管理隔离插件；flag off 或未注入 utilityProcess 时保持 4.3 行为
-        if (isPluginIsolationEnabled() && deps.utilityProcess) {
+        if (isPluginIsolationEnabled(process.env, deps.appInfo().version) && deps.utilityProcess) {
           isolationManager = createPluginIsolationManager({
             fork: createUtilityProcessFork(deps.utilityProcess),
             hostVersion: deps.appInfo().version,
@@ -711,7 +711,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
 
     isolationEnabled() {
       // B1：只暴露开关；真正的第三方 supervisor 在 B2/B3 接入。默认 off 保证 4.3 行为不变。
-      return isPluginIsolationEnabled()
+      return isPluginIsolationEnabled(process.env, deps.appInfo().version)
     },
 
     checkPermission(pluginId: string, action: PermissionAction) {

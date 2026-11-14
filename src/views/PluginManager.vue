@@ -42,6 +42,13 @@
         {{ String(item.trustLevel) }}
         <button class="btn btn-sm" @click="rollback(item.id)">回滚</button>
         <button class="btn btn-sm btn-danger" @click="uninstall(item.id)">卸载</button>
+        <div v-if="schemaFields(item).length" class="config-form">
+          <label v-for="field in schemaFields(item)" :key="field.key" class="meta">
+            {{ field.label }}（{{ field.type }}）
+            <input v-model="configValues[String(item.id)][field.key]" class="input" />
+          </label>
+          <button class="btn btn-sm" @click="saveConfig(item.id)">保存配置</button>
+        </div>
       </div>
     </section>
 
@@ -204,6 +211,15 @@ const configValues = ref<Record<string, Record<string, unknown>>>({})
 function schemaFields(item: Record<string, unknown>): Array<{ key: string; label: string; type: string }> {
   const schema = item.configSchema as { properties?: Record<string, { type?: string; title?: string }> } | undefined
   return Object.entries(schema?.properties ?? {}).map(([key, value]) => ({ key, label: value.title ?? key, type: value.type ?? 'string' }))
+}
+async function saveConfig(id: unknown): Promise<void> {
+  installError.value = ''
+  try {
+    await window.api.plugins.setConfig(String(id), configValues.value[String(id)] ?? {})
+    installNotice.value = '配置已保存'
+  } catch (e) {
+    installError.value = (e as Error)?.message ?? '保存配置失败'
+  }
 }
 const pendingPackage = ref('')
 const pendingInspect = ref<{ id: string; version: string; trust: string; fingerprint: string } | null>(null)

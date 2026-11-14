@@ -5,6 +5,10 @@
 
 export const PLUGIN_ISOLATION_ENV = 'UMI_PLUGIN_ISOLATION'
 
-export function isPluginIsolationEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env[PLUGIN_ISOLATION_ENV] === '1'
+export function isPluginIsolationEnabled(env: NodeJS.ProcessEnv = process.env, hostVersion?: string): boolean {
+  const flag = env[PLUGIN_ISOLATION_ENV]
+  if (flag === '1') return true
+  if (flag === '0') return false
+  // 5.0 起隔离默认开启；4.x 分支仍默认关闭（本文件只在 5.0 分支生效）
+  return Boolean(hostVersion && /^5\./.test(hostVersion))
 }

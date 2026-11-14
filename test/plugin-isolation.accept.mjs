@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
+  bundleEntry,
   Recorder,
   __dirname,
   assert,
@@ -506,6 +507,16 @@ await r.check('I17', '心跳配置非法（interval <= timeout）在构造期拒
   }
   assert(threw, 'interval<=timeout 应抛错')
   return '心跳配置校验 ✓'
+})
+
+await r.check('I7b', '5.0 默认开隔离；4.x 默认关；显式 0 仍关', async () => {
+  const mod = await import(
+    pathToFileURL(bundleEntry('electron/main/kernel/pluginIsolation.ts', 'iso-flag.mjs')).href
+  )
+  assertEq(mod.isPluginIsolationEnabled({}, '5.0.0-beta.2'), true, '5.0 默认开')
+  assertEq(mod.isPluginIsolationEnabled({}, '4.4.0'), false, '4.x 默认关')
+  assertEq(mod.isPluginIsolationEnabled({ UMI_PLUGIN_ISOLATION: '0' }, '5.0.0'), false, '显式 0 关')
+  return 'flag 语义 ✓'
 })
 
 const result = r.toJSON()

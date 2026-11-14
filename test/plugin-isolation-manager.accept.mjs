@@ -158,7 +158,10 @@ await r.check('M4', '生产接线：pluginRuntime 注入 utilityProcess + 隔离
   const runtime = readFileSync(join(repoRoot, 'electron', 'main', 'services', 'pluginRuntime.ts'), 'utf8')
   const main = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf8')
   assert(runtime.includes('createPluginIsolationManager'), 'runtime 创建 manager')
-  assert(runtime.includes('isPluginIsolationEnabled() && deps.utilityProcess'), 'flag + utilityProcess 才启用')
+  assert(
+    runtime.includes('isPluginIsolationEnabled(process.env, deps.appInfo().version) && deps.utilityProcess'),
+    'flag + utilityProcess 才启用'
+  )
   assert(runtime.includes('startIsolatedPlugin'), '暴露 startIsolatedPlugin')
   assert(runtime.includes('await isolationManager?.stopAll()'), 'disposeHost 停全部')
   assert(/utilityProcess,/.test(main), 'main 注入 utilityProcess')
