@@ -211,6 +211,7 @@ const selfTrust = ref(false)
 const installBusy = ref(false)
 const installNotice = ref('')
 const installError = ref('')
+const diagnostics = ref<{ installed: number; backups: number; auditLines: number } | null>(null)
 const busy = ref('')
 const confirmVisible = ref(false)
 const confirmMessage = ref('')
@@ -533,6 +534,7 @@ onMounted(async () => {
   await loadDevMode()
   await loadIsolated()
   await loadInstalled()
+  diagnostics.value = await window.api.plugins.diagnostics().catch(() => null)
 })
 
 onUnmounted(() => {

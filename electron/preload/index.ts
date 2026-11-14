@@ -463,6 +463,8 @@ const api = {
     installed: () => call<{ schema: 1; plugins: Record<string, unknown> }>('plugin:installed'),
     pickPackage: () => call<string | null>('plugin:pick-package'),
     inspectPackage: (packageFile: string) => call<{ id: string; version: string; trust: string; fingerprint: string; keyId: string }>('plugin:inspect-package', { packageFile }),
+    diagnostics: () => call<{ installed: number; backups: number; auditLines: number }>('plugin:diagnostics'),
+    indexEntries: () => call<Array<{ id: string; version: string; url: string; sha256: string }>>('plugin:index'),
     getConfig: (id: string) => call<Record<string, unknown>>('plugin:config:get', { id }),
     setConfig: (id: string, config: Record<string, unknown>) => call<Record<string, unknown>>('plugin:config:set', { id, config }),
     invoke: <T = unknown>(id: string, method: string, payload?: unknown): Promise<T> => {

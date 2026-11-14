@@ -305,6 +305,17 @@ export function collectPluginDiagnostics(dataDir: string): {
   }
 }
 
+function isRevoked(dataDir: string, keyId: string, fingerprint: string): boolean {
+  try {
+    const raw = JSON.parse(readFileSync(join(dataDir, 'plugin-revocations.json'), 'utf8')) as {
+      keys?: Record<string, unknown>
+      fingerprints?: Record<string, unknown>
+    }
+    return Boolean(raw.keys?.[keyId] || raw.fingerprints?.[fingerprint])
+  } catch {
+    return false
+  }
+}
 export function inspectPluginPackage(options: {
   packageFile: string
   keyring?: PluginKeyring
@@ -340,6 +351,9 @@ export function installPlugin(options: InstallOptions): InstallResult {
     tofuFingerprint: options.tofuFingerprint
   })
   if (!verified.ok) return verified
+  if (isRevoked(options.dataDir, verified.signature.keyId, verified.fingerprint)) {
+    return { ok: false, code: 'PLUGIN_REVOKED', message: `插件密钥已吊销：${verified.signature.keyId}` }
+  }
   if (verified.trust === 'self') {
     const trust = readTrust(options.dataDir)
     const known = trust.keys[verified.signature.keyId]

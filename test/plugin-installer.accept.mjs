@@ -256,6 +256,47 @@ await r.check('C2-9', 'TOFU 持久化：首装写指纹；同 keyId 换指纹拒
   }
 })
 
+await r.check('C2-10', 'C3 兼容矩阵：4.x/5.x 引擎通过，6.x 拒绝', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'umi-inst-'))
+  try {
+    const cases = [
+      { version: '1.0.0', engines: '>=4.3.0 <6.0.0', ok: true },
+      { version: '1.1.0', engines: '>=5.0.0 <6.0.0', ok: true },
+      { version: '2.0.0', engines: '>=6.0.0 <7.0.0', ok: false }
+    ]
+    for (const item of cases) {
+      const src = join(root, item.version)
+      mkdirSync(src, { recursive: true })
+      writeFileSync(join(src, 'plugin.json'), JSON.stringify({ id: 'matrix', version: item.version, name: 'M', engines: { host: item.engines } }), 'utf8')
+      writeFileSync(join(src, 'main.js'), 'module.exports={}', 'utf8')
+      const p = await pack(root, src, item.version)
+      const res = mod.installPlugin({ dataDir: join(root, `d-${item.version}`), packageFile: p.out, allowSelfSigned: true, hostVersion: '5.0.0' })
+      if (item.ok) assertEq(res.ok, true, `${item.engines}: ${JSON.stringify(res)}`)
+      else assertEq(res.code, 'PLUGIN_INCOMPATIBLE', `${item.engines} 拒绝`)
+    }
+    return 'C3 矩阵 ✓'
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+await r.check('C2-11', 'C4 吊销：plugin-revocations.json 命中的 keyId 拒绝安装', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'umi-inst-'))
+  try {
+    const dataDir = join(root, 'data')
+    mkdirSync(dataDir, { recursive: true })
+    const src = join(root, 'src')
+    makeSource(src, '1.0.0')
+    const packed = await pack(root, src, '1.0.0')
+    writeFileSync(join(dataDir, 'plugin-revocations.json'), JSON.stringify({ keys: { [packed.kp.keyId]: { reason: 'test' } } }), 'utf8')
+    const res = mod.installPlugin({ dataDir, packageFile: packed.out, allowSelfSigned: true })
+    assertEq(res.code, 'PLUGIN_REVOKED', '吊销拒绝')
+    return '吊销 ✓'
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin-installer.json'), result)

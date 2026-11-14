@@ -50,6 +50,7 @@ import {
 import { buildPluginPermissionEnv } from './pluginPermissions'
 import { createPluginServiceBridge, type PluginServiceBridge } from './pluginServiceBridge'
 import {
+  collectPluginDiagnostics,
   inspectPluginPackage,
   installPlugin as installPluginPackage,
   readInstallState,
@@ -59,6 +60,7 @@ import {
   type InstallState
 } from './pluginInstaller'
 import { readKeyring } from './pluginPackage'
+import { readPluginIndex, verifyPluginIndex } from './pluginIndex'
 import {
   createPluginIsolationManager,
   type IsolatedPluginSpec,
@@ -340,6 +342,19 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
 
     deps.ipc.removeHandler('plugin:pick-package')
     deps.ipc.handle('plugin:pick-package', () => (deps.pickPackage ? deps.pickPackage() : null))
+
+    deps.ipc.removeHandler('plugin:diagnostics')
+    deps.ipc.handle('plugin:diagnostics', () => ({ ok: true, data: collectPluginDiagnostics(deps.dataDir()) }))
+
+    deps.ipc.removeHandler('plugin:index')
+    deps.ipc.handle('plugin:index', () => {
+      const envelope = readPluginIndex(join(deps.dataDir(), 'plugin-index.json'))
+      if (!envelope) return { ok: true, data: [] }
+      const result = verifyPluginIndex(envelope, readKeyring(join(deps.dataDir(), 'plugin-keys.json')))
+      return result.ok
+        ? { ok: true, data: result.index.entries }
+        : { ok: false, error: { code: result.code, message: result.message } }
+    })
 
     deps.ipc.removeHandler('plugin:inspect-package')
     deps.ipc.handle('plugin:inspect-package', (_e, payload: { packageFile?: string }) => {
