@@ -229,7 +229,7 @@ await r.check('C2-8', 'P0 安装器：保留 id / 非公开服务拒绝', async 
   }
 })
 
-await r.check('C2-9', 'TOFU 持久化：首装写指纹；同 keyId 换指纹拒绝；inspect 返回指纹', async () => {
+await r.check('C2-9', 'TOFU：首装写指纹；inspect 区分首次/已信任；换指纹 inspect 提前拒绝；失败安装不留指纹', async () => {
   const root = mkdtempSync(join(tmpdir(), 'umi-inst-'))
   try {
     const dataDir = join(root, 'data')
@@ -238,18 +238,40 @@ await r.check('C2-9', 'TOFU 持久化：首装写指纹；同 keyId 换指纹拒
     const kp1 = pkg.generateSigningKeyPair()
     const p1 = join(root, 'p1.umi-plugin')
     pkg.packPlugin({ sourceDir: src, outFile: p1, keyId: 'self-fixed', privateKeyPem: kp1.privateKeyPem, publicKeyBase64: kp1.publicKeyBase64 })
+    // 首装前：inspect 必须判「首次」，UI 才会要求勾选 TOFU
+    const before = mod.inspectPluginPackage({ packageFile: p1, allowSelfSigned: true, dataDir })
+    assertEq(before.tofu, 'new', '首装前 tofu=new')
     const first = mod.installPlugin({ dataDir, packageFile: p1, allowSelfSigned: true })
     assertEq(first.ok, true, JSON.stringify(first))
     const trust = JSON.parse(readFileSync(join(dataDir, 'plugin-trust.json'), 'utf8'))
     assertEq(trust.keys['self-fixed'].fingerprint, kp1.fingerprint, 'TOFU 落盘')
-    const inspect = mod.inspectPluginPackage({ packageFile: p1, allowSelfSigned: true })
+    const inspect = mod.inspectPluginPackage({ packageFile: p1, allowSelfSigned: true, dataDir })
     assertEq(inspect.ok, true, JSON.stringify(inspect))
     assertEq(inspect.fingerprint, kp1.fingerprint, 'inspect 指纹')
+    assertEq(inspect.tofu, 'known', '已信任后 tofu=known（更新不该再要求勾选）')
     const kp2 = pkg.generateSigningKeyPair()
     const p2 = join(root, 'p2.umi-plugin')
     pkg.packPlugin({ sourceDir: src, outFile: p2, keyId: 'self-fixed', privateKeyPem: kp2.privateKeyPem, publicKeyBase64: kp2.publicKeyBase64 })
+    const changedInspect = mod.inspectPluginPackage({ packageFile: p2, allowSelfSigned: true, dataDir })
+    assertEq(changedInspect.code, 'PACKAGE_TOFU_MISMATCH', 'inspect 提前拒绝指纹变化')
     const changed = mod.installPlugin({ dataDir, packageFile: p2, allowSelfSigned: true })
     assertEq(changed.code, 'PACKAGE_TOFU_MISMATCH', '指纹变化拒绝')
+    // 签名对但 manifest/引擎不兼容：安装失败，且不得记住新 key 的指纹
+    const kp3 = pkg.generateSigningKeyPair()
+    const badSrc = join(root, 'bad-src')
+    mkdirSync(badSrc, { recursive: true })
+    writeFileSync(
+      join(badSrc, 'plugin.json'),
+      JSON.stringify({ id: 'late', version: '9.9.9', name: 'Late', engines: { host: '>=6.0.0 <7.0.0' } }),
+      'utf8'
+    )
+    writeFileSync(join(badSrc, 'main.js'), 'module.exports={}', 'utf8')
+    const p3 = join(root, 'p3.umi-plugin')
+    pkg.packPlugin({ sourceDir: badSrc, outFile: p3, keyId: 'self-late', privateKeyPem: kp3.privateKeyPem, publicKeyBase64: kp3.publicKeyBase64 })
+    const bad = mod.installPlugin({ dataDir, packageFile: p3, allowSelfSigned: true, hostVersion: '5.0.0' })
+    assertEq(bad.code, 'PLUGIN_INCOMPATIBLE', '不兼容包拒绝安装')
+    const trustAfter = JSON.parse(readFileSync(join(dataDir, 'plugin-trust.json'), 'utf8'))
+    assert(!trustAfter.keys['self-late'], '失败安装不得写入 TOFU 指纹')
     return 'TOFU 持久化 ✓'
   } finally {
     rmSync(root, { recursive: true, force: true })

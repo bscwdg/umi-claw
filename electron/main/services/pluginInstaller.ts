@@ -376,12 +376,28 @@ export function inspectPluginPackage(options: {
   packageFile: string
   keyring?: PluginKeyring
   allowSelfSigned?: boolean
-}): { ok: true; id: string; version: string; trust: string; fingerprint: string; keyId: string } | { ok: false; code: string; message: string } {
+  /** 传入 dataDir 才能区分「首次 TOFU」与「已信任更新」（读 plugin-trust.json） */
+  dataDir?: string
+}):
+  | { ok: true; id: string; version: string; trust: string; fingerprint: string; keyId: string; tofu: 'new' | 'known' }
+  | { ok: false; code: string; message: string } {
   const verified = verifyPluginPackage(options.packageFile, {
     keyring: options.keyring,
     allowSelfSigned: options.allowSelfSigned
   })
   if (!verified.ok) return verified
+  // TOFU 语义是「首次安装显式确认」：已信任的 self key 更新不该再让用户勾一次。
+  // 同 keyId 换指纹在 inspect 阶段就拒绝（安装器里也有同一道闸，这里只是提前告知）。
+  let tofu: 'new' | 'known' = 'new'
+  if (options.dataDir && verified.trust === 'self') {
+    const known = readTrust(options.dataDir).keys[verified.signature.keyId]
+    if (known) {
+      if (known.fingerprint !== verified.fingerprint) {
+        return { ok: false, code: 'PACKAGE_TOFU_MISMATCH', message: '自签指纹变化，拒绝安装' }
+      }
+      tofu = 'known'
+    }
+  }
   try {
     const raw = JSON.parse(new AdmZip(options.packageFile).getEntry('plugin.json')!.getData().toString('utf8')) as {
       id?: string
@@ -394,7 +410,8 @@ export function inspectPluginPackage(options: {
       version: raw.version,
       trust: verified.trust,
       fingerprint: verified.fingerprint,
-      keyId: verified.signature.keyId
+      keyId: verified.signature.keyId,
+      tofu
     }
   } catch (e) {
     return { ok: false, code: 'PACKAGE_MANIFEST_INVALID', message: (e as Error).message }
@@ -438,18 +455,13 @@ function installPluginImpl(options: InstallOptions): InstallResult {
     return { ok: false, code: 'PLUGIN_REVOKED', message: `插件密钥已吊销：${verified.signature.keyId}` }
   }
   if (verified.trust === 'self') {
+    // 先只做 TOFU 校验（失败不落任何盘）；指纹写入放到安装全部校验通过之后，
+    // 避免「包签名对但 manifest/权限/解包失败」也把指纹记进 plugin-trust.json。
     const trust = readTrust(options.dataDir)
     const known = trust.keys[verified.signature.keyId]
     if (known && known.fingerprint !== verified.fingerprint) {
       return { ok: false, code: 'PACKAGE_TOFU_MISMATCH', message: '自签包指纹变化，拒绝安装' }
     }
-    trust.keys[verified.signature.keyId] = {
-      fingerprint: verified.fingerprint,
-      keyId: verified.signature.keyId,
-      firstSeen: known?.firstSeen ?? Date.now(),
-      lastSeen: Date.now()
-    }
-    writeTrust(options.dataDir, trust)
   }
   const now = options.now ?? Date.now()
   const id = (() => {
@@ -527,6 +539,18 @@ function installPluginImpl(options: InstallOptions): InstallResult {
           }
         }
       : {})
+  }
+  // 所有可能失败的校验/解包/落目录都过了，才把 TOFU 指纹记下来（审查 #7）
+  if (verified.trust === 'self') {
+    const trust = readTrust(options.dataDir)
+    const known = trust.keys[verified.signature.keyId]
+    trust.keys[verified.signature.keyId] = {
+      fingerprint: verified.fingerprint,
+      keyId: verified.signature.keyId,
+      firstSeen: known?.firstSeen ?? now,
+      lastSeen: now
+    }
+    writeTrust(options.dataDir, trust)
   }
   writeInstallState(options.dataDir, {
     schema: 1,

@@ -375,7 +375,16 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     deps.ipc.handle('plugin:installed', () => ({ ok: true, data: readInstallState(deps.dataDir()) }))
 
     deps.ipc.removeHandler('plugin:pick-package')
-    deps.ipc.handle('plugin:pick-package', () => (deps.pickPackage ? deps.pickPackage() : null))
+    // 必须回信封：preload 的 call() 按 {ok,data} 解包，直接返回 null/路径会让
+    // 「取消选择」变成 `IPC plugin:pick-package 失败`（取消是正常路径，不是错误）。
+    deps.ipc.handle('plugin:pick-package', async () => {
+      if (!deps.pickPackage) return { ok: true, data: null }
+      try {
+        return { ok: true, data: await deps.pickPackage() }
+      } catch (e) {
+        return { ok: false, error: { code: 'PLUGIN_OPERATION_FAILED', message: (e as Error)?.message ?? '选择安装包失败' } }
+      }
+    })
 
     deps.ipc.removeHandler('plugin:diagnostics')
     deps.ipc.handle('plugin:diagnostics', () => ({ ok: true, data: collectPluginDiagnostics(deps.dataDir()) }))
@@ -397,7 +406,8 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       const result = inspectPluginPackage({
         packageFile,
         keyring: loadInstallKeyring(deps.dataDir()),
-        allowSelfSigned: true
+        allowSelfSigned: true,
+        dataDir: deps.dataDir()
       })
       return result.ok
         ? { ok: true, data: result }

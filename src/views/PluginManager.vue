@@ -25,13 +25,24 @@
       <h2 class="section-title">第三方插件（.umi-plugin）</h2>
       <p class="meta">安装包需通过 Ed25519 验签；自签包需你明确确认首次安装（TOFU）。</p>
       <div class="actions">
-        <p v-if="pendingInspect?.trust === 'self'" class="meta">自签指纹：{{ pendingInspect.fingerprint }}（首次安装需确认 TOFU）</p>
+        <p v-if="pendingInspect?.trust === 'self'" class="meta">
+          自签指纹：{{ pendingInspect.fingerprint }}（{{ pendingInspect.tofu === 'known' ? '已信任，更新无需再次确认' : '首次安装需确认 TOFU' }}）
+        </p>
+        <label v-if="pendingInspect?.trust === 'self' && pendingInspect.tofu === 'new'" class="meta">
+          <input v-model="selfTrust" type="checkbox" />
+          我确认信任该自签密钥（TOFU，首次安装）
+        </label>
         <button class="btn" :disabled="installBusy" @click="pickInstall">选择安装包…</button>
         <span v-if="pendingPackage" class="meta">{{ pendingPackage.split(/[\\/]/).pop() }}</span>
-        <button v-if="pendingPackage" class="btn btn-primary" :disabled="installBusy" @click="confirmInstall">
-          确认安装（含自签）
+        <button
+          v-if="pendingPackage"
+          class="btn btn-primary"
+          :disabled="installBusy || (pendingInspect?.trust === 'self' && pendingInspect.tofu === 'new' && !selfTrust)"
+          @click="confirmInstall"
+        >
+          确认安装{{ pendingInspect?.trust === 'self' ? '（含自签）' : '' }}
         </button>
-        <button v-if="pendingPackage" class="btn btn-ghost" :disabled="installBusy" @click="pendingPackage = ''">
+        <button v-if="pendingPackage" class="btn btn-ghost" :disabled="installBusy" @click="cancelPick">
           取消
         </button>
       </div>
@@ -223,7 +234,7 @@ async function saveConfig(id: unknown): Promise<void> {
   }
 }
 const pendingPackage = ref('')
-const pendingInspect = ref<{ id: string; version: string; trust: string; fingerprint: string } | null>(null)
+const pendingInspect = ref<{ id: string; version: string; trust: string; fingerprint: string; tofu: 'new' | 'known' } | null>(null)
 const selfTrust = ref(false)
 const installBusy = ref(false)
 const installNotice = ref('')
@@ -428,27 +439,51 @@ async function loadInstalled(): Promise<void> {
 }
 
 async function pickInstall(): Promise<void> {
+  if (installBusy.value) return
   installError.value = ''
   installNotice.value = ''
+  // 重选/取消时必须把旧待装包一起清掉：否则 pendingPackage 还在、pendingInspect 已清，
+  // 确认按钮会绕过 TOFU（自签）或装到没验签的旧包（官方）。
+  cancelPick()
+  installBusy.value = true
   try {
     const file = await window.api.plugins.pickPackage()
-    if (file) pendingPackage.value = file
+    // 取消是正常路径：IPC 回 {ok:true,data:null}，不弹错误
+    if (!file) return
+    // 先验签再看安装：自签包必须先把指纹摆到界面上，勾选确认才叫「明确确认」（TOFU）
+    pendingInspect.value = await window.api.plugins.inspectPackage(file)
+    pendingPackage.value = file
   } catch (e) {
     installError.value = (e as Error)?.message ?? '选择安装包失败'
+  } finally {
+    installBusy.value = false
   }
 }
 
+function cancelPick(): void {
+  pendingPackage.value = ''
+  pendingInspect.value = null
+  selfTrust.value = false
+}
+
 async function confirmInstall(): Promise<void> {
-  if (!pendingPackage.value) return
+  // 两个状态必须同时存在：pendingInspect 缺失说明这包没验签（重选/取消清过），宁可不装
+  if (!pendingPackage.value || !pendingInspect.value) return
+  const inspect = pendingInspect.value
+  const needTrust = inspect.trust === 'self' && inspect.tofu === 'new'
+  if (needTrust && !selfTrust.value) {
+    installError.value = '自签包需先勾选确认信任该密钥（TOFU）'
+    return
+  }
   installBusy.value = true
   installError.value = ''
   installNotice.value = ''
   try {
     const result = (await window.api.plugins.install(pendingPackage.value, {
-      allowSelfSigned: pendingInspect.value?.trust === 'self' && selfTrust.value,
-      tofuFingerprint: pendingInspect.value?.fingerprint
+      allowSelfSigned: inspect.trust === 'self' && (inspect.tofu === 'known' || selfTrust.value),
+      tofuFingerprint: inspect.fingerprint
     })) as { started?: boolean; warning?: string }
-    pendingPackage.value = ''
+    cancelPick()
     installNotice.value = result?.started === false
       ? '安装完成，但隔离插件启动失败：' + (result.warning ?? '未知原因')
       : '安装完成；隔离插件已按安装态启动。'

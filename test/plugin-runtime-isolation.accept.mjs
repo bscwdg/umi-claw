@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { Recorder, __dirname, assert, assertEq, bundleEntry, printResult, repoRoot, waitFor, writeJson } from './_lib.mjs'
+import { Recorder, __dirname, assert, assertDeepEq, assertEq, bundleEntry, printResult, repoRoot, waitFor, writeJson } from './_lib.mjs'
 
 const r = new Recorder('Phase 2 · pluginRuntime 隔离生命周期（P1）')
 const runtimeMod = await import(
@@ -294,6 +294,38 @@ await r.check('R6', 'OpenClaw 会话键隔离：第三方强制 conv:plugin:<id>
   await official.chat({ conversationKey: 'conv:work:qa' })
   assertEq(seen, 'conv:work:qa', '官方内置不改写')
   return '会话键隔离 ✓'
+})
+
+await r.check('R7', '产品 IPC：plugin:pick-package 一律回 {ok,data} 信封（取消 = data:null，不报错）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'umi-rt-'))
+  const resources = join(dir, 'resources')
+  mkdirSync(join(resources, 'plugins'), { recursive: true })
+  const deps = createDeps(dir, resources, () => new FakeChild())
+  const runtime = runtimeMod.createPluginRuntime(deps)
+  try {
+    await runtime.init()
+    const handler = deps.__handlers.get('plugin:pick-package')
+    assert(handler, 'pick-package handler 已注册')
+    // 平台不给选择器（理论上不会发生）：也必须走空信封，而不是裸返回
+    assertDeepEq(await handler(null), { ok: true, data: null }, '无 pickPackage 时 data:null')
+    // 用户点「取消」：dialog 返回 null —— preload 的 call() 只认 {ok,data}，
+    // 裸 null 会被当成失败抛「IPC plugin:pick-package 失败」
+    deps.pickPackage = async () => null
+    assertDeepEq(await handler(null), { ok: true, data: null }, '取消是成功信封 + data:null')
+    const picked = join(dir, 'demo.umi-plugin')
+    deps.pickPackage = async () => picked
+    assertDeepEq(await handler(null), { ok: true, data: picked }, '选中返回路径')
+    deps.pickPackage = async () => {
+      throw new Error('dialog 崩了')
+    }
+    const failed = await handler(null)
+    assertEq(failed.ok, false, '选择器异常回失败信封')
+    assertEq(failed.error?.code, 'PLUGIN_OPERATION_FAILED', '失败码')
+    return 'pick-package 信封 ✓'
+  } finally {
+    await runtime.disposeHost()
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 const result = r.toJSON()

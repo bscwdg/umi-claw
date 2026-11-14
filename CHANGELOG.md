@@ -20,6 +20,10 @@
 - **C8 运维**：安装/更新/回滚/卸载审计 JSONL、诊断（安装/备份/审计计数）、备份保留 5 份。
 - **隔离默认**：5.x 默认开启（`UMI_PLUGIN_ISOLATION=0` 可显式关）；4.x 默认关。
 
+### 修复（GA 后）
+- 管理页选择安装包点「取消」不再误报 `IPC plugin:pick-package 失败`；`plugin:pick-package` 统一回 `{ok,data}` 信封（裸 null/路径会被 preload 当失败）。
+- 选包后先验签再确认：自签包首次安装展示指纹并要求显式勾选 TOFU，已信任更新免重复确认；同 keyId 换指纹在 inspect 阶段即拒绝；安装校验失败不再残留 TOFU 指纹。
+
 ### 验收
 - 59 套 / 942 项（941 通过 + 1 显式跳过）+ `node:test` 21 条；双 typecheck 0；build 绿。
 - C5 真机：安装→启动→更新→回滚（utilityProcess 全链路）。

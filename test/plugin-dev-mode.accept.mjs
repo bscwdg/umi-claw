@@ -77,6 +77,60 @@ await r.check('D4', '接线：plugin:dev-mode IPC 带 {ok,data} 信封 + preload
   return 'dev-mode 连接线（含信封） ✓'
 })
 
+await r.check('D5', 'C6 安装入口：pick-package 信封 + 选包先验签 + TOFU 首次确认/已信任免确认', async () => {
+  const runtime = readFileSync(join(repoRoot, 'electron', 'main', 'services', 'pluginRuntime.ts'), 'utf8')
+  const preload = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf8')
+  const page = readFileSync(join(repoRoot, 'src', 'views', 'PluginManager.vue'), 'utf8')
+
+  // ① handler 信封断言必须限定在 handler 函数体内。跨到下一条 handler 的正则会让
+  //    旧代码（裸返回 null/路径）也假绿（对抗审查 #1）。
+  const start = runtime.indexOf("handle('plugin:pick-package'")
+  const end = runtime.indexOf("deps.ipc.removeHandler('plugin:diagnostics')", start)
+  assert(start >= 0 && end > start, 'pick-package handler 边界可定位')
+  const handlerBody = runtime.slice(start, end)
+  assert(/ok: true, data: null/.test(handlerBody), '无 picker / 用户取消必须回 data:null 信封')
+  assert(/ok: true, data: await deps\.pickPackage\(\)/.test(handlerBody), '选中路径必须回 data 信封')
+  assert(/PLUGIN_OPERATION_FAILED/.test(handlerBody), 'picker 抛异常回失败信封（不裸抛）')
+  assert(/pickPackage: \(\) => call<string \| null>\('plugin:pick-package'\)/.test(preload), 'preload 按信封解包 pick-package')
+
+  // ② UI 状态机：重选清旧包、取消不报错、无验签结果不得确认、首次自签才要勾选
+  assert(
+    /async function pickInstall\(\): Promise<void> \{[\s\S]{0,600}?cancelPick\(\)[\s\S]{0,400}?window\.api\.plugins\.pickPackage\(\)/.test(page),
+    '重选/取消必须先从清旧待装包开始（否则 pendingPackage 残留会绕过 TOFU）'
+  )
+  assert(
+    /const file = await window\.api\.plugins\.pickPackage\(\)[\s\S]{0,200}?if \(!file\) return/.test(page),
+    '取消是正常路径，不能弹错'
+  )
+  assert(
+    /pendingInspect\.value = await window\.api\.plugins\.inspectPackage\(file\)/.test(page),
+    '选完包先验签并把结果写入 pendingInspect'
+  )
+  assert(
+    /if \(!pendingPackage\.value \|\| !pendingInspect\.value\) return/.test(page),
+    '没有验签结果不得确认安装'
+  )
+  assert(
+    /:disabled="installBusy \|\| \(pendingInspect\?\.trust === 'self' && pendingInspect\.tofu === 'new' && !selfTrust\)"/.test(page),
+    '首次自签未勾选时禁用确认按钮'
+  )
+  assert(
+    /v-if="pendingInspect\?\.trust === 'self' && pendingInspect\.tofu === 'new'"[\s\S]{0,200}?v-model="selfTrust"/.test(page),
+    '只在「首次安装」要求显式勾选 TOFU'
+  )
+  assert(/inspect\.tofu === 'known' \|\| selfTrust\.value/.test(page), '已信任的 self key 更新免二次勾选')
+  assert(/@click="cancelPick"/.test(page), '取消按钮走 cancelPick 清理')
+
+  // ③ inspect 必须传 dataDir 才能区分首次/已信任
+  const inspectStart = runtime.indexOf("'plugin:inspect-package'")
+  const inspectEnd = runtime.indexOf("'plugin:config:get'", inspectStart)
+  assert(
+    inspectStart >= 0 && /dataDir: deps\.dataDir\(\)/.test(runtime.slice(inspectStart, inspectEnd)),
+    'inspect-package 传 dataDir（读 plugin-trust.json 判断首次/已信任）'
+  )
+  return '安装入口接线 ✓'
+})
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin-dev-mode.json'), result)
