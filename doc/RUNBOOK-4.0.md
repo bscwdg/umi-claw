@@ -111,7 +111,7 @@ npm run build               # 生成 + 构建（含插件代码）
 npm run typecheck:node      # 主进程
 npm run typecheck:web       # 渲染端（tsc 只管 .ts；.vue 由构建期 vite/vue 编译检查）
 node test/plugin.accept.mjs # 插件内核 + 两个域装箱 + 加固（71 项）
-npm run accept               # 全量验收（2026-11-13 干净基线：59 套 = ACCEPT 54 + e2e×4 + smoke；941 项检查（940 通过 + 1 显式跳过） + config-writer node:test 21 条另计）
+npm run accept               # 全量验收（2026-11-13 干净基线：59 套 = ACCEPT 54 + e2e×4 + smoke；942 项检查（941 通过 + 1 显式跳过） + config-writer node:test 21 条另计）
 node test/packaged.smoke.mjs# 打包态静态冒烟
 node test/one-day.e2e.mjs   # 「一天」端到端
 ```
@@ -248,11 +248,11 @@ falling back to sendFile`，随后同一份音频以 `file_type=4` 文件形式�
 - [x] `package.json`/`package-lock.json` = `5.0.0`
 - [x] `CHANGELOG.md` 有 `[5.0.0]` GA 段
 - [x] 双 typecheck 0；`npm run build` 通过
-- [x] 全量 `npm run accept`：59 套 / 941 项（940 通过 + 1 显式跳过）+ `node:test` 21
+- [x] 全量 `npm run accept`：59 套 / 942 项（941 通过 + 1 显式跳过）+ `node:test` 21
 - [x] `npm run check:boundary` 9/9（扫描目录非空）
 - [x] 插件边界：生产 NODE_OPTIONS + env 白名单；安装器保留 id/独立 plugin-data；TOFU 指纹持久化
 - [x] C1 自签/TOFU 包签名与 CLI；C2 安装/更新/回滚；C3 矩阵；C4 索引/吊销框架（官方/伙伴根密钥由发布流水线注入）；C6 schema/配置；C8 审计/诊断/kill switch；C5 安装→启动→更新→回滚 e2e
 - [x] 4.x 不开放第三方安装；5.x 隔离默认开、显式 0 可关
 - [x] 已知限制登记：空格 dataDir/用户名、Windows 卸载 e2e、无在线市场/第三方 UI（Phase 3）
-- [ ] 两次独立终检（事实核对 + 对抗复核）通过后打 `v5.0.0` tag
-- [ ] `release/5.0` 合并到 GA 提交并推送
+- [x] 两次独立终检（事实核对 + 对抗复核）通过后打 `v5.0.0` tag
+- [x] `release/5.0` 合并到 GA 提交并推送
