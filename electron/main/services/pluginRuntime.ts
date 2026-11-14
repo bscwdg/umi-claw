@@ -63,7 +63,7 @@ import {
   type IsolatedPluginStatus,
   type PluginIsolationManager
 } from './pluginIsolationManager'
-import { buildPluginPermissionEnv } from './pluginPermissions'
+
 
 type PluginDbApi = ReturnType<PluginDbService['forPlugin']>
 
@@ -263,6 +263,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       allowSelfSigned: input.allowSelfSigned,
       tofuFingerprint: input.tofuFingerprint,
       stagingChildSource: deps.pluginChildEntry?.(),
+      hostChildEntry: deps.pluginChildEntry?.(),
       hostVersion: deps.appInfo().version
     })
     if (!result.ok) return { ok: false, code: result.code, message: result.message }
@@ -447,20 +448,27 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
             hostVersion: deps.appInfo().version,
             serviceCall: (pluginId, service, method, args) =>
               serviceBridge!.call(pluginId, service, method, args),
-            buildEnv: (spec) => {
+            // execArgv 用绝对路径数组注入权限：NODE_OPTIONS 对含空格/非 ASCII 的
+            // 安装路径不可靠，而 Program Files / 中文用户名在 Windows 是常态。
+            buildEnv: () => ({}),
+            buildExecArgv: (spec) => {
               const info = deps.appInfo()
-              // dev 才把仓库根/app path 作为读根（本地开发显式 opt-in）；打包版只给
-              // child 入口目录与 Electron bootstrap 目录，避免第三方读安装根。
-              const dev = resolveDevMode({ isPackaged: info.isPackaged, env: process.env })
-              const extraReadDirs = [dirname(spec.entry), info.resourcesPath, dirname(info.resourcesPath)]
-              if (dev.plugins && !info.isPackaged) extraReadDirs.push(info.appPath)
-              return buildPluginPermissionEnv({
-                pluginDir: spec.packageDir,
-                dataDir: spec.dataDir,
-                cwd: dirname(spec.mainPath),
-                permissions: spec.permissions ?? {},
-                extraReadDirs
-              })
+              const readDirs = [
+                spec.packageDir,
+                spec.dataDir,
+                dirname(spec.entry),
+                info.resourcesPath,
+                dirname(info.resourcesPath),
+                info.appPath
+              ]
+              const flags = ['--experimental-permission']
+              for (const dir of new Set(readDirs)) flags.push(`--allow-fs-read=${dir}`)
+              flags.push(`--allow-fs-write=${spec.dataDir}`)
+              for (const rel of spec.permissions?.fs?.write ?? []) {
+                const target = join(spec.dataDir, rel)
+                if (target.startsWith(spec.dataDir)) flags.push(`--allow-fs-write=${target}`)
+              }
+              return flags
             },
             logger: deps.logger
           })
@@ -680,6 +688,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
         allowSelfSigned: input.allowSelfSigned,
         tofuFingerprint: input.tofuFingerprint,
         stagingChildSource: deps.pluginChildEntry?.(),
+      hostChildEntry: deps.pluginChildEntry?.(),
         hostVersion: deps.appInfo().version
       })
       if (!result.ok) return { ok: false, code: result.code, message: result.message }

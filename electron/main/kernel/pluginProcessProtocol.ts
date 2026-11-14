@@ -32,6 +32,8 @@ export interface PluginProcessSpec {
   config?: unknown
   /** 额外 env 白名单（B2 权限注入用；不得透传整份 process.env） */
   env?: Record<string, string>
+  /** 绝对路径权限参数（execArgv 数组，避免 NODE_OPTIONS 空格/非 ASCII 限制） */
+  execArgv?: string[]
 }
 
 export interface PluginInitMessage {

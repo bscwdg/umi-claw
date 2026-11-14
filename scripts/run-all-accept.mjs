@@ -83,7 +83,8 @@ const ACCEPT = [
 const E2E = [
   ['one-day e2e', 'test/one-day.e2e.mjs'],
   ['startup e2e', 'test/startup.e2e.mjs'],
-  ['isolation e2e', 'test/plugin-isolation.e2e.mjs']
+  ['isolation e2e', 'test/plugin-isolation.e2e.mjs'],
+  ['install e2e', 'test/plugin-install.e2e.mjs']
 ]
 const SMOKE = ['packaged smoke', 'test/packaged.smoke.mjs']
 

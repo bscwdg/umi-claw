@@ -33,6 +33,7 @@ import { createTerminalSessionRegistry } from './terminalSessions'
 import { createPluginRuntime, type PluginRuntime } from './services/pluginRuntime'
 import { createUtilityProcessFork } from './kernel'
 import { createPluginIsolationManager } from './services/pluginIsolationManager'
+import { installPlugin as installPluginPackage } from './services/pluginInstaller'
 import { buildPluginPermissionEnv } from './services/pluginPermissions'
 import { createPermissionAudit, createPermissionBroker, createPermissionStore } from './services/pluginPermissions'
 import { createPluginServiceBridge } from './services/pluginServiceBridge'
@@ -1272,7 +1273,11 @@ if (app.isPackaged) {
     app.setPath('userData', appDataRoot)
     app.setPath('sessionData', appDataRoot)
   }
-} else if (process.env.UMI_STARTUP_PROBE === '1' || process.env.UMI_ISOLATION_PROBE === '1') {
+} else if (
+  process.env.UMI_STARTUP_PROBE === '1' ||
+  process.env.UMI_ISOLATION_PROBE === '1' ||
+  process.env.UMI_INSTALL_PROBE === '1'
+) {
   // E2E 探针必须用独立 userData：否则会和正在运行的 dev 实例抢单实例锁，
   // 进程拿不到锁直接 exit 0，测试只看到“marker 未写”而误判。
   // 优先级：CLAW_DATA_DIR（测试传入）> --user-data-dir（被这里覆盖）> 仓库内 fallback。
@@ -1324,6 +1329,76 @@ app.whenReady().then(async () => {
       JSON.stringify({ ok: true, version: app.getVersion(), at: Date.now() })
     )
     app.quit()
+    return
+  }
+
+  // C5 真机探针：真实 .umi-plugin 安装 → staging child → utilityProcess 启动 → invoke。
+  if (!app.isPackaged && process.env.UMI_INSTALL_PROBE === '1') {
+    const probeDir = process.env.UMI_INSTALL_PROBE_DIR || process.env.CLAW_DATA_DIR || app.getPath('userData')
+    mkdirSync(probeDir, { recursive: true })
+    const packageFile = process.env.UMI_INSTALL_PACKAGE
+    const manager = createPluginIsolationManager({
+      fork: createUtilityProcessFork(utilityProcess),
+      hostVersion: app.getVersion(),
+      buildEnv: () => ({}),
+      buildExecArgv: (spec) => [
+        '--experimental-permission',
+        `--allow-fs-read=${spec.packageDir}`,
+        `--allow-fs-read=${spec.dataDir}`,
+        `--allow-fs-read=${dirname(spec.entry)}`,
+        `--allow-fs-read=${process.resourcesPath}`,
+        `--allow-fs-read=${app.getAppPath()}`
+      ],
+      logger: (line) => console.error('[install-probe]', line),
+      serviceCall: async () => {
+        throw new Error('install probe 未提供宿主服务')
+      }
+    })
+    try {
+      if (!packageFile) throw new Error('缺少 UMI_INSTALL_PACKAGE')
+      const installed = installPluginPackage({
+        dataDir: probeDir,
+        packageFile,
+        allowSelfSigned: true,
+        stagingChildSource: join(__dirname, 'pluginProcessChild.js'),
+        hostChildEntry: join(__dirname, 'pluginProcessChild.js'),
+        hostVersion: app.getVersion()
+      })
+      if (!installed.ok) throw new Error(`${installed.code}: ${installed.message}`)
+      await manager.start({
+        pluginId: installed.record.id,
+        name: installed.record.name,
+        version: installed.record.version,
+        entry: installed.record.entry,
+        mainPath: join(installed.record.packageDir, 'main.js'),
+        packageDir: installed.record.packageDir,
+        dataDir: installed.record.dataDir,
+        services: installed.record.permissions?.services ?? [],
+        permissions: installed.record.permissions,
+        config: {}
+      })
+      const envResult = await manager.invoke(installed.record.id, 'env')
+      writeFileSync(
+        join(probeDir, 'install-probe.json'),
+        JSON.stringify({
+          ok: true,
+          id: installed.record.id,
+          version: installed.record.version,
+          entry: installed.record.entry,
+          state: manager.statuses()[0]?.state,
+          env: envResult,
+          at: Date.now()
+        })
+      )
+    } catch (e) {
+      writeFileSync(
+        join(probeDir, 'install-probe.json'),
+        JSON.stringify({ ok: false, error: (e as Error)?.message ?? String(e), at: Date.now() })
+      )
+    } finally {
+      await manager.stopAll()
+      app.quit()
+    }
     return
   }
 

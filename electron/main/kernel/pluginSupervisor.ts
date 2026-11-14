@@ -480,6 +480,7 @@ export function createUtilityProcessFork(utilityProcess: UtilityProcessForkApi):
       cwd: spec.cwd ?? dirname(spec.mainPath),
       env: spec.env as NodeJS.ProcessEnv,
       serviceName: `plugin-${spec.pluginId}`,
+      ...(spec.execArgv?.length ? { execArgv: spec.execArgv } : {}),
       stdio: 'pipe'
     })
     // 子进程日志单独前缀转发；pipe 必须有人读，否则写满会阻塞子进程

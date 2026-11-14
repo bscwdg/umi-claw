@@ -30,6 +30,8 @@ export interface IsolatedPluginSpec {
   permissions?: PluginPermissions
   config?: unknown
   serviceTimeoutMs?: number
+  /** 绝对路径权限参数（避免 NODE_OPTIONS 对空格路径的限制） */
+  execArgv?: string[]
 }
 
 export interface IsolatedPluginStatus {
@@ -43,6 +45,7 @@ export interface PluginIsolationManagerOptions {
   fork: ForkPluginProcess
   hostVersion: string
   buildEnv: (spec: IsolatedPluginSpec) => Record<string, string>
+  buildExecArgv?: (spec: IsolatedPluginSpec) => string[]
   serviceCall: (pluginId: string, service: string, method: string, args: unknown[]) => Promise<unknown>
   readyTimeoutMs?: number
   serviceTimeoutMs?: number
@@ -103,7 +106,8 @@ export function createPluginIsolationManager(
           services: spec.services ?? [],
           serviceTimeoutMs: spec.serviceTimeoutMs,
           config: spec.config,
-          env: options.buildEnv(spec)
+          env: options.buildEnv(spec),
+          execArgv: options.buildExecArgv ? options.buildExecArgv(spec) : spec.execArgv
         })
       } catch (e) {
         supervisors.delete(spec.pluginId)

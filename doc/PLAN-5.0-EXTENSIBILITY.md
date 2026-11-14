@@ -285,7 +285,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - `devMode.ts`：`UMI_DEV_PLUGINS=1` 才开 plugins，`UMI_DEV_BUILD=1` 且 plugins 开才开 build；**打包版即使设 env 也拒绝**。
 - 接线：`plugin:dev-mode`（`{ok,data}` 信封）+ preload `plugins.devMode()` + 管理页风险横幅。
 - 本批只做闸门与提示，不扫描/不加载 dev-plugins、不新增安装入口；扫描/源码构建留 Phase 2。
-- 测试：`plugin-dev-mode` 4/4；全量 54 套/931 项（930 通过 + 1 显式跳过）。
+- 测试：`plugin-dev-mode` 4/4；全量 54 套/932 项（931 通过 + 1 显式跳过）。
 - 未做/登记：UI 横幅可达性无 E2E；dev-plugins 扫描/源码构建 Phase 2。
 
 ### 4.7 Phase 2 起点提醒
@@ -354,7 +354,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
    - 官方 builtin：包 `<resources>/plugins/<id>/`（不参与安装器）；第三方包：`<dataDir>/plugin-packages/<id>/<version>/`（版本目录不可原地修改）。
    - 数据：官方/第三方统一 `<dataDir>/plugins/<id>/`（`data.db`/`kv`/`secrets` 命名空间不变）；旧 `plugin-data/` 从未落地，废弃。
    - 快照：`<dataDir>/plugin-backups/<id>/<timestamp>/`（默认保留最近 5 份）；安装态：`<dataDir>/plugin-install-state.json`。
-   - **child 入口 staging**：C2 安装时把宿主 `pluginProcessChild.js` 复制到 `<dataDir>/plugin-runtime/<hostVersion>/pluginProcessChild.js`；权限 `NODE_OPTIONS` 只允许 `<dataDir>` 下相对路径（包目录/runtime/data），**不把 `Program Files`/仓库根加入 allowlist**，避免含空格安装路径无法注入（P1 已知限制，C2 落地）。
+   - **child 入口与权限注入**：实际启动入口用宿主 app 内 `pluginProcessChild.js`（Electron utilityProcess 不能从 dataDir 外部入口启动）；安装时仍复制一份到 `<dataDir>/plugin-runtime/<hostVersion>/` 作备份/诊断。权限用 `execArgv` **绝对路径数组**（`--allow-fs-read/write`），不再依赖 `NODE_OPTIONS` 字符串，支持 `Program Files` 空格与中文用户名。
    - 所有路径解析后必须 `realpath` 校验在允许根内；reparse point 在安装期拒绝。
 6. **权限与状态**
    - `permissions` 只允许公开服务 `db/openclaw/notifications/config/kv/secrets/voice`；`http/dialog` 在 C6 实现后再追加；`consent/abort/hostOps/legacyDb` 永不对第三方开放。
@@ -418,7 +418,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 | 打包 | `npm run build` + packaged smoke |
 | 审查 | AGENTS §12：每 commit 对抗审查；每 WP 两次独立检查 |
 
-**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**54 套**（ACCEPT 50 + e2e×3 + smoke）、accept result **931 项（930 通过 + 1 显式跳过）** + `node:test` **21 条** = **952**。AGENTS/RUNBOOK 已同步该口径（2026-11-14 Phase 1 收尾）；release/4.0 在 voice 合并后复核。后续以每次留档为准。
+**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**54 套**（ACCEPT 50 + e2e×4 + smoke）、accept result **932 项（931 通过 + 1 显式跳过）** + `node:test` **21 条** = **953**。AGENTS/RUNBOOK 已同步该口径（2026-11-14 Phase 1 收尾）；release/4.0 在 voice 合并后复核。后续以每次留档为准。
 
 ---
 

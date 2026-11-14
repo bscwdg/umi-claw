@@ -36,3 +36,5 @@ config
 electron.vite.config.*.mjs
 CLAUDE.md
 .claude/
+
+.probe-user-data/

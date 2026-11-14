@@ -45,6 +45,8 @@ export interface InstallOptions {
   tofuFingerprint?: string
   /** 宿主 child 入口；C2 staging 到 <dataDir>/plugin-runtime/<hostVersion>/ */
   stagingChildSource?: string
+  /** 实际用于启动的宿主 child 入口（Electron utilityProcess 须在 app 内） */
+  hostChildEntry?: string
   hostVersion?: string
   now?: number
   maxBackups?: number
@@ -303,7 +305,8 @@ export function installPlugin(options: InstallOptions): InstallResult {
   const backupDir = isUpdate ? backupData(options.dataDir, id, now, options.maxBackups ?? 5) : null
   const dataDir = join(options.dataDir, 'plugins', id)
   mkdirSync(dataDir, { recursive: true })
-  const entry = stageChild({ ...options, hostVersion: options.hostVersion ?? 'unknown' })
+  const stagedEntry = stageChild({ ...options, hostVersion: options.hostVersion ?? 'unknown' })
+  const entry = options.hostChildEntry ?? stagedEntry
   const record: InstallRecord = {
     id,
     version: manifest.version,
