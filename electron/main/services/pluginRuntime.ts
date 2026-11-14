@@ -36,6 +36,7 @@ import {
 import { PLUGIN_MAIN_ENTRIES } from '../kernel/plugins.main.generated'
 import { createPluginDbService, type PluginDbService } from './pluginDb'
 import { createPluginKvService } from './pluginKv'
+import { createOpenClawService } from './pluginServiceAdapters'
 import { PluginSecretStore } from './pluginSecrets'
 import { registerConversationKeyResolver } from './conversationKeyRegistry'
 import {
@@ -232,7 +233,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
         }
       },
       notifications: () => deps.notifications(),
-      openclaw: () => deps.openclaw()
+      openclaw: (info) => createOpenClawService(() => deps.openclaw(), info.id) as any
     }
   }
 
@@ -283,8 +284,6 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       hostVersion: deps.appInfo().version
     })
     if (!result.ok) return { ok: false, code: result.code, message: result.message }
-    permissionStore?.revoke(result.record.id)
-    permissionStore?.grant(result.record.id, result.record.permissions ?? {})
     let started = false
     let warning: string | undefined
     try {
@@ -595,11 +594,17 @@ function readInstalledConfig(record: { dataDir?: string; config?: unknown }): un
                   permissions?: import('../kernel/manifest').PluginPermissions
                   config?: unknown
                   enabled?: boolean
+                  keyId?: string
                 }>
               }
               if (raw.schema === 1 && raw.plugins) {
                 for (const [pluginId, record] of Object.entries(raw.plugins)) {
                   if (record.enabled === false || !record.packageDir) continue
+                  const policyBlocked = isPluginBlockedByPolicy(dataDir, { keyId: record.keyId } as InstallRecord)
+                  if (policyBlocked) {
+                    deps.logger('策略阻止启动：' + policyBlocked)
+                    continue
+                  }
                   const entry =
                     record.entry ??
                     join(dataDir, 'plugin-runtime', deps.appInfo().version, 'pluginProcessChild.js')
@@ -822,6 +827,7 @@ function readInstalledConfig(record: { dataDir?: string; config?: unknown }): un
     async uninstallInstalled(pluginId, keepData = true) {
       await isolationManager?.stop(pluginId)
       const result = uninstallInstalledPlugin(deps.dataDir(), pluginId, keepData)
+      if (result.ok) permissionStore?.revoke(pluginId)
       return result.ok ? { ok: true } : { ok: false, code: result.code, message: result.message }
     },
 

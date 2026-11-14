@@ -41,6 +41,7 @@
         <strong>{{ String(item.name) }}</strong> {{ String(item.version) }} ·
         {{ String(item.trustLevel) }}
         <button class="btn btn-sm" @click="rollback(item.id)">回滚</button>
+        <button class="btn btn-sm" @click="toggleInstalledPermission(item.id)">{{ permissionMap[String(item.id)]?.granted ? '撤销权限' : '授权' }}</button>
         <button class="btn btn-sm btn-danger" @click="uninstall(item.id)">卸载</button>
         <div v-if="schemaFields(item).length" class="config-form">
           <label v-for="field in schemaFields(item)" :key="field.key" class="meta">
@@ -456,6 +457,16 @@ async function confirmInstall(): Promise<void> {
     installError.value = (e as Error)?.message ?? '安装失败'
   } finally {
     installBusy.value = false
+  }
+}
+
+async function toggleInstalledPermission(id: unknown): Promise<void> {
+  try {
+    if (permissionMap.value[String(id)]?.granted) await window.api.plugins.revokePermissions(String(id))
+    else await window.api.plugins.grantPermissions(String(id))
+    await loadPermissions()
+  } catch (e) {
+    installError.value = (e as Error)?.message ?? '权限操作失败'
   }
 }
 

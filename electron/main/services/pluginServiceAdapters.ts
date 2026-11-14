@@ -6,7 +6,6 @@
 
 import { Notification } from 'electron'
 import type { HostOpsApi, NotificationsApi, OpenClawApi } from '../kernel'
-import type { GatewayClient } from '../gatewayClient'
 
 export interface HostOpsAdapterDeps {
   notify: (id: string, payload: unknown) => void
@@ -54,16 +53,21 @@ export function createNotificationsService(): NotificationsApi {
  * OpenClaw 能力：包一层唯一的 GatewayClient（单例约束不变）。
  * 插件拿不到 token、拿不到网关进程控制权，只能「问状态 / 聊天 / 流式」。
  */
-export function createOpenClawService(getGateway: () => GatewayClient): OpenClawApi {
+export function createOpenClawService(getGateway: () => any, pluginId = 'plugin'): OpenClawApi {
+  const scope = <T extends { conversationKey?: string }>(input: T): T => {
+    const key = String(input.conversationKey ?? '')
+    if (!key || key.startsWith('conv:plugin:')) return input
+    return { ...input, conversationKey: 'conv:plugin:' + pluginId + ':' + key.replace(/^conv:/, '') }
+  }
   return {
     status: () => getGateway().getStatus(),
     ensureReady: () => getGateway().ensureReady(),
     async chat(input) {
-      const res = await getGateway().chat({ ...input, stream: false })
+      const res = await getGateway().chat({ ...scope(input), stream: false })
       return { text: res.text, model: res.model }
     },
     stream(input) {
-      const handle = getGateway().createChatStream({ ...input, stream: true })
+      const handle = getGateway().createChatStream({ ...scope(input), stream: true })
       return {
         iterator: handle.iterator,
         result: handle.result.then((r) => ({ text: r.text, chunks: r.chunks, aborted: r.aborted })),

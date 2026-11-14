@@ -285,7 +285,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - `devMode.ts`：`UMI_DEV_PLUGINS=1` 才开 plugins，`UMI_DEV_BUILD=1` 且 plugins 开才开 build；**打包版即使设 env 也拒绝**。
 - 接线：`plugin:dev-mode`（`{ok,data}` 信封）+ preload `plugins.devMode()` + 管理页风险横幅。
 - 本批只做闸门与提示，不扫描/不加载 dev-plugins、不新增安装入口；扫描/源码构建留 Phase 2。
-- 测试：`plugin-dev-mode` 4/4；全量 54 套/941 项（940 通过 + 1 显式跳过）。
+- 测试：`plugin-dev-mode` 4/4；全量 59 套/941 项（940 通过 + 1 显式跳过）。
 - 未做/登记：UI 横幅可达性无 E2E；dev-plugins 扫描/源码构建 Phase 2。
 
 ### 4.7 Phase 2 起点提醒

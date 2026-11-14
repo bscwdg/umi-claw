@@ -25,6 +25,13 @@ export const dialog = {
   showErrorBox: () => {}
 }
 
+export class Notification {
+  constructor(options) { this.options = options }
+  show() {}
+  close() {}
+  static isSupported() { return true }
+}
+
 export const shell = {
   openExternal: async () => '',
   openPath: async () => ''
