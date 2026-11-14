@@ -2690,7 +2690,7 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 - `devMode.ts`：`UMI_DEV_PLUGINS=1` 才开 plugins；`UMI_DEV_BUILD=1` 且 plugins 已开才开 build；**打包版（isPackaged）即使设 env 也拒绝**（reason=packaged-build）。
 - 接线：`plugin:dev-mode` IPC（`{ok,data}` 信封）+ preload `plugins.devMode()` + 管理页风险横幅；不新增第三方安装入口（4.x 仍禁止；本批只闸门+提示，不扫描/不加载 dev-plugins）。
 - 测试：`plugin-dev-mode` 4/4（打包版拒绝/默认关闭/dev 双开关/信封接线）。
-- 全量 54 套/942 项（941 通过 + 1 显式跳过）+ node:test 21 全绿（`accept-phase1-b5-final2.log`）。
+- 全量 54 套/当轮结果（历史留档）+ node:test 21 全绿（`accept-phase1-b5-final2.log`）。
 - 对抗审查（task-17，`data/tmp/analysis/phase1-b5-review.md`）：P0=0、P1=1、P2=5；已处置：
   - P1 横幅不可达：`plugin:dev-mode` 改为 `{ok:true,data}` 信封；D4 改为断言信封形状 + preload `call` + banner 驱动 + 不扫描 dev-plugins。
   - P2：文档 893 通过/RUNBOOK/AGENTS 计数修正；日志改指向真正全绿文件；gate-only 说明写入 devMode 注释与本节。
@@ -2701,7 +2701,7 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 ## 2026-11-14 · Phase 1 收尾（flag 默认 off 原型）
 
 - 结论：Phase 1 按 **“flag 默认 off 的隔离/权限原型”** 关闭；**不是生产隔离上线**，生产 installer/supervisor 接线、dev 读根收窄、junction 拒绝、HTTP/dialog/secrets 完整代理、事件流、性能实测均登记 Phase 2。
-- 事实核对（独立，a3a-reviewer）：PLAN §4.1 四条 4/4 有证据（e2e/负向/状态机/flag off）；B1 17/17、B2 11/11、B3 9/9、B4 e2e 1/1、B5 4/4；全量 **54 套/942 项（941 通过 + 1 显式跳过）**；发现并修正：工作树漂移（还原）、PLAN §八/Phase 0/B1 历史计数矛盾（47/854、871 恢复）、§4.1 口径过强（加限定）。
+- 事实核对（独立，a3a-reviewer）：PLAN §4.1 四条 4/4 有证据（e2e/负向/状态机/flag off）；B1 17/17、B2 11/11、B3 9/9、B4 e2e 1/1、B5 4/4；全量 **54 套/当轮结果（历史留档）**；发现并修正：工作树漂移（还原）、PLAN §八/Phase 0/B1 历史计数矛盾（47/854、871 恢复）、§4.1 口径过强（加限定）。
 - 对抗复核（独立，umi-auditor）：P0=0、P1=6；处置：
   - P1 activate 期 service 被丢：supervisor 在 `starting` 也回 service + S9。
   - P1 SDK v1 面缺失：child 补 `onDispose`、`jobs.timeout/count`；service fixture 激活即用。
@@ -2709,7 +2709,7 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
   - P1 打包 probe：`UMI_ISOLATION_PROBE` 加 `!app.isPackaged`。
   - P1 文档过强：§4.1 加“测试探针/生产未接线”限定；HOME 白名单表述修正。
 - 未采纳/登记（Phase 2）：生产 runtime 启动 supervisor、dev 读根=仓库根、junction/reparse、manifest 授权更新求交、撤销后进程重启、bridge 能力面/会话命名、supervisor.invoke 错误码、asar fork、accept 偶发 flake 留档。
-- 最终验收：双 typecheck 0；build 通过；`check:boundary` 9/9；全量 54 套/942 项（941 通过 + 1 显式跳过）+ node:test 21 全绿（`accept-phase1-final.log`）。
+- 最终验收：双 typecheck 0；build 通过；`check:boundary` 9/9；全量 54 套/当轮结果（历史留档）+ node:test 21 全绿（`accept-phase1-final.log`）。
 
 ---
 
@@ -2717,7 +2717,7 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 
 - 版本：`package.json` / `package-lock.json` 升 **4.4.0-dev**；CHANGELOG 新增 `[4.4.0-dev]` 插件化 Phase 1 段。
 - 口径：flag 默认 off、4.x 不开放第三方安装；生产 installer/签名包属 Phase 2；不得表述为“生产隔离已上线”。
-- 验收：双 typecheck 0；build 通过；全量 54 套/942 项（941 通过 + 1 显式跳过）+ node:test 21（`accept-4.4.0-dev-final3.log`；E2E 探针隔离 userData、packaged smoke 7/7）。
+- 验收：双 typecheck 0；build 通过；全量 54 套/当轮结果（历史留档）+ node:test 21（`accept-4.4.0-dev-final3.log`；E2E 探针隔离 userData、packaged smoke 7/7）。
 - 封版审查修正：semver 预发布支持（4.4.0-dev 满足模板 `>=4.3.0 <6.0.0`；contract C1 用实际 package 版本断言）；startup probe 用独立 `CLAW_DATA_DIR/user-data` 避免与 dev 实例抢单实例锁；startup 版本断言改为读 package.json；PLAN §4.1 行首残留修正。
 - 分支：封版提交在 `codex/voice-local-external-conversation`；随后从封版提交切 `feat/plugin-phase2` 开始 C1。
 
@@ -2774,3 +2774,14 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 - 验收：59 套/942 项（913 通过 +1 skip）+ node:test 21；双 typecheck 0；build 绿。
 - 残余（alpha.2/beta 前）：真机 e2e 仍走 probe（安装态由 R3 FakeChild 覆盖）、撤销后自动重启、PluginStatus 正式字段、C2 staging/installer。
 - 独立检查：a3a/umi-auditor 的阻塞项已逐条处置或据实降级口径；tag 由“不批准”改为“内部基线 + 残余明示”。
+
+---
+
+## 5.0.0 GA（2026-11-14）
+
+- 版本门：`v5.0.0-alpha.1` → `alpha.2` → `beta.1` → `beta.2` → **`v5.0.0`**；GA 提交 `d918d3e`，`release/5.0` 已合并并推送。
+- 交付：C1 签名包/CLI/TOFU；C2 安装/更新/回滚/卸载；C3 兼容矩阵；C4 索引/吊销；C5 utilityProcess 隔离 + NODE_OPTIONS/env 白名单；C6 configSchema/配置；C8 审计/诊断/kill switch；权限生命周期（默认拒绝、升级收窄、卸载 revoke）；OpenClaw 会话键 `conv:plugin:<id>:*`。
+- 最终验收：双 typecheck 0；build 绿；`check:boundary` 9/9；全量 **59 套 / 942 项（941 通过 + 1 显式跳过）** + `node:test` 21（`accept-5.0.0-ga-final7.log`）。
+- 独立审查：a3a 事实核对、umi-auditor 对抗复核多轮；GA 前阻塞（boot 数据根、权限生命周期、kill switch、config 校验、会话键 scoping、发布流程）逐项处置。**最后一轮会话键 scoping 修复由 R6 + final7 全量验收覆盖，未再跑第三轮独立子代理复核（已披露）。**
+- 已知限制：含空格 dataDir/用户名显式失败；干净机器卸载 e2e 由单测/打包冒烟替代；官方/伙伴根密钥由发布流水线注入（默认 self-TOFU）；child 只读 appPath/resourcesPath 属 Electron bootstrap 必需；C6 未实现完整 JSON Schema（required/min/max）。
+- 文档：CHANGELOG `[5.0.0]`、PLAN §5.1、RUNBOOK GA 清单、AGENTS 计数已同步；`v5.0.0` tag 指向 `d918d3e`，其后仅文档修正提交。
