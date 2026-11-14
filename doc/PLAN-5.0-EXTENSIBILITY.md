@@ -285,7 +285,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - `devMode.ts`：`UMI_DEV_PLUGINS=1` 才开 plugins，`UMI_DEV_BUILD=1` 且 plugins 开才开 build；**打包版即使设 env 也拒绝**。
 - 接线：`plugin:dev-mode`（`{ok,data}` 信封）+ preload `plugins.devMode()` + 管理页风险横幅。
 - 本批只做闸门与提示，不扫描/不加载 dev-plugins、不新增安装入口；扫描/源码构建留 Phase 2。
-- 测试：`plugin-dev-mode` 4/4；全量 54 套/909 项（908 通过 + 1 显式跳过）。
+- 测试：`plugin-dev-mode` 4/4；全量 54 套/914 项（913 通过 + 1 显式跳过）。
 - 未做/登记：UI 横幅可达性无 E2E；dev-plugins 扫描/源码构建 Phase 2。
 
 ### 4.7 Phase 2 起点提醒
@@ -323,7 +323,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 | 版本 | 触发 |
 | --- | --- |
 | 4.4.0-dev | Phase 1 完成（已封版 ac59459） |
-| 5.0.0-alpha.1 | P0 + P1 + P2 绿 |
+| 5.0.0-alpha.1 | P0 契约 + P1 隔离 runtime 接线 + P2 安全基线（C2 语义残余登记） |
 | 5.0.0-alpha.2 | C1 签名包绿 |
 | 5.0.0-beta.1 | C2 安装/更新/回滚绿（切 `release/5.0`） |
 | 5.0.0-beta.2 | C3/C4/C6/C8/C5 出口全绿 |
@@ -418,7 +418,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 | 打包 | `npm run build` + packaged smoke |
 | 审查 | AGENTS §12：每 commit 对抗审查；每 WP 两次独立检查 |
 
-**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**54 套**（ACCEPT 50 + e2e×3 + smoke）、accept result **909 项（908 通过 + 1 显式跳过）** + `node:test` **21 条** = **929**。AGENTS/RUNBOOK 已同步该口径（2026-11-14 Phase 1 收尾）；release/4.0 在 voice 合并后复核。后续以每次留档为准。
+**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**54 套**（ACCEPT 50 + e2e×3 + smoke）、accept result **914 项（913 通过 + 1 显式跳过）** + `node:test` **21 条** = **934**。AGENTS/RUNBOOK 已同步该口径（2026-11-14 Phase 1 收尾）；release/4.0 在 voice 合并后复核。后续以每次留档为准。
 
 ---
 

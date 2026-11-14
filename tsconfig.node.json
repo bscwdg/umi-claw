@@ -15,6 +15,7 @@
     "electron/main/services/pluginPermissions.ts",
     "electron/main/services/pluginServiceBridge.ts",
     "electron/main/services/pluginIsolationManager.ts",
+    "electron/main/services/pluginPackageFormat.ts",
     "templates/plugin/main.ts",
     "plugins/*/main.ts",
     "plugins/*/domain/**/*.ts"

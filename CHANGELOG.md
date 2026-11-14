@@ -14,7 +14,7 @@
 - P0：冻结 `.umi-plugin` 包布局、Ed25519 签名/SIGNATURE 规范、三档信任（official/partner/self-TOFU）、keyring/吊销/安装态路径、权限只收窄、4.x 边界。
 - P1：`pluginRuntime` 真正管理隔离插件（start/stop/invoke/statuses）；启动失败回收、停止日志；真机 e2e 走 manager；新增 runtime 级测试。
 - P2：授权升级求交（新增权限不继承，空交集撤销）；撤销授权停隔离进程；junction/symlink 检测；`PLUGIN_PERMISSION_CONFIG_INVALID` / `PLUGIN_TIMEOUT`；`supervisor.invoke` 保留错误码；服务能力面禁 `db.backup/forPlugin/dispose`；隔离状态 IPC。
-- 验收：54 套 / 909 项（908 通过 + 1 显式跳过）+ node:test 21。
+- 验收：54 套 / 914 项（913 通过 + 1 显式跳过）+ node:test 21。
 
 ## [4.4.0-dev]（未发布，4.3 之后）— 2026-11-14
 
@@ -171,7 +171,7 @@
 - **边界**：4.x 仍只支持官方内置插件；**不开放第三方安装**，第三方签名/权限/隔离在 5.0 Phase 1+ 继续。
 
 ### 测试
-- 全量 **54 套 / 909 项检查（908 通过 + 1 显式跳过） / 0 失败**；plugin 71/71；plugin-contract 3/3；plugin-api 3/3；ui 28/28；character 110/110；启动级 E2E 1/1。
+- 全量 **54 套 / 914 项检查（913 通过 + 1 显式跳过） / 0 失败**；plugin 71/71；plugin-contract 3/3；plugin-api 3/3；ui 28/28；character 110/110；启动级 E2E 1/1。
 
 ---
 
