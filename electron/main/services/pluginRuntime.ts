@@ -121,6 +121,8 @@ export interface PluginRuntimeDeps {
   }
   /** Phase 2 C2：宿主 child 入口（安装时 staging 到 dataDir，避免 Program Files 空格路径） */
   pluginChildEntry?: () => string
+  /** Phase 2 C6：选择 .umi-plugin 安装包（主进程 dialog；runtime 不 import electron） */
+  pickPackage?: () => Promise<string | null>
   subscribeResume: (callback: () => void) => () => void
   broadcast: (channel: string, payload: unknown) => void
   logger: (line: string) => void
@@ -332,6 +334,9 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     })
     deps.ipc.removeHandler('plugin:installed')
     deps.ipc.handle('plugin:installed', () => ({ ok: true, data: readInstallState(deps.dataDir()) }))
+
+    deps.ipc.removeHandler('plugin:pick-package')
+    deps.ipc.handle('plugin:pick-package', () => (deps.pickPackage ? deps.pickPackage() : null))
 
     deps.ipc.removeHandler('plugin:permissions:grant')
     deps.ipc.handle('plugin:permissions:grant', (_e, payload: { id?: string }) => {

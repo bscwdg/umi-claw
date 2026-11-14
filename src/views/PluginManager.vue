@@ -21,6 +21,29 @@
       </p>
     </section>
 
+    <section class="plugin-card">
+      <h2 class="section-title">第三方插件（.umi-plugin）</h2>
+      <p class="meta">安装包需通过 Ed25519 验签；自签包需你明确确认首次安装（TOFU）。</p>
+      <div class="actions">
+        <button class="btn" :disabled="installBusy" @click="pickInstall">选择安装包…</button>
+        <span v-if="pendingPackage" class="meta">{{ pendingPackage.split(/[\\/]/).pop() }}</span>
+        <button v-if="pendingPackage" class="btn btn-primary" :disabled="installBusy" @click="confirmInstall">
+          确认安装（含自签）
+        </button>
+        <button v-if="pendingPackage" class="btn btn-ghost" :disabled="installBusy" @click="pendingPackage = ''">
+          取消
+        </button>
+      </div>
+      <p v-if="installNotice" class="meta">{{ installNotice }}</p>
+      <p v-if="installError" class="error-line">{{ installError }}</p>
+      <p v-for="item in installedList" :key="String(item.id)" class="meta">
+        <strong>{{ String(item.name) }}</strong> {{ String(item.version) }} ·
+        {{ String(item.trustLevel) }}
+        <button class="btn btn-sm" @click="rollback(item.id)">回滚</button>
+        <button class="btn btn-sm btn-danger" @click="uninstall(item.id)">卸载</button>
+      </p>
+    </section>
+
     <p v-if="loadError" class="error-banner">
       {{ loadError }}
       <button class="btn btn-sm" @click="reload">重试</button>
@@ -174,6 +197,12 @@ const loading = ref(false)
 const loadError = ref('')
 const devMode = ref<{ plugins: boolean; build: boolean; reason: string; warning: string | null } | null>(null)
 const isolatedPlugins = ref<Array<{ pluginId: string; name: string; version: string; state: string }>>([])
+const installed = ref<{ schema: 1; plugins: Record<string, Record<string, unknown>> }>({ schema: 1, plugins: {} })
+const installedList = computed(() => Object.values(installed.value.plugins ?? {}))
+const pendingPackage = ref('')
+const installBusy = ref(false)
+const installNotice = ref('')
+const installError = ref('')
 const busy = ref('')
 const confirmVisible = ref(false)
 const confirmMessage = ref('')
@@ -361,6 +390,64 @@ async function loadIsolated(): Promise<void> {
   }
 }
 
+async function loadInstalled(): Promise<void> {
+  try {
+    installed.value = await window.api.plugins.installed()
+  } catch {
+    installed.value = { schema: 1, plugins: {} }
+  }
+}
+
+async function pickInstall(): Promise<void> {
+  installError.value = ''
+  installNotice.value = ''
+  try {
+    const file = await window.api.plugins.pickPackage()
+    if (file) pendingPackage.value = file
+  } catch (e) {
+    installError.value = (e as Error)?.message ?? '选择安装包失败'
+  }
+}
+
+async function confirmInstall(): Promise<void> {
+  if (!pendingPackage.value) return
+  installBusy.value = true
+  installError.value = ''
+  installNotice.value = ''
+  try {
+    await window.api.plugins.install(pendingPackage.value, { allowSelfSigned: true })
+    pendingPackage.value = ''
+    installNotice.value = '安装完成；隔离插件已按安装态启动。'
+    await Promise.all([loadInstalled(), loadIsolated()])
+  } catch (e) {
+    installError.value = (e as Error)?.message ?? '安装失败'
+  } finally {
+    installBusy.value = false
+  }
+}
+
+async function rollback(id: unknown): Promise<void> {
+  installError.value = ''
+  try {
+    await window.api.plugins.rollback(String(id))
+    installNotice.value = '已回滚到上一版本。'
+    await Promise.all([loadInstalled(), loadIsolated()])
+  } catch (e) {
+    installError.value = (e as Error)?.message ?? '回滚失败'
+  }
+}
+
+async function uninstall(id: unknown): Promise<void> {
+  installError.value = ''
+  try {
+    await window.api.plugins.uninstall(String(id), true)
+    installNotice.value = '已卸载，数据保留。'
+    await Promise.all([loadInstalled(), loadIsolated()])
+  } catch (e) {
+    installError.value = (e as Error)?.message ?? '卸载失败'
+  }
+}
+
 async function togglePermission(status: PluginStatus): Promise<void> {
   busy.value = status.id
   try {
@@ -431,6 +518,7 @@ onMounted(async () => {
   await loadPermissions()
   await loadDevMode()
   await loadIsolated()
+  await loadInstalled()
 })
 
 onUnmounted(() => {

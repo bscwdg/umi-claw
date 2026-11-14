@@ -74,6 +74,7 @@ const ACCEPT = [
   ['plugin-package-format', 'test/plugin-package-format.accept.mjs'],
   ['plugin-package', 'test/plugin-package.accept.mjs'],
   ['plugin-installer', 'test/plugin-installer.accept.mjs'],
+  ['plugin-index', 'test/plugin-index.accept.mjs'],
   ['plugin-dev-mode', 'test/plugin-dev-mode.accept.mjs'],
   ['consent', 'test/consent.accept.mjs'],
   ['ui', 'test/ui.accept.mjs']

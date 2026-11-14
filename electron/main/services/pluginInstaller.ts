@@ -8,6 +8,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameS
 import { dirname, join, resolve, sep } from 'node:path'
 import { verifyPluginPackage, type PluginKeyring } from './pluginPackage'
 import type { PluginPermissions } from '../kernel/manifest'
+import { satisfiesHostRange } from '../kernel/manifest'
 
 export interface InstallRecord {
   id: string
@@ -121,17 +122,28 @@ function extractPackage(packageFile: string, targetDir: string): { ok: true } | 
   }
 }
 
-function parseManifest(dir: string): { id: string; version: string; name: string; permissions?: PluginPermissions } | null {
+function parseManifest(
+  dir: string,
+  hostVersion: string
+): { id: string; version: string; name: string; permissions?: PluginPermissions } | { code: string } | null {
   try {
     const raw = JSON.parse(readFileSync(join(dir, 'plugin.json'), 'utf8')) as {
       id?: string
       version?: string
       name?: string
+      apiVersion?: number
+      engines?: { host?: string }
       permissions?: PluginPermissions
     }
     if (!raw.id || !/^[a-z][a-z0-9-]*$/.test(raw.id)) return null
     if (!raw.version || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(raw.version)) return null
     if (!existsSync(join(dir, 'main.js'))) return null
+    if (raw.apiVersion !== undefined && (!Number.isInteger(raw.apiVersion) || raw.apiVersion < 1)) {
+      return { code: 'PLUGIN_INCOMPATIBLE' }
+    }
+    if (raw.engines?.host && !satisfiesHostRange(hostVersion, raw.engines.host)) {
+      return { code: 'PLUGIN_INCOMPATIBLE' }
+    }
     return { id: raw.id, version: raw.version, name: raw.name ?? raw.id, permissions: raw.permissions }
   } catch {
     return null
@@ -203,10 +215,14 @@ export function installPlugin(options: InstallOptions): InstallResult {
   const stagingDir = join(options.dataDir, 'plugin-packages', id, `.staging-${now}`)
   const extracted = extractPackage(options.packageFile, stagingDir)
   if (!extracted.ok) return extracted
-  const manifest = parseManifest(stagingDir)
+  const manifest = parseManifest(stagingDir, options.hostVersion ?? '5.0.0')
   if (!manifest) {
     rmSync(stagingDir, { recursive: true, force: true })
     return { ok: false, code: 'PACKAGE_MANIFEST_INVALID', message: 'plugin.json 非法或缺 main.js' }
+  }
+  if ('code' in manifest) {
+    rmSync(stagingDir, { recursive: true, force: true })
+    return { ok: false, code: manifest.code, message: 'apiVersion/engines 与宿主不兼容' }
   }
   if (manifest.id !== id) {
     rmSync(stagingDir, { recursive: true, force: true })

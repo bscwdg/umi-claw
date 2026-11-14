@@ -127,6 +127,32 @@ await r.check('C2-4', '篡改包/未信任签名安装一律拒绝，且不写�
   }
 })
 
+await r.check('C2-5', 'C3 兼容：apiVersion/engines.host 不兼容拒绝安装', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'umi-inst-'))
+  try {
+    const src = join(root, 'src')
+    mkdirSync(src, { recursive: true })
+    writeFileSync(
+      join(src, 'plugin.json'),
+      JSON.stringify({ id: 'demo', version: '1.0.0', name: 'Demo', apiVersion: 1, engines: { host: '>=9.0.0 <10.0.0' } }),
+      'utf8'
+    )
+    writeFileSync(join(src, 'main.js'), 'module.exports={}', 'utf8')
+    const p = await pack(root, src, '1.0.0')
+    const res = mod.installPlugin({
+      dataDir: join(root, 'data'),
+      packageFile: p.out,
+      allowSelfSigned: true,
+      hostVersion: '5.0.0'
+    })
+    assertEq(res.ok, false, '不兼容拒绝')
+    assertEq(res.code, 'PLUGIN_INCOMPATIBLE', '兼容错误码')
+    return '兼容门 ✓'
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin-installer.json'), result)

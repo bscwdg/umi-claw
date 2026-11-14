@@ -11,7 +11,8 @@ import {
   // 系统唤醒后热点采集补检（Phase 4：改为插件订阅 hostEvents.onResume）
   safeStorage,
   powerMonitor,
-  utilityProcess
+  utilityProcess,
+  dialog
 } from 'electron'
 import { join, parse, dirname, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -436,6 +437,14 @@ async function initPlugins(): Promise<void> {
       isPackaged: app.isPackaged
     }),
     pluginChildEntry: () => join(__dirname, 'pluginProcessChild.js'),
+    pickPackage: async () => {
+      const result = await dialog.showOpenDialog({
+        title: '选择 .umi-plugin 安装包',
+        properties: ['openFile'],
+        filters: [{ name: '.umi-plugin', extensions: ['umi-plugin'] }]
+      })
+      return result.canceled ? null : (result.filePaths[0] ?? null)
+    },
     subscribeResume: (callback) => {
       powerMonitor.on('resume', callback)
       return () => powerMonitor.removeListener('resume', callback)
