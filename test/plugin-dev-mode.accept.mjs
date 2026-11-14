@@ -111,6 +111,10 @@ await r.check('D5', 'C6 安装入口：pick-package 信封 + 选包先验签 + T
     '没有验签结果不得确认安装'
   )
   assert(
+    /async function confirmInstall\(\): Promise<void> \{\s*if \(installBusy\.value\) return/.test(page),
+    '确认安装必须有 installBusy 重入守卫（防同一任务内双发 install）'
+  )
+  assert(
     /:disabled="installBusy \|\| \(pendingInspect\?\.trust === 'self' && pendingInspect\.tofu === 'new' && !selfTrust\)"/.test(page),
     '首次自签未勾选时禁用确认按钮'
   )

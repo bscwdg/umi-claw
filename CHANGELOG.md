@@ -22,7 +22,7 @@
 
 ### 修复（GA 后）
 - 管理页选择安装包点「取消」不再误报 `IPC plugin:pick-package 失败`；`plugin:pick-package` 统一回 `{ok,data}` 信封（裸 null/路径会被 preload 当失败）。
-- 选包后先验签再确认：自签包首次安装展示指纹并要求显式勾选 TOFU，已信任更新免重复确认；同 keyId 换指纹在 inspect 阶段即拒绝；安装校验失败不再残留 TOFU 指纹。
+- 选包后先验签再确认：自签包首次安装展示指纹并要求显式勾选 TOFU，已信任更新免重复确认；同 keyId 换指纹在 inspect 阶段即拒绝；安装校验阶段失败不再残留 TOFU 指纹。
 
 ### 验收
 - 59 套 / 942 项（941 通过 + 1 显式跳过）+ `node:test` 21 条；双 typecheck 0；build 绿。
@@ -32,6 +32,7 @@
 - Windows 下插件子进程 cwd 锁安装目录，真机卸载 e2e 由 installer 单测覆盖。
 - **已知限制**：第三方 child 需要只读宿主 `appPath`/`resourcesPath`（Electron bootstrap 必需），权限模型不承诺屏蔽宿主代码读取；`NODE_OPTIONS` 无法表达含空格的权限路径；默认安装目录 `Program Files` 已通过 child cwd 规避，但**含有空格的数据目录/Windows 用户名**下第三方隔离插件会以 `PLUGIN_PERMISSION_CONFIG_INVALID` 拒绝启动（显式失败，不降级放行）。
 - C4 索引目前为本地静态文件导入，无在线市场。
+- `plugin-trust.json` 丢失/损坏时按「首次安装」重新要求显式确认（fail-safe，不会静默放行）；管理页暂无「忘记该自签密钥」入口，需手工删该文件。
 - 第三方 UI 隔离/市场属 Phase 3。
 
 ## [5.0.0-beta.2]（内部基线）— 2026-11-14

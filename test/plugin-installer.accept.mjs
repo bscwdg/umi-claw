@@ -229,7 +229,7 @@ await r.check('C2-8', 'P0 安装器：保留 id / 非公开服务拒绝', async 
   }
 })
 
-await r.check('C2-9', 'TOFU：首装写指纹；inspect 区分首次/已信任；换指纹 inspect 提前拒绝；失败安装不留指纹', async () => {
+await r.check('C2-9', 'TOFU：首装写指纹；inspect 区分首次/已信任；换指纹 inspect 提前拒绝；失败安装不留指纹（含 parse 之后失败）', async () => {
   const root = mkdtempSync(join(tmpdir(), 'umi-inst-'))
   try {
     const dataDir = join(root, 'data')
@@ -241,7 +241,7 @@ await r.check('C2-9', 'TOFU：首装写指纹；inspect 区分首次/已信任�
     // 首装前：inspect 必须判「首次」，UI 才会要求勾选 TOFU
     const before = mod.inspectPluginPackage({ packageFile: p1, allowSelfSigned: true, dataDir })
     assertEq(before.tofu, 'new', '首装前 tofu=new')
-    const first = mod.installPlugin({ dataDir, packageFile: p1, allowSelfSigned: true })
+    const first = mod.installPlugin({ dataDir, packageFile: p1, allowSelfSigned: true, now: 1000 })
     assertEq(first.ok, true, JSON.stringify(first))
     const trust = JSON.parse(readFileSync(join(dataDir, 'plugin-trust.json'), 'utf8'))
     assertEq(trust.keys['self-fixed'].fingerprint, kp1.fingerprint, 'TOFU 落盘')
@@ -256,6 +256,22 @@ await r.check('C2-9', 'TOFU：首装写指纹；inspect 区分首次/已信任�
     assertEq(changedInspect.code, 'PACKAGE_TOFU_MISMATCH', 'inspect 提前拒绝指纹变化')
     const changed = mod.installPlugin({ dataDir, packageFile: p2, allowSelfSigned: true })
     assertEq(changed.code, 'PACKAGE_TOFU_MISMATCH', '指纹变化拒绝')
+    // parseManifest **之后**的失败（权限扩大）也不得改动 TOFU：用 now 固定时间戳验证
+    // lastSeen 没被刷新。若 writeTrust 被挪回校验中途（parse 后、权限检查前），这里会红。
+    const escSrc = join(root, 'esc-src')
+    mkdirSync(escSrc, { recursive: true })
+    writeFileSync(
+      join(escSrc, 'plugin.json'),
+      JSON.stringify({ id: 'demo', version: '1.1.0', name: 'Demo', permissions: { services: ['kv'] } }),
+      'utf8'
+    )
+    writeFileSync(join(escSrc, 'main.js'), 'module.exports={}', 'utf8')
+    const pEsc = join(root, 'esc.umi-plugin')
+    pkg.packPlugin({ sourceDir: escSrc, outFile: pEsc, keyId: 'self-fixed', privateKeyPem: kp1.privateKeyPem, publicKeyBase64: kp1.publicKeyBase64 })
+    const escalated = mod.installPlugin({ dataDir, packageFile: pEsc, allowSelfSigned: true, now: 2000 })
+    assertEq(escalated.code, 'PLUGIN_PERMISSION_ESCALATION', '权限扩大拒绝安装')
+    const trustEsc = JSON.parse(readFileSync(join(dataDir, 'plugin-trust.json'), 'utf8'))
+    assertEq(trustEsc.keys['self-fixed'].lastSeen, 1000, 'parse 之后的失败不得刷新 TOFU lastSeen')
     // 签名对但 manifest/引擎不兼容：安装失败，且不得记住新 key 的指纹
     const kp3 = pkg.generateSigningKeyPair()
     const badSrc = join(root, 'bad-src')

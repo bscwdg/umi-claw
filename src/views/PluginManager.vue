@@ -467,6 +467,7 @@ function cancelPick(): void {
 }
 
 async function confirmInstall(): Promise<void> {
+  if (installBusy.value) return
   // 两个状态必须同时存在：pendingInspect 缺失说明这包没验签（重选/取消清过），宁可不装
   if (!pendingPackage.value || !pendingInspect.value) return
   const inspect = pendingInspect.value
