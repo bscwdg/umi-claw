@@ -4,6 +4,8 @@
 >
 > 愿景：简单点，无需复杂安装即可让每个人享受 AI 带来的便利
 
+> **本文件是 `release/4.0`（4.x 维护线）分支说明**：最新发布 tag 为 `v4.1.0`，分支 `package.json` 已到 4.2.0；下面标注 4.3 / 4.4 的能力已合入分支但**尚未发布**。当前主线为 `release/5.0`；全版本选择与总览见 [master README](https://github.com/bscwdg/umi-claw/blob/master/README.md)。
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## 项目特性
@@ -61,9 +63,9 @@
 | mammoth / exceljs / docx / pdfjs-dist | — | Word / Excel / PDF 文档解析与生成 |
 | @vueuse/core | 10 | Vue 组合式工具库 |
 
-## 4.0 插件化宿主（控制台 / 能力中心）
+## 4.x 插件化宿主（4.0 起：控制台 / 能力中心）
 
-4.0 在合并后的单体上做插件化：宿主提供窗口、导航、设置、OpenClaw 管理、渠道、终端、Obsidian 等壳能力；
+4.x 把 1.0 / 2.0 / 3.0 合并到同一代码库并做插件化：宿主提供窗口、导航、设置、OpenClaw 管理、渠道、终端、Obsidian 等壳能力；
 2.0 营销域、3.0 工作域装箱为官方内置插件，运行期可启停。
 
 - **控制台（`/dashboard`）**：网关状态、启动阶段与 ETA、Token、日志、快速入口
@@ -83,13 +85,13 @@
 - **形象**：透明置顶桌宠窗口（暂下线，M2 恢复；当前可导入自定义形象做预览）+ 六态原创 SVG + 气泡（气泡随桌宠窗口 M2 恢复）
 - **聊天**：流式气泡、表情映射、会话代际清空；每轮注入【本鱼状态】（称呼/阶段/心情/今日活动）
 - **关系**：三轴（熟悉/亲密/连续天数）、阶段只升不降、每日上限、`refId` 幂等、解锁提示
-- **生活与主动（4.4 增强）**：生活卡确定性抽取 → `fish/LIFE.md`；30s tick 按静默期/免打扰/日上限发主动消息。支持固定/随机间隔（1–720 分钟；1–10/10–30/30–60 分钟、1–3/3–6 小时等区间）与每日上限最高 60；每轮 2–10 条候选（生活卡 + 20 话题 + 约 100 句台词），精确/3-gram 近似去重、话题冷却；规则选中候选后再交给 `feiyu` agent 结合最近聊天与人格生成实际文案，超时/非法/重复输出回退规则候选；未回复按关系轻试探（恋人「在忙吗？我想你了」），2 条未回换话题、≥3 条进入退避（停发；用户互动或满 6 小时无新发送后重置）。失败降级为角色页提示。
-- **表情包（4.4）**：角色页导入本地 PNG/JPEG/GIF/WebP（≤10MB、最多 200 张、sha256 去重），按情绪/标签管理、启用/归档删除；QQ 发图走 `file_type=1` 上传 + `msg_type=7`（当前仅主动发图/手动测试，被动回复未接线；聊天回复内自动配图待后续版本）；主动消息文字送达后约 20% 概率按情绪补一张。
-- **备份（4.4）**：角色页导出/导入单个 zip（manifest + 设置/状态/关系/解锁/桌宠状态 + 人格文件 + workspace 日记 + 表情包）；不含密钥/token、截图、日志和桌宠自定义形象；导入前自动备份、失败回滚，恢复后重载内存态。
+- **生活与主动（4.4，未发布）**：生活卡确定性抽取 → `fish/LIFE.md`；30s tick 按静默期/免打扰/日上限发主动消息。支持固定/随机间隔（1–720 分钟；1–10/10–30/30–60 分钟、1–3/3–6 小时等区间）与每日上限最高 60；每轮 2–10 条候选（生活卡 + 20 话题 + 约 100 句台词），精确/3-gram 近似去重、话题冷却；规则选中候选后再交给 `feiyu` agent 结合最近聊天与人格生成实际文案，超时/非法/重复输出回退规则候选；未回复按关系轻试探（恋人「在忙吗？我想你了」），2 条未回换话题、≥3 条进入退避（停发；用户互动或满 6 小时无新发送后重置）。失败降级为角色页提示。
+- **表情包（4.4，未发布）**：角色页导入本地 PNG/JPEG/GIF/WebP（≤10MB、最多 200 张、sha256 去重），按情绪/标签管理、启用/归档删除；QQ 发图走 `file_type=1` 上传 + `msg_type=7`（当前仅主动发图/手动测试，被动回复未接线；聊天回复内自动配图待后续版本）；主动消息文字送达后约 20% 概率按情绪补一张。
+- **备份（4.4，未发布）**：角色页导出/导入单个 zip（manifest + 设置/状态/关系/解锁/桌宠状态 + 人格文件 + workspace 日记 + 表情包）；不含密钥/token、截图、日志和桌宠自定义形象；导入前自动备份、失败回滚，恢复后重载内存态。
 - **记忆**：确认年龄后 23:00 自动写日记（workspace + Obsidian `大肥鱼/日记`），失败重试、密钥脱敏、frontmatter 白名单；tags 归一化确保 `大肥鱼/日记` 校验通过。
 - **语音**：TTS 出 16k PCM → SILK → QQ 语音条（失败降级文字，`silk-wasm` 已内置）；外部 TTS 支持 OpenAI 兼容 `/v1/audio/speech`，也支持 Voicebox 原生 `17493`（`/profiles` + `/generate/stream`，自动取 `preset_engine`，固定 WAV）；入站 STT 为预留注入接口，暂未接 QQ 入站（收到的语音不会转写）
-- **多渠道聊天（4.3）**：角色页「聊天渠道」可勾选已配置的单账号外部渠道（QQ/飞书/企微/微信…），把该渠道内被策略放行的会话（含群聊）路由给大肥鱼（文本）；经官方 CLI 写 OpenClaw bindings，保存后需重启网关生效
-- **界面统一（4.4）**：保存按钮按 `--accent` 主题色统一；子组件不再因为 scoped 样式拿不到父页面 `.btn.primary` 而显示灰按钮
+- **多渠道聊天（4.3，未发布）**：角色页「聊天渠道」可勾选已配置的单账号外部渠道（QQ/飞书/企微/微信…），把该渠道内被策略放行的会话（含群聊）路由给大肥鱼（文本）；经官方 CLI 写 OpenClaw bindings，保存后需重启网关生效
+- **界面统一（4.4，未发布）**：保存按钮按 `--accent` 主题色统一；子组件不再因为 scoped 样式拿不到父页面 `.btn.primary` 而显示灰按钮
 - **安全隐私**：危机词直接转求助资源；AI 明示；未确认年龄不主动；导出不含密钥；删除分层且日记归档
 - **数据**：设置/状态/关系等落 `<dataDir>/character/kv.json`（键名仍为 `fish:v2:*`；启动时从旧 `work.db app_meta` 一次性导入）；表情包与桌宠自定义形象另落 `<dataDir>/character/stickers*/`、`<dataDir>/character/pet-appearance/`；不新增知识库；素材按许可（第三方 NC 素材仅用户导入）
 
@@ -218,11 +220,11 @@ umi-claw/
 │   └── installer.nsh           # NSIS 钩子：升级时自动搬迁旧版数据目录
 ├── scripts/
 │   └── run-all-accept.mjs      # 一键跑全部验收
-├── test/                       # 验收：28 套 accept + 一天 e2e + 打包态 smoke（合计 30 套）
+├── test/                       # 验收：44 套（42 accept + e2e + smoke）
 │   ├── _lib.mjs                # 验收公共库
 │   ├── _ui.mjs                 # UI 验收公共库
 │   └── fixtures/               # 验收夹具
-├── CLAUDE.md / PLAN-3.0.md    # Agent 开发指引 / 3.0 规划
+├── AGENTS.md / PLAN-3.0.md    # Agent 开发指引 / 3.0 规划
 ├── run-shared.bat             # 共享运行脚本
 └── package.json
 ```
@@ -231,17 +233,21 @@ umi-claw/
 
 | 分支 | 用途 |
 |------|------|
-| `master` | 稳定主分支（默认分支），只接收经过验证的发布内容，PR 的默认目标 |
-| `release/1.0` | 1.0 版本开发分支，日常开发在此进行，包含最新特性（Obsidian 知识库、企微官方插件、便携模式等），功能稳定后合入 `master` |
-| `release/2.0` | 2.0 版本分支：AI 助手能力与验收体系，3.0 的移植来源 |
-| `release/3.0` | 3.0「工作版」：AI 工作记忆 + 每日工作闭环 |
-| `release/4.0` | 4.0「插件化宿主」：控制台 + 能力中心，集成营销/工作插件，**当前开发主线** |
+| `master` | 1.0 通用版稳定线（默认分支）；当前仍为 1.0，后续计划升级为 5.0 基线 |
+| `release/1.0` | 1.0 开发分支（鱼语音 / Obsidian / 企微官方插件 / 便携模式等）；**已冻结归档** |
+| `release/2.0` | 2.0 AI 营销版；**已冻结归档** |
+| `release/3.0` | 3.0 工作版；**已冻结归档** |
+| `release/4.0` | **本分支**：4.x 插件化宿主维护线（最新发布 tag `v4.1.0`，分支含未发布 4.2 / 4.3 / 4.4 增强） |
+| `release/5.0` | **当前发布分支**：5.0 受控第三方插件（GA `v5.0.0`） |
 
-> 4.0 开发主线为 `release/4.0`；只想体验 3.0 工作版可切到 `release/3.0`（注意用对应 worktree 或先删除 worktree）。
+> 1.0 / 2.0 / 3.0 已于 2026-11-14 冻结（`archive/freeze-*-2026-11-14`），仅作历史归档；新装 / 升级请用 `release/5.0`。全版本选择见 [master README](https://github.com/bscwdg/umi-claw/blob/master/README.md)。
 
 ## 文档
 
+- [master 全版本总览](https://github.com/bscwdg/umi-claw/blob/master/README.md)
 - [4.0 插件化架构规划](PLAN-4.0.md)
+- [4.x 更新日志](CHANGELOG.md)
+- [大肥鱼使用指南](doc/大肥鱼-使用指南.md)
 - [4.0 启动优化与排障](doc/OPT-STARTUP-4.0.md)
 - [4.0 开发进度](doc/PROGRESS-4.0.md)
 - [4.0 运行手册](doc/RUNBOOK-4.0.md)
@@ -270,7 +276,7 @@ npm run dev
 # 类型检查
 npm run typecheck
 
-# 一键跑全部验收（28 套 accept + e2e + smoke，合计 30 套）
+# 一键跑全部验收（44 套：42 accept + e2e + smoke；条数以实测为准）
 npm run accept
 ```
 
@@ -471,6 +477,24 @@ window.api.work.reminder.availablePushChannels()               // 可用推送�
 window.api.work.reminder.availablePushTargets(channel)         // 渠道下可选目标
 window.api.work.reminder.testPush() / .getPushStatus() / .check()
 ```
+
+### 插件管理 / 宿主模块（4.x）
+
+```typescript
+// 插件管理（4.x）
+window.api.plugins.list() / .setEnabled(id, enabled) / .invoke(id, method, payload) / .onChanged(cb)
+window.api.pluginImports.status() / .retry(pluginId)   // 旧数据导入状态
+window.api.consent.status() / .grant() / .revoke()     // 用户协议（宿主单源）
+
+// 大肥鱼 / 语音（宿主模块）
+window.api.character.status() / .state() / .settings.* / .interact() / .reset()
+window.api.character.bootstrap.* / .life.* / .memory.* / .voice.* / .persona.* / .knowledge.*
+window.api.character.stickers.* / .content.* / .backup.* / .chatChannels.* / .safety.* / .pet.* / .chat.*
+window.api.character.onEmotion(cb) / .onOpenPage(cb) / .onEvent(cb)
+window.api.fish.voice.*    // TTS / 克隆 / 外部 TTS
+```
+
+> 4.x 不提供第三方插件安装；5.0 起才加入签名安装 / 权限 / 隔离链路。接口契约见 [master README](https://github.com/bscwdg/umi-claw/blob/master/README.md) 与 [5.0 插件 API](https://github.com/bscwdg/umi-claw/blob/release/5.0/doc/PLUGIN-API.md)。
 
 ## 渠道接入
 
