@@ -21,7 +21,7 @@ await r.check('I1', 'keygen/pack → Electron 安装 → staged child → utilit
   try {
     const src = join(root, 'src')
     mkdirSync(src, { recursive: true })
-    writeFileSync(join(src, 'plugin.json'), JSON.stringify({ id: 'e2e-inst', version: '1.0.0', name: 'E2E Install' }), 'utf8')
+    writeFileSync(join(src, 'plugin.json'), JSON.stringify({ id: 'e2e-inst', version: '1.0.0', name: 'E2E Install', permissions: { services: ['kv'] } }), 'utf8')
     writeFileSync(join(src, 'main.js'), readFileSync(join(__dirname, 'fixtures', 'security-plugin.cjs')), 'utf8')
     const keyFile = join(root, 'key.json')
     const pkgFile = join(root, 'e2e-inst.umi-plugin')
@@ -35,7 +35,7 @@ await r.check('I1', 'keygen/pack → Electron 安装 → staged child → utilit
     assert(existsSync(pkgFile), '安装包存在')
     const src2 = join(root, 'src2')
     mkdirSync(src2, { recursive: true })
-    writeFileSync(join(src2, 'plugin.json'), JSON.stringify({ id: 'e2e-inst', version: '1.1.0', name: 'E2E Install' }), 'utf8')
+    writeFileSync(join(src2, 'plugin.json'), JSON.stringify({ id: 'e2e-inst', version: '1.1.0', name: 'E2E Install', permissions: { services: ['kv'] } }), 'utf8')
     writeFileSync(join(src2, 'main.js'), readFileSync(join(__dirname, 'fixtures', 'security-plugin.cjs')), 'utf8')
     const pkg2 = join(root, 'e2e-inst-1.1.0.umi-plugin')
     assertEq(
@@ -84,6 +84,7 @@ await r.check('I1', 'keygen/pack → Electron 安装 → staged child → utilit
     assertEq(probe.version, '1.0.0', '安装版本')
     assertEq(probe.state, 'running', '启动状态')
     assertEq(probe.versions?.join(','), '1.0.0,1.1.0,1.0.0', '更新→回滚版本序列')
+    assertEq(probe.serviceResult, 'host-value', '已安装插件 ctx.services 经 broker 返回')
     assertEq(probe.env?.path, true, '显式 env 白名单保留 PATH')
     assertEq(probe.env?.sentinel ?? null, null, '宿主 env 不泄漏')
     assertEq(probe.env?.dataDir ?? null, null, '宿主数据目录不进 child env')

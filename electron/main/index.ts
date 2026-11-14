@@ -1337,6 +1337,7 @@ app.whenReady().then(async () => {
     const probeDir = process.env.UMI_INSTALL_PROBE_DIR || process.env.CLAW_DATA_DIR || app.getPath('userData')
     mkdirSync(probeDir, { recursive: true })
     const packageFile = process.env.UMI_INSTALL_PACKAGE
+    let serviceBridge: any = null
     const manager = createPluginIsolationManager({
       fork: createUtilityProcessFork(utilityProcess),
       hostVersion: app.getVersion(),
@@ -1349,9 +1350,7 @@ app.whenReady().then(async () => {
           extraReadDirs: [dirname(spec.entry), process.resourcesPath, dirname(process.resourcesPath), app.getAppPath()]
         }),
       logger: (line) => console.error('[install-probe]', line),
-      serviceCall: async () => {
-        throw new Error('install probe 未提供宿主服务')
-      }
+      serviceCall: (id, service, method, args) => serviceBridge!.call(id, service, method, args)
     })
     try {
       if (!packageFile) throw new Error('缺少 UMI_INSTALL_PACKAGE')
@@ -1364,6 +1363,17 @@ app.whenReady().then(async () => {
         hostVersion: app.getVersion()
       })
       if (!installed.ok) throw new Error(`${installed.code}: ${installed.message}`)
+      const permStore = createPermissionStore(join(probeDir, 'permissions.json'))
+      permStore.grant(installed.record.id, installed.record.permissions ?? {})
+      const broker = createPermissionBroker({
+        store: permStore,
+        audit: createPermissionAudit(join(probeDir, 'permission-audit.log')),
+        rootsFor: () => ({ pluginDir: installed.record.packageDir, dataDir: installed.record.dataDir })
+      })
+      serviceBridge = createPluginServiceBridge({
+        broker,
+        resolveService: (_id, name) => (name === 'kv' ? { get: async () => 'host-value', set: async () => true } : undefined)
+      })
       const startRecord = async (record) => {
         await manager.start({
           pluginId: record.id,
@@ -1380,6 +1390,7 @@ app.whenReady().then(async () => {
       }
       await startRecord(installed.record)
       const envResult = await manager.invoke(installed.record.id, 'env')
+      const serviceResult = await manager.invoke(installed.record.id, 'read')
       const versions = [installed.record.version]
       let uninstalled = false
       const updateFile = process.env.UMI_INSTALL_UPDATE_PACKAGE
@@ -1417,6 +1428,7 @@ app.whenReady().then(async () => {
           entry: installed.record.entry,
           state: 'running',
           env: envResult,
+          serviceResult,
           at: Date.now()
         })
       )
