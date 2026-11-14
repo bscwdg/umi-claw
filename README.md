@@ -1,6 +1,6 @@
 # 🦞 Umi Claw
 
-> 4.0「插件化宿主 + 大肥鱼」：一套代码把 2.0 营销工作台、3.0 工作版作为**官方内置插件**集成，控制台 + 能力中心统一管理；内养一只会聊天、有记忆、有生活的大肥鱼角色；同时保留 OpenClaw 便携管理能力 — 基于 Electron + Vue3 + Vite 开发
+> 5.0「受控第三方插件」：在 4.x 插件化宿主之上，开放经 Ed25519 签名、TOFU 信任与 utilityProcess 隔离的第三方 `.umi-plugin` 安装；官方内置插件（营销 / 工作版）与 4.x 行为不变；内养一只会聊天、有记忆、有生活的大肥鱼角色；同时保留 OpenClaw 便携管理能力 — 基于 Electron + Vue3 + Vite 开发
 >
 > 愿景：简单点，无需复杂安装即可让每个人享受 AI 带来的便利
 
@@ -12,7 +12,7 @@
 
 - 🖥️ **控制台** — 网关状态、启动阶段与预计耗时、Token、日志、常用入口一屏掌握
 - 🧩 **能力中心** — 查看已安装插件，按需启用/禁用、懒加载；插件拥有独立路由、导航、IPC 与数据迁移
-- 🏪 **官方内置插件** — 营销工作台（marketing）与工作版（work）随宿主构建，启动期登记，不开放第三方安装
+- 🏪 **官方内置插件 + 受控第三方** — 营销工作台（marketing）与工作版（work）随宿主构建；5.0 起可安装签名 `.umi-plugin`（自签需 TOFU 确认，隔离进程运行）
 - 🐟 **deepseek大肥鱼** — 小孩子才做选择，养小龙虾和养大肥鱼我全都要，默认关闭；应用内与外部渠道聊天、关系成长、每日日记与记忆、主动消息、表情包、语音条、人格包与备份（见下文「大肥鱼角色」）
 - 🔌 **插件契约** — 插件能力统一经 `ctx` 注入；配置与密钥归宿主；插件失效不影响宿主启动
 - 🗂 **宿主壳能力保留** — 窗口/导航/设置/OpenClaw 管理/渠道/终端/Obsidian/技能/更新全部保留
@@ -72,6 +72,19 @@
 - **宿主服务**：db / gateway / knowledge / context / voice 由宿主提供，插件通过 `ctx` 使用；配置与密钥不交给插件
 - 规划与边界见 [PLAN-4.0.md](PLAN-4.0.md)
 
+
+## 5.0 受控第三方插件
+
+5.0 在 4.x 插件化宿主之上开放**受控**第三方插件安装；4.x 仍不允许第三方安装。
+
+- **包格式**：`.umi-plugin`（zip：`plugin.json` + `main.js` + `SIGNATURE`，可选 `migrations/`、`icon.png`、`README.md`）。
+- **签名与信任**：Ed25519 签名；`SIGNATURE` 对文件集做 canonical 哈希；支持 official / partner / self 三档信任；自签包首次安装需展示指纹并显式确认（TOFU），同 keyId 换指纹或换 keyId 会拒绝。
+- **安装/更新/回滚/卸载**：验签 → 安全解包 → `<dataDir>/plugin-packages/<id>/<version>` → 数据快照 → 安装态；更新保留 previous，回滚恢复版本与数据；卸载可选保留数据。
+- **隔离运行**：第三方默认跑在 Electron `utilityProcess`，用 `NODE_OPTIONS` 文件权限 + 显式 env 白名单限制 `fs`/子进程；服务调用经 broker 按 manifest 权限授权，默认拒绝，设置页可授权/撤销。
+- **配置**：manifest `configSchema` 在设置页渲染并保存到 `<dataDir>/plugin-data/<id>/config.json`；宿主按类型/枚举/大小/深度校验。
+- **运维**：安装/更新/回滚/卸载审计 JSONL、诊断、备份保留 5 份、吊销列表与 kill switch。
+- **已知限制**：含空格的数据目录/Windows 用户名下无法注入 NODE_OPTIONS，会显式拒绝启动；官方/伙伴根密钥由发布流水线注入，开源仓库默认只支持 self-TOFU；第三方 UI 隔离与在线市场属 Phase 3。
+- 规划与边界见 [doc/PLAN-5.0-EXTENSIBILITY.md](doc/PLAN-5.0-EXTENSIBILITY.md)，API 见 [doc/PLUGIN-API.md](doc/PLUGIN-API.md)。
 ## 大肥鱼角色（默认关闭）
 
 > 📖 **用户使用指南**：[doc/大肥鱼-使用指南.md](doc/大肥鱼-使用指南.md) —— 启用 / 首启三问 / 日常使用 / 配置依赖 / FAQ。
@@ -235,13 +248,16 @@ umi-claw/
 | `release/1.0` | 1.0 版本开发分支，日常开发在此进行，包含最新特性（Obsidian 知识库、企微官方插件、便携模式等），功能稳定后合入 `master` |
 | `release/2.0` | 2.0 版本分支：AI 助手能力与验收体系，3.0 的移植来源 |
 | `release/3.0` | 3.0「工作版」：AI 工作记忆 + 每日工作闭环 |
-| `release/4.0` | 4.0「插件化宿主」：控制台 + 能力中心，集成营销/工作插件，**当前开发主线** |
+| `release/4.0` | 4.0「插件化宿主」：控制台 + 能力中心，集成营销/工作插件 |
+| `release/5.0` | 5.0「受控第三方插件」：签名/TOFU/隔离安装、更新/回滚、配置与审计，**当前发布分支** |
 
-> 4.0 开发主线为 `release/4.0`；只想体验 3.0 工作版可切到 `release/3.0`（注意用对应 worktree 或先删除 worktree）。
+> 5.0 发布分支为 `release/5.0`（GA `v5.0.0`）；4.x 维护线为 `release/4.0`；只想体验 3.0 工作版可切到 `release/3.0`（注意用对应 worktree 或先删除 worktree）。
 
 ## 文档
 
 - [4.0 插件化架构规划](PLAN-4.0.md)
+- [5.0 第三方插件扩展规划](doc/PLAN-5.0-EXTENSIBILITY.md)
+- [插件 API v1.0](doc/PLUGIN-API.md)
 - [4.0 启动优化与排障](doc/OPT-STARTUP-4.0.md)
 - [4.0 开发进度](doc/PROGRESS-4.0.md)
 - [4.0 运行手册](doc/RUNBOOK-4.0.md)
