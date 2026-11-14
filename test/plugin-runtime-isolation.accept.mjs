@@ -41,6 +41,7 @@ const driveReady = async (child) => {
 }
 
 function createDeps(dir, resources, fork) {
+  const handlers = new Map()
   return {
     dataDir: () => dir,
     nodePath: () => process.execPath,
@@ -57,12 +58,16 @@ function createDeps(dir, resources, fork) {
       encryptString: () => Buffer.alloc(0),
       decryptString: () => ''
     },
-    ipc: { handle: () => {}, removeHandler: () => {} },
+    ipc: {
+      handle: (channel, fn) => handlers.set(channel, fn),
+      removeHandler: (channel) => handlers.delete(channel)
+    },
     appInfo: () => ({ version: '5.0.0', appPath: repoRoot, resourcesPath: resources, isPackaged: false }),
     subscribeResume: () => () => {},
     broadcast: () => {},
     logger: () => {},
-    utilityProcess: { fork }
+    utilityProcess: { fork },
+    __handlers: handlers
   }
 }
 
@@ -223,6 +228,48 @@ await r.check('R4', 'runtime.installFromPackage：安装 + 自动启动隔离插
     assertEq(runtime.installedPlugins().plugins.inst.version, '1.0.0', '安装态')
     assertEq(runtime.isolatedStatuses().length, 1, '自动启动')
     assertEq(runtime.isolatedStatuses()[0].pluginId, 'inst', '隔离状态 id')
+  } finally {
+    process.env.UMI_PLUGIN_ISOLATION = '0'
+    await runtime.disposeHost()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await r.check('R5', '产品 IPC：plugin:install → grant → isolated:invoke → rollback → installed', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'umi-rt-'))
+  const resources = join(dir, 'resources')
+  mkdirSync(join(resources, 'plugins'), { recursive: true })
+  const src = join(dir, 'src')
+  mkdirSync(src, { recursive: true })
+  writeFileSync(join(src, 'plugin.json'), JSON.stringify({ id: 'ipc-p', version: '1.0.0', name: 'IPC', permissions: { services: ['kv'] } }), 'utf8')
+  writeFileSync(join(src, 'main.js'), 'module.exports={activate(ctx){ctx.registerIpc("ping", async()=>"pong")}}', 'utf8')
+  const kp = pkgMod.generateSigningKeyPair()
+  const pkgFile = join(dir, 'ipc-p.umi-plugin')
+  pkgMod.packPlugin({ sourceDir: src, outFile: pkgFile, keyId: kp.keyId, privateKeyPem: kp.privateKeyPem, publicKeyBase64: kp.publicKeyBase64 })
+  let child = null
+  process.env.UMI_PLUGIN_ISOLATION = '1'
+  const deps = createDeps(dir, resources, () => {
+    child = new FakeChild()
+    return child
+  })
+  const runtime = runtimeMod.createPluginRuntime(deps)
+  const call = (channel, payload) => deps.__handlers.get(channel)(null, payload)
+  try {
+    await runtime.init()
+    const installing = call('plugin:install', { packageFile: pkgFile, allowSelfSigned: true })
+    await waitFor(() => child, { timeout: 6000 })
+    await driveReady(child)
+    const installed = await installing
+    assertEq(installed.ok, true, JSON.stringify(installed))
+    const granted = await call('plugin:permissions:grant', { id: 'ipc-p' })
+    assertEq(granted.ok, true, 'grant IPC '+JSON.stringify(granted))
+    const invoking = call('plugin:isolated:invoke', { id: 'ipc-p', method: 'ping' })
+    const req = await waitFor(() => child.sent.find((m) => m.type === 'invoke'), { timeout: 1000 })
+    child.emit('message', { type: 'result', id: req.id, ok: true, data: 'pong' })
+    assertEq((await invoking).data, 'pong', 'invoke IPC')
+    const rolled = call('plugin:rollback', { id: 'ipc-p' })
+    assertEq((await rolled).error?.code, 'PLUGIN_NO_PREVIOUS', 'rollback 无上一版本时拒绝')
+    assertEq(call('plugin:installed').data.plugins['ipc-p'].version, '1.0.0', 'installed IPC')
   } finally {
     process.env.UMI_PLUGIN_ISOLATION = '0'
     await runtime.disposeHost()

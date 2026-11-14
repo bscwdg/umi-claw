@@ -425,10 +425,14 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     deps.ipc.removeHandler('plugin:permissions:grant')
     deps.ipc.handle('plugin:permissions:grant', (_e, payload: { id?: string }) => {
       const id = String(payload?.id ?? '')
-      const record = registry?.get(id)
-      if (!record) return { ok: false, error: { code: 'NOT_FOUND', message: `插件不存在：${id}` } }
+      const builtinRecord = registry?.get(id)
+      const installedRecord = builtinRecord ? null : readInstallState(deps.dataDir()).plugins[id]
+      if (!builtinRecord && !installedRecord) {
+        return { ok: false, error: { code: 'NOT_FOUND', message: '插件不存在：' + id } }
+      }
       // 只允许授予 manifest 里申请过的权限，UI 不能凭空扩权
-      const grant = permissionStore!.grant(id, record.manifest.permissions ?? {})
+      const requested = builtinRecord?.manifest.permissions ?? installedRecord?.permissions ?? {}
+      const grant = permissionStore!.grant(id, requested)
       return { ok: true, data: { id, grantedAt: grant.grantedAt, permissions: grant.permissions } }
     })
 

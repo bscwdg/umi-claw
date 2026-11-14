@@ -13,7 +13,7 @@
 cd D:\work2026\umi-claw
 npm run dev            # 生成插件入口表 + 启动
 npm run typecheck:node; npm run typecheck:web    # 双 typecheck，必须 0 错
-npm run accept         # 59 套验收（ACCEPT 54 + e2e×4 + smoke，940 项检查（939 通过 + 1 显式跳过）；node:test 21 条另计）— 2026-11-13 codex/voice HEAD 实测；release/4.0 为 40/822，voice 合并后复核
+npm run accept         # 59 套验收（ACCEPT 54 + e2e×4 + smoke，941 项检查（940 通过 + 1 显式跳过）；node:test 21 条另计）— 2026-11-13 codex/voice HEAD 实测；release/4.0 为 40/822，voice 合并后复核
 npm run build          # 构建（含 plugin:gen）
 ```
 
@@ -261,7 +261,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 - 验收脚本**零 npm 依赖**，只用 `node:` 内置 + `test/_lib.mjs`
 - 断言打**真源码**：`bundleEntry('electron/main/work/todoManager.ts', 'todo-todo.mjs')` 后 `import()`，不 mock 被测逻辑
 
-**现状证据**：55 个 `.accept.mjs`、run-all `ACCEPT` 54 项；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。2026-11-13 干净基线（codex/voice HEAD；release/4.0 为 40/822，voice 合并后复核）：59 套（含 e2e×4 + smoke）、940 项检查（939 通过 + 1 显式跳过） + `node:test` 21 条。
+**现状证据**：55 个 `.accept.mjs`、run-all `ACCEPT` 54 项；`db-client.accept.mjs` 由 `db-worker.accept.mjs` 以子进程串跑（不计入 run-all 的 ACCEPT 数组，但**在总链路里**）。2026-11-13 干净基线（codex/voice HEAD；release/4.0 为 40/822，voice 合并后复核）：59 套（含 e2e×4 + smoke）、941 项检查（940 通过 + 1 显式跳过） + `node:test` 21 条。
 
 ### 7.2 `_lib.mjs` 提供的工具
 
@@ -354,7 +354,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 56 套（ACCEPT 52 + e2e×4 + smoke，940 项检查（939 通过 + 1 显式跳过）；node:test 21 条另计）
+# ② 全量验收 56 套（ACCEPT 52 + e2e×4 + smoke，941 项检查（940 通过 + 1 显式跳过）；node:test 21 条另计）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）
