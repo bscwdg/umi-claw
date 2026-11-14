@@ -53,11 +53,15 @@ export function createNotificationsService(): NotificationsApi {
  * OpenClaw 能力：包一层唯一的 GatewayClient（单例约束不变）。
  * 插件拿不到 token、拿不到网关进程控制权，只能「问状态 / 聊天 / 流式」。
  */
-export function createOpenClawService(getGateway: () => any, pluginId = 'plugin'): OpenClawApi {
+export function createOpenClawService(getGateway: () => any, pluginId = 'plugin', isolated = false): OpenClawApi {
   const scope = <T extends { conversationKey?: string }>(input: T): T => {
+    if (!isolated) return input
     const key = String(input.conversationKey ?? '')
-    if (!key || key.startsWith('conv:plugin:')) return input
-    return { ...input, conversationKey: 'conv:plugin:' + pluginId + ':' + key.replace(/^conv:/, '') }
+    if (!key) return input
+    const own = 'conv:plugin:' + pluginId + ':'
+    if (key.startsWith(own)) return input
+    const bare = key.replace(/^conv:(plugin:[^:]+:)?/, '')
+    return { ...input, conversationKey: own + bare }
   }
   return {
     status: () => getGateway().getStatus(),

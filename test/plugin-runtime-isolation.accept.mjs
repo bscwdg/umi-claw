@@ -277,6 +277,25 @@ await r.check('R5', '产品 IPC：plugin:install → grant → isolated:invoke �
   }
 })
 
+await r.check('R6', 'OpenClaw 会话键隔离：第三方强制 conv:plugin:<id>:*，官方不改写', async () => {
+  const mod = await import(
+    pathToFileURL(bundleEntry('electron/main/services/pluginServiceAdapters.ts', 'adapter-keys.mjs', { alias: ['electron=' + join(__dirname, 'electron-stub.mjs')] })).href
+  )
+  let seen = ''
+  const gateway = { chat: async (input) => { seen = input.conversationKey; return { text: 'x', model: 'm' } } }
+  const third = mod.createOpenClawService(() => gateway, 'third', true)
+  await third.chat({ conversationKey: 'conv:work:qa' })
+  assertEq(seen, 'conv:plugin:third:work:qa', '官方键改写')
+  await third.chat({ conversationKey: 'conv:plugin:work:work:qa' })
+  assertEq(seen, 'conv:plugin:third:work:qa', '他插件键不得放行')
+  await third.chat({ conversationKey: 'conv:plugin:third:ok' })
+  assertEq(seen, 'conv:plugin:third:ok', '自己的键保留')
+  const official = mod.createOpenClawService(() => gateway, 'work', false)
+  await official.chat({ conversationKey: 'conv:work:qa' })
+  assertEq(seen, 'conv:work:qa', '官方内置不改写')
+  return '会话键隔离 ✓'
+})
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin-runtime-isolation.json'), result)

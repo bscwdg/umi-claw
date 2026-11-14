@@ -233,7 +233,10 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
         }
       },
       notifications: () => deps.notifications(),
-      openclaw: (info) => createOpenClawService(() => deps.openclaw(), info.id) as any
+      openclaw: (info) => {
+        const isolated = Boolean(readInstallState(deps.dataDir()).plugins[info.id])
+        return createOpenClawService(() => deps.openclaw(), info.id, isolated) as any
+      }
     }
   }
 
