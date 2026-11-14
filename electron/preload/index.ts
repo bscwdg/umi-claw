@@ -462,6 +462,7 @@ const api = {
     uninstall: (id: string, keepData = true) => call<unknown>('plugin:uninstall', { id, keepData }),
     installed: () => call<{ schema: 1; plugins: Record<string, unknown> }>('plugin:installed'),
     pickPackage: () => call<string | null>('plugin:pick-package'),
+    inspectPackage: (packageFile: string) => call<{ id: string; version: string; trust: string; fingerprint: string; keyId: string }>('plugin:inspect-package', { packageFile }),
     getConfig: (id: string) => call<Record<string, unknown>>('plugin:config:get', { id }),
     setConfig: (id: string, config: Record<string, unknown>) => call<Record<string, unknown>>('plugin:config:set', { id, config }),
     invoke: <T = unknown>(id: string, method: string, payload?: unknown): Promise<T> => {

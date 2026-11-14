@@ -50,6 +50,7 @@ import {
 import { buildPluginPermissionEnv } from './pluginPermissions'
 import { createPluginServiceBridge, type PluginServiceBridge } from './pluginServiceBridge'
 import {
+  inspectPluginPackage,
   installPlugin as installPluginPackage,
   readInstallState,
   rollbackPlugin as rollbackInstalledPlugin,
@@ -339,6 +340,20 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
 
     deps.ipc.removeHandler('plugin:pick-package')
     deps.ipc.handle('plugin:pick-package', () => (deps.pickPackage ? deps.pickPackage() : null))
+
+    deps.ipc.removeHandler('plugin:inspect-package')
+    deps.ipc.handle('plugin:inspect-package', (_e, payload: { packageFile?: string }) => {
+      const packageFile = String(payload?.packageFile ?? '')
+      if (!packageFile) return { ok: false, error: { code: 'VALIDATION_ERROR', message: '缺少 packageFile' } }
+      const result = inspectPluginPackage({
+        packageFile,
+        keyring: readKeyring(join(deps.dataDir(), 'plugin-keys.json')),
+        allowSelfSigned: true
+      })
+      return result.ok
+        ? { ok: true, data: result }
+        : { ok: false, error: { code: result.code, message: result.message } }
+    })
 
     deps.ipc.removeHandler('plugin:config:get')
     deps.ipc.handle('plugin:config:get', (_e, payload: { id?: string }) => {

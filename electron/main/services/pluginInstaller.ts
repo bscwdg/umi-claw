@@ -10,6 +10,39 @@ import { verifyPluginPackage, type PluginKeyring } from './pluginPackage'
 import type { PluginPermissions } from '../kernel/manifest'
 import { satisfiesHostRange } from '../kernel/manifest'
 
+export interface PluginTrustEntry {
+  fingerprint: string
+  keyId: string
+  firstSeen: number
+  lastSeen: number
+}
+
+export interface PluginTrustState {
+  schema: 1
+  keys: Record<string, PluginTrustEntry>
+}
+
+function trustPath(dataDir: string): string {
+  return join(dataDir, 'plugin-trust.json')
+}
+
+function readTrust(dataDir: string): PluginTrustState {
+  try {
+    const parsed = JSON.parse(readFileSync(trustPath(dataDir), 'utf8')) as PluginTrustState
+    if (parsed.schema === 1 && parsed.keys && typeof parsed.keys === 'object') return parsed
+  } catch {
+    // 坏文件按空 trust；安装时重建
+  }
+  return { schema: 1, keys: {} }
+}
+
+function writeTrust(dataDir: string, trust: PluginTrustState): void {
+  mkdirSync(dataDir, { recursive: true })
+  const file = trustPath(dataDir)
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`
+  writeFileSync(tmp, JSON.stringify(trust, null, 2), 'utf8')
+  renameSync(tmp, file)
+}
 export interface InstallRecord {
   id: string
   version: string
@@ -272,6 +305,34 @@ export function collectPluginDiagnostics(dataDir: string): {
   }
 }
 
+export function inspectPluginPackage(options: {
+  packageFile: string
+  keyring?: PluginKeyring
+  allowSelfSigned?: boolean
+}): { ok: true; id: string; version: string; trust: string; fingerprint: string; keyId: string } | { ok: false; code: string; message: string } {
+  const verified = verifyPluginPackage(options.packageFile, {
+    keyring: options.keyring,
+    allowSelfSigned: options.allowSelfSigned
+  })
+  if (!verified.ok) return verified
+  try {
+    const raw = JSON.parse(new AdmZip(options.packageFile).getEntry('plugin.json')!.getData().toString('utf8')) as {
+      id?: string
+      version?: string
+    }
+    if (!raw.id || !raw.version) return { ok: false, code: 'PACKAGE_MANIFEST_INVALID', message: '缺少 id/version' }
+    return {
+      ok: true,
+      id: raw.id,
+      version: raw.version,
+      trust: verified.trust,
+      fingerprint: verified.fingerprint,
+      keyId: verified.signature.keyId
+    }
+  } catch (e) {
+    return { ok: false, code: 'PACKAGE_MANIFEST_INVALID', message: (e as Error).message }
+  }
+}
 export function installPlugin(options: InstallOptions): InstallResult {
   const verified = verifyPluginPackage(options.packageFile, {
     keyring: options.keyring,
@@ -279,6 +340,20 @@ export function installPlugin(options: InstallOptions): InstallResult {
     tofuFingerprint: options.tofuFingerprint
   })
   if (!verified.ok) return verified
+  if (verified.trust === 'self') {
+    const trust = readTrust(options.dataDir)
+    const known = trust.keys[verified.signature.keyId]
+    if (known && known.fingerprint !== verified.fingerprint) {
+      return { ok: false, code: 'PACKAGE_TOFU_MISMATCH', message: '自签包指纹变化，拒绝安装' }
+    }
+    trust.keys[verified.signature.keyId] = {
+      fingerprint: verified.fingerprint,
+      keyId: verified.signature.keyId,
+      firstSeen: known?.firstSeen ?? Date.now(),
+      lastSeen: Date.now()
+    }
+    writeTrust(options.dataDir, trust)
+  }
   const now = options.now ?? Date.now()
   const id = (() => {
     try {

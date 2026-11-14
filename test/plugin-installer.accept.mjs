@@ -229,6 +229,33 @@ await r.check('C2-8', 'P0 安装器：保留 id / 非公开服务拒绝', async 
   }
 })
 
+await r.check('C2-9', 'TOFU 持久化：首装写指纹；同 keyId 换指纹拒绝；inspect 返回指纹', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'umi-inst-'))
+  try {
+    const dataDir = join(root, 'data')
+    const src = join(root, 'src')
+    makeSource(src, '1.0.0')
+    const kp1 = pkg.generateSigningKeyPair()
+    const p1 = join(root, 'p1.umi-plugin')
+    pkg.packPlugin({ sourceDir: src, outFile: p1, keyId: 'self-fixed', privateKeyPem: kp1.privateKeyPem, publicKeyBase64: kp1.publicKeyBase64 })
+    const first = mod.installPlugin({ dataDir, packageFile: p1, allowSelfSigned: true })
+    assertEq(first.ok, true, JSON.stringify(first))
+    const trust = JSON.parse(readFileSync(join(dataDir, 'plugin-trust.json'), 'utf8'))
+    assertEq(trust.keys['self-fixed'].fingerprint, kp1.fingerprint, 'TOFU 落盘')
+    const inspect = mod.inspectPluginPackage({ packageFile: p1, allowSelfSigned: true })
+    assertEq(inspect.ok, true, JSON.stringify(inspect))
+    assertEq(inspect.fingerprint, kp1.fingerprint, 'inspect 指纹')
+    const kp2 = pkg.generateSigningKeyPair()
+    const p2 = join(root, 'p2.umi-plugin')
+    pkg.packPlugin({ sourceDir: src, outFile: p2, keyId: 'self-fixed', privateKeyPem: kp2.privateKeyPem, publicKeyBase64: kp2.publicKeyBase64 })
+    const changed = mod.installPlugin({ dataDir, packageFile: p2, allowSelfSigned: true })
+    assertEq(changed.code, 'PACKAGE_TOFU_MISMATCH', '指纹变化拒绝')
+    return 'TOFU 持久化 ✓'
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin-installer.json'), result)

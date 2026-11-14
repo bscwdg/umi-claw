@@ -25,6 +25,7 @@
       <h2 class="section-title">第三方插件（.umi-plugin）</h2>
       <p class="meta">安装包需通过 Ed25519 验签；自签包需你明确确认首次安装（TOFU）。</p>
       <div class="actions">
+        <p v-if="pendingInspect?.trust === 'self'" class="meta">自签指纹：{{ pendingInspect.fingerprint }}（首次安装需确认 TOFU）</p>
         <button class="btn" :disabled="installBusy" @click="pickInstall">选择安装包…</button>
         <span v-if="pendingPackage" class="meta">{{ pendingPackage.split(/[\\/]/).pop() }}</span>
         <button v-if="pendingPackage" class="btn btn-primary" :disabled="installBusy" @click="confirmInstall">
@@ -205,6 +206,8 @@ function schemaFields(item: Record<string, unknown>): Array<{ key: string; label
   return Object.entries(schema?.properties ?? {}).map(([key, value]) => ({ key, label: value.title ?? key, type: value.type ?? 'string' }))
 }
 const pendingPackage = ref('')
+const pendingInspect = ref<{ id: string; version: string; trust: string; fingerprint: string } | null>(null)
+const selfTrust = ref(false)
 const installBusy = ref(false)
 const installNotice = ref('')
 const installError = ref('')
@@ -423,7 +426,10 @@ async function confirmInstall(): Promise<void> {
   installError.value = ''
   installNotice.value = ''
   try {
-    await window.api.plugins.install(pendingPackage.value, { allowSelfSigned: false })
+    await window.api.plugins.install(pendingPackage.value, {
+      allowSelfSigned: pendingInspect.value?.trust === 'self' && selfTrust.value,
+      tofuFingerprint: pendingInspect.value?.fingerprint
+    })
     pendingPackage.value = ''
     installNotice.value = '安装完成；隔离插件已按安装态启动。'
     await Promise.all([loadInstalled(), loadIsolated()])
