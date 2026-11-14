@@ -1,5 +1,5 @@
 // test/plugin-installer.accept.mjs —— Phase 2 C2：安装/更新/回滚/卸载
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -148,6 +148,58 @@ await r.check('C2-5', 'C3 兼容：apiVersion/engines.host 不兼容拒绝安装
     assertEq(res.ok, false, '不兼容拒绝')
     assertEq(res.code, 'PLUGIN_INCOMPATIBLE', '兼容错误码')
     return '兼容门 ✓'
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+await r.check('C2-6', 'C8 审计/诊断：安装、更新、回滚、卸载都有 JSONL；诊断不含密钥', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'umi-inst-'))
+  try {
+    const dataDir = join(root, 'data')
+    const src1 = join(root, 'src1')
+    makeSource(src1, '1.0.0')
+    const p1 = await pack(root, src1, '1.0.0')
+    mod.installPlugin({ dataDir, packageFile: p1.out, allowSelfSigned: true })
+    const src2 = join(root, 'src2')
+    makeSource(src2, '1.1.0')
+    const p2 = await pack(root, src2, '1.1.0')
+    mod.installPlugin({ dataDir, packageFile: p2.out, allowSelfSigned: true })
+    mod.rollbackPlugin(dataDir, 'demo')
+    mod.uninstallPlugin(dataDir, 'demo', true)
+    const lines = readFileSync(join(dataDir, 'plugin-audit.log'), 'utf8').split('\n').filter(Boolean)
+    assertEq(lines.length, 4, '4 条审计')
+    assert(lines.some((line) => JSON.parse(line).action === 'rollback'), '回滚审计')
+    assert(!readFileSync(join(dataDir, 'plugin-audit.log'), 'utf8').includes(root), '不写绝对路径')
+    const diag = mod.collectPluginDiagnostics(dataDir)
+    assertEq(diag.installed, 0, '诊断安装数')
+    assertEq(diag.auditLines, 4, '诊断审计行')
+    assert(!JSON.stringify(diag).includes('privateKey'), '诊断无密钥')
+    return '审计/诊断 ✓'
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+await r.check('C2-7', 'C8 备份保留：多轮更新后只保留最近 5 份快照', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'umi-inst-'))
+  try {
+    const dataDir = join(root, 'data')
+    const src = join(root, 'src')
+    makeSource(src, '1.0.0')
+    const p0 = await pack(root, src, '1.0.0')
+    mod.installPlugin({ dataDir, packageFile: p0.out, allowSelfSigned: true })
+    writeFileSync(join(dataDir, 'plugins', 'demo', 'x.txt'), 'x', 'utf8')
+    for (let i = 1; i <= 7; i += 1) {
+      const s = join(root, `src-${i}`)
+      makeSource(s, `1.0.${i}`)
+      const p = await pack(root, s, `1.0.${i}`)
+      const res = mod.installPlugin({ dataDir, packageFile: p.out, allowSelfSigned: true, maxBackups: 5 })
+      assertEq(res.ok, true, JSON.stringify(res))
+    }
+    const backups = readdirSync(join(dataDir, 'plugin-backups', 'demo'), { withFileTypes: true }).filter((e) => e.isDirectory())
+    assertEq(backups.length, 5, '保留 5 份')
+    return '备份保留 ✓'
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

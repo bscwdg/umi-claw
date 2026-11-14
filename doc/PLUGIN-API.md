@@ -373,6 +373,24 @@ export default definePlugin({
 | 7 | 状态 | 进程六态不变；安装态 `installing/broken` 由 C2 引入 |
 | 8 | configSchema | 设置页只渲染白名单子集（类型/默认/label/枚举）；禁 HTML/脚本 |
 
+### 15.1 打包/验签 CLI
+
+```bash
+node scripts/umi-plugin.mjs keygen --out key.json
+node scripts/umi-plugin.mjs pack --source ./my-plugin --out my-plugin-1.0.0.umi-plugin --key-file key.json --include-public-key
+node scripts/umi-plugin.mjs verify --file my-plugin-1.0.0.umi-plugin --allow-self-signed
+```
+
+- `keygen` 输出私钥文件（0600），**不要提交仓库**。
+- self 包必须 `--include-public-key`，首次安装由用户确认 TOFU；official/partner 由 keyring 解析 keyId。
+- 安装/更新/回滚/卸载由宿主管理页或 IPC 执行；4.x 不开放入口。
+
+### 15.2 安装态与审计
+
+- 安装：`<dataDir>/plugin-packages/<id>/<version>/`；数据 `<dataDir>/plugins/<id>/`；快照 `<dataDir>/plugin-backups/<id>/` 默认保留 5 份。
+- 安装/更新/回滚/卸载写 `<dataDir>/plugin-audit.log`（JSONL，无密钥/绝对用户路径）。
+- 回滚恢复上一版本与对应数据快照；卸载默认保留数据。
+
 ---
 
 *本文件是 API v1.0（Phase 0 冻结官方插件面）；第三方 permissions/configSchema/async/onDemand 为 Phase 1 增量，不改已冻结签名；破坏性变更升 major。Phase 2 增量只在 5.0 启用，4.x 不开放第三方安装。*

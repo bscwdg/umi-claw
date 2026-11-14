@@ -4,7 +4,7 @@
 // 任何一步失败都不碰现有安装；回滚只切版本并恢复对应数据快照。
 
 import AdmZip from 'adm-zip'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { verifyPluginPackage, type PluginKeyring } from './pluginPackage'
 import type { PluginPermissions } from '../kernel/manifest'
@@ -193,6 +193,69 @@ function stageChild(options: InstallOptions): string {
   return target
 }
 
+/** C8：安装/更新/回滚/卸载审计（JSONL，不落密钥/绝对用户路径） */
+export function appendPluginAudit(
+  dataDir: string,
+  event: {
+    action: 'install' | 'update' | 'rollback' | 'uninstall'
+    id: string
+    version?: string
+    ok: boolean
+    code?: string
+    at?: string
+  }
+): void {
+  try {
+    const line = JSON.stringify({
+      at: event.at ?? new Date().toISOString(),
+      action: event.action,
+      id: event.id,
+      version: event.version,
+      ok: event.ok,
+      code: event.code
+    })
+    mkdirSync(dataDir, { recursive: true })
+    appendFileSync(join(dataDir, 'plugin-audit.log'), `${line}\n`, 'utf8')
+  } catch {
+    // 审计写失败不阻断安装；C8 诊断会暴露日志缺失
+  }
+}
+
+/** C8：诊断快照（不返回密钥内容） */
+export function collectPluginDiagnostics(dataDir: string): {
+  installed: number
+  backups: number
+  auditLines: number
+  keyring: boolean
+  trust: boolean
+  revocations: boolean
+} {
+  const state = readInstallState(dataDir)
+  let backups = 0
+  try {
+    for (const entry of readdirSync(join(dataDir, 'plugin-backups'), { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      backups += readdirSync(join(dataDir, 'plugin-backups', entry.name), { withFileTypes: true }).filter((e) => e.isDirectory()).length
+    }
+  } catch {
+    // 无备份目录
+  }
+  let auditLines = 0
+  try {
+    auditLines = readFileSync(join(dataDir, 'plugin-audit.log'), 'utf8').split('\n').filter(Boolean).length
+  } catch {
+    // 无审计
+  }
+  return {
+    installed: Object.keys(state.plugins).length,
+    backups,
+    auditLines,
+    keyring: existsSync(join(dataDir, 'plugin-keys.json')),
+    trust: existsSync(join(dataDir, 'plugin-trust.json')),
+    revocations: existsSync(join(dataDir, 'plugin-revocations.json'))
+  }
+}
+
 export function installPlugin(options: InstallOptions): InstallResult {
   const verified = verifyPluginPackage(options.packageFile, {
     keyring: options.keyring,
@@ -270,6 +333,12 @@ export function installPlugin(options: InstallOptions): InstallResult {
     schema: 1,
     plugins: { ...state.plugins, [id]: record }
   })
+  appendPluginAudit(options.dataDir, {
+    action: isUpdate ? 'update' : 'install',
+    id,
+    version: record.version,
+    ok: true
+  })
   return { ok: true, record, updated: isUpdate }
 }
 
@@ -299,6 +368,7 @@ export function rollbackPlugin(dataDir: string, pluginId: string): RollbackResul
     previous: undefined
   }
   writeInstallState(dataDir, { schema: 1, plugins: { ...state.plugins, [pluginId]: record } })
+  appendPluginAudit(dataDir, { action: 'rollback', id: pluginId, version: record.version, ok: true })
   return { ok: true, record }
 }
 
@@ -313,5 +383,6 @@ export function uninstallPlugin(dataDir: string, pluginId: string, keepData = tr
   const plugins = { ...state.plugins }
   delete plugins[pluginId]
   writeInstallState(dataDir, { schema: 1, plugins })
+  appendPluginAudit(dataDir, { action: 'uninstall', id: pluginId, ok: true })
   return { ok: true }
 }
