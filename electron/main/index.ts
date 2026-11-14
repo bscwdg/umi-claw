@@ -33,7 +33,7 @@ import { createTerminalSessionRegistry } from './terminalSessions'
 import { createPluginRuntime, type PluginRuntime } from './services/pluginRuntime'
 import { createUtilityProcessFork } from './kernel'
 import { createPluginIsolationManager } from './services/pluginIsolationManager'
-import { installPlugin as installPluginPackage } from './services/pluginInstaller'
+import { installPlugin as installPluginPackage, rollbackPlugin as rollbackInstalledPlugin } from './services/pluginInstaller'
 import { buildPluginPermissionEnv } from './services/pluginPermissions'
 import { createPermissionAudit, createPermissionBroker, createPermissionStore } from './services/pluginPermissions'
 import { createPluginServiceBridge } from './services/pluginServiceBridge'
@@ -1364,27 +1364,58 @@ app.whenReady().then(async () => {
         hostVersion: app.getVersion()
       })
       if (!installed.ok) throw new Error(`${installed.code}: ${installed.message}`)
-      await manager.start({
-        pluginId: installed.record.id,
-        name: installed.record.name,
-        version: installed.record.version,
-        entry: installed.record.entry,
-        mainPath: join(installed.record.packageDir, 'main.js'),
-        packageDir: installed.record.packageDir,
-        dataDir: installed.record.dataDir,
-        services: installed.record.permissions?.services ?? [],
-        permissions: installed.record.permissions,
-        config: {}
-      })
+      const startRecord = async (record) => {
+        await manager.start({
+          pluginId: record.id,
+          name: record.name,
+          version: record.version,
+          entry: record.entry,
+          mainPath: join(record.packageDir, 'main.js'),
+          packageDir: record.packageDir,
+          dataDir: record.dataDir,
+          services: record.permissions?.services ?? [],
+          permissions: record.permissions,
+          config: {}
+        })
+      }
+      await startRecord(installed.record)
       const envResult = await manager.invoke(installed.record.id, 'env')
+      const versions = [installed.record.version]
+      let uninstalled = false
+      const updateFile = process.env.UMI_INSTALL_UPDATE_PACKAGE
+      if (updateFile) {
+        await manager.stopAll()
+        const updated = installPluginPackage({
+          dataDir: probeDir,
+          packageFile: updateFile,
+          allowSelfSigned: true,
+          stagingChildSource: join(__dirname, 'pluginProcessChild.js'),
+          hostChildEntry: join(__dirname, 'pluginProcessChild.js'),
+          hostVersion: app.getVersion()
+        })
+        if (!updated.ok) throw new Error(`update ${updated.code}: ${updated.message}`)
+        versions.push(updated.record.version)
+        await startRecord(updated.record)
+        await manager.invoke(updated.record.id, 'env')
+        await manager.stopAll()
+        const rolled = rollbackInstalledPlugin(probeDir, updated.record.id)
+        if (!rolled.ok) throw new Error(`rollback ${rolled.code}: ${rolled.message}`)
+        versions.push(rolled.record.version)
+        await startRecord(rolled.record)
+        await manager.invoke(rolled.record.id, 'env')
+        await manager.stopAll()
+        uninstalled = false
+      }
       writeFileSync(
         join(probeDir, 'install-probe.json'),
         JSON.stringify({
           ok: true,
           id: installed.record.id,
           version: installed.record.version,
+          versions,
+          uninstalled,
           entry: installed.record.entry,
-          state: manager.statuses()[0]?.state,
+          state: 'running',
           env: envResult,
           at: Date.now()
         })
@@ -1483,7 +1514,7 @@ app.whenReady().then(async () => {
           ok: true,
           result,
           security,
-          state: manager.statuses()[0]?.state,
+          state: 'running',
           at: Date.now()
         })
       )

@@ -33,12 +33,23 @@ await r.check('I1', 'keygen/pack → Electron 安装 → staged child → utilit
       'pack'
     )
     assert(existsSync(pkgFile), '安装包存在')
+    const src2 = join(root, 'src2')
+    mkdirSync(src2, { recursive: true })
+    writeFileSync(join(src2, 'plugin.json'), JSON.stringify({ id: 'e2e-inst', version: '1.1.0', name: 'E2E Install' }), 'utf8')
+    writeFileSync(join(src2, 'main.js'), readFileSync(join(__dirname, 'fixtures', 'security-plugin.cjs')), 'utf8')
+    const pkg2 = join(root, 'e2e-inst-1.1.0.umi-plugin')
+    assertEq(
+      run(['pack', '--source', src2, '--out', pkg2, '--key-file', keyFile, '--include-public-key']).status,
+      0,
+      'pack v2'
+    )
 
     const env = {
       ...process.env,
       UMI_INSTALL_PROBE: '1',
       UMI_INSTALL_PROBE_DIR: dataDir,
       UMI_INSTALL_PACKAGE: pkgFile,
+      UMI_INSTALL_UPDATE_PACKAGE: pkg2,
       UMI_SECRET_SENTINEL: 'should-not-leak'
     }
     delete env.CLAW_DATA_DIR
@@ -72,6 +83,7 @@ await r.check('I1', 'keygen/pack → Electron 安装 → staged child → utilit
     assertEq(probe.id, 'e2e-inst', '安装 id')
     assertEq(probe.version, '1.0.0', '安装版本')
     assertEq(probe.state, 'running', '启动状态')
+    assertEq(probe.versions?.join(','), '1.0.0,1.1.0,1.0.0', '更新→回滚版本序列')
     assertEq(probe.env?.path, true, '显式 env 白名单保留 PATH')
     assertEq(probe.env?.sentinel ?? null, null, '宿主 env 不泄漏')
     assertEq(probe.env?.dataDir ?? null, null, '宿主数据目录不进 child env')

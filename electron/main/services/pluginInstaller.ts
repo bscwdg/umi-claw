@@ -149,7 +149,7 @@ function extractPackage(packageFile: string, targetDir: string): { ok: true } | 
       writeFileSync(out, entry.getData())
     }
     mkdirSync(dirname(targetDir), { recursive: true })
-    rmSync(targetDir, { recursive: true, force: true })
+    rmSync(targetDir, { recursive: true, force: true, maxRetries: 40, retryDelay: 100 })
     renameSync(staging, targetDir)
     return { ok: true }
   } catch (e) {
@@ -385,10 +385,10 @@ export function installPlugin(options: InstallOptions): InstallResult {
   const finalDir = join(options.dataDir, 'plugin-packages', id, manifest.version)
   if (existsSync(finalDir) && !isUpdate) {
     // 同版本重装：覆盖前先移除旧目录
-    rmSync(finalDir, { recursive: true, force: true })
+    rmSync(finalDir, { recursive: true, force: true, maxRetries: 40, retryDelay: 100 })
   }
   mkdirSync(dirname(finalDir), { recursive: true })
-  rmSync(finalDir, { recursive: true, force: true })
+  rmSync(finalDir, { recursive: true, force: true, maxRetries: 40, retryDelay: 100 })
   renameSync(stagingDir, finalDir)
 
   const backupDir = isUpdate ? backupData(options.dataDir, id, now, options.maxBackups ?? 5) : null
@@ -471,7 +471,7 @@ export function uninstallPlugin(dataDir: string, pluginId: string, keepData = tr
   const state = readInstallState(dataDir)
   const current = state.plugins[pluginId]
   if (!current) return { ok: false, code: 'PLUGIN_NOT_INSTALLED', message: pluginId }
-  rmSync(current.packageDir, { recursive: true, force: true })
+  rmSync(current.packageDir, { recursive: true, force: true, maxRetries: 40, retryDelay: 100 })
   if (!keepData) rmSync(join(dataDir, 'plugin-data', pluginId), { recursive: true, force: true })
   const plugins = { ...state.plugins }
   delete plugins[pluginId]
