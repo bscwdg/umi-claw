@@ -66,6 +66,8 @@ await r.check('D4', '接线：plugin:dev-mode IPC 带 {ok,data} 信封 + preload
   assert(preload.includes('devMode: () => call<'), 'preload 走 call 解包')
   assert(page.includes('dev-banner'), '管理页风险横幅')
   assert(page.includes('devMode?.plugins'), '横幅由 devMode 驱动')
+  assert(preload.includes('isolatedStatuses'), '隔离状态 IPC 已暴露')
+  assert(runtime.includes("'plugin:isolated:list'"), '隔离状态 IPC 通道')
   assert(!/dev-plugins/.test(runtime), '本批不扫描 dev-plugins（不引入入口）')
   return 'dev-mode 连接线（含信封） ✓'
 })

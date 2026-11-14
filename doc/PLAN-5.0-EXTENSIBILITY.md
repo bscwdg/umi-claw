@@ -285,7 +285,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - `devMode.ts`：`UMI_DEV_PLUGINS=1` 才开 plugins，`UMI_DEV_BUILD=1` 且 plugins 开才开 build；**打包版即使设 env 也拒绝**。
 - 接线：`plugin:dev-mode`（`{ok,data}` 信封）+ preload `plugins.devMode()` + 管理页风险横幅。
 - 本批只做闸门与提示，不扫描/不加载 dev-plugins、不新增安装入口；扫描/源码构建留 Phase 2。
-- 测试：`plugin-dev-mode` 4/4；全量 54 套/907 项（906 通过 + 1 显式跳过）。
+- 测试：`plugin-dev-mode` 4/4；全量 54 套/908 项（907 通过 + 1 显式跳过）。
 - 未做/登记：UI 横幅可达性无 E2E；dev-plugins 扫描/源码构建 Phase 2。
 
 ### 4.7 Phase 2 起点提醒
@@ -307,7 +307,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 
 ### 5.0 执行顺序与 P0 契约冻结（2026-11-14 已拍板）
 
-**已批准**：发布者三档（official / partner / self-TOFU）；keyring 本地存储，不接外部服务；版本节奏 `alpha.1 → alpha.2 → beta.1 → beta.2 → GA`；**不返工原则**：本 P0 冻结后，C1–C8 只按本契约实现，不再改包格式/信任/路径语义。
+**已批准**：发布者三档（official / partner / self-TOFU）；keyring 本地存储，不接外部服务；版本节奏 `alpha.1 → alpha.2 → beta.1 → beta.2 → GA`；**冻结原则**：本 P0 契约冻结后，C1–C8 只按本契约实现，不再改包格式/信任/路径语义；签名 canonical 与包格式由 C1 的 golden vector/契约测试固化。
 
 **执行顺序（先地基后功能）**：
 
@@ -418,7 +418,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 | 打包 | `npm run build` + packaged smoke |
 | 审查 | AGENTS §12：每 commit 对抗审查；每 WP 两次独立检查 |
 
-**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**54 套**（ACCEPT 50 + e2e×3 + smoke）、accept result **907 项（906 通过 + 1 显式跳过）** + `node:test` **21 条** = **927**。AGENTS/RUNBOOK 已同步该口径（2026-11-14 Phase 1 收尾）；release/4.0 在 voice 合并后复核。后续以每次留档为准。
+**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**54 套**（ACCEPT 50 + e2e×3 + smoke）、accept result **908 项（907 通过 + 1 显式跳过）** + `node:test` **21 条** = **928**。AGENTS/RUNBOOK 已同步该口径（2026-11-14 Phase 1 收尾）；release/4.0 在 voice 合并后复核。后续以每次留档为准。
 
 ---
 

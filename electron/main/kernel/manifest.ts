@@ -223,9 +223,7 @@ export const PUBLIC_SERVICE_NAMES = [
   'config',
   'kv',
   'secrets',
-  'voice',
-  'http',
-  'dialog'
+  'voice'
 ] as const
 
 function parsePermissions(raw: unknown, pluginId: string): PluginPermissions | undefined {

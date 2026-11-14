@@ -18,6 +18,12 @@ export interface PluginServiceBridge {
 }
 
 const FORBIDDEN_METHODS = new Set(['constructor', '__proto__', 'prototype', 'toString', 'valueOf', 'hasOwnProperty'])
+/** 服务级危险方法：第三方不得触达宿主路径/生命周期内部能力 */
+const SERVICE_DENY: Record<string, Set<string>> = {
+  db: new Set(['backup', 'forPlugin', 'dispose', 'shutdown', 'maintenance']),
+  // status 会返回 host port/baseUrl；第三方只允许 chat/模型能力
+  openclaw: new Set(['status', 'getStatus'])
+}
 
 export function createPluginServiceBridge(options: PluginServiceBridgeOptions): PluginServiceBridge {
   return {
@@ -32,6 +38,13 @@ export function createPluginServiceBridge(options: PluginServiceBridgeOptions): 
       }
       if (FORBIDDEN_METHODS.has(method) || method.startsWith('__')) {
         throw new AppError(ERROR_CODES.NOT_FOUND, `非法服务方法：${service}.${method}`, { pluginId, service, method })
+      }
+      if (SERVICE_DENY[service]?.has(method)) {
+        throw new AppError(ERROR_CODES.NOT_FOUND, `服务方法不对第三方开放：${service}.${method}`, {
+          pluginId,
+          service,
+          method
+        })
       }
       const target = options.resolveService(pluginId, service)
       if (!target || typeof target !== 'object') {

@@ -421,6 +421,35 @@ await r.check('S10', 'supervisor.invoke 保留子进程错误码（宿主可按 
   }
 })
 
+await r.check('S11', '服务能力面：db.backup/forPlugin/dispose 不对第三方开放', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'umi-svc-'))
+  try {
+    const store = permMod.createPermissionStore(join(dir, 'permissions.json'))
+    const broker = permMod.createPermissionBroker({
+      store,
+      audit: permMod.createPermissionAudit(join(dir, 'audit.log')),
+      rootsFor: () => ({ pluginDir: join(dir, 'plugin'), dataDir: join(dir, 'data') })
+    })
+    store.grant('p1', { services: ['db'] })
+    const bridge = bridgeMod.createPluginServiceBridge({
+      resolveService: () => ({ backup: async () => ({ path: 'x' }) }),
+      broker
+    })
+    for (const method of ['backup', 'forPlugin', 'dispose']) {
+      let err = null
+      try {
+        await bridge.call('p1', 'db', method, [])
+      } catch (e) {
+        err = e
+      }
+      assertEq(err?.code, errorsMod.ERROR_CODES.NOT_FOUND, `${method} 被拒绝`)
+    }
+    return '服务能力面 ✓'
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin-service-bridge.json'), result)

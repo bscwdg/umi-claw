@@ -453,6 +453,7 @@ const api = {
     grantPermissions: (id: string) => call<unknown>('plugin:permissions:grant', { id }),
     revokePermissions: (id: string) => call<unknown>('plugin:permissions:revoke', { id }),
     devMode: () => call<{ plugins: boolean; build: boolean; reason: string; warning: string | null }>('plugin:dev-mode'),
+    isolatedStatuses: () => call<Array<{ pluginId: string; state: string }>>('plugin:isolated:list'),
     invoke: <T = unknown>(id: string, method: string, payload?: unknown): Promise<T> => {
       if (!/^[a-z][a-z0-9-]*$/.test(id)) return Promise.reject(new Error(`插件 id 非法：${id}`))
       if (!method || /[\s:]/.test(method)) return Promise.reject(new Error(`插件方法名非法：${method}`))

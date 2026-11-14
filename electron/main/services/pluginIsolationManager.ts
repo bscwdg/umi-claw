@@ -71,7 +71,7 @@ export function createPluginIsolationManager(
       if (supervisors.has(spec.pluginId)) {
         throw Object.assign(new Error(`隔离插件已启动：${spec.pluginId}`), { code: 'PLUGIN_OPERATION_FAILED' })
       }
-      const reparse = findReparsePoint(spec.packageDir)
+      const reparse = findReparsePoint(spec.packageDir) ?? findReparsePoint(spec.dataDir)
       if (reparse) {
         throw Object.assign(new Error(`插件包包含 reparse point，拒绝启动：${reparse}`), {
           code: 'PLUGIN_PERMISSION_CONFIG_INVALID'

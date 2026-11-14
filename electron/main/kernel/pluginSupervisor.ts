@@ -388,7 +388,7 @@ export class PluginSupervisor extends EventEmitter {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
-        reject(new Error(`插件调用超时：${method}`))
+        reject(Object.assign(new Error(`插件调用超时：${method}`), { code: 'PLUGIN_TIMEOUT' }))
       }, timeoutMs)
       this.pending.set(id, { resolve, reject, timer })
       this.child!.postMessage({ type: 'invoke', id, method, payload })

@@ -237,6 +237,12 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       data: resolveDevMode({ isPackaged: deps.appInfo().isPackaged, env: process.env })
     }))
 
+    deps.ipc.removeHandler('plugin:isolated:list')
+    deps.ipc.handle('plugin:isolated:list', () => ({
+      ok: true,
+      data: isolationManager?.statuses() ?? []
+    }))
+
     deps.ipc.removeHandler('plugin:permissions:grant')
     deps.ipc.handle('plugin:permissions:grant', (_e, payload: { id?: string }) => {
       const id = String(payload?.id ?? '')
@@ -332,17 +338,17 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
               serviceBridge!.call(pluginId, service, method, args),
             buildEnv: (spec) => {
               const info = deps.appInfo()
+              // dev 才把仓库根/app path 作为读根（本地开发显式 opt-in）；打包版只给
+              // child 入口目录与 Electron bootstrap 目录，避免第三方读安装根。
+              const dev = resolveDevMode({ isPackaged: info.isPackaged, env: process.env })
+              const extraReadDirs = [dirname(spec.entry), info.resourcesPath, dirname(info.resourcesPath)]
+              if (dev.plugins && !info.isPackaged) extraReadDirs.push(info.appPath)
               return buildPluginPermissionEnv({
                 pluginDir: spec.packageDir,
                 dataDir: spec.dataDir,
                 cwd: dirname(spec.mainPath),
                 permissions: spec.permissions ?? {},
-                extraReadDirs: [
-                  dirname(spec.entry),
-                  info.resourcesPath,
-                  dirname(info.resourcesPath),
-                  info.appPath
-                ]
+                extraReadDirs
               })
             },
             logger: deps.logger
