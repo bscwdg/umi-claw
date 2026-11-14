@@ -1598,6 +1598,20 @@ await r.check('U23', '控制台按钮文案按动作区分：启动中不再把�
     /pendingAction === 'restart' \? '重启中…' : '🔄 重启'/.test(dashSrc),
     '「重启」按钮不再把启动中误显示成「启动中…」'
   )
+  // 运行态三个按钮（获取 Token / 停止 / 重启）必须同高：统一挂 btn-lg，
+  // 否则 token 按钮大、旁边两个小（用户 2026-11-15 反馈）
+  assert(
+    /<button class="btn btn-success btn-lg" @click="handleFetchToken"/.test(dashSrc),
+    '「获取 Token」按钮保持 btn-lg'
+  )
+  assert(
+    /<button class="btn btn-danger btn-lg" @click="handleStop"/.test(dashSrc),
+    '「停止」按钮要与获取 Token 同高（btn-lg）'
+  )
+  assert(
+    /<button class="btn btn-lg" @click="handleRestart"/.test(dashSrc),
+    '「重启」按钮要与获取 Token 同高（btn-lg）'
+  )
   assert(
     !/actionLoading \? '停止中\.\.\.'/.test(dashSrc),
     '不得再用通用 busy 标志决定「停止」按钮文案'
