@@ -57,7 +57,8 @@ await r.check('S1', '真实 Electron app 启动到 whenReady，写 startup-probe
     assert(existsSync(marker), 'startup-probe.json 已写')
     const probe = JSON.parse(readFileSync(marker, 'utf8'))
     assertEq(probe.ok, true, 'probe.ok')
-    assertEq(probe.version, '4.3.0', 'probe.version')
+    const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'))
+    assertEq(probe.version, pkg.version, 'probe.version 与 package.json 一致')
     return `真实 Electron 启动 ✓（stdout ${out.length}B / stderr ${err.length}B）`
   } finally {
     rmSync(dataDir, { recursive: true, force: true })

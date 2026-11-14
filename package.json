@@ -1,6 +1,6 @@
 {
   "name": "umi-claw",
-  "version": "4.3.0",
+  "version": "4.4.0-dev",
   "description": "🦞 Umi Claw - OpenClaw 便携管理工具，基于 Electron + Vue3 + Vite",
   "main": "dist-electron/main/index.js",
   "scripts": {

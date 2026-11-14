@@ -240,7 +240,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - [x] 第三方样例在 utilityProcess 跑通（`plugin-isolation.e2e`）；官方插件仍 in-process，accept 绿
 - [x] fs/child_process/worker/dlopen 越权被拦（B4 真机）；网络残余风险写入 B0 ADR/权限提示
 - [x] 崩溃/心跳 hang/启动失败有状态机与 disabled 安全态（B1/B4）
-'- [x] feature flag 默认 off，关闭时行为与 4.3 一致（B1 I7/I8 + 全量回归）
+- [x] feature flag 默认 off，关闭时行为与 4.3 一致（B1 I7/I8 + 全量回归）
 
 > 口径限定（2026-11-14 独立检查）：item1 是 `UMI_ISOLATION_PROBE` 测试探针的 utilityProcess E2E，**不是生产 installer 已启动 supervisor**；item4 是默认 off 且关闭路径不变，flag on 的生产接线、dev 读根收窄、junction 拒绝、生产 installer 均登记 Phase 2。不得对外表述为“生产隔离已上线”。
 

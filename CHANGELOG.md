@@ -6,10 +6,19 @@
 
 ---
 
-## [4.4]（未发布，4.3 之后）— 2026-11-10
+## [4.4.0-dev]（未发布，4.3 之后）— 2026-11-14
 
 > 主题：**大肥鱼内容质量、表情包、跨机迁移与 QQ 群聊**；同时补齐本地 TTS 与界面一致性。真机验收仍由用户执行。
+> 插件化 Phase 1（utilityProcess 隔离 + 权限模型原型）并入本开发批次，**feature flag 默认关闭、4.x 不开放第三方安装**；生产 installer/签名包属 Phase 2。
 > 4.5 批次的「QQ 群聊单 agent 重构」（见下方「重构与清理」）并入本未发布批次，不单独起版本号。
+
+### 插件化 Phase 1（开发预览，flag off）
+- 新增 `UMI_PLUGIN_ISOLATION` 开关（默认 off）；关闭时行为与 4.3.0 一致。
+- utilityProcess 子进程协议（init/activate/invoke/service/心跳/退出）与 supervisor 状态机（崩溃退避、5min 熔断、disabled 安全态）。
+- manifest 权限（fs/network/services）、默认拒绝 broker、授权持久化/撤销、审计日志、`NODE_OPTIONS` 权限注入、服务桥（ctx.services JSON RPC）。
+- 真机负向验证：fs 越界、spawn、worker、dlopen 被拦；宿主 env/数据目录/密钥不泄漏。
+- 开发者模式闸门 `UMI_DEV_PLUGINS` / `UMI_DEV_BUILD`（打包版拒绝；仅闸门，不扫描/不加载）。
+- 验收：52 套 / 896 项（895 通过 + 1 显式跳过）+ node:test 21；Phase 1 出口口径见 `doc/PLAN-5.0-EXTENSIBILITY.md` §4.1。
 
 ### 新增
 - **主动消息内容引擎**：每轮 2–10 条候选（生活三卡 + 20 个话题 + 约 100 句台词 + 关系试探），

@@ -62,6 +62,11 @@ await r.check('C1', '模板 manifest：id/apiVersion/engines 可解析，迁移�
   assertEq(manifest.id, 'example', 'id')
   assertEq(manifest.apiVersion, 1, 'apiVersion')
   assertEq(manifest.engines?.host, '>=4.3.0 <6.0.0', 'engines.host')
+  const pkg = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'))
+  assert(
+    kernel.satisfiesHostRange(pkg.version, manifest.engines.host),
+    `宿主实际版本 ${pkg.version} 必须满足模板 engines（预发布也要支持）`
+  )
 
   const schemaMod = await import(
     pathToFileURL(bundleEntry('electron/main/kernel/pluginSchema.ts', 'contract-schema.mjs')).href

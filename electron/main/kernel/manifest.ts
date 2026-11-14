@@ -92,19 +92,47 @@ interface SemVer {
   major: number
   minor: number
   patch: number
+  prerelease: string[]
 }
 
 function parseSemVer(value: string): SemVer | null {
-  // 预发布/构建元数据暂不支持：拒绝比「静默当成正式版」安全（兼容面只认稳定版）
-  const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(value.trim())
+  // 支持 semver 预发布/构建元数据：宿主 4.4.0-dev 必须能被 engines 范围正确比较
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(value.trim())
   if (!m) return null
-  return { major: Number(m[1]), minor: Number(m[2]), patch: Number(m[3]) }
+  return {
+    major: Number(m[1]),
+    minor: Number(m[2]),
+    patch: Number(m[3]),
+    prerelease: m[4] ? m[4].split('.') : []
+  }
 }
 
 function cmpSemVer(a: SemVer, b: SemVer): number {
   if (a.major !== b.major) return a.major - b.major
   if (a.minor !== b.minor) return a.minor - b.minor
-  return a.patch - b.patch
+  if (a.patch !== b.patch) return a.patch - b.patch
+  const ap = a.prerelease
+  const bp = b.prerelease
+  if (!ap.length && !bp.length) return 0
+  if (!ap.length) return 1
+  if (!bp.length) return -1
+  for (let i = 0; i < Math.max(ap.length, bp.length); i += 1) {
+    const x = ap[i]
+    const y = bp[i]
+    if (x === undefined) return -1
+    if (y === undefined) return 1
+    const nx = /^\d+$/.test(x)
+    const ny = /^\d+$/.test(y)
+    if (nx && ny) {
+      const d = Number(x) - Number(y)
+      if (d !== 0) return d
+      continue
+    }
+    if (nx) return -1
+    if (ny) return 1
+    if (x !== y) return x < y ? -1 : 1
+  }
+  return 0
 }
 
 /** 支持 "*"、">=x.y.z"、"<x.y.z"、">=x <y"、">x"、"<=x"、"=x"、"^x.y.z" */

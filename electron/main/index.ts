@@ -1260,6 +1260,14 @@ if (app.isPackaged) {
     app.setPath('userData', appDataRoot)
     app.setPath('sessionData', appDataRoot)
   }
+} else if (process.env.UMI_STARTUP_PROBE === '1' || process.env.UMI_ISOLATION_PROBE === '1') {
+  // E2E 探针必须用独立 userData：否则会和正在运行的 dev 实例抢单实例锁，
+  // 进程拿不到锁直接 exit 0，测试只看到“marker 未写”而误判。
+  // 优先级：CLAW_DATA_DIR（测试传入）> --user-data-dir（被这里覆盖）> 仓库内 fallback。
+  const probeRoot = process.env.CLAW_DATA_DIR || join(__dirname, '../../.probe-user-data')
+  const probeUserData = join(probeRoot, 'user-data')
+  app.setPath('userData', probeUserData)
+  app.setPath('sessionData', probeUserData)
 } else {
   // 开发环境下保持默认，或者指向项目内的临时夹
   app.setPath('userData', join(__dirname, '../../.dev-user-data'))

@@ -2710,3 +2710,13 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
   - P1 文档过强：§4.1 加“测试探针/生产未接线”限定；HOME 白名单表述修正。
 - 未采纳/登记（Phase 2）：生产 runtime 启动 supervisor、dev 读根=仓库根、junction/reparse、manifest 授权更新求交、撤销后进程重启、bridge 能力面/会话命名、supervisor.invoke 错误码、asar fork、accept 偶发 flake 留档。
 - 最终验收：双 typecheck 0；build 通过；`check:boundary` 9/9；全量 52 套/896 项（895 通过 + 1 显式跳过）+ node:test 21 全绿（`accept-phase1-final.log`）。
+
+---
+
+## 2026-11-14 · 4.4.0-dev 封版（Phase 1 基线）
+
+- 版本：`package.json` / `package-lock.json` 升 **4.4.0-dev**；CHANGELOG 新增 `[4.4.0-dev]` 插件化 Phase 1 段。
+- 口径：flag 默认 off、4.x 不开放第三方安装；生产 installer/签名包属 Phase 2；不得表述为“生产隔离已上线”。
+'- 验收：双 typecheck 0；build 通过；全量 52 套/896 项（895 通过 + 1 显式跳过）+ node:test 21（`accept-4.4.0-dev-final3.log`；E2E 探针隔离 userData、packaged smoke 7/7）。
+- 封版审查修正：semver 预发布支持（4.4.0-dev 满足模板 `>=4.3.0 <6.0.0`；contract C1 用实际 package 版本断言）；startup probe 用独立 `CLAW_DATA_DIR/user-data` 避免与 dev 实例抢单实例锁；startup 版本断言改为读 package.json；PLAN §4.1 行首残留修正。'
+- 分支：封版提交在 `codex/voice-local-external-conversation`；随后从封版提交切 `feat/plugin-phase2` 开始 C1。
