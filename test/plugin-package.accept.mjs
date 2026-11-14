@@ -1,5 +1,6 @@
 // test/plugin-package.accept.mjs —— Phase 2 C1：打包/签名/验签/TOFU
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -139,6 +140,32 @@ await r.check('C1-5', 'keyring 读写：坏文件 fail-closed；upsert 记 finge
     pkg.writeKeyring(file, ring)
     assertEq(pkg.readKeyring(file).keys[kp.keyId].fingerprint, kp.fingerprint, '持久化指纹')
     return 'keyring ✓'
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await r.check('C1-6', 'CLI：keygen → pack → verify（self+TOFU）全链路', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'umi-cli-'))
+  try {
+    const src = join(dir, 'src')
+    makeSource(src)
+    const keyFile = join(dir, 'key.json')
+    const out = join(dir, 'demo.umi-plugin')
+    const run = (args) => {
+      const res = spawnSync(process.execPath, ['scripts/umi-plugin.mjs', ...args], { encoding: 'utf8' })
+      return { code: res.status, out: res.stdout, err: res.stderr }
+    }
+    const keygen = run(['keygen', '--out', keyFile])
+    assertEq(keygen.code, 0, keygen.err)
+    const pack = run(['pack', '--source', src, '--out', out, '--key-file', keyFile, '--include-public-key'])
+    assertEq(pack.code, 0, pack.err)
+    const verify = run(['verify', '--file', out, '--allow-self-signed'])
+    assertEq(verify.code, 0, verify.err)
+    const parsed = JSON.parse(verify.out)
+    assertEq(parsed.ok, true, 'CLI verify ok')
+    assertEq(parsed.trust, 'self', 'self trust')
+    return 'CLI 全链路 ✓'
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
