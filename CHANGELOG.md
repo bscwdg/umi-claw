@@ -15,7 +15,7 @@
 - **C1 签名包**：Ed25519 keygen/pack/verify/keyring/TOFU；canonical 签名原文 + golden vector；`umi-plugin` CLI（keygen/pack/verify）。
 - **C2 安装/回滚**：验签→安全解包→`plugin-packages/<id>/<version>`→数据快照→install-state；更新保留 previous、回滚恢复版本与数据；卸载保留/删除数据；真机安装→启动→更新→回滚 e2e。
 - **C3 兼容**：`apiVersion`/`engines.host` 安装期拒绝；4.x/5.x 矩阵。
-- **C4 静态索引/吊销**：官方/伙伴签名索引验签；`plugin:index`；吊销 keyId 拒绝安装。
+- **C4 静态索引/吊销**：签名索引验签框架与 `plugin:index`；吊销 keyId 拒绝安装。**官方/伙伴根密钥由发布流水线注入 `resources/plugin-keys/`（本开源仓库不含私钥/根密钥），未注入时 official/partner 包按未知 key 拒绝；GA 默认支持 self-TOFU**。
 - **C6 设置页**：安装包选择、自签指纹展示/TOFU 确认、已安装列表、回滚/卸载、configSchema 渲染与保存；配置写 `plugin-data/<id>/config.json`。
 - **C8 运维**：安装/更新/回滚/卸载审计 JSONL、诊断（安装/备份/审计计数）、备份保留 5 份。
 - **隔离默认**：5.x 默认开启（`UMI_PLUGIN_ISOLATION=0` 可显式关）；4.x 默认关。

@@ -53,6 +53,8 @@ import {
   collectPluginDiagnostics,
   inspectPluginPackage,
   installPlugin as installPluginPackage,
+  isPluginBlockedByPolicy,
+  validatePluginConfig,
   readInstallState,
   rollbackPlugin as rollbackInstalledPlugin,
   uninstallPlugin as uninstallInstalledPlugin,
@@ -266,7 +268,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     packageFile: string
     allowSelfSigned?: boolean
     tofuFingerprint?: string
-  }): Promise<{ ok: boolean; code?: string; message?: string; record?: InstallRecord; updated?: boolean }> => {
+  }): Promise<{ ok: boolean; code?: string; message?: string; record?: InstallRecord; updated?: boolean; started?: boolean; warning?: string }> => {
     const dataDir = deps.dataDir()
     const keyring = loadInstallKeyring(dataDir)
     await isolationManager?.stopAll()
@@ -281,12 +283,18 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       hostVersion: deps.appInfo().version
     })
     if (!result.ok) return { ok: false, code: result.code, message: result.message }
+    permissionStore?.revoke(result.record.id)
+    permissionStore?.grant(result.record.id, result.record.permissions ?? {})
+    let started = false
+    let warning: string | undefined
     try {
       await startInstalledRecord(result.record)
+      started = true
     } catch (e) {
-      deps.logger(`[plugin:${result.record.id}] 安装后启动失败：${(e as Error)?.message ?? e}`)
+      warning = (e as Error)?.message ?? String(e)
+      deps.logger(`[plugin:${result.record.id}] 安装后启动失败：${warning}`)
     }
-    return { ok: true, record: result.record, updated: result.updated }
+    return { ok: true, record: result.record, updated: result.updated, started, warning }
   }
 
   const registerHostIpc = (stateStore: ReturnType<typeof createJsonStateStore>): void => {    deps.ipc.removeHandler('plugin:list')
@@ -411,6 +419,8 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       const id = String(payload?.id ?? '')
       const record = readInstallState(deps.dataDir()).plugins[id]
       if (!record) return { ok: false, error: { code: 'NOT_FOUND', message: '插件未安装：' + id } }
+      const checked = validatePluginConfig(record.configSchema, payload?.config ?? {})
+      if (!checked.ok) return { ok: false, error: { code: 'VALIDATION_ERROR', message: checked.message } }
       try {
         mkdirSync(record.dataDir, { recursive: true })
         const file = join(record.dataDir, 'config.json')
@@ -491,6 +501,8 @@ function readInstalledConfig(record: { dataDir?: string; config?: unknown }): un
   return record.config
 }
   async function startInstalledRecord(record: InstallRecord): Promise<void> {
+    const blocked = isPluginBlockedByPolicy(deps.dataDir(), record)
+    if (blocked) throw new Error(blocked)
     if (!isolationManager || record.enabled === false) return
     await isolationManager.start({
       pluginId: record.id,

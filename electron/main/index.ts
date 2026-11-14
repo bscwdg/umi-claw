@@ -1347,7 +1347,7 @@ app.whenReady().then(async () => {
           dataDir: spec.dataDir,
           cwd: dirname(spec.entry),
           permissions: spec.permissions ?? {},
-          extraReadDirs: [dirname(spec.entry), process.resourcesPath, dirname(process.resourcesPath), app.getAppPath()]
+          extraReadDirs: [dirname(spec.entry), process.resourcesPath, app.getAppPath()]
         }),
       logger: (line) => console.error('[install-probe]', line),
       serviceCall: (id, service, method, args) => serviceBridge!.call(id, service, method, args)

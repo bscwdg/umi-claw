@@ -443,12 +443,14 @@ async function confirmInstall(): Promise<void> {
   installError.value = ''
   installNotice.value = ''
   try {
-    await window.api.plugins.install(pendingPackage.value, {
+    const result = (await window.api.plugins.install(pendingPackage.value, {
       allowSelfSigned: pendingInspect.value?.trust === 'self' && selfTrust.value,
       tofuFingerprint: pendingInspect.value?.fingerprint
-    })
+    })) as { started?: boolean; warning?: string }
     pendingPackage.value = ''
-    installNotice.value = '安装完成；隔离插件已按安装态启动。'
+    installNotice.value = result?.started === false
+      ? '安装完成，但隔离插件启动失败：' + (result.warning ?? '未知原因')
+      : '安装完成；隔离插件已按安装态启动。'
     await Promise.all([loadInstalled(), loadIsolated()])
   } catch (e) {
     installError.value = (e as Error)?.message ?? '安装失败'

@@ -63,6 +63,8 @@ export interface InstallRecord {
     dataDir: string
     backupDir: string | null
     installedAt: number
+    permissions?: PluginPermissions
+    configSchema?: Record<string, unknown>
   }
 }
 
@@ -316,6 +318,60 @@ function isRevoked(dataDir: string, keyId: string, fingerprint: string): boolean
     return false
   }
 }
+function isSubsetPermissions(next: PluginPermissions | undefined, previous: PluginPermissions | undefined): boolean {
+  const n = next ?? {}
+  const p = previous ?? {}
+  const list = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
+  const nServices = list(n.services)
+  if (nServices.some((s) => !list(p.services).includes(s))) return false
+  const nRead = list(n.fs?.read)
+  if (nRead.some((x) => !list(p.fs?.read).includes(x))) return false
+  const nWrite = list(n.fs?.write)
+  if (nWrite.some((x) => !list(p.fs?.write).includes(x))) return false
+  const nDomains = list(n.network)
+  if (nDomains.some((x) => !list(p.network).includes(x))) return false
+  return true
+}
+
+/** 启动/安装前策略检查：kill switch 与吊销对已安装插件同样生效 */
+export function isPluginBlockedByPolicy(dataDir: string, record: Pick<InstallRecord, 'keyId'>): string | null {
+  if (existsSync(join(dataDir, 'plugin-kill-switch.json'))) return 'PLUGIN_KILL_SWITCH'
+  if (record.keyId) {
+    try {
+      const raw = JSON.parse(readFileSync(join(dataDir, 'plugin-revocations.json'), 'utf8')) as {
+        keys?: Record<string, unknown>
+      }
+      if (raw.keys?.[record.keyId]) return 'PLUGIN_REVOKED'
+    } catch {
+      // 无吊销文件
+    }
+  }
+  return null
+}
+
+/** C6：host 侧按 configSchema 校验第三方配置（类型/枚举/required/大小/深度） */
+export function validatePluginConfig(
+  schema: Record<string, unknown> | undefined,
+  config: unknown
+): { ok: true; value: Record<string, unknown> } | { ok: false; message: string } {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return { ok: false, message: '配置必须是对象' }
+  const text = JSON.stringify(config)
+  if (text.length > 64 * 1024) return { ok: false, message: '配置超过 64KB' }
+  const depth = (v: unknown, d = 0): number =>
+    d > 6 ? d : v && typeof v === 'object' ? 1 + Math.max(0, ...Object.values(v as Record<string, unknown>).map((x) => depth(x, d + 1))) : d
+  if (depth(config) > 6) return { ok: false, message: '配置嵌套过深' }
+  const properties = (schema as { properties?: Record<string, { type?: string; enum?: unknown[] }> } | undefined)?.properties
+  if (!properties) return { ok: true, value: config as Record<string, unknown> }
+  for (const [key, prop] of Object.entries(properties)) {
+    const value = (config as Record<string, unknown>)[key]
+    if (value === undefined) continue
+    if (prop.type === 'number' && typeof value !== 'number') return { ok: false, message: `${key} 必须是数字` }
+    if (prop.type === 'boolean' && typeof value !== 'boolean') return { ok: false, message: `${key} 必须是布尔` }
+    if (prop.type === 'string' && typeof value !== 'string') return { ok: false, message: `${key} 必须是字符串` }
+    if (prop.enum && !prop.enum.includes(value)) return { ok: false, message: `${key} 不在枚举内` }
+  }
+  return { ok: true, value: config as Record<string, unknown> }
+}
 export function inspectPluginPackage(options: {
   packageFile: string
   keyring?: PluginKeyring
@@ -422,6 +478,10 @@ function installPluginImpl(options: InstallOptions): InstallResult {
     rmSync(stagingDir, { recursive: true, force: true })
     return { ok: false, code: manifest.code, message: 'apiVersion/engines 与宿主不兼容' }
   }
+  if (existing && !isSubsetPermissions(manifest.permissions, existing.permissions)) {
+    rmSync(stagingDir, { recursive: true, force: true })
+    return { ok: false, code: 'PLUGIN_PERMISSION_ESCALATION', message: '升级不得扩大权限；请先卸载再安装' }
+  }
   if (manifest.id !== id) {
     rmSync(stagingDir, { recursive: true, force: true })
     return { ok: false, code: 'PACKAGE_MANIFEST_INVALID', message: 'id 与包名不一致' }
@@ -461,7 +521,9 @@ function installPluginImpl(options: InstallOptions): InstallResult {
             packageDir: existing.packageDir,
             dataDir: existing.dataDir,
             backupDir,
-            installedAt: existing.installedAt
+            installedAt: existing.installedAt,
+            permissions: existing.permissions,
+            configSchema: existing.configSchema
           }
         }
       : {})
@@ -502,6 +564,8 @@ export function rollbackPlugin(dataDir: string, pluginId: string): RollbackResul
     dataDir: current.previous.dataDir,
     installedAt: current.previous.installedAt,
     updatedAt: Date.now(),
+    permissions: current.previous.permissions ?? current.permissions,
+    configSchema: current.previous.configSchema ?? current.configSchema,
     previous: undefined
   }
   writeInstallState(dataDir, { schema: 1, plugins: { ...state.plugins, [pluginId]: record } })

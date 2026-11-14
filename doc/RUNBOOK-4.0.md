@@ -251,7 +251,7 @@ falling back to sendFile`，随后同一份音频以 `file_type=4` 文件形式�
 - [x] 全量 `npm run accept`：59 套 / 941 项（940 通过 + 1 显式跳过）+ `node:test` 21
 - [x] `npm run check:boundary` 9/9（扫描目录非空）
 - [x] 插件边界：生产 NODE_OPTIONS + env 白名单；安装器保留 id/独立 plugin-data；TOFU 指纹持久化
-- [x] C1 包/签名/CLI；C2 安装/更新/回滚；C3 矩阵；C4 索引/吊销；C6 schema/配置；C8 审计/诊断/kill switch；C5 安装→启动→更新→回滚 e2e
+- [x] C1 自签/TOFU 包签名与 CLI；C2 安装/更新/回滚；C3 矩阵；C4 索引/吊销框架（官方/伙伴根密钥由发布流水线注入）；C6 schema/配置；C8 审计/诊断/kill switch；C5 安装→启动→更新→回滚 e2e
 - [x] 4.x 不开放第三方安装；5.x 隔离默认开、显式 0 可关
 - [x] 已知限制登记：空格 dataDir/用户名、Windows 卸载 e2e、无在线市场/第三方 UI（Phase 3）
 - [ ] 两次独立终检（事实核对 + 对抗复核）通过后打 `v5.0.0` tag
