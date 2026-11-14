@@ -23,6 +23,7 @@ export interface InstallRecord {
   updatedAt: number
   entry: string
   permissions?: PluginPermissions
+  configSchema?: Record<string, unknown>
   previous?: {
     version: string
     packageDir: string
@@ -130,7 +131,7 @@ const PUBLIC_SERVICES = new Set(['db', 'openclaw', 'notifications', 'config', 'k
 function parseManifest(
   dir: string,
   hostVersion: string
-): { id: string; version: string; name: string; permissions?: PluginPermissions } | { code: string } | null {
+): { id: string; version: string; name: string; permissions?: PluginPermissions; configSchema?: Record<string, unknown> } | { code: string } | null {
   try {
     const raw = JSON.parse(readFileSync(join(dir, 'plugin.json'), 'utf8')) as {
       id?: string
@@ -139,6 +140,7 @@ function parseManifest(
       apiVersion?: number
       engines?: { host?: string }
       permissions?: PluginPermissions
+      configSchema?: Record<string, unknown>
     }
     if (!raw.id || !/^[a-z][a-z0-9-]*$/.test(raw.id)) return null
     if (RESERVED_PLUGIN_IDS.has(raw.id)) return { code: 'PLUGIN_ID_RESERVED' }
@@ -158,7 +160,7 @@ function parseManifest(
     if (raw.engines?.host && !satisfiesHostRange(hostVersion, raw.engines.host)) {
       return { code: 'PLUGIN_INCOMPATIBLE' }
     }
-    return { id: raw.id, version: raw.version, name: raw.name ?? raw.id, permissions: raw.permissions }
+    return { id: raw.id, version: raw.version, name: raw.name ?? raw.id, permissions: raw.permissions, configSchema: raw.configSchema }
   } catch {
     return null
   }
@@ -332,6 +334,7 @@ export function installPlugin(options: InstallOptions): InstallResult {
     updatedAt: now,
     entry,
     permissions: manifest.permissions,
+    configSchema: manifest.configSchema,
     ...(isUpdate
       ? {
           previous: {

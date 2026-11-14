@@ -462,6 +462,8 @@ const api = {
     uninstall: (id: string, keepData = true) => call<unknown>('plugin:uninstall', { id, keepData }),
     installed: () => call<{ schema: 1; plugins: Record<string, unknown> }>('plugin:installed'),
     pickPackage: () => call<string | null>('plugin:pick-package'),
+    getConfig: (id: string) => call<Record<string, unknown>>('plugin:config:get', { id }),
+    setConfig: (id: string, config: Record<string, unknown>) => call<Record<string, unknown>>('plugin:config:set', { id, config }),
     invoke: <T = unknown>(id: string, method: string, payload?: unknown): Promise<T> => {
       if (!/^[a-z][a-z0-9-]*$/.test(id)) return Promise.reject(new Error(`插件 id 非法：${id}`))
       if (!method || /[\s:]/.test(method)) return Promise.reject(new Error(`插件方法名非法：${method}`))

@@ -129,7 +129,7 @@ export interface PluginRuntimeDeps {
   logger: (line: string) => void
 }
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 export interface PluginRuntime {
@@ -339,6 +339,34 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
 
     deps.ipc.removeHandler('plugin:pick-package')
     deps.ipc.handle('plugin:pick-package', () => (deps.pickPackage ? deps.pickPackage() : null))
+
+    deps.ipc.removeHandler('plugin:config:get')
+    deps.ipc.handle('plugin:config:get', (_e, payload: { id?: string }) => {
+      const id = String(payload?.id ?? '')
+      const record = readInstallState(deps.dataDir()).plugins[id]
+      if (!record) return { ok: false, error: { code: 'NOT_FOUND', message: '插件未安装：' + id } }
+      const file = join(record.dataDir, 'config.json')
+      try {
+        return { ok: true, data: existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {} }
+      } catch {
+        return { ok: true, data: {} }
+      }
+    })
+    deps.ipc.removeHandler('plugin:config:set')
+    deps.ipc.handle('plugin:config:set', (_e, payload: { id?: string; config?: unknown }) => {
+      const id = String(payload?.id ?? '')
+      const record = readInstallState(deps.dataDir()).plugins[id]
+      if (!record) return { ok: false, error: { code: 'NOT_FOUND', message: '插件未安装：' + id } }
+      try {
+        mkdirSync(record.dataDir, { recursive: true })
+        const file = join(record.dataDir, 'config.json')
+        writeFileSync(file + '.tmp', JSON.stringify(payload?.config ?? {}, null, 2), 'utf8')
+        renameSync(file + '.tmp', file)
+        return { ok: true, data: payload?.config ?? {} }
+      } catch (e) {
+        return { ok: false, error: { code: 'PLUGIN_OPERATION_FAILED', message: (e as Error)?.message ?? '保存失败' } }
+      }
+    })
 
     deps.ipc.removeHandler('plugin:permissions:grant')
     deps.ipc.handle('plugin:permissions:grant', (_e, payload: { id?: string }) => {

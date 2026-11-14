@@ -71,6 +71,8 @@ await r.check('D4', '接线：plugin:dev-mode IPC 带 {ok,data} 信封 + preload
   assert(page.includes('第三方插件（.umi-plugin）'), '管理页安装入口')
   assert(page.includes('pickPackage'), '安装包选择接线')
   assert(preload.includes('pickPackage'), 'pickPackage 已暴露')
+  assert(page.includes('schemaFields'), 'C6 configSchema 渲染')
+  assert(preload.includes('getConfig') && preload.includes('setConfig'), 'C6 配置 IPC')
   assert(!/dev-plugins/.test(runtime), '本批不扫描 dev-plugins（不引入入口）')
   return 'dev-mode 连接线（含信封） ✓'
 })

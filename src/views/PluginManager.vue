@@ -36,12 +36,12 @@
       </div>
       <p v-if="installNotice" class="meta">{{ installNotice }}</p>
       <p v-if="installError" class="error-line">{{ installError }}</p>
-      <p v-for="item in installedList" :key="String(item.id)" class="meta">
+      <div v-for="item in installedList" :key="String(item.id)" class="meta">
         <strong>{{ String(item.name) }}</strong> {{ String(item.version) }} ·
         {{ String(item.trustLevel) }}
         <button class="btn btn-sm" @click="rollback(item.id)">回滚</button>
         <button class="btn btn-sm btn-danger" @click="uninstall(item.id)">卸载</button>
-      </p>
+      </div>
     </section>
 
     <p v-if="loadError" class="error-banner">
@@ -199,6 +199,11 @@ const devMode = ref<{ plugins: boolean; build: boolean; reason: string; warning:
 const isolatedPlugins = ref<Array<{ pluginId: string; name: string; version: string; state: string }>>([])
 const installed = ref<{ schema: 1; plugins: Record<string, Record<string, unknown>> }>({ schema: 1, plugins: {} })
 const installedList = computed(() => Object.values(installed.value.plugins ?? {}))
+const configValues = ref<Record<string, Record<string, unknown>>>({})
+function schemaFields(item: Record<string, unknown>): Array<{ key: string; label: string; type: string }> {
+  const schema = item.configSchema as { properties?: Record<string, { type?: string; title?: string }> } | undefined
+  return Object.entries(schema?.properties ?? {}).map(([key, value]) => ({ key, label: value.title ?? key, type: value.type ?? 'string' }))
+}
 const pendingPackage = ref('')
 const installBusy = ref(false)
 const installNotice = ref('')
@@ -393,6 +398,9 @@ async function loadIsolated(): Promise<void> {
 async function loadInstalled(): Promise<void> {
   try {
     installed.value = await window.api.plugins.installed()
+    for (const [id] of Object.entries(installed.value.plugins ?? {})) {
+      configValues.value[id] = await window.api.plugins.getConfig(id).catch(() => ({}))
+    }
   } catch {
     installed.value = { schema: 1, plugins: {} }
   }
@@ -415,7 +423,7 @@ async function confirmInstall(): Promise<void> {
   installError.value = ''
   installNotice.value = ''
   try {
-    await window.api.plugins.install(pendingPackage.value, { allowSelfSigned: true })
+    await window.api.plugins.install(pendingPackage.value, { allowSelfSigned: false })
     pendingPackage.value = ''
     installNotice.value = '安装完成；隔离插件已按安装态启动。'
     await Promise.all([loadInstalled(), loadIsolated()])
