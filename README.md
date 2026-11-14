@@ -9,9 +9,11 @@
 
 > **最新发布：5.0（GA `v5.0.0`，分支 `release/5.0`）** —— 在 4.x 插件化宿主上开放受控第三方插件（Ed25519 签名 / TOFU / `utilityProcess` 隔离）。
 >
-> `master` 是 **1.0 通用版**稳定线（默认分支），**不代表最新功能**；各版本功能以所在分支的 README 为准。想直接体验最新能力请切到 `release/5.0`。`master` 当前仍为 1.0，后续计划在 5.0 稳定后升级为 5.0 基线（以仓库实际状态为准）。
+> `master` 是 **1.0 通用版**稳定线（默认分支），**不代表最新功能**；各版本功能以所在分支的 README 为准。想直接体验最新能力请切到 `release/5.0`。`master` 当前仍为 1.0，后续计划升级为 5.0 基线（以仓库实际状态为准）。
 >
-> 本页信息截至 2026-11-14；版本号、分支与验收数字以各分支最新提交为准。
+> 本页信息截至 2026-11-15；版本号、分支与验收数字以各分支最新提交为准。
+>
+> **想直接跑起来**：`git clone https://github.com/bscwdg/umi-claw.git && cd umi-claw && git switch release/5.0 && npm install && npm run dev`（详见[快速开始](#快速开始)）。
 
 ## 五条版本线：先选对分支
 
@@ -47,7 +49,7 @@ Umi Claw 有 5 条版本线，都从 1.0 的 OpenClaw 管理能力分叉。其�
 
 ## 4.x 插件化宿主 + 大肥鱼
 
-4.x 在合并后的单体上做插件化：宿主提供窗口、导航、设置、OpenClaw 管理、渠道、终端、Obsidian 等壳能力；2.0 营销域、3.0 工作域装箱为官方内置插件，运行期可启停。`release/4.0` 为维护线：最新发布 tag 为 `v4.1.0`，分支 `package.json` 已到 4.2.0；下面标注 4.3 / 4.4 的能力已合入分支但**尚未发布**。
+4.x 把 1.0 / 2.0 / 3.0 合并到同一代码库并做插件化：宿主提供窗口、导航、设置、OpenClaw 管理、渠道、终端、Obsidian 等壳能力；2.0 营销域、3.0 工作域装箱为官方内置插件，运行期可启停。`release/4.0` 为维护线：最新发布 tag 为 `v4.1.0`，分支 `package.json` 已到 4.2.0；下面标注 4.3 / 4.4 的能力已合入分支但**尚未发布**。
 
 ### 插件化宿主
 
@@ -165,9 +167,10 @@ MCP 工具：`search_notes` / `read_note` / `list_notes` / `create_note` / `upda
 | xterm.js | 6 | 内嵌终端 |
 | Less | 4.6 | 样式预处理 |
 | @vueuse/core | 10 | Vue 组合式工具库 |
-| mammoth / exceljs / docx / pdfjs-dist | — | Word / Excel / PDF 文档解析与生成 |
+| docx | — | Word 文档生成 |
+| mammoth / exceljs / pdfjs-dist | — | Word / Excel / PDF 解析（2.0 起） |
 | adm-zip | — | 技能 zip / `.umi-plugin` 包解包 |
-| silk-wasm | — | 语音条 SILK 编码（4.x / 5.0） |
+| silk-wasm | — | 语音条 SILK 编码（4.x / 5.0，可选依赖） |
 
 > 各分支的完整依赖以对应分支的 `package.json` 为准。
 
@@ -208,7 +211,7 @@ umi-claw/
 
 **各分支目录差异**
 
-- **1.0（`master` / `release/1.0`）**：业务域主要是 `electron/main/*.ts`（含 `obsidian/` 子目录）+ `src/views/*` + `resources/obsidian` / `model-presets`；没有插件内核。
+- **1.0（`master` / `release/1.0`）**：业务域主要是 `electron/main/*.ts`（含 `obsidian/` 子目录）+ `src/views/*` + `resources/obsidian` / `model-presets` / `resources/database/list-node-starts.ps1`；没有插件内核。
 - **2.0**：新增 `electron/main/marketing/`、`electron/main/database/`、`src/views/marketing/`、`resources/collector/`。
 - **3.0**：新增 `electron/main/work/`、`electron/main/database/`、`src/views/work/`、`resources/database/`、`resources/pdfjs/`。
 - **4.x / 5.0**：2.0 / 3.0 域搬进 `plugins/<id>/`（`domain/` + `ui/` + `main/`）；新增 `kernel/`、`services/`、`ipc/host/`、`character/`、`fish/voice/`、`claw/`、`src/character/`、`renderer/pluginUi.ts`、`resources/plugins/`、`resources/openclaw-plugins/`；**5.0** 再增加 `plugin-sdk/` 与签名 / 安装 / 隔离链路（`pluginPackage*`、`pluginInstaller`、`pluginIsolation*`、`scripts/umi-plugin.mjs`、`templates/plugin/`）。
@@ -259,7 +262,7 @@ npm run dev
 # 类型检查（4.x / 5.0）
 npm run typecheck:node
 npm run typecheck:web
-# master / 1.0 使用 npm run typecheck
+# master / 1.0 / 2.0 / 3.0 使用 npm run typecheck
 
 # 全量验收（3.0 / 4.x / 5.0；5.0 为 59 套 / 944 项（943 通过 + 1 显式跳过；GA 留档 942）+ node:test 21 条）
 npm run accept
@@ -311,11 +314,10 @@ npm run build:win
 | 2.0 数据 | `<dataDir>/umi-claw.db` + `<dataDir>/projects/<id>/` | SQLite（WAL，自动备份 5 份） |
 | 3.0 数据 | `<dataDir>/work.db` + `<dataDir>/knowledge/` | 8 张表；图片 / 文档原件按目录存放 |
 | 4.x / 5.0 插件数据 | `<dataDir>/plugins/<id>/data.db` | 每插件独立库 + 独立 schema / migrations |
-| 5.0 安装包与配置 | `<dataDir>/plugin-packages/<id>/<version>/`、`plugin-data/<id>/config.json` | 安装记录、回滚 previous、configSchema 配置 |
-| 5.0 信任与运维 | `plugin-trust.json`、`plugin-audit.log`、`plugin-index.json`、`plugin-revocations.json`、`plugin-kill-switch.json` | TOFU 指纹、审计、静态索引、吊销、安装开关 |
+| 5.0 安装包与配置 | `<dataDir>/plugin-packages/<id>/<version>/`、`<dataDir>/plugin-data/<id>/config.json` | 安装记录、回滚 previous、configSchema 配置 |
+| 5.0 信任与运维 | `<dataDir>/plugin-trust.json`、`plugin-audit.log`、`plugin-index.json`、`plugin-revocations.json`、`plugin-kill-switch.json` | TOFU 指纹、审计、静态索引、吊销、安装开关 |
 | 大肥鱼 | `<dataDir>/character/kv.json` 等 | 设置 / 状态 / 关系；表情包与桌宠形象另落子目录 |
-| 模型 API Key（1.0） | `openclaw.json` 的 `models.providers[].apiKey` | 1.0 当前实现，由 configManager 读写 |
-| 模型 API Key（2.0 / 3.0） | `safeStorage`（启动时注入网关） | 不写 `openclaw.json` |
+| 模型 API Key（所有版本） | `openclaw.json` 的 `models.providers[].apiKey` | 由各分支 configManager 写入网关配置 |
 | 鱼语音密钥（`release/1.0` / 2.0 / 3.0） | `safeStorage` → `<dataDir>/voice/key.bin` | 不写 `openclaw.json`，启动时由主进程注入 |
 | 插件密钥（4.x / 5.0） | `safeStorage`，命名空间 `plugin:<id>:<key>` | 永不写日志 / 配置 / 导出包 |
 
@@ -352,16 +354,18 @@ window.api.shell.openExternal(url) / window.api.app.getVersion() / window.api.di
 ### 4.x / 5.0 插件与角色
 
 ```typescript
-// 插件管理 + 签名安装（5.0）
-window.api.plugins.list() / .setEnabled(id, enabled)
-window.api.plugins.permissions() / .grantPermissions(id) / .revokePermissions(id)
+// 插件管理（4.x / 5.0）
+window.api.plugins.list() / .setEnabled(id, enabled) / .invoke(id, method, payload) / .onChanged(cb)
+window.api.pluginImports.status() / .retry(pluginId)   // 旧数据导入状态
+window.api.consent.status() / .grant() / .revoke()     // 用户协议（4.x / 5.0：宿主单源）
+
+// 5.0 另增：签名安装 / 权限 / 隔离 / 配置 / 诊断
 window.api.plugins.pickPackage() / .inspectPackage(file)
 window.api.plugins.install(file, { allowSelfSigned?, tofuFingerprint? }) / .update(...)
 window.api.plugins.rollback(id) / .uninstall(id, keepData) / .installed()
-window.api.plugins.devMode() / .isolatedStatuses() / .invokeIsolated(id, method, payload) / .invoke(id, method, payload)
-window.api.plugins.getConfig(id) / .setConfig(id, config) / .diagnostics() / .indexEntries() / .onChanged(cb)
-window.api.pluginImports.status() / .retry(pluginId)   // 旧数据导入状态
-window.api.consent.status() / .grant() / .revoke()     // 用户协议（4.x / 5.0：宿主单源）
+window.api.plugins.permissions() / .grantPermissions(id) / .revokePermissions(id)
+window.api.plugins.devMode() / .isolatedStatuses() / .invokeIsolated(id, method, payload)
+window.api.plugins.getConfig(id) / .setConfig(id, config) / .diagnostics() / .indexEntries()
 
 // 大肥鱼（4.x / 5.0 宿主模块）
 window.api.character.status() / .state() / .settings.* / .interact() / .reset()
@@ -463,7 +467,7 @@ icacls "<数据目录>" /inheritance:r /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /g
 - **`PLUGIN_KILL_SWITCH`**：安装能力被显式停用。
 - 选择安装包时点「取消」是正常操作，不应产生错误提示。
 
-### 其他
+### 其他常见问题
 
 - 便携模式数据文件被占用：关闭 Excel / WPS 等程序后再替换程序文件。
 - 升级后老数据找不到：安装器会自动搬迁 `data` / `context-data`；便携模式需手动保留这两个目录。
@@ -486,7 +490,7 @@ icacls "<数据目录>" /inheritance:r /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /g
 
 ## 贡献与反馈
 
-- PR 默认目标为 `master`（1.0 稳定线）；**新功能请基于 `release/5.0` 开发**；`release/1.0` / 2.0 / 3.0 已冻结、不再接收功能改动（`master` 仍为 1.0），4.x 仅接收维护性修复。
+- PR 默认目标为 `master`（1.0 稳定线）；**功能 PR 请提交到 `release/5.0`**，稳定后由维护者合并；`release/1.0` / 2.0 / 3.0 已冻结、不再接收功能改动（`master` 仍为 1.0），4.x 仅接收维护性修复。
 - 提交前在对应分支跑已有检查：`release/5.0` / `release/4.0` 用 `npm run typecheck:node` + `npm run typecheck:web` + `npm run accept` + `npm run check:boundary`；`release/3.0` 用 `npm run typecheck` + `npm run accept`；已冻结的 1.0 / 2.0 仅做归档修复时用 `npm run typecheck` + 各自 `accept:*` 分项。
 - 改动插件 / IPC / 数据层时请同步补 `test/*.accept.mjs` 断言。
 - Bug / 使用问题可通过 Issue 或文末邮箱反馈，附版本、分支、日志（`runtime-debug.log`）。
