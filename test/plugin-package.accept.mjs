@@ -171,6 +171,22 @@ await r.check('C1-6', 'CLI：keygen → pack → verify（self+TOFU）全链路'
   }
 })
 
+await r.check('C1-7', '随包 keyring 加载：resources/plugin-keys/*.json → official/partner', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'umi-keys-'))
+  try {
+    const kp = pkg.generateSigningKeyPair()
+    const keysDir = join(dir, 'plugin-keys')
+    mkdirSync(keysDir, { recursive: true })
+    writeFileSync(join(keysDir, 'official.json'), JSON.stringify({ keyId: 'official-x', publicKey: kp.publicKeyBase64, trust: 'official' }), 'utf8')
+    const ring = pkg.readBundledKeyring(keysDir)
+    assertEq(ring.keys['official-x']?.trust, 'official', 'official key')
+    assertEq(ring.keys['official-x']?.fingerprint, kp.fingerprint, 'fingerprint 计算')
+    return 'bundled keyring ✓'
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin-package.json'), result)

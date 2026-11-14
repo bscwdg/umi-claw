@@ -19,8 +19,8 @@ function makeSource(dir, version = '1.0.0', main = 'module.exports={activate(){}
   writeFileSync(join(dir, 'main.js'), main, 'utf8')
 }
 
-async function pack(dir, source, version) {
-  const kp = pkg.generateSigningKeyPair()
+async function pack(dir, source, version, reuseKey = null) {
+  const kp = reuseKey ?? pkg.generateSigningKeyPair()
   const out = join(dir, `demo-${version}.umi-plugin`)
   pkg.packPlugin({
     sourceDir: source,
@@ -71,7 +71,7 @@ await r.check('C2-2', '更新：旧版本进 previous、数据先快照；回滚
 
     const src2 = join(root, 'src2')
     makeSource(src2, '1.1.0', 'module.exports={activate(){return "v2"}}')
-    const p2 = await pack(root, src2, '1.1.0')
+    const p2 = await pack(root, src2, '1.1.0', p1.kp)
     const upd = mod.installPlugin({ dataDir, packageFile: p2.out, allowSelfSigned: true, now: 2000 })
     assertEq(upd.ok, true, JSON.stringify(upd))
     assertEq(upd.record.version, '1.1.0')
@@ -163,7 +163,7 @@ await r.check('C2-6', 'C8 审计/诊断：安装、更新、回滚、卸载都�
     mod.installPlugin({ dataDir, packageFile: p1.out, allowSelfSigned: true })
     const src2 = join(root, 'src2')
     makeSource(src2, '1.1.0')
-    const p2 = await pack(root, src2, '1.1.0')
+    const p2 = await pack(root, src2, '1.1.0', p1.kp)
     mod.installPlugin({ dataDir, packageFile: p2.out, allowSelfSigned: true })
     mod.rollbackPlugin(dataDir, 'demo')
     mod.uninstallPlugin(dataDir, 'demo', true)
@@ -193,7 +193,7 @@ await r.check('C2-7', 'C8 备份保留：多轮更新后只保留最近 5 份快
     for (let i = 1; i <= 7; i += 1) {
       const s = join(root, `src-${i}`)
       makeSource(s, `1.0.${i}`)
-      const p = await pack(root, s, `1.0.${i}`)
+      const p = await pack(root, s, `1.0.${i}`, p0.kp)
       const res = mod.installPlugin({ dataDir, packageFile: p.out, allowSelfSigned: true, maxBackups: 5 })
       assertEq(res.ok, true, JSON.stringify(res))
     }
@@ -314,6 +314,25 @@ await r.check('C2-12', 'C8 失败审计 + kill switch：失败写 JSONL；开关
     mod.setPluginKillSwitch(dataDir, false)
     assertEq(mod.installPlugin({ dataDir, packageFile: p.out, allowSelfSigned: true }).ok, true, '关闭后可安装')
     return '失败审计/kill switch ✓'
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+await r.check('C2-13', 'TOFU 更新换 keyId：自签插件拒绝静默换 key', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'umi-inst-'))
+  try {
+    const dataDir = join(root, 'data')
+    const src = join(root, 'src')
+    makeSource(src, '1.0.0')
+    const p1 = await pack(root, src, '1.0.0')
+    assertEq(mod.installPlugin({ dataDir, packageFile: p1.out, allowSelfSigned: true }).ok, true)
+    const kp2 = pkg.generateSigningKeyPair()
+    const p2 = join(root, 'p2.umi-plugin')
+    pkg.packPlugin({ sourceDir: src, outFile: p2, keyId: kp2.keyId, privateKeyPem: kp2.privateKeyPem, publicKeyBase64: kp2.publicKeyBase64 })
+    const changed = mod.installPlugin({ dataDir, packageFile: p2, allowSelfSigned: true })
+    assertEq(changed.code, 'PACKAGE_KEY_ID_CHANGED', 'keyId 变化拒绝')
+    return 'TOFU keyId ✓'
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

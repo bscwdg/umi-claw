@@ -59,7 +59,7 @@ import {
   type InstallRecord,
   type InstallState
 } from './pluginInstaller'
-import { readKeyring } from './pluginPackage'
+import { readBundledKeyring, readKeyring, type PluginKeyring } from './pluginPackage'
 import { readPluginIndex, verifyPluginIndex } from './pluginIndex'
 import {
   createPluginIsolationManager,
@@ -258,7 +258,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     tofuFingerprint?: string
   }): Promise<{ ok: boolean; code?: string; message?: string; record?: InstallRecord; updated?: boolean }> => {
     const dataDir = deps.dataDir()
-    const keyring = readKeyring(join(dataDir, 'plugin-keys.json'))
+    const keyring = loadInstallKeyring(dataDir)
     await isolationManager?.stopAll()
     const result = installPluginPackage({
       dataDir,
@@ -350,7 +350,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     deps.ipc.handle('plugin:index', () => {
       const envelope = readPluginIndex(join(deps.dataDir(), 'plugin-index.json'))
       if (!envelope) return { ok: true, data: [] }
-      const result = verifyPluginIndex(envelope, readKeyring(join(deps.dataDir(), 'plugin-keys.json')))
+      const result = verifyPluginIndex(envelope, loadInstallKeyring(deps.dataDir()))
       return result.ok
         ? { ok: true, data: result.index.entries }
         : { ok: false, error: { code: result.code, message: result.message } }
@@ -362,7 +362,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       if (!packageFile) return { ok: false, error: { code: 'VALIDATION_ERROR', message: '缺少 packageFile' } }
       const result = inspectPluginPackage({
         packageFile,
-        keyring: readKeyring(join(deps.dataDir(), 'plugin-keys.json')),
+        keyring: loadInstallKeyring(deps.dataDir()),
         allowSelfSigned: true
       })
       return result.ok
@@ -447,6 +447,21 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     })
   }
 
+function loadInstallKeyring(dataDir: string): PluginKeyring {
+  const bundled = readBundledKeyring(join(deps.resourcesRoot(), 'plugin-keys'))
+  const local = readKeyring(join(dataDir, 'plugin-keys.json'))
+  return { schema: 1, keys: { ...bundled.keys, ...local.keys } }
+}
+function readInstalledConfig(record: { dataDir?: string; config?: unknown }): unknown {
+  if (record.dataDir) {
+    try {
+      return JSON.parse(readFileSync(join(record.dataDir, 'config.json'), 'utf8'))
+    } catch {
+      // 未保存过配置
+    }
+  }
+  return record.config
+}
   async function startInstalledRecord(record: InstallRecord): Promise<void> {
     if (!isolationManager || record.enabled === false) return
     await isolationManager.start({
@@ -459,7 +474,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       dataDir: record.dataDir,
       services: record.permissions?.services ?? [],
       permissions: record.permissions,
-      config: undefined
+      config: readInstalledConfig(record)
     })
   }
 
@@ -561,7 +576,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
                       dataDir: record.dataDir ?? join(dataDir, 'plugin-data', pluginId),
                       services: record.permissions?.services ?? [],
                       permissions: record.permissions,
-                      config: record.config
+                      config: readInstalledConfig(record)
                     })
                   } catch (e) {
                     deps.logger(`[plugin:${pluginId}] 隔离启动失败：${(e as Error)?.message ?? e}`)
@@ -729,7 +744,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
 
     async installFromPackage(input) {
       const dataDir = deps.dataDir()
-      const keyring = readKeyring(join(dataDir, 'plugin-keys.json'))
+      const keyring = loadInstallKeyring(dataDir)
       await isolationManager?.stopAll()
       const result = installPluginPackage({
         dataDir,

@@ -406,6 +406,9 @@ function installPluginImpl(options: InstallOptions): InstallResult {
   if (!id) return { ok: false, code: 'PACKAGE_MANIFEST_INVALID', message: '缺少 id' }
   const state = readInstallState(options.dataDir)
   const existing = state.plugins[id]
+  if (existing && existing.keyId !== verified.signature.keyId && verified.trust === 'self') {
+    return { ok: false, code: 'PACKAGE_KEY_ID_CHANGED', message: '自签插件更新更换了 keyId，需重新确认信任' }
+  }
   const isUpdate = Boolean(existing)
   const stagingDir = join(options.dataDir, 'plugin-packages', id, `.staging-${now}`)
   const extracted = extractPackage(options.packageFile, stagingDir)

@@ -201,6 +201,30 @@ export function upsertKeyringKey(
   }
 }
 
+/** 读取随包官方/伙伴 keyring：<dir>/<keyId>.json（publicKey/trust） */
+export function readBundledKeyring(dir: string): PluginKeyring {
+  const keys: PluginKeyring['keys'] = {}
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.json')) continue
+      try {
+        const raw = JSON.parse(readFileSync(join(dir, name), 'utf8')) as {
+          keyId?: string
+          publicKey?: string
+          trust?: 'official' | 'partner'
+        }
+        if (!raw.keyId || !raw.publicKey || !raw.trust) continue
+        const fingerprint = fingerprintFromPublicKey(Buffer.from(raw.publicKey, 'base64'))
+        keys[raw.keyId] = { publicKey: raw.publicKey, trust: raw.trust, fingerprint }
+      } catch {
+        // 单个坏 key 文件跳过；安装时按未知 key 拒绝
+      }
+    }
+  } catch {
+    // 无随包 keyring
+  }
+  return { schema: 1, keys }
+}
 export function readKeyring(file: string): PluginKeyring {
   try {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as PluginKeyring
