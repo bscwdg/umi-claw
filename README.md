@@ -9,23 +9,25 @@
 
 > **最新发布：5.0（GA `v5.0.0`，分支 `release/5.0`）** —— 在 4.x 插件化宿主上开放受控第三方插件（Ed25519 签名 / TOFU / `utilityProcess` 隔离）。
 >
-> `master` 是 **1.0 通用版**稳定线（默认分支），**不代表最新功能**；各版本功能以所在分支的 README 为准。想直接体验最新能力请切到 `release/5.0`。
+> `master` 是 **1.0 通用版**稳定线（默认分支），**不代表最新功能**；各版本功能以所在分支的 README 为准。想直接体验最新能力请切到 `release/5.0`。`master` 当前仍为 1.0，后续计划在 5.0 稳定后升级为 5.0 基线（以仓库实际状态为准）。
 >
 > 本页信息截至 2026-11-14；版本号、分支与验收数字以各分支最新提交为准。
 
 ## 五条版本线：先选对分支
 
-Umi Claw 有 5 条并行版本线，都从 1.0 的 OpenClaw 管理能力分叉，各自独立演进：
+Umi Claw 有 5 条版本线，都从 1.0 的 OpenClaw 管理能力分叉。其中 **`release/1.0` / 2.0 / 3.0 已于 2026-11-14 冻结归档**（`master` 仍为 1.0，不归档），4.x 为维护线，5.0 为当前发布分支：
 
-| 版本 | 分支 | 面向谁 | 在通用能力之上新增 |
-|------|------|--------|-------------------|
-| **1.0** 通用版 | `master` / `release/1.0` | 想用 OpenClaw 的个人 | 模型 / 技能 / 渠道 / Obsidian / 终端等管理能力；`release/1.0` 额外含鱼语音（火山 TTS / 音色克隆 / 预算） |
-| **2.0** AI 营销版 | `release/2.0` | 实体店老板、线上获客 | AI 营销工作台：商家大脑 → 知识库 → AI 顾问 → 内容中心 → 热点雷达 |
-| **3.0** 工作版 | `release/3.0` | 日常办公的打工人 | AI 工作记忆 + 每日工作闭环：今日待办 / 工作记录 / 日报周报 / 工作问答 / 工具箱 / 到点提醒 |
-| **4.x** 插件化宿主 | `release/4.0` | 想一站式用营销 + 工作 + 大肥鱼的人 | 插件化宿主 + 控制台/能力中心 + 官方内置插件 + 大肥鱼角色（维护线；最新发布 tag `v4.1.0`） |
-| **5.0** 受控第三方插件 | `release/5.0` | 想安装签名第三方插件的人 / 插件开发者 | Ed25519 签名 + TOFU + `utilityProcess` 隔离安装 / 更新 / 回滚；插件配置、审计、吊销与 kill switch |
+| 版本 | 分支 | 状态 | 面向谁 | 在通用能力之上新增 |
+|------|------|------|--------|-------------------|
+| **1.0** 通用版 | `master` / `release/1.0` | `release/1.0` 已冻结（`archive/freeze-1.0-2026-11-14`）；`master` 当前仍为 1.0 | 想用 OpenClaw 的个人 | 模型 / 技能 / 渠道 / Obsidian / 终端等管理能力；`release/1.0` 额外含鱼语音（火山 TTS / 音色克隆 / 预算） |
+| **2.0** AI 营销版 | `release/2.0` | 已冻结（`archive/freeze-2.0-2026-11-14`） | 实体店老板、线上获客 | AI 营销工作台：商家大脑 → 知识库 → AI 顾问 → 内容中心 → 热点雷达 |
+| **3.0** 工作版 | `release/3.0` | 已冻结（`archive/freeze-3.0-2026-11-14`） | 日常办公的打工人 | AI 工作记忆 + 每日工作闭环：今日待办 / 工作记录 / 日报周报 / 工作问答 / 工具箱 / 到点提醒 |
+| **4.x** 插件化宿主 | `release/4.0` | 维护线（最新发布 tag `v4.1.0`） | 想一站式用营销 + 工作 + 大肥鱼的人 | 插件化宿主 + 控制台/能力中心 + 官方内置插件 + 大肥鱼角色 |
+| **5.0** 受控第三方插件 | `release/5.0` | **当前发布分支**（GA `v5.0.0`） | 想安装签名第三方插件的人 / 插件开发者 | Ed25519 签名 + TOFU + `utilityProcess` 隔离安装 / 更新 / 回滚；插件配置、审计、吊销与 kill switch |
 
-> 2.0 与 3.0 是两条**独立**的产品线，互不包含：3.0 基于 1.0 分叉，不带 2.0 的营销模块；2.0 也不带 3.0 的工作记忆模块。4.x 是合并后的插件化线，把 2.0 / 3.0 作为官方内置插件集成；5.0 在 4.x 之上开放**受控**第三方插件，4.x 仍不提供第三方安装入口。
+> **`release/1.0` / 2.0 / 3.0 已冻结，仅作历史归档**（`archive/freeze-*-2026-11-14`；`master` 不归档，仍为 1.0），新装与升级请使用 `release/5.0`；这些分支不再接收功能改动，2.0 / 3.0 的能力已作为 5.0 官方内置插件提供。
+
+> 2.0 与 3.0 是两条**独立**的产品线，互不包含：3.0 基于 1.0 分叉，不带 2.0 的营销模块；2.0 也不带 3.0 的工作记忆模块。两条线均已冻结归档；4.x 是合并后的插件化线，把 2.0 / 3.0 作为官方内置插件集成；5.0 在 4.x 之上开放**受控**第三方插件，4.x 仍不提供第三方安装入口。
 
 ## 最新发布：5.0 受控第三方插件
 
@@ -69,8 +71,8 @@ Umi Claw 有 5 条并行版本线，都从 1.0 的 OpenClaw 管理能力分叉�
 - **聊天**：流式气泡、表情映射、会话代际清空；每轮注入【本鱼状态】（称呼 / 阶段 / 心情 / 今日活动）。
 - **关系**：三轴（熟悉 / 亲密 / 连续天数）、阶段只升不降、每日上限、`refId` 幂等、解锁提示。
 - **生活与主动（4.4，未发布）**：生活卡确定性抽取 → `fish/LIFE.md`；30s tick 按静默期 / 免打扰 / 日上限发主动消息。支持固定 / 随机间隔（1–720 分钟）与每日上限最高 60；每轮从生活卡 + 话题 + 台词中选候选，去重 / 冷却后交给 `feiyu` agent 生成文案，失败回退规则候选；未回复按关系轻试探，2 条未回换话题、≥3 条进入退避。
-- **表情包（4.4，未发布）**：导入 PNG / JPEG / GIF / WebP（≤10MB、最多 200 张、sha256 去重），按情绪 / 标签管理；QQ 发图走 `file_type=1` + `msg_type=7`。
-- **备份（4.4，未发布）**：角色页导出 / 导入单个 zip（设置 / 状态 / 关系 / 解锁 / 桌宠状态、人格文件、workspace 日记、表情包），不含密钥 / token / 截图 / 日志。
+- **表情包（4.4，未发布）**：导入 PNG / JPEG / GIF / WebP（≤10MB、最多 200 张、sha256 去重），按情绪 / 标签管理；QQ 发图走 `file_type=1` + `msg_type=7`（当前仅主动消息 / 手动测试发图，被动聊天回复未接线）。
+- **备份（4.4，未发布）**：角色页导出 / 导入单个 zip（设置 / 状态 / 关系 / 解锁 / 桌宠状态、人格文件、workspace 日记、表情包），不含密钥 / token / 截图 / 日志与桌宠自定义形象。
 - **记忆**：确认年龄后 23:00 自动写日记（workspace + Obsidian `大肥鱼/日记`），失败重试、密钥脱敏；tags 归一化。
 - **语音**：TTS 出 16k PCM → SILK → QQ 语音条（失败降级文字，`silk-wasm` 已内置）；外部 TTS 支持 OpenAI 兼容 `/v1/audio/speech` 与 Voicebox 原生 `17493`；入站 STT 暂未接 QQ。
 - **多渠道聊天（4.3，未发布）**：角色页可勾选已配置的外部渠道，把策略放行的单账号会话（含群聊）路由给大肥鱼（文本）；经官方 CLI 写 OpenClaw bindings，保存后需重启网关。
@@ -78,7 +80,7 @@ Umi Claw 有 5 条并行版本线，都从 1.0 的 OpenClaw 管理能力分叉�
 
 > 默认关闭：在「大肥鱼」页手动启用；停用后侧栏入口隐藏，仍可从「插件管理 → 宿主模块」重新启用。
 
-## 3.0 工作版
+## 3.0 工作版（已冻结归档）
 
 3.0 在 OpenClaw 管理能力之上，新增面向日常办公的「AI 工作记忆 + 每日工作闭环」。
 
@@ -101,7 +103,7 @@ Umi Claw 有 5 条并行版本线，都从 1.0 的 OpenClaw 管理能力分叉�
 
 > `release/3.0` 为独立工作版；4.x / 5.0 中该域作为官方内置插件 `work` 集成，数据与交互保持一致。
 
-## 2.0 AI 营销工作台
+## 2.0 AI 营销工作台（已冻结归档）
 
 2.0 在 OpenClaw 管理器之上新增面向实体店老板的 AI 营销工作台，覆盖线上获客动线：**建档 → 喂资料 → 提问 → 写文案 → 追热点**。所有 AI 产出都经人工审核、人工复制发布，应用不自动外发。
 
@@ -164,7 +166,7 @@ MCP 工具：`search_notes` / `read_note` / `list_notes` / `create_note` / `upda
 | Less | 4.6 | 样式预处理 |
 | @vueuse/core | 10 | Vue 组合式工具库 |
 | mammoth / exceljs / docx / pdfjs-dist | — | Word / Excel / PDF 文档解析与生成 |
-| adm-zip | — | `.umi-plugin` 安装包解包（5.0） |
+| adm-zip | — | 技能 zip / `.umi-plugin` 包解包 |
 | silk-wasm | — | 语音条 SILK 编码（4.x / 5.0） |
 
 > 各分支的完整依赖以对应分支的 `package.json` 为准。
@@ -206,7 +208,7 @@ umi-claw/
 
 **各分支目录差异**
 
-- **1.0（`master` / `release/1.0`）**：只有 `electron/main/*.ts` + `src/views/*` + `resources/obsidian` / `model-presets`；没有插件内核。
+- **1.0（`master` / `release/1.0`）**：业务域主要是 `electron/main/*.ts`（含 `obsidian/` 子目录）+ `src/views/*` + `resources/obsidian` / `model-presets`；没有插件内核。
 - **2.0**：新增 `electron/main/marketing/`、`electron/main/database/`、`src/views/marketing/`、`resources/collector/`。
 - **3.0**：新增 `electron/main/work/`、`electron/main/database/`、`src/views/work/`、`resources/database/`、`resources/pdfjs/`。
 - **4.x / 5.0**：2.0 / 3.0 域搬进 `plugins/<id>/`（`domain/` + `ui/` + `main/`）；新增 `kernel/`、`services/`、`ipc/host/`、`character/`、`fish/voice/`、`claw/`、`src/character/`、`renderer/pluginUi.ts`、`resources/plugins/`、`resources/openclaw-plugins/`；**5.0** 再增加 `plugin-sdk/` 与签名 / 安装 / 隔离链路（`pluginPackage*`、`pluginInstaller`、`pluginIsolation*`、`scripts/umi-plugin.mjs`、`templates/plugin/`）。
@@ -217,14 +219,16 @@ umi-claw/
 
 | 分支 | 用途 |
 |------|------|
-| `master` | **1.0 通用版稳定线**，默认分支，PR 默认目标；只接收经过验证的发布内容 |
-| `release/1.0` | 1.0 开发分支（鱼语音 / Obsidian / 企微官方插件 / 便携模式 / 技能同步等），稳定后合入 `master` |
-| `release/2.0` | 2.0 AI 营销版（独立线） |
-| `release/3.0` | 3.0 工作版（独立线） |
+| `master` | **1.0 通用版稳定线**，默认分支，PR 默认目标；当前仍为 1.0，后续计划升级为 5.0 基线 |
+| `release/1.0` | 1.0 开发分支（鱼语音 / Obsidian / 企微官方插件 / 便携模式 / 技能同步等）；**已冻结，仅归档** |
+| `release/2.0` | 2.0 AI 营销版；**已冻结，仅归档** |
+| `release/3.0` | 3.0 工作版；**已冻结，仅归档** |
 | `release/4.0` | 4.x 插件化宿主维护线（最新发布 tag `v4.1.0`，分支含未发布 4.2 / 4.3 / 4.4 增强），含大肥鱼与官方插件 |
 | `release/5.0` | **当前发布分支**：5.0 受控第三方插件（GA `v5.0.0`） |
 
-> 体验：1.0 → [`release/1.0`](https://github.com/bscwdg/umi-claw/tree/release/1.0) ｜ 2.0 → [`release/2.0`](https://github.com/bscwdg/umi-claw/tree/release/2.0) ｜ 3.0 → [`release/3.0`](https://github.com/bscwdg/umi-claw/tree/release/3.0) ｜ 4.x → [`release/4.0`](https://github.com/bscwdg/umi-claw/tree/release/4.0) ｜ 5.0 → [`release/5.0`](https://github.com/bscwdg/umi-claw/tree/release/5.0)
+> **`release/1.0` / 2.0 / 3.0 已于 2026-11-14 冻结**（`archive/freeze-*-2026-11-14`），仅作历史归档（`master` 不归档），新装 / 升级请用 `release/5.0`。
+>
+> 体验：1.0 → [`release/1.0`](https://github.com/bscwdg/umi-claw/tree/release/1.0)（归档） ｜ 2.0 → [`release/2.0`](https://github.com/bscwdg/umi-claw/tree/release/2.0)（归档） ｜ 3.0 → [`release/3.0`](https://github.com/bscwdg/umi-claw/tree/release/3.0)（归档） ｜ 4.x → [`release/4.0`](https://github.com/bscwdg/umi-claw/tree/release/4.0) ｜ 5.0 → [`release/5.0`](https://github.com/bscwdg/umi-claw/tree/release/5.0)
 >
 > 不同版本线需要不同代码时，建议用 `git worktree` 分别检出，避免频繁切分支。
 
@@ -244,7 +248,7 @@ umi-claw/
 # 克隆项目并切到想开发的分支
 git clone https://github.com/bscwdg/umi-claw.git
 cd umi-claw
-git switch release/5.0     # 或 master / release/2.0 / release/3.0 / release/4.0
+git switch release/5.0     # 或 release/4.0（维护线）/ master（1.0）
 
 # 安装依赖
 npm install
@@ -277,7 +281,7 @@ npm run build:all    # 所有平台（需在对应系统 / 容器内执行）
 ```powershell
 $env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
 $env:ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
-$env:ELECTRON_BUILDER_CACHE="D:\work2026\umi-claw\electron-builder-cache"  # 缓存目录可按需改成自己的路径
+$env:ELECTRON_BUILDER_CACHE="<你的缓存目录>"  # 例如 D:\electron-builder-cache，按需修改
 npm run build:win
 ```
 
@@ -310,9 +314,12 @@ npm run build:win
 | 5.0 安装包与配置 | `<dataDir>/plugin-packages/<id>/<version>/`、`plugin-data/<id>/config.json` | 安装记录、回滚 previous、configSchema 配置 |
 | 5.0 信任与运维 | `plugin-trust.json`、`plugin-audit.log`、`plugin-index.json`、`plugin-revocations.json`、`plugin-kill-switch.json` | TOFU 指纹、审计、静态索引、吊销、安装开关 |
 | 大肥鱼 | `<dataDir>/character/kv.json` 等 | 设置 / 状态 / 关系；表情包与桌宠形象另落子目录 |
-| 密钥 | `safeStorage`，命名空间 `plugin:<id>:<key>` | 永不写日志 / 配置 / 导出包 |
+| 模型 API Key（1.0） | `openclaw.json` 的 `models.providers[].apiKey` | 1.0 当前实现，由 configManager 读写 |
+| 模型 API Key（2.0 / 3.0） | `safeStorage`（启动时注入网关） | 不写 `openclaw.json` |
+| 鱼语音密钥（`release/1.0` / 2.0 / 3.0） | `safeStorage` → `<dataDir>/voice/key.bin` | 不写 `openclaw.json`，启动时由主进程注入 |
+| 插件密钥（4.x / 5.0） | `safeStorage`，命名空间 `plugin:<id>:<key>` | 永不写日志 / 配置 / 导出包 |
 
-**隐私原则**：本地优先；资料默认只存本机，仅在主动发起 AI 操作时把相关上下文发给所选模型服务商；网关 token 只留在主进程；3.0 起首启需同意用户协议，4.x / 5.0 的协议状态由宿主单源管理（`window.api.consent.*`）。
+**隐私原则**：本地优先；资料默认只存本机，仅在主动发起 AI 操作时把相关上下文发给所选模型服务商；网关 token 由主进程管理（`window.api.claw.getToken` 仅供宿主页面打开 Web 控制台等场景）；3.0 起的业务域 IPC 不把 token 交给渲染端；首启需同意用户协议（3.0 起），4.x / 5.0 的协议状态由宿主单源管理（`window.api.consent.*`）。
 
 ## IPC / API 设计
 
@@ -471,16 +478,16 @@ icacls "<数据目录>" /inheritance:r /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /g
 
 ### 其他版本线
 
-- 1.0：[README](https://github.com/bscwdg/umi-claw/blob/release/1.0/README.md)
-- 2.0：[README](https://github.com/bscwdg/umi-claw/blob/release/2.0/README.md) · [PLAN-2.0](https://github.com/bscwdg/umi-claw/blob/release/2.0/PLAN-2.0.md)
-- 3.0：[README](https://github.com/bscwdg/umi-claw/blob/release/3.0/README.md) · [PLAN-3.0](https://github.com/bscwdg/umi-claw/blob/release/3.0/PLAN-3.0.md)
+- 1.0（已归档）：[README](https://github.com/bscwdg/umi-claw/blob/release/1.0/README.md)
+- 2.0（已归档）：[README](https://github.com/bscwdg/umi-claw/blob/release/2.0/README.md) · [PLAN-2.0](https://github.com/bscwdg/umi-claw/blob/release/2.0/PLAN-2.0.md)
+- 3.0（已归档）：[README](https://github.com/bscwdg/umi-claw/blob/release/3.0/README.md) · [PLAN-3.0](https://github.com/bscwdg/umi-claw/blob/release/3.0/PLAN-3.0.md)
 - 4.x：[README](https://github.com/bscwdg/umi-claw/blob/release/4.0/README.md) · [PLAN-4.0](https://github.com/bscwdg/umi-claw/blob/release/4.0/PLAN-4.0.md) · [大肥鱼规划](https://github.com/bscwdg/umi-claw/blob/release/4.0/PLAN-FISH-CHARACTER.md) · [启动优化](https://github.com/bscwdg/umi-claw/blob/release/4.0/doc/OPT-STARTUP-4.0.md) · [运行手册](https://github.com/bscwdg/umi-claw/blob/release/4.0/doc/RUNBOOK-4.0.md) · [进度](https://github.com/bscwdg/umi-claw/blob/release/4.0/doc/PROGRESS-4.0.md)
 - 5.0：[README](https://github.com/bscwdg/umi-claw/blob/release/5.0/README.md) · [扩展性规划](https://github.com/bscwdg/umi-claw/blob/release/5.0/doc/PLAN-5.0-EXTENSIBILITY.md) · [插件 API](https://github.com/bscwdg/umi-claw/blob/release/5.0/doc/PLUGIN-API.md) · [更新日志](https://github.com/bscwdg/umi-claw/blob/release/5.0/CHANGELOG.md) · [大肥鱼使用指南](https://github.com/bscwdg/umi-claw/blob/release/5.0/doc/%E5%A4%A7%E8%82%A5%E9%B1%BC-%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97.md)
 
 ## 贡献与反馈
 
-- PR 默认目标为 `master`；新功能请先对应版本线分支开发（2.0 / 3.0 / 4.0 / 5.0），稳定后再合入。
-- 提交前至少跑对应分支已有的检查：`master` / `release/1.0` / `release/2.0` 跑 `npm run typecheck` + 各自 `accept:*` 分项；`release/3.0` 跑 `npm run typecheck` + `npm run accept`；`release/4.0` / `release/5.0` 跑 `npm run typecheck:node` + `npm run typecheck:web` + `npm run accept` + `npm run check:boundary`。
+- PR 默认目标为 `master`（1.0 稳定线）；**新功能请基于 `release/5.0` 开发**；`release/1.0` / 2.0 / 3.0 已冻结、不再接收功能改动（`master` 仍为 1.0），4.x 仅接收维护性修复。
+- 提交前在对应分支跑已有检查：`release/5.0` / `release/4.0` 用 `npm run typecheck:node` + `npm run typecheck:web` + `npm run accept` + `npm run check:boundary`；`release/3.0` 用 `npm run typecheck` + `npm run accept`；已冻结的 1.0 / 2.0 仅做归档修复时用 `npm run typecheck` + 各自 `accept:*` 分项。
 - 改动插件 / IPC / 数据层时请同步补 `test/*.accept.mjs` 断言。
 - Bug / 使用问题可通过 Issue 或文末邮箱反馈，附版本、分支、日志（`runtime-debug.log`）。
 
@@ -493,15 +500,3 @@ icacls "<数据目录>" /inheritance:r /grant "NT AUTHORITY\SYSTEM:(OI)(CI)F" /g
 ## License
 
 MIT
-
-## 附录：启动可靠性修复（2026-10-31，自 4.0 同步）
-
-master 与 release/4.0 共用 OpenClaw 网关启动链路，本次同步启动慢优化与可靠性修复（**不含语音模块**）。
-
-- **就绪态与阶段可视化**：`running`（进程）与 `ready`（`/health` 200）分离；点击启动立即显示「启动中」；状态推送新增 `starting/ready/startedAt/startupMs/bootPhase/estimateStartupMs`；Dashboard 展示阶段与 ETA。
-- **webhook 迁移标记兜底**：无 `legacyWebhook` 时自动补 `meta.migrations.webhookListeners=true`，避免每次启动重跑旧迁移；备份 + 原子写回退 + BOM/CRLF 保留，走官方写入串行队列。
-- **退出应用时保留网关（可选，默认关）**：开启后网关 detached 运行、退出应用不停网关；下次启动校验端口 owner / 版本 / 健康后直接复用（跳过冷启动）；退出路径统一幂等。
-- **启动耗时统计与 ETA**：最近 5 次；样本 ≤2 用最近一次，≥3 取最近 3 次中位数。
-- **网关日志文件 tail**：增量读、半行 carry、截断检测、stdout/stderr 分流、兼容 pino `msg`。
-
-验证：双 typecheck 0 错、build 通过、`npm run accept:startup-sync`（config-writer / startup-stats / webhook-marker / startup-ready / qqbot）全绿。
