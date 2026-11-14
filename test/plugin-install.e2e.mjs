@@ -38,7 +38,8 @@ await r.check('I1', 'keygen/pack → Electron 安装 → staged child → utilit
       ...process.env,
       UMI_INSTALL_PROBE: '1',
       UMI_INSTALL_PROBE_DIR: dataDir,
-      UMI_INSTALL_PACKAGE: pkgFile
+      UMI_INSTALL_PACKAGE: pkgFile,
+      UMI_SECRET_SENTINEL: 'should-not-leak'
     }
     delete env.CLAW_DATA_DIR
     delete env.ELECTRON_RUN_AS_NODE
@@ -71,7 +72,8 @@ await r.check('I1', 'keygen/pack → Electron 安装 → staged child → utilit
     assertEq(probe.id, 'e2e-inst', '安装 id')
     assertEq(probe.version, '1.0.0', '安装版本')
     assertEq(probe.state, 'running', '启动状态')
-    assertEq(probe.env?.path, true, '真实 child 环境')
+    assertEq(probe.env?.path, true, '显式 env 白名单保留 PATH')
+    assertEq(probe.env?.sentinel ?? null, null, '宿主 env 不泄漏')
     assertEq(probe.env?.dataDir ?? null, null, '宿主数据目录不进 child env')
     assert(existsSync(probe.entry), '宿主 child 存在')
     assert(probe.entry.includes('dist-electron'), '启动使用宿主 app 内 child（Electron utilityProcess 约束）')

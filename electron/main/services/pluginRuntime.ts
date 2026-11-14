@@ -47,6 +47,7 @@ import {
   type PermissionDecision,
   type PluginPermissionStore
 } from './pluginPermissions'
+import { buildPluginPermissionEnv } from './pluginPermissions'
 import { createPluginServiceBridge, type PluginServiceBridge } from './pluginServiceBridge'
 import {
   installPlugin as installPluginPackage,
@@ -448,27 +449,17 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
             hostVersion: deps.appInfo().version,
             serviceCall: (pluginId, service, method, args) =>
               serviceBridge!.call(pluginId, service, method, args),
-            // execArgv 用绝对路径数组注入权限：NODE_OPTIONS 对含空格/非 ASCII 的
-            // 安装路径不可靠，而 Program Files / 中文用户名在 Windows 是常态。
-            buildEnv: () => ({}),
-            buildExecArgv: (spec) => {
+            // NODE_OPTIONS 是 Electron 30 utilityProcess 下唯一实测生效的权限入口；
+            // cwd 取插件包目录，app/entry 用 .. 相对路径，避免父目录空格进入 flags。
+            buildEnv: (spec) => {
               const info = deps.appInfo()
-              const readDirs = [
-                spec.packageDir,
-                spec.dataDir,
-                dirname(spec.entry),
-                info.resourcesPath,
-                dirname(info.resourcesPath),
-                info.appPath
-              ]
-              const flags = ['--experimental-permission']
-              for (const dir of new Set(readDirs)) flags.push(`--allow-fs-read=${dir}`)
-              flags.push(`--allow-fs-write=${spec.dataDir}`)
-              for (const rel of spec.permissions?.fs?.write ?? []) {
-                const target = join(spec.dataDir, rel)
-                if (target.startsWith(spec.dataDir)) flags.push(`--allow-fs-write=${target}`)
-              }
-              return flags
+              return buildPluginPermissionEnv({
+                pluginDir: spec.packageDir,
+                dataDir: spec.dataDir,
+                cwd: spec.packageDir,
+                permissions: spec.permissions ?? {},
+                extraReadDirs: [dirname(spec.entry), info.resourcesPath, dirname(info.resourcesPath), info.appPath]
+              })
             },
             logger: deps.logger
           })

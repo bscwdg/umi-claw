@@ -124,6 +124,9 @@ function extractPackage(packageFile: string, targetDir: string): { ok: true } | 
   }
 }
 
+const RESERVED_PLUGIN_IDS = new Set(['work', 'marketing', 'hello', 'host', 'plugin', 'system', 'app', 'umi'])
+const PUBLIC_SERVICES = new Set(['db', 'openclaw', 'notifications', 'config', 'kv', 'secrets', 'voice'])
+
 function parseManifest(
   dir: string,
   hostVersion: string
@@ -138,6 +141,15 @@ function parseManifest(
       permissions?: PluginPermissions
     }
     if (!raw.id || !/^[a-z][a-z0-9-]*$/.test(raw.id)) return null
+    if (RESERVED_PLUGIN_IDS.has(raw.id)) return { code: 'PLUGIN_ID_RESERVED' }
+    if (raw.permissions) {
+      const keys = Object.keys(raw.permissions)
+      if (keys.some((key) => !['fs', 'network', 'services'].includes(key))) return { code: 'PACKAGE_MANIFEST_INVALID' }
+      const services = raw.permissions.services ?? []
+      if (!Array.isArray(services) || services.some((service) => !PUBLIC_SERVICES.has(service))) {
+        return { code: 'PLUGIN_PERMISSION_DENIED' }
+      }
+    }
     if (!raw.version || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(raw.version)) return null
     if (!existsSync(join(dir, 'main.js'))) return null
     if (raw.apiVersion !== undefined && (!Number.isInteger(raw.apiVersion) || raw.apiVersion < 1)) {
@@ -167,7 +179,7 @@ function copyDir(source: string, target: string): void {
 }
 
 function backupData(dataDir: string, pluginId: string, now: number, maxBackups: number): string | null {
-  const source = join(dataDir, 'plugins', pluginId)
+  const source = join(dataDir, 'plugin-data', pluginId)
   if (!existsSync(source)) return null
   const root = join(dataDir, 'plugin-backups', pluginId)
   mkdirSync(root, { recursive: true })
@@ -303,7 +315,7 @@ export function installPlugin(options: InstallOptions): InstallResult {
   renameSync(stagingDir, finalDir)
 
   const backupDir = isUpdate ? backupData(options.dataDir, id, now, options.maxBackups ?? 5) : null
-  const dataDir = join(options.dataDir, 'plugins', id)
+  const dataDir = join(options.dataDir, 'plugin-data', id)
   mkdirSync(dataDir, { recursive: true })
   const stagedEntry = stageChild({ ...options, hostVersion: options.hostVersion ?? 'unknown' })
   const entry = options.hostChildEntry ?? stagedEntry
@@ -382,7 +394,7 @@ export function uninstallPlugin(dataDir: string, pluginId: string, keepData = tr
   const current = state.plugins[pluginId]
   if (!current) return { ok: false, code: 'PLUGIN_NOT_INSTALLED', message: pluginId }
   rmSync(current.packageDir, { recursive: true, force: true })
-  if (!keepData) rmSync(join(dataDir, 'plugins', pluginId), { recursive: true, force: true })
+  if (!keepData) rmSync(join(dataDir, 'plugin-data', pluginId), { recursive: true, force: true })
   const plugins = { ...state.plugins }
   delete plugins[pluginId]
   writeInstallState(dataDir, { schema: 1, plugins })

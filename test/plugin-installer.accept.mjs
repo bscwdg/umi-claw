@@ -50,7 +50,7 @@ await r.check('C2-1', '首次安装：验签 → 解包到 plugin-packages/<id>/
     assertEq(res.record.version, '1.0.0')
     assertEq(res.record.trustLevel, 'self')
     assert(existsSync(join(dataDir, 'plugin-packages', 'demo', '1.0.0', 'main.js')), '包文件解出')
-    assert(existsSync(join(dataDir, 'plugins', 'demo')), '数据目录创建')
+    assert(existsSync(join(dataDir, 'plugin-data', 'demo')), '数据目录创建')
     const state = mod.readInstallState(dataDir)
     assertEq(state.plugins.demo.version, '1.0.0', '状态写入')
     return '首次安装 ✓'
@@ -67,7 +67,7 @@ await r.check('C2-2', '更新：旧版本进 previous、数据先快照；回滚
     makeSource(src1, '1.0.0')
     const p1 = await pack(root, src1, '1.0.0')
     assertEq(mod.installPlugin({ dataDir, packageFile: p1.out, allowSelfSigned: true, now: 1000 }).ok, true)
-    writeFileSync(join(dataDir, 'plugins', 'demo', 'keep.txt'), 'v1-data', 'utf8')
+    writeFileSync(join(dataDir, 'plugin-data', 'demo', 'keep.txt'), 'v1-data', 'utf8')
 
     const src2 = join(root, 'src2')
     makeSource(src2, '1.1.0', 'module.exports={activate(){return "v2"}}')
@@ -77,13 +77,13 @@ await r.check('C2-2', '更新：旧版本进 previous、数据先快照；回滚
     assertEq(upd.record.version, '1.1.0')
     assertEq(upd.record.previous.version, '1.0.0')
     assert(existsSync(upd.record.previous.backupDir), '数据快照')
-    assertEq(readFileSync(join(dataDir, 'plugins', 'demo', 'keep.txt'), 'utf8'), 'v1-data', '更新不改数据')
+    assertEq(readFileSync(join(dataDir, 'plugin-data', 'demo', 'keep.txt'), 'utf8'), 'v1-data', '更新不改数据')
 
-    writeFileSync(join(dataDir, 'plugins', 'demo', 'keep.txt'), 'v2-data', 'utf8')
+    writeFileSync(join(dataDir, 'plugin-data', 'demo', 'keep.txt'), 'v2-data', 'utf8')
     const rb = mod.rollbackPlugin(dataDir, 'demo')
     assertEq(rb.ok, true, JSON.stringify(rb))
     assertEq(rb.record.version, '1.0.0', '回滚版本')
-    assertEq(readFileSync(join(dataDir, 'plugins', 'demo', 'keep.txt'), 'utf8'), 'v1-data', '回滚恢复快照')
+    assertEq(readFileSync(join(dataDir, 'plugin-data', 'demo', 'keep.txt'), 'utf8'), 'v1-data', '回滚恢复快照')
     return '更新/回滚 ✓'
   } finally {
     rmSync(root, { recursive: true, force: true })
@@ -98,10 +98,10 @@ await r.check('C2-3', '卸载：默认保留数据；keepData=false 删数据；
     makeSource(src)
     const p = await pack(root, src, '1.0.0')
     mod.installPlugin({ dataDir, packageFile: p.out, allowSelfSigned: true })
-    writeFileSync(join(dataDir, 'plugins', 'demo', 'x.txt'), 'x', 'utf8')
+    writeFileSync(join(dataDir, 'plugin-data', 'demo', 'x.txt'), 'x', 'utf8')
     assertEq(mod.uninstallPlugin(dataDir, 'demo', true).ok, true)
     assert(!existsSync(join(dataDir, 'plugin-packages', 'demo', '1.0.0')), '包已删')
-    assert(existsSync(join(dataDir, 'plugins', 'demo', 'x.txt')), '数据保留')
+    assert(existsSync(join(dataDir, 'plugin-data', 'demo', 'x.txt')), '数据保留')
     assertEq(mod.readInstallState(dataDir).plugins.demo, undefined, '状态移除')
     assertEq(mod.uninstallPlugin(dataDir, 'missing').code, 'PLUGIN_NOT_INSTALLED', '未知 id')
     return '卸载 ✓'
@@ -189,7 +189,7 @@ await r.check('C2-7', 'C8 备份保留：多轮更新后只保留最近 5 份快
     makeSource(src, '1.0.0')
     const p0 = await pack(root, src, '1.0.0')
     mod.installPlugin({ dataDir, packageFile: p0.out, allowSelfSigned: true })
-    writeFileSync(join(dataDir, 'plugins', 'demo', 'x.txt'), 'x', 'utf8')
+    writeFileSync(join(dataDir, 'plugin-data', 'demo', 'x.txt'), 'x', 'utf8')
     for (let i = 1; i <= 7; i += 1) {
       const s = join(root, `src-${i}`)
       makeSource(s, `1.0.${i}`)
@@ -200,6 +200,30 @@ await r.check('C2-7', 'C8 备份保留：多轮更新后只保留最近 5 份快
     const backups = readdirSync(join(dataDir, 'plugin-backups', 'demo'), { withFileTypes: true }).filter((e) => e.isDirectory())
     assertEq(backups.length, 5, '保留 5 份')
     return '备份保留 ✓'
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+await r.check('C2-8', 'P0 安装器：保留 id / 非公开服务拒绝', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'umi-inst-'))
+  try {
+    const make = (name, manifest) => {
+      const dir = join(root, name)
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, 'plugin.json'), JSON.stringify(manifest), 'utf8')
+      writeFileSync(join(dir, 'main.js'), 'module.exports={}', 'utf8')
+      return dir
+    }
+    const workSrc = make('work-src', { id: 'work', version: '1.0.0', name: 'Work' })
+    const p1 = await pack(root, workSrc, '1.0.0')
+    const reserved = mod.installPlugin({ dataDir: join(root, 'd1'), packageFile: p1.out, allowSelfSigned: true })
+    assertEq(reserved.code, 'PLUGIN_ID_RESERVED', '保留 id')
+    const httpSrc = make('http-src', { id: 'demo-http', version: '1.0.0', name: 'H', permissions: { services: ['http'] } })
+    const p2 = await pack(root, httpSrc, '1.0.0')
+    const denied = mod.installPlugin({ dataDir: join(root, 'd2'), packageFile: p2.out, allowSelfSigned: true })
+    assertEq(denied.code, 'PLUGIN_PERMISSION_DENIED', '非公开服务')
+    return '安装器校验 ✓'
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

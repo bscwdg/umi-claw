@@ -1340,15 +1340,14 @@ app.whenReady().then(async () => {
     const manager = createPluginIsolationManager({
       fork: createUtilityProcessFork(utilityProcess),
       hostVersion: app.getVersion(),
-      buildEnv: () => ({}),
-      buildExecArgv: (spec) => [
-        '--experimental-permission',
-        `--allow-fs-read=${spec.packageDir}`,
-        `--allow-fs-read=${spec.dataDir}`,
-        `--allow-fs-read=${dirname(spec.entry)}`,
-        `--allow-fs-read=${process.resourcesPath}`,
-        `--allow-fs-read=${app.getAppPath()}`
-      ],
+      buildEnv: (spec) =>
+        buildPluginPermissionEnv({
+          pluginDir: spec.packageDir,
+          dataDir: spec.dataDir,
+          cwd: spec.packageDir,
+          permissions: spec.permissions ?? {},
+          extraReadDirs: [dirname(spec.entry), process.resourcesPath, dirname(process.resourcesPath), app.getAppPath()]
+        }),
       logger: (line) => console.error('[install-probe]', line),
       serviceCall: async () => {
         throw new Error('install probe 未提供宿主服务')
