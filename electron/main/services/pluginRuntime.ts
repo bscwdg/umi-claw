@@ -42,6 +42,7 @@ import {
   createPermissionAudit,
   createPermissionBroker,
   createPermissionStore,
+  applyPermissionUpdate,
   type PermissionAction,
   type PermissionDecision,
   type PluginPermissionStore
@@ -247,9 +248,12 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     })
 
     deps.ipc.removeHandler('plugin:permissions:revoke')
-    deps.ipc.handle('plugin:permissions:revoke', (_e, payload: { id?: string }) => {
+    deps.ipc.handle('plugin:permissions:revoke', async (_e, payload: { id?: string }) => {
       const id = String(payload?.id ?? '')
       permissionStore!.revoke(id)
+      // 撤销授权后运行中进程仍持有旧 NODE_OPTIONS；C2 语义要求停/重启，
+      // P2 先把隔离进程停掉，避免撤销后继续用旧 allowlist。
+      await isolationManager?.stop(id)
       return { ok: true, data: permissionGrants() }
     })
 
@@ -402,11 +406,18 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
           }
         }
 
-        // 授权必须随 manifest 收窄：插件升级后申请范围变化时，旧授权自动夹到新 manifest，
-        // 不能让历史 grant 保留已删除的权限。
+        // 授权必须随 manifest 收窄：新 grant = 旧 grant ∩ 新 manifest；
+        // 插件升级新增的权限不会继承，必须重新授权。交集为空则撤销，
+        // 避免留下「已授权但权限为空」的静默空 grant（UI 误显示已授权）。
         for (const record of reg.list()) {
-          if (permissionStore.get(record.manifest.id)) {
-            permissionStore.grant(record.manifest.id, record.manifest.permissions ?? {})
+          const existing = permissionStore.get(record.manifest.id)
+          if (existing) {
+            applyPermissionUpdate(
+              permissionStore,
+              record.manifest.id,
+              existing.permissions,
+              record.manifest.permissions ?? {}
+            )
           }
         }
 

@@ -367,6 +367,60 @@ await r.check('S9', 'activate 期间（starting）调 ctx.services 也能回包�
   }
 })
 
+await r.check('S10', 'supervisor.invoke 保留子进程错误码（宿主可按 code 分支）', async () => {
+  const { EventEmitter } = await import('node:events')
+  const supMod = await import(
+    pathToFileURL(bundleEntry('electron/main/kernel/pluginSupervisor.ts', 'svc-supervisor-code.mjs')).href
+  )
+  class FakeChild extends EventEmitter {
+    sent = []
+    postMessage(m) {
+      this.sent.push(m)
+    }
+    kill() {
+      this.emit('exit', 0)
+    }
+  }
+  let child = null
+  const sup = supMod.createPluginSupervisor({
+    fork: () => {
+      child = new FakeChild()
+      return child
+    }
+  })
+  try {
+    const started = sup.start({
+      pluginId: 'p',
+      entry: '/x/child.js',
+      mainPath: '/x/main.cjs',
+      dataDir: '/x/data',
+      hostVersion: '5.0.0'
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    child.emit('message', { type: 'ready', version: '5.0.0' })
+    await waitFor(() => child.sent.find((m) => m.type === 'activate'), { timeout: 1000 })
+    child.emit('message', { type: 'activated' })
+    await started
+    const pending = sup.invoke('read', {})
+    const req = await waitFor(() => child.sent.find((m) => m.type === 'invoke'), { timeout: 1000 })
+    child.emit('message', {
+      type: 'result',
+      id: req.id,
+      ok: false,
+      error: { code: 'PLUGIN_PERMISSION_DENIED', message: 'denied' }
+    })
+    let err = null
+    try {
+      await pending
+    } catch (e) {
+      err = e
+    }
+    assertEq(err?.code, 'PLUGIN_PERMISSION_DENIED', 'invoke 错误码')
+  } finally {
+    await sup.stop()
+  }
+})
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin-service-bridge.json'), result)

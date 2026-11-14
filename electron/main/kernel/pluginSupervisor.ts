@@ -172,7 +172,7 @@ export class PluginSupervisor extends EventEmitter {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.activateWaiter = null
-        reject(new Error('插件 activate 超时'))
+        reject(Object.assign(new Error('插件 activate 超时'), { code: 'PLUGIN_TIMEOUT' }))
       }, this.opts.readyTimeoutMs)
       this.activateWaiter = {
         resolve: () => {
@@ -215,7 +215,11 @@ export class PluginSupervisor extends EventEmitter {
         clearTimeout(pending.timer)
         this.pending.delete(message.id)
         if (message.ok) pending.resolve(message.data)
-        else pending.reject(new Error(message.error?.message ?? '插件调用失败'))
+        else {
+          const error = new Error(message.error?.message ?? '插件调用失败') as Error & { code?: string }
+          error.code = message.error?.code ?? 'PLUGIN_OPERATION_FAILED'
+          pending.reject(error)
+        }
         break
       }
       case 'log':

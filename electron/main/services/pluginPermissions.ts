@@ -4,8 +4,8 @@
 // 边界：NODE_OPTIONS 只做 Node API 层护栏（B0：不是沙箱，网络仍可直连）。
 // 默认拒绝：manifest 没申请、用户没授权、路径不在 allowlist 内都返回 denied。
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { PluginPermissions } from '../kernel/manifest'
 import { PUBLIC_SERVICE_NAMES } from '../kernel/manifest'
 
@@ -304,6 +304,70 @@ export function buildPluginPermissionEnv(options: PermissionEnvOptions): Record<
   ]
   env.NODE_OPTIONS = flags.join(' ')
   return env
+}
+
+/** 升级时授权只能收窄：新 grant = 旧 grant ∩ 新 manifest，绝不继承新增权限 */
+export function intersectPermissions(
+  oldPermissions: PluginPermissions,
+  nextPermissions: PluginPermissions
+): PluginPermissions {
+  const intersect = (a?: string[], b?: string[]): string[] => {
+    if (!a?.length || !b?.length) return []
+    const next = new Set(b)
+    return a.filter((item) => next.has(item))
+  }
+  const out: PluginPermissions = {}
+  const read = intersect(oldPermissions.fs?.read, nextPermissions.fs?.read)
+  const write = intersect(oldPermissions.fs?.write, nextPermissions.fs?.write)
+  if (read.length || write.length) out.fs = { ...(read.length ? { read } : {}), ...(write.length ? { write } : {}) }
+  const network = intersect(oldPermissions.network, nextPermissions.network)
+  if (network.length) out.network = network
+  const services = intersect(oldPermissions.services, nextPermissions.services)
+  if (services.length) out.services = services
+  return out
+}
+
+/** 安装期拒绝 reparse point：Node 权限模型不解析 junction/symlink，包内预置链接可越界 */
+export function findReparsePoint(root: string): string | null {
+  let stat
+  try {
+    stat = lstatSync(root)
+  } catch {
+    return null
+  }
+  if (stat.isSymbolicLink()) return root
+  if (!stat.isDirectory()) return null
+  let entries
+  try {
+    entries = readdirSync(root, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const entry of entries) {
+    const child = join(root, entry.name)
+    if (entry.isSymbolicLink()) return child
+    if (entry.isDirectory()) {
+      const found = findReparsePoint(child)
+      if (found) return found
+    }
+  }
+  return null
+}
+
+/** 升级 reconcile：交集为空则撤销，避免「已授权但权限为空」的假授权；返回是否仍授权 */
+export function applyPermissionUpdate(
+  store: PluginPermissionStore,
+  pluginId: string,
+  oldPermissions: PluginPermissions,
+  nextPermissions: PluginPermissions
+): boolean {
+  const merged = intersectPermissions(oldPermissions, nextPermissions)
+  if (Object.keys(merged).length === 0) {
+    store.revoke(pluginId)
+    return false
+  }
+  store.grant(pluginId, merged)
+  return true
 }
 
 /** 仅供测试/诊断：判断路径是否落在根内（不暴露到对外 API） */

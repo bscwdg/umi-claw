@@ -12,6 +12,7 @@ import {
   type PluginSupervisor
 } from '../kernel'
 import type { PluginPermissions } from '../kernel/manifest'
+import { findReparsePoint } from './pluginPermissions'
 
 export interface IsolatedPluginSpec {
   pluginId: string
@@ -69,6 +70,12 @@ export function createPluginIsolationManager(
     async start(spec) {
       if (supervisors.has(spec.pluginId)) {
         throw Object.assign(new Error(`隔离插件已启动：${spec.pluginId}`), { code: 'PLUGIN_OPERATION_FAILED' })
+      }
+      const reparse = findReparsePoint(spec.packageDir)
+      if (reparse) {
+        throw Object.assign(new Error(`插件包包含 reparse point，拒绝启动：${reparse}`), {
+          code: 'PLUGIN_PERMISSION_CONFIG_INVALID'
+        })
       }
       const supervisor = createPluginSupervisor({
         fork: options.fork,

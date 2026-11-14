@@ -14,6 +14,7 @@ import {
   __dirname,
   assert,
   assertEq,
+  assertDeepEq,
   bundleEntry,
   printResult,
   repoRoot,
@@ -304,6 +305,61 @@ await r.check('P11', '内部服务永不对第三方开放：manifest 拒绝 con
     store.grant('p1', { services: ['consent'] })
     assertEq(broker.check('p1', { type: 'service', name: 'consent' }).allowed, false, 'consent 被 broker 拒绝')
     return '内部服务 allowlist ✓'
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await r.check('P12', '升级授权只收窄：新 grant = 旧 grant ∩ 新 manifest，新增权限不继承', async () => {
+  const oldPerms = {
+    fs: { read: ['a', 'b'], write: ['c'] },
+    network: ['x.com'],
+    services: ['kv', 'db']
+  }
+  const nextPerms = {
+    fs: { read: ['b', 'c'], write: ['c', 'd'] },
+    network: ['x.com', 'y.com'],
+    services: ['db', 'secrets']
+  }
+  const merged = permMod.intersectPermissions(oldPerms, nextPerms)
+  assertDeepEq(merged, {
+    fs: { read: ['b'], write: ['c'] },
+    network: ['x.com'],
+    services: ['db']
+  })
+  assertEq(permMod.intersectPermissions({}, nextPerms).services, undefined, '旧授权为空则不继承')
+  return '授权求交 ✓'
+})
+
+await r.check('P13', '安装期 reparse point 检测：junction 被识别并拒绝', async () => {
+  if (process.platform !== 'win32') return '跳过：非 Windows'
+  const dir = mkdtempSync(join(tmpdir(), 'umi-reparse-'))
+  const target = join(dir, 'target')
+  const link = join(dir, 'link')
+  mkdirSync(target)
+  writeFileSync(join(target, 'x.txt'), 'x')
+  const res = spawnSync('cmd', ['/c', 'mklink', '/J', link, target], { encoding: 'utf8' })
+  try {
+    if (res.status !== 0) return '跳过：当前环境不允许创建 junction'
+    assertEq(permMod.findReparsePoint(dir), link, 'junction 被识别')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+  return 'reparse point 检测 ✓'
+})
+
+await r.check('P14', '升级 reconcile：交集为空时撤销，不留下假授权', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'umi-grant-'))
+  try {
+    const store = permMod.createPermissionStore(join(dir, 'permissions.json'))
+    store.grant('p', { services: ['kv'] })
+    const kept = permMod.applyPermissionUpdate(store, 'p', { services: ['kv'] }, { services: ['kv', 'db'] })
+    assertEq(kept, true, '有交集保留授权')
+    assertEq(store.get('p')?.permissions.services.join(','), 'kv', '新增 db 不继承')
+    const revoked = permMod.applyPermissionUpdate(store, 'p', { services: ['kv'] }, { services: ['db'] })
+    assertEq(revoked, false, '无交集撤销')
+    assertEq(store.get('p'), undefined, 'store 已撤销')
+    return '空交集撤销 ✓'
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
