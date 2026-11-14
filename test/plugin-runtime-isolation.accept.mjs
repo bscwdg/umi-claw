@@ -14,7 +14,10 @@ import { Recorder, __dirname, assert, assertEq, bundleEntry, printResult, repoRo
 const r = new Recorder('Phase 2 · pluginRuntime 隔离生命周期（P1）')
 const runtimeMod = await import(
   pathToFileURL(
-    bundleEntry('electron/main/services/pluginRuntime.ts', 'runtime-isolation.mjs', { stubElectron: true })
+    bundleEntry('electron/main/services/pluginRuntime.ts', 'runtime-isolation.mjs', {
+      stubElectron: true,
+      externals: ['adm-zip']
+    })
   ).href
 )
 
@@ -173,6 +176,53 @@ await r.check('R3', '安装态文件驱动：runtime.init 自动启动 enabled �
     assertEq(runtime.isolatedStatuses().length, 1, 'init 自动启动')
     assertEq(runtime.isolatedStatuses()[0].pluginId, 'p', 'pluginId')
     assertEq(runtime.isolatedStatuses()[0].version, '1.0.0', 'version')
+  } finally {
+    process.env.UMI_PLUGIN_ISOLATION = '0'
+    await runtime.disposeHost()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+const pkgMod = await import(
+  pathToFileURL(bundleEntry('electron/main/services/pluginPackage.ts', 'runtime-pkg.mjs', { externals: ['adm-zip'] })).href
+)
+
+await r.check('R4', 'runtime.installFromPackage：安装 + 自动启动隔离插件（C2 产品链路）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'umi-rt-'))
+  const resources = join(dir, 'resources')
+  mkdirSync(join(resources, 'plugins'), { recursive: true })
+  const src = join(dir, 'src')
+  mkdirSync(src, { recursive: true })
+  writeFileSync(join(src, 'plugin.json'), JSON.stringify({ id: 'inst', version: '1.0.0', name: 'Inst' }), 'utf8')
+  writeFileSync(join(src, 'main.js'), 'module.exports={}', 'utf8')
+  const kp = pkgMod.generateSigningKeyPair()
+  const pkgFile = join(dir, 'inst.umi-plugin')
+  pkgMod.packPlugin({
+    sourceDir: src,
+    outFile: pkgFile,
+    keyId: kp.keyId,
+    privateKeyPem: kp.privateKeyPem,
+    publicKeyBase64: kp.publicKeyBase64
+  })
+  let child = null
+  process.env.UMI_PLUGIN_ISOLATION = '1'
+  const runtime = runtimeMod.createPluginRuntime(
+    createDeps(dir, resources, () => {
+      child = new FakeChild()
+      return child
+    })
+  )
+  try {
+    await runtime.init()
+    const installing = runtime.installFromPackage({ packageFile: pkgFile, allowSelfSigned: true })
+    await waitFor(() => child, { timeout: 2000 })
+    await driveReady(child)
+    const result = await installing
+    assertEq(result.ok, true, JSON.stringify(result))
+    assertEq(result.record.version, '1.0.0', '安装版本')
+    assertEq(runtime.installedPlugins().plugins.inst.version, '1.0.0', '安装态')
+    assertEq(runtime.isolatedStatuses().length, 1, '自动启动')
+    assertEq(runtime.isolatedStatuses()[0].pluginId, 'inst', '隔离状态 id')
   } finally {
     process.env.UMI_PLUGIN_ISOLATION = '0'
     await runtime.disposeHost()

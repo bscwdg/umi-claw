@@ -435,6 +435,7 @@ async function initPlugins(): Promise<void> {
       resourcesPath: process.resourcesPath,
       isPackaged: app.isPackaged
     }),
+    pluginChildEntry: () => join(__dirname, 'pluginProcessChild.js'),
     subscribeResume: (callback) => {
       powerMonitor.on('resume', callback)
       return () => powerMonitor.removeListener('resume', callback)

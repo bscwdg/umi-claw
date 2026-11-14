@@ -49,6 +49,15 @@ import {
 } from './pluginPermissions'
 import { createPluginServiceBridge, type PluginServiceBridge } from './pluginServiceBridge'
 import {
+  installPlugin as installPluginPackage,
+  readInstallState,
+  rollbackPlugin as rollbackInstalledPlugin,
+  uninstallPlugin as uninstallInstalledPlugin,
+  type InstallRecord,
+  type InstallState
+} from './pluginInstaller'
+import { readKeyring } from './pluginPackage'
+import {
   createPluginIsolationManager,
   type IsolatedPluginSpec,
   type IsolatedPluginStatus,
@@ -110,6 +119,8 @@ export interface PluginRuntimeDeps {
     resourcesPath: string
     isPackaged: boolean
   }
+  /** Phase 2 C2：宿主 child 入口（安装时 staging 到 dataDir，避免 Program Files 空格路径） */
+  pluginChildEntry?: () => string
   subscribeResume: (callback: () => void) => () => void
   broadcast: (channel: string, payload: unknown) => void
   logger: (line: string) => void
@@ -137,6 +148,15 @@ export interface PluginRuntime {
   permissionGrants(): Array<{ id: string; granted: boolean; grantedAt: number | null; requested: unknown }>
   /** Phase 1 B3：子进程服务调用（supervisor onService 用）；过权限 broker */
   callPluginService(pluginId: string, service: string, method: string, args: unknown[]): Promise<unknown>
+  /** Phase 2 C2：安装/更新/回滚/卸载（安装包路径由 UI/CLI 提供） */
+  installFromPackage(input: {
+    packageFile: string
+    allowSelfSigned?: boolean
+    tofuFingerprint?: string
+  }): Promise<{ ok: boolean; code?: string; message?: string; record?: InstallRecord; updated?: boolean }>
+  rollbackInstalled(pluginId: string): Promise<{ ok: boolean; code?: string; message?: string }>
+  uninstallInstalled(pluginId: string, keepData?: boolean): Promise<{ ok: boolean; code?: string; message?: string }>
+  installedPlugins(): InstallState
   /** Phase 2 P1：生产 runtime 管理的隔离插件生命周期（flag off 时拒绝） */
   startIsolatedPlugin(spec: IsolatedPluginSpec): Promise<void>
   stopIsolatedPlugin(pluginId: string): Promise<void>
@@ -226,6 +246,32 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     })
   }
 
+  const installFromPackageInternal = async (input: {
+    packageFile: string
+    allowSelfSigned?: boolean
+    tofuFingerprint?: string
+  }): Promise<{ ok: boolean; code?: string; message?: string; record?: InstallRecord; updated?: boolean }> => {
+    const dataDir = deps.dataDir()
+    const keyring = readKeyring(join(dataDir, 'plugin-keys.json'))
+    await isolationManager?.stopAll()
+    const result = installPluginPackage({
+      dataDir,
+      packageFile: input.packageFile,
+      keyring,
+      allowSelfSigned: input.allowSelfSigned,
+      tofuFingerprint: input.tofuFingerprint,
+      stagingChildSource: deps.pluginChildEntry?.(),
+      hostVersion: deps.appInfo().version
+    })
+    if (!result.ok) return { ok: false, code: result.code, message: result.message }
+    try {
+      await startInstalledRecord(result.record)
+    } catch (e) {
+      deps.logger(`[plugin:${result.record.id}] 安装后启动失败：${(e as Error)?.message ?? e}`)
+    }
+    return { ok: true, record: result.record, updated: result.updated }
+  }
+
   const registerHostIpc = (stateStore: ReturnType<typeof createJsonStateStore>): void => {    deps.ipc.removeHandler('plugin:list')
     deps.ipc.handle('plugin:list', () => ({ ok: true, data: statuses() }))
 
@@ -243,6 +289,49 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       ok: true,
       data: isolationManager?.statuses() ?? []
     }))
+
+    deps.ipc.removeHandler('plugin:install')
+    deps.ipc.handle('plugin:install', async (_e, payload: { packageFile?: string; allowSelfSigned?: boolean; tofuFingerprint?: string }) => {
+      const packageFile = String(payload?.packageFile ?? '')
+      if (!packageFile) return { ok: false, error: { code: 'VALIDATION_ERROR', message: '缺少 packageFile' } }
+      const result = await installFromPackageInternal({
+        packageFile,
+        allowSelfSigned: Boolean(payload?.allowSelfSigned),
+        tofuFingerprint: payload?.tofuFingerprint
+      })
+      return result.ok
+        ? { ok: true, data: result }
+        : { ok: false, error: { code: result.code ?? 'PLUGIN_OPERATION_FAILED', message: result.message ?? '安装失败' } }
+    })
+    deps.ipc.removeHandler('plugin:update')
+    deps.ipc.handle('plugin:update', async (_e, payload: { packageFile?: string; allowSelfSigned?: boolean; tofuFingerprint?: string }) => {
+      const packageFile = String(payload?.packageFile ?? '')
+      if (!packageFile) return { ok: false, error: { code: 'VALIDATION_ERROR', message: '缺少 packageFile' } }
+      const result = await installFromPackageInternal({
+        packageFile,
+        allowSelfSigned: Boolean(payload?.allowSelfSigned),
+        tofuFingerprint: payload?.tofuFingerprint
+      })
+      return result.ok
+        ? { ok: true, data: result }
+        : { ok: false, error: { code: result.code ?? 'PLUGIN_OPERATION_FAILED', message: result.message ?? '更新失败' } }
+    })
+    deps.ipc.removeHandler('plugin:rollback')
+    deps.ipc.handle('plugin:rollback', async (_e, payload: { id?: string }) => {
+      const result = await (async () => { await isolationManager?.stop(String(payload?.id ?? '')); const r = rollbackInstalledPlugin(deps.dataDir(), String(payload?.id ?? '')); if (r.ok) { try { await startInstalledRecord(r.record) } catch (e) { deps.logger(`[plugin:${payload?.id}] 回滚后启动失败：${(e as Error)?.message ?? e}`) } } return r })()
+      return result.ok
+        ? { ok: true, data: result }
+        : { ok: false, error: { code: result.code ?? 'PLUGIN_OPERATION_FAILED', message: result.message ?? '回滚失败' } }
+    })
+    deps.ipc.removeHandler('plugin:uninstall')
+    deps.ipc.handle('plugin:uninstall', async (_e, payload: { id?: string; keepData?: boolean }) => {
+      await isolationManager?.stop(String(payload?.id ?? '')); const result = uninstallInstalledPlugin(deps.dataDir(), String(payload?.id ?? ''), payload?.keepData !== false)
+      return result.ok
+        ? { ok: true, data: result }
+        : { ok: false, error: { code: result.code ?? 'PLUGIN_OPERATION_FAILED', message: result.message ?? '卸载失败' } }
+    })
+    deps.ipc.removeHandler('plugin:installed')
+    deps.ipc.handle('plugin:installed', () => ({ ok: true, data: readInstallState(deps.dataDir()) }))
 
     deps.ipc.removeHandler('plugin:permissions:grant')
     deps.ipc.handle('plugin:permissions:grant', (_e, payload: { id?: string }) => {
@@ -290,6 +379,22 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
           }
         }
       }
+    })
+  }
+
+  async function startInstalledRecord(record: InstallRecord): Promise<void> {
+    if (!isolationManager || record.enabled === false) return
+    await isolationManager.start({
+      pluginId: record.id,
+      name: record.name,
+      version: record.version,
+      entry: record.entry,
+      mainPath: join(record.packageDir, 'main.js'),
+      packageDir: record.packageDir,
+      dataDir: record.dataDir,
+      services: record.permissions?.services ?? [],
+      permissions: record.permissions,
+      config: undefined
     })
   }
 
@@ -557,6 +662,50 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     callPluginService(pluginId, service, method, args) {
       if (!serviceBridge) return Promise.reject(new Error('服务桥未初始化'))
       return serviceBridge.call(pluginId, service, method, args)
+    },
+
+    async installFromPackage(input) {
+      const dataDir = deps.dataDir()
+      const keyring = readKeyring(join(dataDir, 'plugin-keys.json'))
+      await isolationManager?.stopAll()
+      const result = installPluginPackage({
+        dataDir,
+        packageFile: input.packageFile,
+        keyring,
+        allowSelfSigned: input.allowSelfSigned,
+        tofuFingerprint: input.tofuFingerprint,
+        stagingChildSource: deps.pluginChildEntry?.(),
+        hostVersion: deps.appInfo().version
+      })
+      if (!result.ok) return { ok: false, code: result.code, message: result.message }
+      try {
+        await startInstalledRecord(result.record)
+      } catch (e) {
+        deps.logger(`[plugin:${result.record.id}] 安装后启动失败：${(e as Error)?.message ?? e}`)
+      }
+      return { ok: true, record: result.record, updated: result.updated }
+    },
+
+    async rollbackInstalled(pluginId) {
+      await isolationManager?.stop(pluginId)
+      const result = rollbackInstalledPlugin(deps.dataDir(), pluginId)
+      if (!result.ok) return { ok: false, code: result.code, message: result.message }
+      try {
+        await startInstalledRecord(result.record)
+      } catch (e) {
+        deps.logger(`[plugin:${pluginId}] 回滚后启动失败：${(e as Error)?.message ?? e}`)
+      }
+      return { ok: true }
+    },
+
+    async uninstallInstalled(pluginId, keepData = true) {
+      await isolationManager?.stop(pluginId)
+      const result = uninstallInstalledPlugin(deps.dataDir(), pluginId, keepData)
+      return result.ok ? { ok: true } : { ok: false, code: result.code, message: result.message }
+    },
+
+    installedPlugins() {
+      return readInstallState(deps.dataDir())
     },
 
     startIsolatedPlugin(spec) {

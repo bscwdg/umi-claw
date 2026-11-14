@@ -454,6 +454,13 @@ const api = {
     revokePermissions: (id: string) => call<unknown>('plugin:permissions:revoke', { id }),
     devMode: () => call<{ plugins: boolean; build: boolean; reason: string; warning: string | null }>('plugin:dev-mode'),
     isolatedStatuses: () => call<Array<{ pluginId: string; state: string }>>('plugin:isolated:list'),
+    install: (packageFile: string, options?: { allowSelfSigned?: boolean; tofuFingerprint?: string }) =>
+      call<unknown>('plugin:install', { packageFile, ...options }),
+    update: (packageFile: string, options?: { allowSelfSigned?: boolean; tofuFingerprint?: string }) =>
+      call<unknown>('plugin:update', { packageFile, ...options }),
+    rollback: (id: string) => call<unknown>('plugin:rollback', { id }),
+    uninstall: (id: string, keepData = true) => call<unknown>('plugin:uninstall', { id, keepData }),
+    installed: () => call<{ schema: 1; plugins: Record<string, unknown> }>('plugin:installed'),
     invoke: <T = unknown>(id: string, method: string, payload?: unknown): Promise<T> => {
       if (!/^[a-z][a-z0-9-]*$/.test(id)) return Promise.reject(new Error(`插件 id 非法：${id}`))
       if (!method || /[\s:]/.test(method)) return Promise.reject(new Error(`插件方法名非法：${method}`))
