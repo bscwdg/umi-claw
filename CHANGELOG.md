@@ -26,6 +26,7 @@
 
 ### 已知限制
 - Windows 下插件子进程 cwd 锁安装目录，真机卸载 e2e 由 installer 单测覆盖。
+- **已知限制**：NODE_OPTIONS 无法表达含空格的权限路径；默认安装目录 `Program Files` 已通过 child cwd 规避，但**含有空格的数据目录/Windows 用户名**下第三方隔离插件会以 `PLUGIN_PERMISSION_CONFIG_INVALID` 拒绝启动（显式失败，不降级放行）。
 - C4 索引目前为本地静态文件导入，无在线市场。
 - 第三方 UI 隔离/市场属 Phase 3。
 

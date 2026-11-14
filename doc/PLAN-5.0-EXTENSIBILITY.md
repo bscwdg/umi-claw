@@ -354,7 +354,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
    - 官方 builtin：包 `<resources>/plugins/<id>/`（不参与安装器）；第三方包：`<dataDir>/plugin-packages/<id>/<version>/`（版本目录不可原地修改）。
    - 数据：官方 `<dataDir>/plugins/<id>/`；**第三方 `<dataDir>/plugin-data/<id>/`**（与官方命名空间隔离，卸载/删除不会碰官方数据）。
    - 快照：`<dataDir>/plugin-backups/<id>/<timestamp>/`（默认保留最近 5 份）；安装态：`<dataDir>/plugin-install-state.json`。
-   - **child 入口与权限注入**：实际启动入口用宿主 app 内 `pluginProcessChild.js`（Electron utilityProcess 不能从 dataDir 外部入口启动）；安装时复制一份到 `<dataDir>/plugin-runtime/<hostVersion>/` 作备份/诊断。权限用 **`NODE_OPTIONS` + 相对 cwd（child 入口目录）** 注入；`execArgv` 在 Electron 30 utilityProcess 下实测不生效。
+   - **child 入口与权限注入**：实际启动入口用宿主 app 内 `pluginProcessChild.js`（Electron utilityProcess 不能从 dataDir 外部入口启动）；安装时复制一份到 `<dataDir>/plugin-runtime/<hostVersion>/` 作备份/诊断。权限用 **`NODE_OPTIONS` + 相对 cwd（child 入口目录）** 注入；`execArgv` 在 Electron 30 utilityProcess 下实测不生效。已知限制：路径中含空格的 dataDir/用户名无法注入，显式抛 `PLUGIN_PERMISSION_CONFIG_INVALID`（不降级放行）。
    - 所有路径解析后必须 `realpath` 校验在允许根内；reparse point 在安装期拒绝。
 6. **权限与状态**
    - `permissions` 只允许公开服务 `db/openclaw/notifications/config/kv/secrets/voice`；`http/dialog` 在 C6 实现后再追加；`consent/abort/hostOps/legacyDb` 永不对第三方开放。
