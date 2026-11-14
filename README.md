@@ -4,6 +4,8 @@
 >
 > 愿景：简单点，无需复杂安装即可让每个人享受 AI 带来的便利
 
+> **本文件是 `release/5.0` 分支说明**；全版本选择与总览见 [master README](https://github.com/bscwdg/umi-claw/blob/master/README.md)。5.0 已 GA（`v5.0.0`），本分支 HEAD 含 GA 后的修复。
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## 项目特性
@@ -231,11 +233,11 @@ umi-claw/
 │   └── installer.nsh           # NSIS 钩子：升级时自动搬迁旧版数据目录
 ├── scripts/
 │   └── run-all-accept.mjs      # 一键跑全部验收
-├── test/                       # 验收：28 套 accept + 一天 e2e + 打包态 smoke（合计 30 套）
+├── test/                       # 验收：54 套 accept + e2e + 打包态 smoke（合计 59 套 / 5.0 实测 944 项）
 │   ├── _lib.mjs                # 验收公共库
 │   ├── _ui.mjs                 # UI 验收公共库
 │   └── fixtures/               # 验收夹具
-├── CLAUDE.md / PLAN-3.0.md    # Agent 开发指引 / 3.0 规划
+├── AGENTS.md / PLAN-3.0.md    # Agent 开发指引 / 3.0 规划
 ├── run-shared.bat             # 共享运行脚本
 └── package.json
 ```
@@ -255,9 +257,12 @@ umi-claw/
 
 ## 文档
 
+- [master 全版本总览](https://github.com/bscwdg/umi-claw/blob/master/README.md)
 - [4.0 插件化架构规划](PLAN-4.0.md)
 - [5.0 第三方插件扩展规划](doc/PLAN-5.0-EXTENSIBILITY.md)
 - [插件 API v1.0](doc/PLUGIN-API.md)
+- [5.0 更新日志](CHANGELOG.md)
+- [大肥鱼使用指南](doc/大肥鱼-使用指南.md)
 - [4.0 启动优化与排障](doc/OPT-STARTUP-4.0.md)
 - [4.0 开发进度](doc/PROGRESS-4.0.md)
 - [4.0 运行手册](doc/RUNBOOK-4.0.md)
@@ -286,7 +291,7 @@ npm run dev
 # 类型检查
 npm run typecheck
 
-# 一键跑全部验收（28 套 accept + e2e + smoke，合计 30 套）
+# 一键跑全部验收（59 套 / 944 项（943 通过 + 1 显式跳过；GA 留档 942）+ node:test 21 条）
 npm run accept
 ```
 
@@ -487,6 +492,30 @@ window.api.work.reminder.availablePushChannels()               // 可用推送�
 window.api.work.reminder.availablePushTargets(channel)         // 渠道下可选目标
 window.api.work.reminder.testPush() / .getPushStatus() / .check()
 ```
+
+### 第三方插件 / 宿主模块（5.0）
+
+```typescript
+// 插件管理
+window.api.plugins.list() / .setEnabled(id, enabled) / .invoke(id, method, payload) / .onChanged(cb)
+window.api.plugins.pickPackage() / .inspectPackage(file)
+window.api.plugins.install(file, { allowSelfSigned?, tofuFingerprint? }) / .update(...)
+window.api.plugins.rollback(id) / .uninstall(id, keepData) / .installed()
+window.api.plugins.permissions() / .grantPermissions(id) / .revokePermissions(id)
+window.api.plugins.devMode() / .isolatedStatuses() / .invokeIsolated(id, method, payload)
+window.api.plugins.getConfig(id) / .setConfig(id, config) / .diagnostics() / .indexEntries()
+window.api.pluginImports.status() / .retry(pluginId)   // 旧数据导入状态
+window.api.consent.status() / .grant() / .revoke()     // 用户协议（宿主单源）
+
+// 大肥鱼 / 语音（宿主模块）
+window.api.character.status() / .state() / .settings.* / .interact() / .reset()
+window.api.character.bootstrap.* / .life.* / .memory.* / .voice.* / .persona.* / .knowledge.*
+window.api.character.stickers.* / .content.* / .backup.* / .chatChannels.* / .safety.* / .pet.* / .chat.*
+window.api.character.onEmotion(cb) / .onOpenPage(cb) / .onEvent(cb)
+window.api.fish.voice.*    // TTS / 克隆 / 外部 TTS
+```
+
+> 接口契约与 manifest 字段见 [PLUGIN-API.md](doc/PLUGIN-API.md)；渲染端不得持有网关 token 或直连数据库。
 
 ## 渠道接入
 
