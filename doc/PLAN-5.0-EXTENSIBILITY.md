@@ -418,7 +418,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 | 打包 | `npm run build` + packaged smoke |
 | 审查 | AGENTS §12：每 commit 对抗审查；每 WP 两次独立检查 |
 
-**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**54 套**（ACCEPT 50 + e2e×4 + smoke）、accept result **941 项（940 通过 + 1 显式跳过）** + `node:test` **21 条** = **953**。AGENTS/RUNBOOK 已同步该口径（2026-11-14 Phase 1 收尾）；release/4.0 在 voice 合并后复核。后续以每次留档为准。
+**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**59 套**（ACCEPT 54 + e2e×4 + smoke）、accept result **941 项（940 通过 + 1 显式跳过）** + `node:test` **21 条** = **962**。AGENTS/RUNBOOK 已同步该口径（2026-11-14 Phase 1 收尾）；release/4.0 在 voice 合并后复核。后续以每次留档为准。
 
 ---
 

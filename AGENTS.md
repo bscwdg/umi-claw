@@ -114,7 +114,7 @@ doc/                 # 计划、施工日志、运维手册、调研
 
 **规则**：`plugins/<id>/domain/**/*Manager.ts` 与 `contextEngine.ts` **禁止** `import ... from 'electron'`（WP3 起域代码住在 `plugins/<id>/domain/`；宿主 `electron/main/{work,marketing}` 已删除）。
 
-**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 54 套验收能在纯 Node 里跑真源码的前提。
+**现状证据**：0 / 34 个域文件命中（`plugins/*/domain`，其中 21 个 `*Manager.ts`）。这是 59 套验收能在纯 Node 里跑真源码的前提。
 
 **写法**：工厂函数 + 显式 options，不 `new`、不单例、不从全局推。
 
@@ -354,7 +354,7 @@ export default { routes, nav, slot, setup } as PluginUiModule
 # ① 双 typecheck 0 错
 npm run typecheck:node; npm run typecheck:web
 
-# ② 全量验收 56 套（ACCEPT 52 + e2e×4 + smoke，941 项检查（940 通过 + 1 显式跳过）；node:test 21 条另计）
+# ② 全量验收 59 套（ACCEPT 54 + e2e×4 + smoke，941 项检查（940 通过 + 1 显式跳过）；node:test 21 条另计）
 npm run accept
 
 # ③ 插件边界门禁（ratchet：只准降不准升；权威定义与基线见 scripts/check-boundaries.mjs 与 scripts/boundary-baseline.json）
