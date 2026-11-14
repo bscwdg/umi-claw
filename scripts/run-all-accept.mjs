@@ -69,6 +69,8 @@ const ACCEPT = [
   ['plugin-isolation', 'test/plugin-isolation.accept.mjs'],
   ['plugin-permissions', 'test/plugin-permissions.accept.mjs'],
   ['plugin-service-bridge', 'test/plugin-service-bridge.accept.mjs'],
+  ['plugin-isolation-manager', 'test/plugin-isolation-manager.accept.mjs'],
+  ['plugin-runtime-isolation', 'test/plugin-runtime-isolation.accept.mjs'],
   ['plugin-dev-mode', 'test/plugin-dev-mode.accept.mjs'],
   ['consent', 'test/consent.accept.mjs'],
   ['ui', 'test/ui.accept.mjs']

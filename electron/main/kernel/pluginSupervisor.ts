@@ -66,14 +66,14 @@ export class PluginSupervisor extends EventEmitter {
   constructor(options: PluginSupervisorOptions) {
     super()
     this.opts = {
-      readyTimeoutMs: 10_000,
-      heartbeatIntervalMs: 5_000,
-      heartbeatTimeoutMs: 2_000,
-      backoffMs: DEFAULT_BACKOFF,
-      crashWindowMs: 5 * 60_000,
-      crashLimit: 3,
-      stopTimeoutMs: 3000,
       ...options,
+      readyTimeoutMs: options.readyTimeoutMs ?? 10_000,
+      heartbeatIntervalMs: options.heartbeatIntervalMs ?? 5_000,
+      heartbeatTimeoutMs: options.heartbeatTimeoutMs ?? 2_000,
+      backoffMs: options.backoffMs ?? DEFAULT_BACKOFF,
+      crashWindowMs: options.crashWindowMs ?? 5 * 60_000,
+      crashLimit: options.crashLimit ?? 3,
+      stopTimeoutMs: options.stopTimeoutMs ?? 3000,
       serviceTimeoutMs: options.serviceTimeoutMs ?? 30_000
     }
     // 心跳必须「发一次后等超时，再发下一次」；interval <= timeout 会让 deadline 永远被下一次 ping 清掉

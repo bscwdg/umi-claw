@@ -67,7 +67,7 @@
 如果确认要彻底清理：
 
 1. 先备份 `<dataDir>/plugins/`（插件数据）与 `voice/`（音色密钥）。
-2. 删除 `<dataDir>` 下：`plugins/`、`work.db*`、`umi-claw.db*`、`plugin-config.json`、`plugins-state.json`。
+2. 删除 `<dataDir>` 下：`plugins/`（插件数据）、`plugin-packages/`（第三方包）、`plugin-backups/`（升级快照）、`plugin-keys.json`、`plugin-trust.json`、`plugin-revocations.json`、`plugin-install-state.json`、`work.db*`、`umi-claw.db*`、`plugin-config.json`、`plugins-state.json`。
 3. `backup/` 里是各库的迁移前快照，可一并保留一段时间。
 
 ---

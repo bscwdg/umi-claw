@@ -30,7 +30,8 @@ import { createTerminalSessionRegistry } from './terminalSessions'
 
 // ── 4.0 插件内核（Phase 0/1）──────────────────────────────────────────────────
 import { createPluginRuntime, type PluginRuntime } from './services/pluginRuntime'
-import { PluginSupervisor, createUtilityProcessFork } from './kernel'
+import { createUtilityProcessFork } from './kernel'
+import { createPluginIsolationManager } from './services/pluginIsolationManager'
 import { buildPluginPermissionEnv } from './services/pluginPermissions'
 import { createPermissionAudit, createPermissionBroker, createPermissionStore } from './services/pluginPermissions'
 import { createPluginServiceBridge } from './services/pluginServiceBridge'
@@ -414,6 +415,7 @@ async function initPlugins(): Promise<void> {
     // 用户协议（4.1.1 宿主单源）：插件经 ctx.services.consent 读写，不碰自己的库
     // 后台任务中止登记（4.2 B3）：插件自注册，宿主不再反向依赖插件内部函数
     abort: () => abortRegistry,
+    utilityProcess,
     consent: () => ({
       status: () => consentService.status(),
       grant: () => consentService.grant(),
@@ -1338,33 +1340,34 @@ app.whenReady().then(async () => {
       resolveService: (_id, name) =>
         name === 'kv' ? { get: async () => 'host-value', set: async () => true } : undefined
     })
-    const supervisor = new PluginSupervisor({
+    const manager = createPluginIsolationManager({
       fork: createUtilityProcessFork(utilityProcess),
+      hostVersion: app.getVersion(),
+      buildEnv: (spec) =>
+        buildPluginPermissionEnv({
+          pluginDir: spec.packageDir,
+          dataDir: spec.dataDir,
+          cwd: dirname(spec.mainPath),
+          permissions: {},
+          extraReadDirs: [
+            dirname(spec.entry),
+            process.resourcesPath,
+            dirname(process.resourcesPath),
+            app.getAppPath()
+          ]
+        }),
       logger: (line) => console.error('[isolation-probe]', line),
-      onService: (id, service, method, args) => serviceBridge.call(id, service, method, args)
+      serviceCall: (id, service, method, args) => serviceBridge.call(id, service, method, args)
     })
     try {
       if (!mainPath) throw new Error('缺少 UMI_ISOLATION_MAIN')
       const entry = join(__dirname, 'pluginProcessChild.js')
-      const env = buildPluginPermissionEnv({
-        pluginDir,
-        dataDir,
-        cwd: process.cwd(),
-        permissions: {},
-        extraReadDirs: [
-          dirname(entry),
-          process.resourcesPath,
-          dirname(process.resourcesPath),
-          app.getAppPath()
-        ]
-      })
-      await supervisor.start({
+      await manager.start({
         pluginId: 'probe',
         entry,
         mainPath,
+        packageDir: dirname(mainPath),
         dataDir,
-        hostVersion: app.getVersion(),
-        cwd: process.cwd(),
         services: ['kv'],
         config: {
           secretPath: hostSecretPath,
@@ -1375,14 +1378,13 @@ app.whenReady().then(async () => {
             'rollup-win32-x64-msvc',
             'rollup.win32-x64-msvc.node'
           )
-        },
-        env
+        }
       })
-      const result = await supervisor.invoke('read')
+      const result = await manager.invoke('probe', 'read')
       const security: Record<string, unknown> = {}
       for (const method of ['escape', 'spawn', 'worker', 'native', 'env']) {
         try {
-          security[method] = { ok: true, value: await supervisor.invoke(method) }
+          security[method] = { ok: true, value: await manager.invoke('probe', method) }
         } catch (e) {
           security[method] = {
             ok: false,
@@ -1393,7 +1395,13 @@ app.whenReady().then(async () => {
       }
       writeFileSync(
         join(probeDir, 'isolation-probe.json'),
-        JSON.stringify({ ok: true, result, security, state: supervisor.state, at: Date.now() })
+        JSON.stringify({
+          ok: true,
+          result,
+          security,
+          state: manager.statuses()[0]?.state,
+          at: Date.now()
+        })
       )
     } catch (e) {
       writeFileSync(
@@ -1401,7 +1409,7 @@ app.whenReady().then(async () => {
         JSON.stringify({ ok: false, error: (e as Error)?.message ?? String(e), at: Date.now() })
       )
     } finally {
-      await supervisor.dispose()
+      await manager.stopAll()
       app.quit()
     }
     return

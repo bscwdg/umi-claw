@@ -265,7 +265,9 @@ export function bundleEntry(entryRelPath, outName, options = {}) {
       '--platform=node',
       '--format=esm',
       '--target=node20',
-      '--external:electron',
+      ...(options.stubElectron
+        ? [`--alias:electron=${join(repoRoot, 'test', 'fixtures', 'electron-stub.mjs')}`]
+        : ['--external:electron']),
       ...externals.map((name) => `--external:${name}`),
       ...alias.map((entry) => `--alias:${entry}`),
       '--log-level=warning',

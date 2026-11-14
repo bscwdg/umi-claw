@@ -61,7 +61,7 @@ export interface PluginModule {
 
 ---
 
-## 二、manifest（v2）
+## 二、manifest（v1 + Phase 2 扩展）
 
 ```json
 {
@@ -72,20 +72,11 @@ export interface PluginModule {
   "engines": { "host": ">=5.0.0 <6.0.0" },
   "description": "一句话说明",
   "permissions": {
-    "data": "own",
-    "kv": true,
-    "secrets": [],
-    "db": true,
-    "config": true,
-    "openclaw": { "model": true, "channels": [] },
-    "notifications": false,
-    "http": [],
-    "dialog": false
+    "fs": { "read": ["docs"], "write": ["cache"] },
+    "network": ["api.example.com"],
+    "services": ["db", "kv"]
   },
   "configSchema": { "type": "object", "properties": {} },
-  "activation": ["onStartup"],
-  "contributes": { "navGroup": { "id": "example", "label": "示例" }, "routes": ["/example"], "settings": [], "commands": [] },
-  "channels": [],
   "defaultEnabled": false
 }
 ```
@@ -94,7 +85,11 @@ export interface PluginModule {
 
 - `id`：`^[a-z][a-z0-9-]*$`；保留字 `host`/`plugin`/`system`/`app`/`umi` 及后续登记项禁止。
 - `apiVersion` 必须为 >=1 的整数（**缺省 1**）；`engines.host` 若声明必须可解析（缺省不限制）；声明了但宿主不满足 → 注册期拒绝（`MANIFEST_INVALID`，field=apiVersion/engines.host）。
-- `permissions` 未知键 **fail-closed**（拒绝），不做静默忽略。
+- `permissions` 形状固定为 `{fs:{read?,write?}, network?, services?}`：
+  - `fs` 只允许插件目录/数据目录内的相对路径，禁绝对路径、`..`、盘符、空白/控制字符；未知键 fail-closed。
+  - `network` 为域名 allowlist；`*.` 只匹配子域，不匹配裸域。
+  - `services` 只允许公开服务清单（`db/openclaw/notifications/config/kv/secrets/voice`；http/dialog 在 C6 实现后追加）。
+  - 未知键/未知服务 **fail-closed**，不做静默忽略。
 - `configSchema` 仅 JSON Schema 子集（见 §七）；超限拒绝。
 - 官方插件可省略 `permissions`（可信默认），第三方必须显式声明。
 - `channels` 仅官方可租用；第三方必须为空。
@@ -219,21 +214,20 @@ interface PluginDbApiV1 {
 
 | permission | 授予 |
 | --- | --- |
-| `data: "own"` | 本插件 DB |
-| `kv: true` | 本插件 KV |
-| `secrets: [key...]` | 本插件命名空间下的 key |
-| `db: true` | 插件 DB API |
-| `config: true` | 插件配置 |
-| `openclaw.model: true` | 宿主代理的模型调用（配额/模型策略由宿主） |
-| `openclaw.channels: []` | v1 必须为空；第三方不可发渠道 |
-| `notifications: true` | 系统通知 |
-| `http: [domain...]` | 宿主代理 fetch 的域名白名单 |
-| `dialog: true` | 文件选择器 |
+| `services: ["db"]` | 插件 DB API（`ctx.services.db`） |
+| `services: ["kv"]` | 本插件 KV |
+| `services: ["secrets"]` | 本插件命名空间下的 key |
+| `services: ["config"]` | 插件配置 |
+| `services: ["openclaw"]` | 宿主代理的模型调用 / 渠道状态（配额/策略由宿主） |
+| `services: ["notifications"]` | 系统通知 |
+| `services: ["voice"]` | 语音能力（仅公开面） |
+| `fs.read/write` | 数据目录/插件目录内的相对路径 |
+| `network` | 域名 allowlist（不强制拦截，仅审计/提示） |
 
-- 默认拒绝；未声明即不存在（不是 undefined 回落）。（**A3a/B2 目标**；当前 manifest 仍保留 unknown 字段、无权限校验）
-- 未知 permission 键 fail-closed。
-- 权限变更/撤销：立即生效；进行中的调用可被 abort。
-- 首次启用展示授权 UI（人能看懂的语言）；开发者模式仍需展示。
+- 默认拒绝；未声明即不存在（不是 undefined 回落）。
+- 未知 permission 键/未知服务 fail-closed。
+- 权限变更/撤销：broker 立即生效；运行中进程的 fs/network 需重启后生效（C2 实现）。
+- 首次启用展示授权 UI；开发者模式仍需展示。
 
 ### 6.2 OpenClaw 边界
 
@@ -364,4 +358,21 @@ export default definePlugin({
 
 ---
 
-*本文件是 API v1.0（Phase 0 冻结官方插件面）；第三方 permissions/configSchema/async/onDemand 为 Phase 1 增量，不改已冻结签名；破坏性变更升 major。*
+## 十五、Phase 2 增量（P0 契约冻结，2026-11-14）
+
+> 完整契约与版本门见 `doc/PLAN-5.0-EXTENSIBILITY.md` §5.0；本节只列对插件作者可见的变化。
+
+| # | 项 | 冻结口径 |
+| --- | --- | --- |
+| 1 | 来源与运行形态 | `builtin`（官方 in-process）/ `isolated`（第三方 utilityProcess）；第三方永远 isolated |
+| 2 | 包格式 | `.umi-plugin` zip：`plugin.json` + `main.js` + `SIGNATURE`；可选 `migrations/`、`icon.png`、`README.md`；禁 node_modules/.git/链接 |
+| 3 | 签名 | `SIGNATURE` 为 Ed25519；覆盖排序文件哈希；keyId/指纹/等级由宿主 keyring 校验 |
+| 4 | 信任 | official / partner / self(TOFU)；未签名包仅 dev；指纹变更需二次确认 |
+| 5 | 权限 | 首批只允许 db/openclaw/notifications/config/kv/secrets/voice；http/dialog 由 C6 实现后追加；升级只收窄，新增权限重新授权 |
+| 6 | 路径 | 包 `<dataDir>/plugin-packages/<id>/<version>/`；数据 `<dataDir>/plugins/<id>/`；快照 `<dataDir>/plugin-backups/<id>/<timestamp>/` |
+| 7 | 状态 | 进程六态不变；安装态 `installing/broken` 由 C2 引入 |
+| 8 | configSchema | 设置页只渲染白名单子集（类型/默认/label/枚举）；禁 HTML/脚本 |
+
+---
+
+*本文件是 API v1.0（Phase 0 冻结官方插件面）；第三方 permissions/configSchema/async/onDemand 为 Phase 1 增量，不改已冻结签名；破坏性变更升 major。Phase 2 增量只在 5.0 启用，4.x 不开放第三方安装。*

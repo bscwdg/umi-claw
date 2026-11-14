@@ -21,6 +21,8 @@ import {
   PluginRegistry,
   isPluginIsolationEnabled,
   resolveDevMode,
+  createUtilityProcessFork,
+  type UtilityProcessForkApi,
   type DevModeState,
   type HostOpsApi,
   type LegacyDbApi,
@@ -45,6 +47,13 @@ import {
   type PluginPermissionStore
 } from './pluginPermissions'
 import { createPluginServiceBridge, type PluginServiceBridge } from './pluginServiceBridge'
+import {
+  createPluginIsolationManager,
+  type IsolatedPluginSpec,
+  type IsolatedPluginStatus,
+  type PluginIsolationManager
+} from './pluginIsolationManager'
+import { buildPluginPermissionEnv } from './pluginPermissions'
 
 type PluginDbApi = ReturnType<PluginDbService['forPlugin']>
 
@@ -88,6 +97,8 @@ export interface PluginRuntimeDeps {
    */
   afterEnable?: (pluginId: string) => Promise<void>
   encryption: SecretEncryptionLike
+  /** Phase 2 P1：Electron utilityProcess；flag off 时可不传 */
+  utilityProcess?: UtilityProcessForkApi
   ipc: {
     handle(channel: string, listener: (event: unknown, ...args: any[]) => unknown): void
     removeHandler(channel: string): void
@@ -103,7 +114,7 @@ export interface PluginRuntimeDeps {
   logger: (line: string) => void
 }
 
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 export interface PluginRuntime {
   init(): Promise<void>
@@ -124,6 +135,11 @@ export interface PluginRuntime {
   permissionGrants(): Array<{ id: string; granted: boolean; grantedAt: number | null; requested: unknown }>
   /** Phase 1 B3：子进程服务调用（supervisor onService 用）；过权限 broker */
   callPluginService(pluginId: string, service: string, method: string, args: unknown[]): Promise<unknown>
+  /** Phase 2 P1：生产 runtime 管理的隔离插件生命周期（flag off 时拒绝） */
+  startIsolatedPlugin(spec: IsolatedPluginSpec): Promise<void>
+  stopIsolatedPlugin(pluginId: string): Promise<void>
+  isolatedStatuses(): IsolatedPluginStatus[]
+  invokeIsolated(pluginId: string, method: string, payload?: unknown): Promise<unknown>
   /** Phase 1 B5：开发者模式闸门（打包版永远拒绝） */
   devMode(): DevModeState
 }
@@ -136,6 +152,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
   let permissionStore: PluginPermissionStore | null = null
   let permissionBroker: ReturnType<typeof createPermissionBroker> | null = null
   let serviceBridge: PluginServiceBridge | null = null
+  let isolationManager: PluginIsolationManager | null = null
 
   const statuses = (): PluginStatus[] => host?.statuses() ?? []
 
@@ -301,6 +318,32 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
           },
           logger: deps.logger
         })
+
+        // P1：生产 runtime 管理隔离插件；flag off 或未注入 utilityProcess 时保持 4.3 行为
+        if (isPluginIsolationEnabled() && deps.utilityProcess) {
+          isolationManager = createPluginIsolationManager({
+            fork: createUtilityProcessFork(deps.utilityProcess),
+            hostVersion: deps.appInfo().version,
+            serviceCall: (pluginId, service, method, args) =>
+              serviceBridge!.call(pluginId, service, method, args),
+            buildEnv: (spec) => {
+              const info = deps.appInfo()
+              return buildPluginPermissionEnv({
+                pluginDir: spec.packageDir,
+                dataDir: spec.dataDir,
+                cwd: dirname(spec.mainPath),
+                permissions: spec.permissions ?? {},
+                extraReadDirs: [
+                  dirname(spec.entry),
+                  info.resourcesPath,
+                  dirname(info.resourcesPath),
+                  info.appPath
+                ]
+              })
+            },
+            logger: deps.logger
+          })
+        }
         const reg = new PluginRegistry({
           persistedEnabled: await stateStore.load(),
           hostServices: availableServices(serviceFactories),
@@ -419,6 +462,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     },
 
     async disposeHost() {
+      await isolationManager?.stopAll()
       await host?.disposeAll()
     },
 
@@ -445,6 +489,32 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     callPluginService(pluginId, service, method, args) {
       if (!serviceBridge) return Promise.reject(new Error('服务桥未初始化'))
       return serviceBridge.call(pluginId, service, method, args)
+    },
+
+    startIsolatedPlugin(spec) {
+      if (!isolationManager) {
+        return Promise.reject(
+          Object.assign(new Error('隔离未启用或未注入 utilityProcess'), { code: 'PLUGIN_OPERATION_FAILED' })
+        )
+      }
+      return isolationManager.start(spec)
+    },
+
+    stopIsolatedPlugin(pluginId) {
+      return isolationManager?.stop(pluginId) ?? Promise.resolve()
+    },
+
+    isolatedStatuses() {
+      return isolationManager?.statuses() ?? []
+    },
+
+    invokeIsolated(pluginId, method, payload) {
+      if (!isolationManager) {
+        return Promise.reject(
+          Object.assign(new Error('隔离未启用或未注入 utilityProcess'), { code: 'PLUGIN_OPERATION_FAILED' })
+        )
+      }
+      return isolationManager.invoke(pluginId, method, payload)
     },
 
     devMode() {

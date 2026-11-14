@@ -44,7 +44,7 @@
 | --- | --- | --- | --- |
 | Phase 0 | 4.3.0 | `feat/plugin-api`（基于当前 codex/voice HEAD；voice 合并后 rebase 到 release/4.0） | API v1 + SDK + 契约收敛；**不开放第三方安装** |
 | Phase 1 | 4.4.0-dev | `feat/plugin-isolation` → 合回 4.x | 隔离/权限原型，feature flag 默认 off |
-| Phase 2 | 5.0.0-beta | `release/5.0`（此时才切） | 签名包、侧载安装、更新/回滚、设置页 |
+| Phase 2 | 5.0.0-beta.2 | `release/5.0`（beta.1 时切） | 签名包、侧载安装、更新/回滚、设置页 |
 | Phase 3 | 5.x | `release/5.0` | 第三方 UI iframe、市场/审核、OS 级隔离研究 |
 
 > 不在现在切 `release/5.0`：4.x 的 hotfix/voice 仍在活跃（近期 2 天 9 提交），长分支会同时踩合并与审查债。Phase 0 用短分支，A2/A3 分小步合回。
@@ -146,7 +146,7 @@ renderer
 12. **宿主反向读插件库清零**：`index.ts` 的 `conversation_key`、`consent.ts` 的 `wizard_consent` 改为插件注册 provider；注意 consent 在插件激活前/停用后仍需可读（U27）。
 13. **通道租约**：work 76 条租约通道（P37 实测）；marketing 通道 A3a 前重新统计；第三方不租历史命名空间；宿主只保留 `work:gateway:*` 这一套。
 14. **gen/三份真相**：清理已删插件的 `resources/plugins/<id>`；生成表/清单/state 一致性校验。
-15. **插件 id 保留字与数据根**：`plugin-data/<id>/` 独立数据根；保留 id（host/plugin/system/...）；覆盖「删除全部数据」、宿主备份、卸载导出。
+15. **插件 id 保留字与数据根**：第三方数据根统一为 `<dataDir>/plugins/<id>/`（与官方插件命名空间一致，旧 `plugin-data/` 从未落地、已废弃）；保留 id（host/plugin/system/...）；覆盖「删除全部数据」、宿主备份、卸载导出。
 16. **门禁扩容**：renderer 插件→宿主 `src/**`；`plugins/**` 的 `node:fs`/`node:child_process`/裸 electron；`templates/`、`plugin-sdk/` 纳入 typecheck。
 
 ### 3.1.1 A3a 实施状态（2026-11-13）
@@ -205,7 +205,7 @@ Phase 0 出口评审：B0 ADR 通过 → API v1-final 冻结（后续不兼容�
 Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；以下计划项**未在 Phase 0 完成**，明确移交 Phase 1，不阻塞 4.3.0：
 
 - A2：`@umi/plugin-sdk/*` alias / build external / 宿主注入机制未做；仓内插件暂用相对 `plugin-sdk/src/*` 路径（迁移本身已完成）。
-- A3a 剩余：async/事件流 RPC、`onDemand`、`contributes.settings/commands` 消费、`capabilities`/`inject` 合并、`ctx.host` 公开/内部拆分、hostBridge 收窄（13 consumers）、consent host→work 反向读、marketing `knowledge.search` 缺口、`plugin-data/<id>/` 独立数据根/保留 id。
+- A3a 剩余：async/事件流 RPC、`onDemand`、`contributes.settings/commands` 消费、`capabilities`/`inject` 合并、`ctx.host` 公开/内部拆分、hostBridge 收窄（13 consumers）、consent host→work 反向读、marketing `knowledge.search` 缺口、数据根统一 `<dataDir>/plugins/<id>/`/保留 id。
 - A6：host import 0；UI 仅 4 处 ConfirmDialog `.vue` 直连（`.ts` SDK 无法 re-export SFC；由 ratchet 锁死，不再新增）。
 - A7：文档/PLAN/AGENTS 已评审；4.3.0 **只升版本号，未生成 tag/安装包**（发布产物待用户真机验收后出）。
 - 门禁扩容（`plugins/**` 的 node:fs/child_process、templates/plugin-sdk typecheck）与 SDK 内部 host import 白名单已部分落地；完整负向门禁随 Phase 1 B2/B4。
@@ -285,7 +285,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - `devMode.ts`：`UMI_DEV_PLUGINS=1` 才开 plugins，`UMI_DEV_BUILD=1` 且 plugins 开才开 build；**打包版即使设 env 也拒绝**。
 - 接线：`plugin:dev-mode`（`{ok,data}` 信封）+ preload `plugins.devMode()` + 管理页风险横幅。
 - 本批只做闸门与提示，不扫描/不加载 dev-plugins、不新增安装入口；扫描/源码构建留 Phase 2。
-- 测试：`plugin-dev-mode` 4/4；全量 52 套/896 项（895 通过 + 1 显式跳过）。
+- 测试：`plugin-dev-mode` 4/4；全量 54 套/903 项（902 通过 + 1 显式跳过）。
 - 未做/登记：UI 横幅可达性无 E2E；dev-plugins 扫描/源码构建 Phase 2。
 
 ### 4.7 Phase 2 起点提醒
@@ -300,10 +300,70 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 | C2 | **安装/卸载/更新/回滚** | 侧载文件/URL；原子安装；版本目录；**二进制 + 数据快照回滚**（范围：db/kv/secrets/config；时点：升级前；保留：最近 N 份；恢复顺序：停插件→WAL checkpoint→还原→迁移校验）；卸载保留/导出数据；安全模式 | 安装→启用→更新→回滚全链路；数据不丢；快照可校验 | 3–4 周 |
 | C3 | **兼容与状态** | 兼容矩阵；状态 schema 迁移；弃用告警 | 不兼容拒绝；N/N-1 测试 | 2 周 |
 | C4 | **静态目录** | 签名 JSON 索引（官方/伙伴）；更新检查；吊销列表 | 无市场入口；可离线校验 | 1–2 周 |
-| C5 | **测试与文档** | 安装 e2e、打包冒烟、安全审查、用户文档 | 5.0.0-beta 清单全绿 | 2 周 |
+| C5 | **测试与文档** | 安装 e2e、打包冒烟、安全审查、用户文档 | 5.0.0-beta.2 清单全绿 | 2 周 |
 | C6 | **第三方设置页** | `configSchema` 子集渲染（类型/默认值/label/枚举；禁任意 HTML；深度/大小/正则上限）；A1 定义 `permissions` 与 db/config/openclaw 的服务映射 | 恶意 schema 不执行代码；设置可读写；未授权服务不可见 | 2 周 |
 | C7 | **UI 可行性 spike** | 1 周 iframe/sandbox 评估：主题 token、路由回退、插槽、postMessage、性能 | 决定 Phase 3 是否继续/缩小 | 1 周 |
 | C8 | **运营最小集** | 插件日志落盘/脱敏/PII 保留期、崩溃计数、安全模式、kill switch/吊销（来源：C4 签名索引 + 本地吊销名单）、崩溃归因 | 5.0-beta 出事故可禁用/回滚 | 2–3 周 |
+
+### 5.0 执行顺序与 P0 契约冻结（2026-11-14 已拍板）
+
+**已批准**：发布者三档（official / partner / self-TOFU）；keyring 本地存储，不接外部服务；版本节奏 `alpha.1 → alpha.2 → beta.1 → beta.2 → GA`；**不返工原则**：本 P0 冻结后，C1–C8 只按本契约实现，不再改包格式/信任/路径语义。
+
+**执行顺序（先地基后功能）**：
+
+1. **P0 契约冻结**（本批）：来源模型、包格式、信任模型、路径布局、状态 schema。
+2. **P1 生产隔离接线**：`pluginRuntime` 真正管理 supervisor，isolated 生命周期；验收 fixture 走 runtime，不再只走测试探针。
+3. **P2 安全边界补洞**：授权更新求交、撤销重启、junction/reparse、dev 读根收窄、服务桥能力面、invoke 错误码。
+4. **C1 包格式与签名** → **C2 安装/卸载/更新/回滚**。
+5. C3（兼容/状态）、C6（设置页）、C4（静态索引）、C8（运营）并行；C5（测试/文档）最后收口；C7（UI spike）并行但不阻塞。
+6. GA 收口：安全审查、签名证书、干净机器矩阵、回滚/kill switch 演练。
+
+**版本门**：
+
+| 版本 | 触发 |
+| --- | --- |
+| 4.4.0-dev | Phase 1 完成（已封版 ac59459） |
+| 5.0.0-alpha.1 | P0 + P1 + P2 绿 |
+| 5.0.0-alpha.2 | C1 签名包绿 |
+| 5.0.0-beta.1 | C2 安装/更新/回滚绿（切 `release/5.0`） |
+| 5.0.0-beta.2 | C3/C4/C6/C8/C5 出口全绿 |
+| 5.0.0 GA | 安全审查/发布清单绿 |
+
+**P0 契约冻结**：
+
+1. **来源与生命周期**
+   - `PluginRuntimeKind = 'builtin' | 'isolated'`；官方插件永远 `builtin`，第三方永远 `isolated`。
+   - 安装态记录：`{ id, version, packageDir, dataDir, trustLevel, keyId, status, installedAt, updatedAt }`。
+   - 状态沿用 `stopped/starting/running/stopping/crashed/disabled`；安装态新增 `installing/broken` 由 C2 使用。
+2. **包布局**（`.umi-plugin` = zip，根目录即包根）
+   - 必选：`plugin.json`、`main.js`、`SIGNATURE`；可选：`migrations/`、`icon.png`、`README.md`。
+   - 禁止：`node_modules/`、`.git/`、绝对路径、`..`、反斜杠路径、符号链接/junction、重复/大小写折叠冲突条目。
+   - `plugin.json` 在 v1 基础上扩展（不破坏官方 v1）：`id/version/name/apiVersion/engines/permissions/configSchema`；签名相关字段只放 `SIGNATURE`，不进 manifest。
+3. **签名格式（Ed25519）**
+   - `SIGNATURE` JSON 固定字段：`{schema:1,keyId,alg:"ed25519",createdAt,files:[{path,sha256}],publicKey?,signature}`。
+   - 签名原文 = `JSON.stringify({schema,keyId,alg,createdAt,files})`，字段顺序固定为上述顺序；`files` 按 `path` UTF-8 升序；无空白；UTF-8 无 BOM；`createdAt` 为 ISO-8601 UTC（`YYYY-MM-DDTHH:mm:ss.sssZ`）；`sha256` 小写 hex；`signature` 标准 base64。
+   - `files` 必须**精确覆盖** zip 中除 `SIGNATURE` 外的全部条目（不允许未列出的额外文件）；`SIGNATURE` 自身不参与哈希。
+   - `publicKey`：official/partner 包可省略（由 keyring 按 keyId 解析）；self 包必须携带 SPKI DER 的 base64；TOFU fingerprint = `sha256(SPKI DER)` 小写 hex。
+   - 验签前做 zip-slip/bomb/大小/数量/重复条目检查；解压/加载只使用签名 `files` 列表，不信任 zip 元数据（external attrs/压缩方式/mtime/目录项）。
+4. **信任模型**
+   - 三档：`official`、`partner`、`self`；未签名包仅 dev 加载（由 C2 实现；B5 仅闸门，不扫描/不加载）。
+   - 本地 keyring：`<dataDir>/plugin-keys.json`（keyId→SPKI/等级/fingerprint）；吊销：`<dataDir>/plugin-revocations.json`。
+   - official/partner 根公钥随包：`<resources>/plugin-keys/<keyId>.json`；轮换由 C4 签名索引发布，不联网拉取。
+   - 自签 TOFU：`<dataDir>/plugin-trust.json` 记录 fingerprint firstSeen/lastSeen；首次确认后指纹变更必须二次确认。
+5. **路径布局**
+   - 官方 builtin：包 `<resources>/plugins/<id>/`（不参与安装器）；第三方包：`<dataDir>/plugin-packages/<id>/<version>/`（版本目录不可原地修改）。
+   - 数据：官方/第三方统一 `<dataDir>/plugins/<id>/`（`data.db`/`kv`/`secrets` 命名空间不变）；旧 `plugin-data/` 从未落地，废弃。
+   - 快照：`<dataDir>/plugin-backups/<id>/<timestamp>/`（默认保留最近 5 份）；安装态：`<dataDir>/plugin-install-state.json`。
+   - **child 入口 staging**：C2 安装时把宿主 `pluginProcessChild.js` 复制到 `<dataDir>/plugin-runtime/<hostVersion>/pluginProcessChild.js`；权限 `NODE_OPTIONS` 只允许 `<dataDir>` 下相对路径（包目录/runtime/data），**不把 `Program Files`/仓库根加入 allowlist**，避免含空格安装路径无法注入（P1 已知限制，C2 落地）。
+   - 所有路径解析后必须 `realpath` 校验在允许根内；reparse point 在安装期拒绝。
+6. **权限与状态**
+   - `permissions` 只允许公开服务 `db/openclaw/notifications/config/kv/secrets/voice`；`http/dialog` 在 C6 实现后再追加；`consent/abort/hostOps/legacyDb` 永不对第三方开放。
+   - 授权只能收窄：升级时新 grant = 旧 grant ∩ 新 manifest；新增权限必须重新授权；撤销后 C2 停/重启进程。
+   - 状态：既有进程六态不变；安装态 `installing/broken`；`PluginStatus` 增加 `runtimeKind/trustLevel/keyId`（只读展示），现有 `source`（manifest 路径）语义不变。
+   - 安装/更新/回滚/卸载全部写审计；密钥/密码不落盘明文。
+   - **4.x 边界**：P0/C1–C8 只在 5.0 分支生效；4.x 不扫描第三方包、不提供安装入口、不加载未签名代码。
+
+### 5.1 Phase 2 出口判据
 
 ### 5.1 Phase 2 出口判据
 
@@ -311,7 +371,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 - [ ] 回滚同时覆盖二进制与数据快照（或明确声明向前兼容）
 - [ ] 不兼容包明确拒绝；吊销列表生效
 - [ ] 设置页只渲染 schema，不执行任意代码
-- [ ] 5.0.0-beta 干净机器安装/卸载冒烟
+- [ ] 5.0.0-beta.2 干净机器安装/卸载冒烟
 
 ---
 
@@ -333,7 +393,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 | M0 | 基线冻结 + 文档契约修订 | — | 3–5 天 |
 | M1 | Phase 0 完成：API v1 + SDK + 官方插件 | 4.3.0 | 9–13 周（可并行到 6–8 周） |
 | M2 | Phase 1 完成：隔离/权限原型（flag off） | 4.4.0-dev | 12–16 周 |
-| M3 | Phase 2 完成：签名包 + 侧载 + 设置页 | 5.0.0-beta | 16–20 周 |
+| M3 | Phase 2 完成：签名包 + 侧载 + 设置页 | 5.0.0-beta.2 | 16–20 周 |
 | M4 | 5.0.0 GA：安全审查 + 运营最小集 + 回滚预案 | 5.0.0 | 2–3 周 |
 
 > 总工期（单人）：约 9–12 个月到 5.0.0-beta；2 人并行可压到 6–8 个月。估算按 WP 人天相加 + 审查/回归 buffer。
@@ -358,7 +418,7 @@ Phase 0 的目标是「官方插件吃狗粮 + 契约/兼容/契约测试」；�
 | 打包 | `npm run build` + packaged smoke |
 | 审查 | AGENTS §12：每 commit 对抗审查；每 WP 两次独立检查 |
 
-**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**52 套**（ACCEPT 48 + e2e×3 + smoke）、accept result **896 项（895 通过 + 1 显式跳过）** + `node:test` **21 条** = **916**。AGENTS/RUNBOOK 已同步该口径（2026-11-14 Phase 1 收尾）；release/4.0 在 voice 合并后复核。后续以每次留档为准。
+**数字口径**：2026-11-13 干净基线（codex/voice HEAD，TEMP 指向系统临时目录 + 清空 `test/.tmp`）：**54 套**（ACCEPT 50 + e2e×3 + smoke）、accept result **903 项（902 通过 + 1 显式跳过）** + `node:test` **21 条** = **923**。AGENTS/RUNBOOK 已同步该口径（2026-11-14 Phase 1 收尾）；release/4.0 在 voice 合并后复核。后续以每次留档为准。
 
 ---
 
@@ -483,10 +543,14 @@ example-1.0.0.umi-plugin (zip)
 ├── main.js            # CJS canonical；ESM（.mjs / type=module）实测可用
 ├── migrations/        # 可选；DDL 白名单
 ├── icon.png
-└── SIGNATURE          # keyId + alg + 内容 hash
-<dataDir>/plugins-installed/<id>/<version>/
-<dataDir>/plugin-data/<id>/          # 与官方 plugins/<id>/ 分离
-<dataDir>/plugin-install-state.json  # JSON，不新增 DB 表
+└── SIGNATURE          # 签名 JSON（见 §5.0）
+<dataDir>/plugin-packages/<id>/<version>/   # 第三方包安装目录
+<dataDir>/plugins/<id>/                     # 插件数据（官方/第三方同根）
+<dataDir>/plugin-backups/<id>/<timestamp>/  # 升级前数据快照
+<dataDir>/plugin-install-state.json         # 安装态 JSON（不新增 DB 表）
+<dataDir>/plugin-keys.json                  # 本地 keyring
+<dataDir>/plugin-trust.json                 # 自签 TOFU
+<dataDir>/plugin-revocations.json           # 吊销列表
 ```
 
 ## 附录 D：对抗审查 P0 处置
