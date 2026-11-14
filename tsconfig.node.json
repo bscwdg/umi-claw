@@ -17,6 +17,7 @@
     "electron/main/services/pluginIsolationManager.ts",
     "electron/main/services/pluginPackageFormat.ts",
     "electron/main/services/pluginPackage.ts",
+    "electron/main/services/pluginInstaller.ts",
     "templates/plugin/main.ts",
     "plugins/*/main.ts",
     "plugins/*/domain/**/*.ts"
