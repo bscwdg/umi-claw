@@ -233,7 +233,7 @@ umi-claw/
 │   └── installer.nsh           # NSIS 钩子：升级时自动搬迁旧版数据目录
 ├── scripts/
 │   └── run-all-accept.mjs      # 一键跑全部验收
-├── test/                       # 验收：54 套 accept + e2e + 打包态 smoke（合计 59 套 / 5.0 实测 944 项）
+├── test/                       # 验收：56 套 accept + e2e + 打包态 smoke（合计 61 套 / 2026-11-15 实测全绿）
 │   ├── _lib.mjs                # 验收公共库
 │   ├── _ui.mjs                 # UI 验收公共库
 │   └── fixtures/               # 验收夹具
@@ -291,7 +291,7 @@ npm run dev
 # 类型检查
 npm run typecheck
 
-# 一键跑全部验收（59 套 / 944 项（943 通过 + 1 显式跳过；GA 留档 942）+ node:test 21 条）
+# 一键跑全部验收（61 套：accept×56 + e2e×4 + smoke；另有 node:test 21 条）
 npm run accept
 ```
 
@@ -419,8 +419,10 @@ window.api.terminal.onPtyExit(cb)                 // 监听 PTY 退出
 window.api.terminal.removeListeners()             // 移除 PTY 监听
 
 // ── 渠道接入 ──
-window.api.channels.isPluginInstalled(id)     // 查询渠道插件是否已安装（如 'feishu'）
+window.api.channels.isPluginInstalled(id)     // 查询渠道插件是否完整安装（如 'feishu'）
 window.api.channels.installPlugin(pkg)         // 安装渠道插件（如 '@openclaw/feishu'），安装日志走 claw.onLog
+window.api.channels.getPluginPresence()        // 一次取全部渠道插件安装态（微信/QQ/飞书/企微/Slack）
+window.api.channels.ensurePlugin(key, force?)  // 确保插件就绪：缺失就装、卸载标记就启用；force=重装
 
 // ── 知识库（Obsidian）──
 window.api.obsidian.getConfig()            // 读取知识库配置
@@ -581,9 +583,13 @@ QQ 机器人接入使用腾讯官方插件 `@tencent-connect/openclaw-qqbot`，�
 
 1. 进入「渠道接入」页，展开**飞书自建应用**，填写 App ID / App Secret，
    并按需设置私聊策略、群聊策略、是否需要 @机器人。
-2. 点击保存。若飞书插件尚未安装，应用会自动执行安装
-   （首次约 1-2 分钟，安装日志实时显示在「日志」页，前缀 `[feishu]`）。
-3. 安装完成后**重启 OpenClaw**，飞书长连接会自动建立。
+   - 群聊策略选「仅白名单群」时，必须填「群白名单」（群 chat_id，逗号分隔），
+     否则所有群都不会回复。
+2. 点击保存。保存前会先确保插件就绪：缺失则自动安装并启用
+   （首次约 1-2 分钟，进度显示在页面与「日志」页，前缀 `[channels]`）。
+3. 插件缺失/损坏时，也可以在页面上方「渠道插件」面板里对任一渠道
+   一键「安装 / 重装」（微信、QQ、飞书、企业微信、Slack 共用）。
+4. 安装完成后**重启 OpenClaw**，飞书长连接会自动建立。
 
 #### 首次私聊配对
 

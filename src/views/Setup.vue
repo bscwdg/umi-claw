@@ -105,15 +105,9 @@
             {{ envLoading ? "⏳" : envInfo?.channelsInstalled ? "✅" : "❌" }}
           </div>
           <div class="env-detail">
-            <div class="env-name">官方消息渠道内置插件</div>
+            <div class="env-name">消息渠道插件</div>
             <div class="text-sm text-muted">
-              {{
-                envInfo?.channelsInstalled
-                  ? "微信/飞书/企业微信/钉钉/Slack 已就绪"
-                  : envInfo?.channelsInstalled === false
-                  ? "未安装或依赖缺失"
-                  : "检测中..."
-              }}
+              {{ channelPluginsText }}
             </div>
           </div>
         </div>
@@ -200,7 +194,7 @@
       <div style="font-size: var(--text-hero)">🎉</div>
       <h3>环境已就绪！</h3>
       <p class="text-muted text-sm">
-        所有运行时核心及基础渠道插件包均已内置安装完成
+        运行时核心与微信基础插件已安装；其它渠道可在「渠道接入」页按需一键安装
       </p>
       <button class="btn btn-success btn-lg" @click="goToDashboard">
         前往控制台
@@ -235,8 +229,8 @@
           <div>
             <div class="setting-name">自动同步内置渠道插件</div>
             <div class="text-sm text-muted">
-              默认勾选。将自动装配：微信、飞书自建应用、企业微信、钉钉机器人、Slack
-              核心插件
+              默认勾选。初始化会自动装配微信与 QQ 机器人渠道插件；飞书、企业微信、Slack
+              在「渠道接入」页按需一键安装
             </div>
           </div>
           <div class="text-sm text-success" style="font-weight: 500">
@@ -340,7 +334,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import ConfirmDialog from "@/views/components/ConfirmDialog.vue";
@@ -367,13 +361,33 @@ const updateInfo = ref<{
 async function checkEnv() {
   envLoading.value = true;
   try {
-    // 此时 window.api.env.check() 在主进程返回时，需额外带上 channelsInstalled 字段
+    // 主进程返回全量渠道插件安装态（channelPlugins）；channelsInstalled 只表示微信基础插件
     envInfo.value = await window.api.env.check();
     console.log("envInfo updated:", envInfo.value);
   } finally {
     envLoading.value = false;
   }
 }
+
+/**
+ * 环境卡片文案：按渠道逐个展示安装态，不再笼统宣称「所有渠道已就绪」。
+ * 钉钉/公众号在 OpenClaw 2026.11.x 没有渠道插件，不在这份列表里（渠道页也不再承诺可安装）。
+ */
+const channelPluginsText = computed(() => {
+  const list = envInfo.value?.channelPlugins as
+    | Array<{ label?: string; installed?: boolean }>
+    | undefined;
+  if (envLoading.value) return "检测中...";
+  if (!list?.length) {
+    return envInfo.value?.channelsInstalled
+      ? "微信插件已就绪；其它渠道按需安装"
+      : "未安装或依赖缺失";
+  }
+  const parts = list.map((p) => `${p.label ?? "渠道"}${p.installed ? "✓" : "✗"}`);
+  return list.some((p) => !p.installed)
+    ? `${parts.join(" · ")}（未装的可在「渠道接入」页一键安装）`
+    : parts.join(" · ");
+});
 
 /** 版本比较：installed ≥ target（只比较前三段数字，忽略 v 前缀/预发布后缀） */
 function isVersionAtLeast(installed: string, target: string): boolean {

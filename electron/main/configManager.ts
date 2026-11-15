@@ -14,6 +14,9 @@ import {
   type EnsureWebhookMarkerResult
 } from './openclawWebhookMarker'
 import type { ObsidianConfig } from './obsidian/types'
+import { isChannelPluginInstalled } from './claw/channelPlugins'
+import { buildFeishuChannelPatch } from './claw/feishuChannelConfig'
+import type { ChannelPluginKey } from '../../src/types/channels'
 
 /**
  * 技能版本 manifest 的单条记录（skill-manifest.json）。
@@ -510,6 +513,21 @@ export class ConfigManager {
     )
     const channels = cfg?.channels
     return channels && typeof channels === 'object' ? channels : {}
+  }
+
+  /**
+   * 受管渠道插件是否完整安装（统一走 claw/channelPlugins 的注册表判定）。
+   *
+   * 为什么不用「目录名前缀」：安装回滚/半拷贝会留下空项目目录，旧判定会误以为已安装，
+   * 于是把 channels.<id> 写进 openclaw.json，网关启动时以 unknown channel id 拒绝整份配置。
+   * 读目录失败一律当未安装：宁可不写，也不能把网关写坏。
+   */
+  private _isManagedChannelPluginInstalled(key: ChannelPluginKey): boolean {
+    try {
+      return isChannelPluginInstalled(dirname(this.openClawConfigPath), key)
+    } catch {
+      return false
+    }
   }
 
   /**
@@ -1322,37 +1340,20 @@ private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string; kind
     // channel config injection (native channels such as feishu)
     existingConfig.channels = existingConfig.channels || {}
 
-    // 兼容老版 feishu 插件：群白名单字段由 allowGroups 改名为 groupAllowFrom（v2026.6.x 起）。
-    // openclaw.json 里残留的 allowGroups 会被新版 schema（additionalProperties:false）当作非法附加属性拒绝，
-    // 导致网关启动失败（exit 78）。同步时迁移到新字段并删除旧字段；若已显式配置 groupAllowFrom 则不覆盖。
-    const feishuExisting = existingConfig.channels.feishu
-    if (feishuExisting && Array.isArray(feishuExisting.allowGroups)) {
-      if (feishuExisting.groupAllowFrom === undefined) {
-        feishuExisting.groupAllowFrom = feishuExisting.allowGroups
-      }
-      delete feishuExisting.allowGroups
-    }
-
     const uiChannels = this.config.channels || {}
-    const feishuCfg = uiChannels.feishu as Record<string, unknown> | undefined
-    if (feishuCfg && feishuCfg.enabled) {
-      const appId = String(feishuCfg.appId ?? '').trim()
-      const appSecret = String(feishuCfg.appSecret ?? '').trim()
-      if (appId && appSecret) {
-        const feishu: Record<string, unknown> = {
-          ...(existingConfig.channels.feishu || {}),
-          appId,
-          appSecret,
-          dmPolicy: feishuCfg.dmPolicy || 'pairing',
-          groupPolicy: feishuCfg.groupPolicy || 'allowlist',
-          requireMention: feishuCfg.requireMention ?? true
-        }
-        const encryptKey = String(feishuCfg.encryptKey ?? '').trim()
-        const verificationToken = String(feishuCfg.verificationToken ?? '').trim()
-        if (encryptKey) feishu.encryptKey = encryptKey
-        if (verificationToken) feishu.verificationToken = verificationToken
-        existingConfig.channels.feishu = feishu
-
+    // 飞书的写/删/跳过决策收在纯函数里（可行为级验收，见 test/feishu-channel-config.accept.mjs）：
+    // - app.json 没有飞书条目 → 不碰 openclaw.json（否则会删掉 channels login 向导写入的配置）
+    // - 插件未安装时绝不写 channels.feishu（OpenClaw 会以 unknown channel id 拒绝整份配置）
+    const feishuPatch = buildFeishuChannelPatch({
+      ui: uiChannels.feishu as Record<string, unknown> | undefined,
+      existing: existingConfig.channels.feishu as Record<string, unknown> | undefined,
+      pluginInstalled: this._isManagedChannelPluginInstalled('feishu')
+    })
+    if (feishuPatch.action === 'delete') {
+      delete existingConfig.channels.feishu
+    } else if (feishuPatch.action === 'write') {
+      existingConfig.channels.feishu = feishuPatch.channel
+      if (feishuPatch.enablePlugin) {
         existingConfig.plugins = existingConfig.plugins || {}
         existingConfig.plugins.entries = existingConfig.plugins.entries || {}
         existingConfig.plugins.entries.feishu = {
@@ -1360,8 +1361,6 @@ private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string; kind
           enabled: true
         }
       }
-    } else if (existingConfig.channels.feishu) {
-      delete existingConfig.channels.feishu
     }
 
     // QQ 机器人（官方插件 @tencent-connect/openclaw-qqbot）：
@@ -1370,15 +1369,7 @@ private async _syncOpenClawConfig(): Promise<{ ok: boolean; error?: string; kind
     // 注意：插件未安装时不能写 channels.qqbot —— OpenClaw 会以「unknown channel id」拒绝整份配置，
     // 进而导致网关不 spawn；此时只保存 app.json，等插件装好后的下次同步再注入。
     const qqCfg = uiChannels.qqbot as Record<string, unknown> | undefined
-    const qqPluginInstalled = (() => {
-      try {
-        const projectsDir = join(dirname(this.openClawConfigPath), 'npm', 'projects')
-        if (!existsSync(projectsDir)) return false
-        return readdirSync(projectsDir).some((name) => name.startsWith('tencent-connect-openclaw-qqbot-'))
-      } catch {
-        return false
-      }
-    })()
+    const qqPluginInstalled = this._isManagedChannelPluginInstalled('qqbot')
     if (qqCfg && qqCfg.enabled && qqPluginInstalled) {
       const appId = String(qqCfg.appId ?? '').trim()
       const clientSecret = String(qqCfg.clientSecret ?? '').trim()

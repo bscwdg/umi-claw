@@ -21,3 +21,20 @@ export interface ChannelStatus {
   /** 简短说明，如「机器人 aibD7-b0c7」；未配置时省略 */
   detail?: string
 }
+
+/**
+ * 渠道插件标识：这些渠道在 OpenClaw 里是「原生插件」，需要按需安装
+ * （`openclaw plugins install <pkg>`），与 ChannelStatusKey 不是同一命名空间：
+ * 缺少 slack / weixin 之外的展示差异，且 wecom 插件 id 与 UI key 也不同。
+ */
+export type ChannelPluginKey = 'weixin' | 'qqbot' | 'feishu' | 'wecom' | 'slack'
+
+/** 渠道插件安装态（只读展示 + 一键安装/重装的返回形状） */
+export interface ChannelPluginPresence {
+  key: ChannelPluginKey
+  /** 展示名（与渠道卡片文案保持一致） */
+  label: string
+  installed: boolean
+  /** 已安装时读到的包版本；读不到时省略 */
+  version?: string
+}
