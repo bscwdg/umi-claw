@@ -42,7 +42,8 @@ export interface OpenClawStatusV1 {
 export interface OpenClawProxyApi {
   status(): Promise<OpenClawStatusV1>
   chat(input: Parameters<KernelOpenClawApi['chat']>[0]): ReturnType<KernelOpenClawApi['chat']>
-  stream(input: Parameters<KernelOpenClawApi['stream']>[0]): ReturnType<KernelOpenClawApi['stream']>
+  // 第三方 v1 不支持流式：service bridge 只传 JSON，AsyncGenerator/Promise/fn 过不了
+  // structured clone；事件流 RPC（PLUGIN-API §四）落地前不暴露 stream。
 }
 
 export interface PluginHttpApi {

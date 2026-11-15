@@ -15,6 +15,7 @@ import {
   Recorder,
   __dirname,
   assert,
+  assertDeepEq,
   assertEq,
   bundleCjs,
   bundleEntry,
@@ -28,6 +29,13 @@ import {
 const r = new Recorder('Phase 1 · 插件服务桥（权限 / 服务解析 / RPC）')
 const bridgeMod = await import(
   pathToFileURL(bundleEntry('electron/main/services/pluginServiceBridge.ts', 'svc-bridge.mjs')).href
+)
+const adapterMod = await import(
+  pathToFileURL(
+    bundleEntry('electron/main/services/pluginServiceAdapters.ts', 'svc-adapter.mjs', {
+      alias: ['electron=' + join(__dirname, 'electron-stub.mjs')]
+    })
+  ).href
 )
 const permMod = await import(
   pathToFileURL(bundleEntry('electron/main/services/pluginPermissions.ts', 'svc-perms.mjs')).href
@@ -448,6 +456,382 @@ await r.check('S11', '服务能力面：db.backup/forPlugin/dispose 不对第三
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+await r.check('S12', 'bridge：openclaw.status 放行，getStatus 仍拒（第三方只走脱敏状态）', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'umi-svc-'))
+  try {
+    const store = permMod.createPermissionStore(join(dir, 'permissions.json'))
+    const broker = permMod.createPermissionBroker({
+      store,
+      audit: permMod.createPermissionAudit(join(dir, 'audit.log')),
+      rootsFor: () => ({ pluginDir: join(dir, 'plugin'), dataDir: join(dir, 'data') })
+    })
+    store.grant('p1', { services: ['openclaw'] })
+    const status = { ready: true, endpointsEnabled: true, lastError: null, port: 3213 }
+    const bridge = bridgeMod.createPluginServiceBridge({
+      resolveService: (id, name) =>
+        name === 'openclaw'
+          ? { status: async () => status, getStatus: async () => ({ ...status, port: 3213, token: 'secret' }) }
+          : undefined,
+      broker
+    })
+    assertEq((await bridge.call('p1', 'openclaw', 'status', [])).ready, true, 'status 放行')
+    let denied = null
+    try {
+      await bridge.call('p1', 'openclaw', 'getStatus', [])
+    } catch (e) {
+      denied = e
+    }
+    assertEq(denied?.code, errorsMod.ERROR_CODES.NOT_FOUND, 'getStatus 仍拒')
+    return 'openclaw.status 放行 / getStatus 拒绝 ✓'
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await r.check('S13', 'adapter：第三方 status 脱敏为 {ready,endpointsEnabled,lastError?}，官方全量不变', async () => {
+  const full = {
+    ready: true,
+    port: 3213,
+    baseUrl: 'http://127.0.0.1:3213',
+    endpointsEnabled: true,
+    lastError: { code: 'OPENCLAW_NOT_READY', message: '网关未就绪', details: { path: 'C:/secret/gateway' } },
+    token: 'do-not-leak'
+  }
+  const gateway = { getStatus: async () => full }
+  const third = adapterMod.createOpenClawService(() => gateway, 'third', true)
+  const masked = await third.status()
+  assertDeepEq(
+    masked,
+    {
+      ready: true,
+      endpointsEnabled: true,
+      lastError: { code: 'OPENCLAW_NOT_READY', message: '网关未就绪' }
+    },
+    '第三方只拿公开承诺字段'
+  )
+  assertEq('port' in masked, false, '不返回 port')
+  assertEq('baseUrl' in masked, false, '不返回 baseUrl')
+  assertEq('token' in masked, false, '不返回 token')
+  assertEq(JSON.stringify(masked).includes('secret'), false, 'lastError 不带 details/paths')
+
+  const nullErr = adapterMod.createOpenClawService(
+    () => ({ getStatus: async () => ({ ready: false, port: 1, baseUrl: 'u', endpointsEnabled: false, lastError: null }) }),
+    'third',
+    true
+  )
+  assertDeepEq(await nullErr.status(), { ready: false, endpointsEnabled: false }, '无错误时不带 lastError 键')
+
+  const official = adapterMod.createOpenClawService(() => gateway, 'work', false)
+  assertDeepEq(await official.status(), full, '官方 builtin 行为不变（全量）')
+  return 'status 脱敏 ✓'
+})
+
+await r.check('S14', 'adapter：生产形状（inner OpenClawApi，无 getStatus/createChatStream）不再 TypeError', async () => {
+  const calls = []
+  const fullStatus = {
+    ready: true,
+    port: 3213,
+    baseUrl: 'http://127.0.0.1:3213',
+    endpointsEnabled: true,
+    lastError: { code: 'OPENCLAW_NOT_READY', message: '网关未就绪', details: { path: 'C:/secret' } }
+  }
+  // index.ts 的 deps.openclaw 已经是 createOpenClawService(getWorkGatewayClient) 的返回值：
+  // 只有 status/ensureReady/chat/stream，没有 getStatus/createChatStream。
+  const inner = {
+    status: async () => fullStatus,
+    ensureReady: async () => ({ ...fullStatus, ready: true }),
+    chat: async (input) => {
+      calls.push(['chat', input])
+      return { text: 'pong', model: 'm' }
+    },
+    stream: (input) => {
+      calls.push(['stream', input])
+      return {
+        iterator: (async function* () {
+          yield { index: 0, delta: 'x' }
+        })(),
+        result: Promise.resolve({ text: 'streamed', chunks: 1, aborted: false }),
+        cancel: () => calls.push(['cancel'])
+      }
+    }
+  }
+  const third = adapterMod.createOpenClawService(() => inner, 'third', true)
+  // 1) status：旧实现在这里空指针（inner 没有 getStatus）
+  const status = await third.status()
+  assertDeepEq(
+    status,
+    {
+      ready: true,
+      endpointsEnabled: true,
+      lastError: { code: 'OPENCLAW_NOT_READY', message: '网关未就绪' }
+    },
+    'status 走 inner.status 并脱敏'
+  )
+  assertEq('port' in status, false, '不泄漏 port')
+  // 2) ensureReady：同样脱敏
+  assertDeepEq(
+    await third.ensureReady(),
+    {
+      ready: true,
+      endpointsEnabled: true,
+      lastError: { code: 'OPENCLAW_NOT_READY', message: '网关未就绪' }
+    },
+    'ensureReady 脱敏'
+  )
+  // 3) chat：inner.chat 可用，且会话键仍强制隔离
+  const chatRes = await third.chat({ conversationKey: 'conv:work:qa', messages: [] })
+  assertEq(chatRes.text, 'pong', 'chat 正常返回')
+  assertEq(chatRes.model, 'm', 'chat model 透传')
+  assertEq(calls.find(([name]) => name === 'chat')[1].conversationKey, 'conv:plugin:third:work:qa', 'chat 会话键隔离')
+  // 4) stream：第三方 v1 不支持流式（S18 详测传输层），adapter 侧直接安全拒绝
+  let streamDenied = null
+  try {
+    third.stream({ conversationKey: 'conv:work:stream', messages: [] })
+  } catch (e) {
+    streamDenied = e
+  }
+  assertEq(streamDenied?.code, 'PLUGIN_OPERATION_FAILED', '第三方 stream 安全拒绝')
+  // 5) 官方 builtin 用同一形状时保持全量，stream 仍可用
+  const official = adapterMod.createOpenClawService(() => inner, 'work', false)
+  assertDeepEq(await official.status(), fullStatus, 'builtin 全量不变')
+  const builtinHandle = official.stream({ conversationKey: 'conv:work:s', messages: [] })
+  assertDeepEq(
+    await builtinHandle.result,
+    { text: 'streamed', chunks: 1, aborted: false },
+    'builtin stream 正常（OpenClawApi 形状）'
+  )
+  return '生产 OpenClawApi 形状兼容 ✓'
+})
+
+await r.check('S15', 'bridge：openclaw.ensureReady 对第三方拒绝（NOT_FOUND），status 仍放行', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'umi-svc-'))
+  try {
+    const store = permMod.createPermissionStore(join(dir, 'permissions.json'))
+    const broker = permMod.createPermissionBroker({
+      store,
+      audit: permMod.createPermissionAudit(join(dir, 'audit.log')),
+      rootsFor: () => ({ pluginDir: join(dir, 'plugin'), dataDir: join(dir, 'data') })
+    })
+    store.grant('p1', { services: ['openclaw'] })
+    const bridge = bridgeMod.createPluginServiceBridge({
+      resolveService: (id, name) =>
+        name === 'openclaw'
+          ? {
+              status: async () => ({ ready: true }),
+              // ensureReady 会触发网关拉起并回全量状态（port/baseUrl），必须被 bridge 挡住
+              ensureReady: async () => ({ ready: true, port: 3213, baseUrl: 'http://127.0.0.1:3213' })
+            }
+          : undefined,
+      broker
+    })
+    assertEq((await bridge.call('p1', 'openclaw', 'status', [])).ready, true, 'status 仍放行')
+    let denied = null
+    try {
+      await bridge.call('p1', 'openclaw', 'ensureReady', [])
+    } catch (e) {
+      denied = e
+    }
+    assertEq(denied?.code, errorsMod.ERROR_CODES.NOT_FOUND, 'ensureReady 被拒')
+    return 'ensureReady 收口 ✓'
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await r.check('S16', 'adapter：lastError/chat 错误只回 code+固定安全文案，原始串一律不出现', async () => {
+  // 覆盖复核给的泄漏向量：URL、内网 IP:port、内网域名:port、UNC、引号/等号后 POSIX、
+  // 带空格 Windows 路径、IPv6。
+  const leakyMessage =
+    'connect http://127.0.0.1:3213/v1 10.0.0.5:3213 gateway.internal:8443 \\\\server\\share "/home/u/secret" =/home/u/secret C:\\Program Files\\secret [::1]:3213'
+  const full = {
+    ready: false,
+    port: 3213,
+    baseUrl: 'http://127.0.0.1:3213',
+    endpointsEnabled: false,
+    lastError: { code: 'OPENCLAW_NOT_READY', message: leakyMessage, details: { path: 'C:/secret/gateway' } }
+  }
+  const third = adapterMod.createOpenClawService(() => ({ getStatus: async () => full }), 'third', true)
+  const masked = await third.status()
+  assertEq(masked.lastError?.code, 'OPENCLAW_NOT_READY', 'code 保留')
+  assertEq(masked.lastError?.message, '网关未就绪', '固定安全文案（不拼原始 message）')
+  const msg = masked.lastError?.message ?? ''
+  for (const bad of [
+    'http://',
+    '127.0.0.1',
+    '10.0.0.5',
+    'gateway.internal',
+    '8443',
+    '3213',
+    '\\\\server',
+    '/home/u',
+    'Program Files',
+    '[::1]',
+    'C:/secret',
+    'C:\\secret'
+  ]) {
+    assertEq(msg.includes(bad), false, `message 不得泄漏 ${bad}`)
+  }
+
+  // code → 固定文案映射（含 auth / timeout / 其它）
+  for (const [code, safe] of [
+    ['OPENCLAW_AUTH_ERROR', '网关鉴权失败'],
+    ['OPENCLAW_TIMEOUT', '网关超时'],
+    ['SOMETHING_ELSE', '网关异常']
+  ]) {
+    const svc = adapterMod.createOpenClawService(
+      () => ({ getStatus: async () => ({ ...full, lastError: { code, message: leakyMessage } }) }),
+      'third',
+      true
+    )
+    assertEq((await svc.status()).lastError?.message, safe, `${code} 映射固定文案`)
+  }
+
+  // chat 失败：isolated 只回 code + 安全文案（不泄漏原始 message）
+  const chatGateway = {
+    chat: async () => {
+      const e = new Error(`chat failed: ${leakyMessage}`)
+      e.code = 'OPENCLAW_TIMEOUT'
+      throw e
+    }
+  }
+  const thirdChat = adapterMod.createOpenClawService(() => chatGateway, 'third', true)
+  let chatErr = null
+  try {
+    await thirdChat.chat({ conversationKey: 'conv:work:qa', messages: [] })
+  } catch (e) {
+    chatErr = e
+  }
+  assertEq(chatErr?.code, 'OPENCLAW_TIMEOUT', 'chat 错误 code 保留')
+  assertEq(chatErr?.message, '网关超时', 'chat 错误固定安全文案')
+  for (const bad of ['http://', '10.0.0.5', 'gateway.internal', '\\\\server', '/home/u', '[::1]', 'Program Files']) {
+    assertEq(String(chatErr?.message ?? '').includes(bad), false, `chat 错误不得泄漏 ${bad}`)
+  }
+
+  // builtin 保持原始错误（宿主自用，不受第三方脱敏影响）
+  const officialChat = adapterMod.createOpenClawService(() => chatGateway, 'work', false)
+  let officialErr = null
+  try {
+    await officialChat.chat({ conversationKey: 'conv:work:qa', messages: [] })
+  } catch (e) {
+    officialErr = e
+  }
+  assertEq(officialErr?.code, 'OPENCLAW_TIMEOUT', 'builtin code 保留')
+  assertEq(String(officialErr?.message ?? '').includes('http://'), true, 'builtin 保留原始 message')
+  return '错误文案固定映射 ✓'
+})
+
+await r.check('S17', 'adapter/bridge：第三方无法用 projectId 进入宿主会话；无键合成 conv:plugin:<id>:default', async () => {
+  const seen = []
+  const gateway = {
+    chat: async (input) => {
+      seen.push(input)
+      return { text: 'ok', model: 'm' }
+    }
+  }
+  const third = adapterMod.createOpenClawService(() => gateway, 'third', true)
+  await third.chat({ projectId: 'victim-project', messages: [] })
+  assertEq('projectId' in seen[0], false, 'projectId 被剥离')
+  assertEq(seen[0].conversationKey, 'conv:plugin:third:default', '无键合成 default 键（不留空）')
+  await third.chat({ projectId: 'victim-project', conversationKey: 'conv:work:qa', messages: [] })
+  assertEq('projectId' in seen[1], false, '带键时 projectId 仍被剥离')
+  assertEq(seen[1].conversationKey, 'conv:plugin:third:work:qa', '已有键只改写')
+  await third.chat({ conversationKey: 'conv:plugin:third:own', messages: [] })
+  assertEq(seen[2].conversationKey, 'conv:plugin:third:own', '自己的键保留')
+
+  // 走真实 bridge：服务解析返回 adapter，第三方经 ctx.services.openclaw.chat 调用
+  const dir = mkdtempSync(join(tmpdir(), 'umi-svc-'))
+  try {
+    const store = permMod.createPermissionStore(join(dir, 'permissions.json'))
+    const broker = permMod.createPermissionBroker({
+      store,
+      audit: permMod.createPermissionAudit(join(dir, 'audit.log')),
+      rootsFor: () => ({ pluginDir: join(dir, 'plugin'), dataDir: join(dir, 'data') })
+    })
+    store.grant('p1', { services: ['openclaw'] })
+    const bridged = []
+    const bridgedGateway = {
+      chat: async (input) => {
+        bridged.push(input)
+        return { text: 'ok', model: 'm' }
+      }
+    }
+    const service = adapterMod.createOpenClawService(() => bridgedGateway, 'p1', true)
+    const bridge = bridgeMod.createPluginServiceBridge({
+      resolveService: (id, name) => (name === 'openclaw' ? service : undefined),
+      broker
+    })
+    const result = await bridge.call('p1', 'openclaw', 'chat', [{ projectId: 'victim-project', messages: [] }])
+    assertEq(result.text, 'ok', 'bridge chat 正常')
+    assertEq('projectId' in bridged[0], false, 'bridge 路径 projectId 被剥离')
+    assertEq(bridged[0].conversationKey, 'conv:plugin:p1:default', 'bridge 路径合成 default 键')
+    return 'projectId 隔离 ✓'
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+await r.check('S18', 'stream 收口：bridge 拒绝、第三方 adapter 抛安全错误、builtin 正常', async () => {
+  // 1) bridge 层：对第三方直接 NOT_FOUND（不进入 adapter）
+  const dir = mkdtempSync(join(tmpdir(), 'umi-svc-'))
+  try {
+    const store = permMod.createPermissionStore(join(dir, 'permissions.json'))
+    const broker = permMod.createPermissionBroker({
+      store,
+      audit: permMod.createPermissionAudit(join(dir, 'audit.log')),
+      rootsFor: () => ({ pluginDir: join(dir, 'plugin'), dataDir: join(dir, 'data') })
+    })
+    store.grant('p1', { services: ['openclaw'] })
+    const bridge = bridgeMod.createPluginServiceBridge({
+      resolveService: (id, name) =>
+        name === 'openclaw' ? { status: async () => ({ ready: true }), stream: () => ({}) } : undefined,
+      broker
+    })
+    let denied = null
+    try {
+      await bridge.call('p1', 'openclaw', 'stream', [{}])
+    } catch (e) {
+      denied = e
+    }
+    assertEq(denied?.code, errorsMod.ERROR_CODES.NOT_FOUND, 'bridge stream 拒绝（第三方 v1 不支持流式）')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+
+  // 2) adapter isolated 层：直接抛安全错误，不返回不可 structured-clone 的 handle
+  const third = adapterMod.createOpenClawService(() => ({ chat: async () => ({}) }), 'third', true)
+  let thrown = null
+  try {
+    third.stream({ messages: [] })
+  } catch (e) {
+    thrown = e
+  }
+  assertEq(thrown?.code, 'PLUGIN_OPERATION_FAILED', 'adapter isolated stream 安全拒绝')
+  assert(!/AsyncGenerator|Promise|iterator/.test(thrown?.message ?? ''), '安全文案不暴露实现细节')
+
+  // 3) builtin（fake GatewayClient，createChatStream 分支）保持原逻辑
+  const streamedCalls = []
+  const gatewayClient = {
+    getStatus: async () => ({ ready: true, endpointsEnabled: true, port: 1, baseUrl: 'u', lastError: null }),
+    createChatStream: (input) => {
+      streamedCalls.push(input)
+      return {
+        iterator: (async function* () {
+          yield { index: 0, delta: 'x' }
+        })(),
+        result: Promise.resolve({ text: 's', chunks: 2, aborted: false }),
+        cancel: () => {}
+      }
+    }
+  }
+  const builtin = adapterMod.createOpenClawService(() => gatewayClient, 'work', false)
+  const handle = builtin.stream({ conversationKey: 'conv:work:s', messages: [] })
+  assertEq(typeof handle.cancel, 'function', 'builtin stream 返回 cancel')
+  assertDeepEq(await handle.result, { text: 's', chunks: 2, aborted: false }, 'builtin stream result 收口')
+  assertEq(streamedCalls[0].conversationKey, 'conv:work:s', 'builtin 不改写会话键')
+  assertEq(streamedCalls[0].stream, true, 'builtin 传 stream:true')
+  return 'stream 收口 ✓'
 })
 
 const result = r.toJSON()

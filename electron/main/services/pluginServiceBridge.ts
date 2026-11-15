@@ -21,8 +21,11 @@ const FORBIDDEN_METHODS = new Set(['constructor', '__proto__', 'prototype', 'toS
 /** 服务级危险方法：第三方不得触达宿主路径/生命周期内部能力 */
 const SERVICE_DENY: Record<string, Set<string>> = {
   db: new Set(['backup', 'forPlugin', 'dispose', 'shutdown', 'maintenance']),
-  // status 会返回 host port/baseUrl；第三方只允许 chat/模型能力
-  openclaw: new Set(['status', 'getStatus'])
+  // status/chat 已由 adapter 在第三方（isolated）侧脱敏/强制会话隔离；
+  // getStatus 是宿主内部全量状态；ensureReady 会触发网关拉起并回全量状态；
+  // stream 的 handle 含 AsyncGenerator/Promise/函数，过不了 JSON RPC（structured clone）——
+  // 第三方 v1 明确不支持流式，三项都不对第三方开放。
+  openclaw: new Set(['getStatus', 'ensureReady', 'stream'])
 }
 
 export function createPluginServiceBridge(options: PluginServiceBridgeOptions): PluginServiceBridge {
