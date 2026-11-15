@@ -7,7 +7,7 @@
 //   - 去掉与 3.0 无关的 HOT_SOURCE_ERROR（营销热点采集专属）
 //   - 新增 STREAM_TRUNCATED：流式响应体已开始后的传输中断（2.0 v1.21 已从 connect-failed 拆出）
 
-/** §14.2 错误码表（唯一的 code 真相来源，共 17 项） */
+/** §14.2 错误码表（唯一的 code 真相来源，共 18 项） */
 export const ERROR_CODES = {
   /** 参数不合法 */
   VALIDATION_ERROR: 'VALIDATION_ERROR',
@@ -21,6 +21,8 @@ export const ERROR_CODES = {
   PLUGIN_PERMISSION_DENIED: 'PLUGIN_PERMISSION_DENIED',
   /** 插件权限配置无法安全落地（路径含空白/引号、NODE_OPTIONS 注入失败） */
   PLUGIN_PERMISSION_CONFIG_INVALID: 'PLUGIN_PERMISSION_CONFIG_INVALID',
+  /** 插件未注册/已卸载（隔离子进程未注册该方法；PLAN-5.0 P2 登记，PLUGIN-API §九 早已承诺） */
+  PLUGIN_NOT_FOUND: 'PLUGIN_NOT_FOUND',
   /** 插件调用超时（服务/激活/停止） */
   PLUGIN_TIMEOUT: 'PLUGIN_TIMEOUT',
   /** Worker 查询失败（重试后仍败） */
