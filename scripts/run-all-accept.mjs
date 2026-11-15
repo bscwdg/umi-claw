@@ -31,6 +31,8 @@ const ACCEPT = [
   ['gateway-log', 'test/gateway-log-files.accept.mjs'],
   // openclaw-qqbot 语音本地路径热修（启动前幂等锚点补丁，fail-open）
   ['qqbot-voice-patch', 'test/qqbot-voice-patch.accept.mjs'],
+  // OpenClaw 插件依赖 junction 自检热修（Node 24.16+/26 在 Windows 的兼容补丁）
+  ['openclaw-junction-patch', 'test/openclaw-junction-patch.accept.mjs'],
   ['terminal-sessions', 'test/terminal-sessions.accept.mjs'],
   // P45：宿主 IPC 行为级验收（env / claw / config / terminal 四组通道，fake registrar + 注入 deps）
   ['host-ipc', 'test/host-ipc.accept.mjs'],

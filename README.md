@@ -233,7 +233,7 @@ umi-claw/
 │   └── installer.nsh           # NSIS 钩子：升级时自动搬迁旧版数据目录
 ├── scripts/
 │   └── run-all-accept.mjs      # 一键跑全部验收
-├── test/                       # 验收：56 套 accept + e2e + 打包态 smoke（合计 61 套 / 2026-11-15 实测全绿）
+├── test/                       # 验收：57 套 accept + e2e + 打包态 smoke（合计 62 套 / 2026-11-15 实测全绿）
 │   ├── _lib.mjs                # 验收公共库
 │   ├── _ui.mjs                 # UI 验收公共库
 │   └── fixtures/               # 验收夹具
@@ -291,7 +291,7 @@ npm run dev
 # 类型检查
 npm run typecheck
 
-# 一键跑全部验收（61 套：accept×56 + e2e×4 + smoke；另有 node:test 21 条）
+# 一键跑全部验收（62 套：accept×57 + e2e×4 + smoke；另有 node:test 21 条）
 npm run accept
 ```
 

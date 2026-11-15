@@ -54,6 +54,10 @@ import type { SchemaVersionEntry } from './claw/schema'
 import { markStartupMigrationsComplete, repairManagedPluginPeerLinks } from './claw/migrations'
 import { emptyQqVoicePatchSummary, ensureQqBotVoicePatch } from './claw/qqVoicePatch'
 import {
+  emptyOpenClawJunctionPatchSummary,
+  ensureOpenClawJunctionPatch
+} from './claw/openclawJunctionPatch'
+import {
   DOCTOR_CONTENTION_RE,
   autoFixMaintenance,
   cleanStaleAgentLeases,
@@ -347,6 +351,33 @@ export class ClawManager extends EventEmitter {
       if (result.status === 'unsupported' || result.status === 'error') {
         this._addLog(
           `[gateway] QQ 语音补丁未应用：${result.file}（${result.detail ?? result.status}）`,
+          'stderr'
+        )
+      }
+    }
+
+    // OpenClaw 插件依赖 junction 兼容补丁：Node >=24.16/>=26 在 Windows 建的 junction
+    // 会被上游抓取代码的自检误判成「没解析到目标」，导致微信/QQ 等插件在网关启动时
+    // 全部加载失败（2026-11-15 实测 2026.11.1/2026.11.3 均命中）。补丁只改那段自检
+    // （见 claw/openclawJunctionPatch.ts），每轮启动幂等应用，上游改代码时自动跳过。
+    // best-effort：失败/超时都不阻断启动，口径与 QQ 语音补丁一致。
+    const emptyJunctionPatch = emptyOpenClawJunctionPatchSummary()
+    const junctionPatch = await this._withTimeoutValue(
+      ensureOpenClawJunctionPatch({ log: this._logSink() }, dataDir),
+      30_000,
+      'OpenClaw junction 兼容补丁',
+      emptyJunctionPatch
+    )
+    if (junctionPatch.patched > 0) {
+      this._addLog(
+        `[gateway] OpenClaw junction 兼容补丁已应用（${junctionPatch.patched} 个核心文件）`,
+        'system'
+      )
+    }
+    for (const result of junctionPatch.results) {
+      if (result.status === 'unsupported' || result.status === 'error') {
+        this._addLog(
+          `[gateway] junction 兼容补丁未应用：${result.file}（${result.detail ?? result.status}）`,
           'stderr'
         )
       }
