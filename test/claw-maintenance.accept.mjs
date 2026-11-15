@@ -1049,13 +1049,22 @@ await rec.check('qqbot-channel', 'QQ 机器人：渠道状态识别 + 应用侧�
     'accounts.* 里有凭证也算已配置'
   )
 
-  // 4) 受管插件目录识别：QQ 项目目录名是 tencent-connect-openclaw-qqbot-<hash>
+  // 4) 受管插件目录识别：只认「包实体完整」的项目目录（空目录/残缺包不算已安装）
+  //    旧断言把「仅创建了目录」当成已安装，正好锁死了会导致安装按钮失效的 bug，已按契约变更修正。
   const projectsDir = join(sandbox, 'config', '.openclaw', 'npm', 'projects')
-  mkdirSync(join(projectsDir, 'tencent-connect-openclaw-qqbot-a7ec020d86'), { recursive: true })
-  mkdirSync(join(projectsDir, 'openclaw-feishu-deadbeef'), { recursive: true })
+  const writeManagedPkg = (prefix, pkgName, version) => {
+    const pkgDir = join(projectsDir, prefix, 'node_modules', ...pkgName.split('/'))
+    mkdirSync(pkgDir, { recursive: true })
+    writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: pkgName, version }), 'utf-8')
+  }
+  writeManagedPkg('tencent-connect-openclaw-qqbot-a7ec020d86', '@tencent-connect/openclaw-qqbot', '2.0.4')
+  writeManagedPkg('openclaw-feishu-deadbeef00', '@openclaw/feishu', '2026.11.1')
+  // 安装回滚 / 手动组装中断会留下空项目目录：不能算已安装，否则 UI 会跳过安装
+  mkdirSync(join(projectsDir, 'openclaw-slack-deadbeef00'), { recursive: true })
   const cm3 = new ChannelManager(fakeConfig({}))
-  assertEq(cm3.isPluginInstalled('qqbot'), true, '受管 QQ 插件目录应被识别（scope 扁平化 + 哈希）')
-  assertEq(cm3.isPluginInstalled('feishu'), true, '飞书受管目录识别不回归')
+  assertEq(cm3.isPluginInstalled('qqbot'), true, '受管 QQ 插件包完整 → 已安装')
+  assertEq(cm3.isPluginInstalled('feishu'), true, '受管飞书插件包完整 → 已安装')
+  assertEq(cm3.isPluginInstalled('slack'), false, '空目录不算已安装（防误判后跳过安装）')
   assertEq(cm3.isPluginInstalled('wecom'), false, '未安装的插件不误判')
 
   // 5) 应用侧接线（安装/扫码/配置注入）静态核对
@@ -1157,7 +1166,7 @@ await rec.check('qqbot-channel', 'QQ 机器人：渠道状态识别 + 应用侧�
       '.openclaw',
       'npm',
       'projects',
-      'tencent-connect-openclaw-qqbot-deadbeef'
+      'tencent-connect-openclaw-qqbot-deadbeef00'
     ),
     { recursive: true }
   )

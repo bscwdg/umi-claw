@@ -37,6 +37,9 @@ const ACCEPT = [
   ['group-config', 'test/group-config.accept.mjs'],
   ['guard-plugin', 'test/guard-plugin.accept.mjs'],
   ['config-writer', 'test/openclaw-config-writer.accept.mjs'],
+  // 渠道插件：注册表判定 / ensurePlugin（安装+启用）/ IPC 白名单 + 飞书配置补丁纯函数
+  ['channel-plugins', 'test/channel-plugins.accept.mjs'],
+  ['feishu-channel-config', 'test/feishu-channel-config.accept.mjs'],
   ['work', 'test/work.accept.mjs'],
   ['record', 'test/record.accept.mjs'],
   ['context:work', 'test/context.work.accept.mjs'],

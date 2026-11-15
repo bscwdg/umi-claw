@@ -24,7 +24,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { Recorder, assert, assertEq, printResult, writeJson, __dirname, repoRoot, domainUiSrc, waitFor } from './_lib.mjs'
+import { Recorder, assert, assertEq, assertDeepEq, printResult, writeJson, __dirname, repoRoot, domainUiSrc, waitFor } from './_lib.mjs'
 import {
   writeStubs, compileVuePage, importPreloadApi, mountPage, esbuildBundle,
   collectRendererChannels, loadWorkIpcChannels, serialize
@@ -986,7 +986,9 @@ try {
         getStatuses: unwrap(api.channels.getStatuses),
         isPluginInstalled: unwrap(api.channels.isPluginInstalled),
         installPlugin: unwrap(api.channels.installPlugin),
-        prepareQQBotLogin: unwrap(api.channels.prepareQQBotLogin)
+        prepareQQBotLogin: unwrap(api.channels.prepareQQBotLogin),
+        getPluginPresence: unwrap(api.channels.getPluginPresence),
+        ensurePlugin: unwrap(api.channels.ensurePlugin)
       }
     }
     const bundle = compileVuePage('src/views/ChannelsPage.vue', 'ui-channels', {
@@ -1065,6 +1067,159 @@ try {
     assertEq(saved.args[0]?.channels?.qqbot?.appId, '102030405', '保存包含 channels.qqbot.appId')
     assertEq(saved.args[0]?.channels?.qqbot?.clientSecret, 's3cret', '保存包含 channels.qqbot.clientSecret')
     return 'QQ 卡片渲染/扫码前准备/失败留页/保存接线 ✓'
+  })
+
+  // ── U29 渠道插件面板：安装/重装入口 + 保存前先确保插件 + 群白名单序列化 ──
+  await r.check('U29', '渠道插件：状态/安装按钮/保存前 ensure/群白名单数组', async () => {
+    const unwrap = (fn) => async (...args) => {
+      const r = await fn(...args)
+      return r && typeof r === 'object' && 'ok' in r ? r.data : r
+    }
+    const presence = [
+      { key: 'weixin', label: '微信', installed: true, version: '2.4.10' },
+      { key: 'qqbot', label: 'QQ 机器人', installed: true },
+      { key: 'feishu', label: '飞书', installed: false },
+      { key: 'wecom', label: '企业微信', installed: true },
+      { key: 'slack', label: 'Slack', installed: false }
+    ]
+    setIpc({
+      'config:get': {
+        channels: {
+          feishu: {
+            enabled: false,
+            appId: 'cli_test',
+            appSecret: 'secret_test',
+            groupPolicy: 'allowlist',
+            groupAllowFrom: ['oc_a', 'oc_b']
+          }
+        }
+      },
+      'config:save': { appConfigSavedOk: true, openClawSyncOk: true },
+      'channels:getStatuses': [],
+      'channels:getPluginPresence': presence,
+      'channels:ensurePlugin': (key) => ({
+        success: true,
+        key,
+        installed: true,
+        installedNow: true,
+        enabled: true
+      })
+    })
+    const pageApi = {
+      ...api,
+      config: { ...api.config, get: unwrap(api.config.get), save: unwrap(api.config.save) },
+      channels: {
+        ...api.channels,
+        getStatuses: unwrap(api.channels.getStatuses),
+        getPluginPresence: unwrap(api.channels.getPluginPresence),
+        ensurePlugin: unwrap(api.channels.ensurePlugin)
+      }
+    }
+    const bundle = compileVuePage('src/views/ChannelsPage.vue', 'ui-channels-plugins', {
+      routerStub: stubs.routerStub
+    })
+    const mod = await import(pathToFileURL(bundle).href)
+    const res = await mountPage(mod.default, { api: pageApi, flush: 30 })
+    assert(!res.mountError, '渠道页挂载无异常')
+    assert(res.html.includes('渠道插件'), '渲染渠道插件面板')
+    assert(res.html.includes('已安装 v2.4.10'), '已安装插件显示版本')
+    assert(res.html.includes('未安装'), '缺失插件显示未安装')
+    let installButtonCount = 0
+    for (const n of walk(res.root)) {
+      const label = (n.children ?? []).map((c) => c.text ?? '').join('')
+      if (n.tag === 'button' && label.includes('安装')) installButtonCount += 1
+    }
+    assertEq(installButtonCount, 2, '两个未安装渠道各有一个「安装」按钮')
+
+    // 点「安装」→ 调 channels:ensurePlugin(key=feishu, force=false)
+    const installBtn = findButton(res.root, '安装')
+    assert(installBtn, '存在安装按钮')
+    installBtn.props.onClick()
+    await flushTicks()
+    const ensureCalls = calls().filter((c) => c.channel === 'channels:ensurePlugin')
+    assertEq(ensureCalls.length, 1, '点安装只调一次 ensurePlugin')
+    assertEq(ensureCalls[0].args[0], 'feishu', '按行 key 调 ensurePlugin')
+    assertEq(ensureCalls[0].args[1], false, '首次安装不传 force')
+    assert(serialize(res.root).includes('插件已安装并启用'), '安装成功提示可见')
+
+    // 保存：先 ensurePlugin（主进程只在插件已安装时写 channels.feishu），再 config:save
+    const saveBtn = findButton(res.root, '保存渠道配置')
+    assert(saveBtn, '存在保存按钮')
+    saveBtn.props.onClick()
+    await flushTicks(10)
+    const tail = calls().filter((c) => ['channels:ensurePlugin', 'config:save'].includes(c.channel))
+    assert(tail.length >= 2, '保存至少包含一次 ensurePlugin 与一次 config:save')
+    assertEq(tail.at(-2).channel, 'channels:ensurePlugin', '保存流程先确保插件')
+    assertEq(tail.at(-1).channel, 'config:save', '确保插件后才写配置')
+    const saved = tail.at(-1)
+    assertEq(saved.args[0]?.channels?.feishu?.enabled, true, '保存写 enabled:true')
+    assertDeepEq(
+      saved.args[0]?.channels?.feishu?.groupAllowFrom,
+      ['oc_a', 'oc_b'],
+      '群白名单按数组写回（逗号分隔字符串 → string[]）'
+    )
+
+    // 安装失败：原因必须留在页面可见并可重试
+    setIpc({
+      'config:get': { channels: {} },
+      'config:save': { appConfigSavedOk: true, openClawSyncOk: true },
+      'channels:getStatuses': [],
+      'channels:getPluginPresence': presence,
+      'channels:ensurePlugin': () => ({
+        success: false,
+        key: 'feishu',
+        installed: false,
+        installedNow: false,
+        enabled: false,
+        error: '模拟安装失败'
+      })
+    })
+    const failBtn = findButton(res.root, '安装')
+    assert(failBtn, '失败后仍可重试（安装按钮仍在）')
+    failBtn.props.onClick()
+    await flushTicks()
+    assert(serialize(res.root).includes('模拟安装失败'), '安装失败原因可见')
+
+    // 升级场景：旧 app.json 的 feishu 没有 groupAllowFrom 字段
+    // → 首次保存绝不能写空数组（会覆盖 openclaw.json 里已有白名单，实测会清空群接入）
+    setIpc({
+      'config:get': {
+        channels: {
+          feishu: {
+            enabled: false,
+            appId: 'cli_upgrade',
+            appSecret: 'secret_upgrade',
+            groupPolicy: 'allowlist'
+          }
+        }
+      },
+      'config:save': { appConfigSavedOk: true, openClawSyncOk: true },
+      'channels:getStatuses': [],
+      'channels:getPluginPresence': presence,
+      'channels:ensurePlugin': (key) => ({
+        success: true,
+        key,
+        installed: true,
+        installedNow: true,
+        enabled: true
+      })
+    })
+    const upgradeRes = await mountPage(mod.default, { api: pageApi, flush: 30 })
+    const upgradeSave = findButton(upgradeRes.root, '保存渠道配置')
+    assert(upgradeSave, '升级场景存在保存按钮')
+    upgradeSave.props.onClick()
+    await flushTicks(10)
+    const upgradeSaved = calls().filter((c) => c.channel === 'config:save').at(-1)
+    assert(upgradeSaved?.args?.[0]?.channels?.feishu, '升级场景保存了飞书配置')
+    assertEq(
+      Object.prototype.hasOwnProperty.call(
+        upgradeSaved.args[0].channels.feishu,
+        'groupAllowFrom'
+      ),
+      false,
+      '旧 app.json 没有白名单字段时不得写 groupAllowFrom（否则覆盖已有白名单）'
+    )
+    return '插件面板/安装/保存顺序/群白名单/升级不清空/失败可见 ✓'
   })
 
   // ── U26 撤销用户协议：ConfirmDialog 二次确认 → consent:revoke 宿主单源通道 → 状态同步 ──

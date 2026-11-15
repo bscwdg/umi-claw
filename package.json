@@ -56,6 +56,8 @@
     "e2e:day": "node test/one-day.e2e.mjs",
     "smoke": "node test/packaged.smoke.mjs",
     "accept:config-writer": "esbuild electron/main/openClawConfigWriter.ts --bundle --platform=node --format=esm --target=node20 --outfile=test/.tmp/openclaw-config-writer.mjs && node --test test/openclaw-config-writer.accept.mjs",
+    "accept:channel-plugins": "node test/channel-plugins.accept.mjs",
+    "accept:feishu-channel-config": "node test/feishu-channel-config.accept.mjs",
     "accept": "node scripts/run-all-accept.mjs",
     "check:boundary": "node scripts/check-boundaries.mjs",
     "check:style-tokens": "node scripts/check-style-tokens.mjs",
