@@ -15,6 +15,7 @@ import {
   getChannelPluginPresence,
   isChannelPluginInstalled
 } from './claw/channelPlugins'
+import { ensureOpenClawJunctionPatch } from './claw/openclawJunctionPatch'
 import type { ChannelPluginPresence } from '../../src/types/channels'
 
 const execAsync = promisify(exec)
@@ -783,6 +784,32 @@ export class DownloadManager extends EventEmitter {
   }
 
   /**
+   * 更新链路（安装新核心 → update repair / doctor）同样会加载插件抓取产物。
+   * 在跑任何会触发 doctor 的核心命令之前，先幂等补上 junction 兼容补丁，
+   * 否则新核心上的 update repair 仍会报 PluginDependencyLinkError（对抗审查 B1）。
+   * 失败只写 debug 日志，不阻断更新。
+   */
+  private async _ensureJunctionPatchBeforeCoreCommand(reason: string): Promise<void> {
+    try {
+      const summary = await ensureOpenClawJunctionPatch(
+        {
+          log: (line, type) =>
+            this._writeDebugLog(`[JunctionPatch${type === 'stderr' ? '/stderr' : ''}] ${line}`)
+        },
+        this.configManager.getDataDir()
+      )
+      this._writeDebugLog(
+        `[JunctionPatch] ${reason}：scanned=${summary.scanned} patched=${summary.patched} ` +
+          `already=${summary.alreadyPatched} unsupported=${summary.unsupported} errors=${summary.errors}`
+      )
+    } catch (err: any) {
+      this._writeDebugLog(
+        `[JunctionPatch] ${reason} 失败（不阻断更新/doctor）：${err?.message ?? String(err)}`
+      )
+    }
+  }
+
+  /**
    * 一键更新 OpenClaw 核心及渠道插件到最新版本。
    *
    * 兜底策略（对齐 OpenClaw v2026.9.1「升级失败自动回滚 npm 候选版本」）：
@@ -849,12 +876,20 @@ export class DownloadManager extends EventEmitter {
       }
       await this._smokeTestOpenClaw(candidate.openClawVersion)
 
+      // update repair 内部会跑 doctor（加载插件 doctor contract → 插件抓取产物），
+      // 新核心刚装好还是未补丁状态，先补一次再收敛插件（对抗审查 B1）。
+      await this._ensureJunctionPatchBeforeCoreCommand('update repair 前')
+
       // 官方插件/状态收敛：doctor 修复 + 按新核心重装全部受管插件。
       // 这是旧更新链路缺失的关键一步 —— 只换核心时，.openclaw/npm/projects 里
       // 与新核心不匹配或缺包的插件会让 doctor 退 1、网关冷启动卡几分钟补装后
       // degraded 运行。先收敛，再做启动探针。
       this._progress('装配插件', '正在收敛已安装插件与更新遗留状态（openclaw update repair）...', 87)
       const repairReady = await this._runUpdateRepair(useMirror)
+
+      // update repair 可能重装/回滚核心包，收敛完成后再补一次，确保 IPC 层随后
+      // 的 doctor 迁移与网关启动读到的是已补丁文件（对抗审查 B1）。
+      await this._ensureJunctionPatchBeforeCoreCommand('update repair 后')
 
       // 更新核心后同步刷新受管微信插件，保证渠道登录持续可用。
       const pluginReady = await this._installWeixinChannelPlugin(useMirror, true)

@@ -54,6 +54,10 @@ import type { SchemaVersionEntry } from './claw/schema'
 import { markStartupMigrationsComplete, repairManagedPluginPeerLinks } from './claw/migrations'
 import { emptyQqVoicePatchSummary, ensureQqBotVoicePatch } from './claw/qqVoicePatch'
 import {
+  emptyOpenClawJunctionPatchSummary,
+  ensureOpenClawJunctionPatch
+} from './claw/openclawJunctionPatch'
+import {
   DOCTOR_CONTENTION_RE,
   autoFixMaintenance,
   cleanStaleAgentLeases,
@@ -347,6 +351,47 @@ export class ClawManager extends EventEmitter {
       if (result.status === 'unsupported' || result.status === 'error') {
         this._addLog(
           `[gateway] QQ 语音补丁未应用：${result.file}（${result.detail ?? result.status}）`,
+          'stderr'
+        )
+      }
+    }
+
+    // OpenClaw 插件依赖 junction 兼容补丁：Node >=24.16/>=26 在 Windows 建的 junction
+    // 会被上游抓取代码的自检误判成「没解析到目标」，导致微信/QQ 等插件在网关启动时
+    // 全部加载失败（2026-11-15 实测 2026.11.1/2026.11.3 均命中）。补丁只改那段自检
+    // （见 claw/openclawJunctionPatch.ts），每轮启动幂等应用，上游改代码时自动跳过。
+    // best-effort：失败/超时都不阻断启动，口径与 QQ 语音补丁一致。
+    const emptyJunctionPatch = emptyOpenClawJunctionPatchSummary()
+    let junctionPatch = emptyJunctionPatch
+    try {
+      junctionPatch = await this._withTimeoutValue(
+        ensureOpenClawJunctionPatch({ log: this._logSink() }, dataDir),
+        30_000,
+        'OpenClaw junction 兼容补丁',
+        emptyJunctionPatch
+      )
+    } catch (err) {
+      // 超时工具在 task reject 时会直接 reject；补丁失败绝不能让网关起不来。
+      this._addLog(
+        `[gateway] junction 兼容补丁执行异常（已忽略，继续启动）：${err instanceof Error ? err.message : String(err)}`,
+        'stderr'
+      )
+    }
+    if (junctionPatch.patched > 0) {
+      this._addLog(
+        `[gateway] OpenClaw junction 兼容补丁已应用（${junctionPatch.patched} 个核心文件）`,
+        'system'
+      )
+    }
+    for (const result of junctionPatch.results) {
+      if (result.status === 'unsupported' || result.status === 'error') {
+        this._addLog(
+          `[gateway] junction 兼容补丁未应用：${result.file}（${result.detail ?? result.status}）`,
+          'stderr'
+        )
+      } else if (result.status === 'already-patched' && result.detail) {
+        this._addLog(
+          `[gateway] junction 兼容补丁提示：${result.file}（${result.detail}）`,
           'stderr'
         )
       }
@@ -1259,6 +1304,36 @@ export class ClawManager extends EventEmitter {
     const clawJsPath = openClawPaths.clawJs(dataDir)
     if (!existsSync(nodePath)) return { success: false, error: '未找到 Node.js 运行时' }
     if (!existsSync(clawJsPath)) return { success: false, error: '未找到 OpenClaw 核心库' }
+
+    // doctor 会加载插件 doctor contract（plugin-setup-module → 插件抓取产物），
+    // 上游那条 junction 自检若未补丁，doctor 会以同样的 PluginDependencyLinkError
+    // degraded/失败。更新链路（update repair）与首次启动/退出码 78 自愈都可能在
+    // 网关 start() 之前先跑 doctor，所以 doctor 前也要幂等补一次；失败不阻断 doctor。
+    try {
+      const junctionPatch = await ensureOpenClawJunctionPatch(
+        { log: this._logSink() },
+        dataDir
+      )
+      if (junctionPatch.patched > 0) {
+        this._addLog(
+          `[gateway] doctor 前已应用 junction 兼容补丁（${junctionPatch.patched} 个核心文件）`,
+          'system'
+        )
+      }
+      for (const result of junctionPatch.results) {
+        if (result.status === 'unsupported' || result.status === 'error') {
+          this._addLog(
+            `[gateway] doctor 前 junction 兼容补丁未应用：${result.file}（${result.detail ?? result.status}）`,
+            'stderr'
+          )
+        }
+      }
+    } catch (err) {
+      this._addLog(
+        `[gateway] doctor 前 junction 兼容补丁失败（不影响 doctor）：${err instanceof Error ? err.message : String(err)}`,
+        'stderr'
+      )
+    }
 
     const env = buildOpenClawEnv(dataDir, nodePath, {
       OPENCLAW_DISABLE_BONJOUR: '1',
