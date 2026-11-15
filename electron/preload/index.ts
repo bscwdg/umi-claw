@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { TerminalRuntime } from '../../src/types/terminal'
-import type { ChannelStatus } from '../../src/types/channels'
+import type { ChannelPluginKey, ChannelPluginPresence, ChannelStatus } from '../../src/types/channels'
 import type { PluginStatus } from '../main/kernel'
 import type {
   VoiceAudioPayload,
@@ -205,7 +205,22 @@ const api = {
       enabled: boolean
       error?: string
     }> => ipcRenderer.invoke('channels:prepareQQBotLogin'),
-    getStatuses: (): Promise<ChannelStatus[]> => ipcRenderer.invoke('channels:getStatuses')
+    getStatuses: (): Promise<ChannelStatus[]> => ipcRenderer.invoke('channels:getStatuses'),
+    // 通用安装/重装：缺失就装、装了没启用就启用（所有渠道插件共用）
+    ensurePlugin: (
+      key: ChannelPluginKey,
+      force = false
+    ): Promise<{
+      success: boolean
+      key: string
+      installed: boolean
+      installedNow: boolean
+      enabled: boolean
+      error?: string
+    }> => ipcRenderer.invoke('channels:ensurePlugin', key, force),
+    // 全部渠道插件安装态（渠道页/Setup 一次取完）
+    getPluginPresence: (): Promise<ChannelPluginPresence[]> =>
+      ipcRenderer.invoke('channels:getPluginPresence')
   },
 
   // 终端

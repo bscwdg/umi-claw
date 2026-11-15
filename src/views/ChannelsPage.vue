@@ -20,6 +20,31 @@
       <p v-else class="cs-empty">尚未配置任何渠道，选择下方渠道卡片开始接入</p>
     </div>
 
+    <div class="plugin-panel">
+      <div class="plugin-panel-header">
+        <span class="plugin-panel-title">渠道插件</span>
+        <span class="plugin-panel-desc"
+          >插件缺失/损坏时可一键安装或重装（首次约 1–2 分钟），装完需重启 OpenClaw</span
+        >
+      </div>
+      <div class="plugin-rows">
+        <div v-for="p in pluginPresence" :key="p.key" class="plugin-row">
+          <span class="plugin-name">{{ p.label }}</span>
+          <span :class="['plugin-state', p.installed ? 'ok' : 'missing']">
+            {{ p.installed ? (p.version ? `已安装 v${p.version}` : "已安装") : "未安装" }}
+          </span>
+          <button
+            class="btn btn-sm"
+            :disabled="pluginBusy === p.key"
+            @click="ensurePlugin(p.key, p.installed)"
+          >
+            {{ pluginBusy === p.key ? "处理中…" : p.installed ? "重装" : "安装" }}
+          </button>
+        </div>
+      </div>
+      <p v-if="pluginMsg" class="form-hint">{{ pluginMsg }}</p>
+    </div>
+
     <div class="channels-list">
       <div
         v-for="ch in CHANNELS"
@@ -118,9 +143,9 @@
 
     <div class="alert alert-info channels-tip">
       <p>
-        💻 其他渠道（Telegram、Slack
-        等）可在<strong>终端</strong>页面通过
-        <code>openclaw channels setup</code> 命令添加。
+        💻 Telegram 等其它渠道可在<strong>终端</strong>页面执行
+        <code>openclaw channels setup</code> 添加；Slack 可先用上方「渠道插件」安装，
+        再按官方向导配置凭证。
       </p>
     </div>
 
@@ -218,12 +243,27 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router"; // 👈 引入 Vue 路由，摆脱 props
-import type { ChannelStatus } from "../types/channels";
+import type {
+  ChannelPluginKey,
+  ChannelPluginPresence,
+  ChannelStatus,
+} from "../types/channels";
 
 const router = useRouter();
 const weixinMsg = ref("");
 const qqbotMsg = ref("");
 const qqbotBusy = ref(false);
+
+// ── 渠道插件安装态（5 个渠道插件共用一套：缺了就装，装了没启用就启用）──
+const pluginPresence = ref<ChannelPluginPresence[]>([]);
+const pluginBusy = ref<ChannelPluginKey | null>(null);
+const pluginMsg = ref("");
+/**
+ * app.json 里原本有没有飞书群白名单字段。
+ * 旧版 app.json 没有这个字段时，表单初始为空；此时保存不能写 `[]`，
+ * 否则会覆盖 openclaw.json 里由向导/旧版写入的白名单（升级场景实测会清空）。
+ */
+const feishuHadGroupAllowFrom = ref(false);
 
 // ── 已接入渠道（依据网关真实配置，见 electron/main/channelManager.getChannelStatuses）──
 const channelStatuses = ref<Record<string, ChannelStatus>>({});
@@ -251,10 +291,48 @@ async function loadChannelStatuses() {
     if (!window.api?.channels?.getStatuses) return;
     const list = await window.api.channels.getStatuses();
     const map: Record<string, ChannelStatus> = {};
-    for (const s of list || []) map[s.key] = s;
+    // IPC 返回形状异常时降级为空，不让整页渲染因 for..of 崩掉
+    for (const s of Array.isArray(list) ? list : []) map[s.key] = s;
     channelStatuses.value = map;
   } catch (err) {
     console.error("加载渠道运行状态失败:", err);
+  }
+}
+
+async function loadPluginPresence() {
+  try {
+    if (!window.api?.channels?.getPluginPresence) return;
+    const list = await window.api.channels.getPluginPresence();
+    // 元素形状异常时过滤掉：模板直接读 p.key，null 元素会让整页渲染崩
+    pluginPresence.value = Array.isArray(list)
+      ? list.filter((p) => p && typeof p === "object")
+      : [];
+  } catch (err) {
+    console.error("加载渠道插件安装态失败:", err);
+  }
+}
+
+/**
+ * 安装/重装渠道插件（所有渠道共用）。
+ * force = 已安装时点「重装」：走 openclaw plugins install --force 覆盖受管目录。
+ */
+async function ensurePlugin(key: ChannelPluginKey, force = false) {
+  if (pluginBusy.value || !window.api?.channels?.ensurePlugin) return;
+  pluginBusy.value = key;
+  pluginMsg.value = `⏳ 正在${force ? "重装" : "安装"}插件（首次约 1–2 分钟）…`;
+  try {
+    const res = await window.api.channels.ensurePlugin(key, force);
+    if (res?.success) {
+      pluginMsg.value = `✅ 插件已${force ? "重装" : "安装"}并启用，请重启 OpenClaw 生效`;
+    } else {
+      pluginMsg.value = `⚠️ 插件${force ? "重装" : "安装"}失败：${res?.error || "未知错误"}`;
+    }
+  } catch (e) {
+    pluginMsg.value = `⚠️ 插件安装失败：${e}`;
+  } finally {
+    pluginBusy.value = null;
+    await loadPluginPresence();
+    await loadChannelStatuses();
   }
 }
 
@@ -422,6 +500,13 @@ const CHANNELS: ChannelConfig[] = [
         type: "checkbox",
         default: true,
       },
+      {
+        id: "groupAllowFrom",
+        label: "群白名单（群 chat_id，逗号分隔）",
+        optional: true,
+        placeholder: "oc_xxx, oc_yyy",
+        hint: "群聊策略选「仅白名单群」时必须填写，否则所有群都不会回复；留空表示不接收任何群消息",
+      },
     ],
   },
   {
@@ -561,11 +646,16 @@ onMounted(async () => {
         const cfg = existing[ch.key] as Record<string, unknown> | undefined;
         if (cfg) {
           expanded.value[ch.key] = true; // 有旧配置的默认展开
+          if (ch.key === "feishu" && cfg.groupAllowFrom !== undefined) {
+            feishuHadGroupAllowFrom.value = true;
+          }
           for (const f of ch.fields) {
             if (cfg[f.id] !== undefined) {
               formValues.value[ch.key][f.id] =
                 f.type === "checkbox"
                   ? Boolean(cfg[f.id])
+                  : Array.isArray(cfg[f.id])
+                  ? (cfg[f.id] as unknown[]).join(", ")
                   : (cfg[f.id] as string);
             }
           }
@@ -576,8 +666,9 @@ onMounted(async () => {
     console.error("加载渠道已有配置失败:", err);
   }
 
-  // 3. 拉取网关侧的真实接入状态（含插件型渠道）
+  // 3. 拉取网关侧的真实接入状态（含插件型渠道）与渠道插件安装态
   await loadChannelStatuses();
+  await loadPluginPresence();
 });
 
 // ── 5. 交互行为逻辑 ───────────────────────────────────────────────────
@@ -619,6 +710,20 @@ async function save() {
         const entry: Record<string, unknown> = { enabled: true };
         for (const f of ch.fields) {
           const v = vals[f.id];
+          // 群白名单：UI 用逗号/空白分隔，openclaw.json 要数组。
+          // 旧 app.json 没有该字段时不能写空数组（会覆盖 openclaw.json 里已有白名单），
+          // 只有「原来就有这个字段（用户显式清空）」或「这次填了值」才写。
+          if (f.id === "groupAllowFrom") {
+            const list = String(v ?? "")
+              .split(/[,，\s]+/)
+              .map((item) => item.trim())
+              .filter(Boolean);
+            if (list.length || feishuHadGroupAllowFrom.value) {
+              entry.groupAllowFrom = list;
+              feishuHadGroupAllowFrom.value = true;
+            }
+            continue;
+          }
           if (f.type === "checkbox") {
             entry[f.id] = Boolean(v);
           } else {
@@ -633,70 +738,62 @@ async function save() {
 
     // 闭环处理保存：先获取完整配置，避免抹除 models/gateway 等其他配置项
     if (window.api?.config?.get && window.api?.config?.save) {
+      // 插件渠道先确保插件就绪，再写配置：
+      // 1) 缺失就安装、卸载标记 enabled:false 就启用（所有渠道共用 ensurePlugin）；
+      // 2) 主进程只在「插件已安装」时写 channels.feishu / channels.qqbot，否则会被
+      //    OpenClaw 以 unknown channel id 拒绝整份配置（网关起不来）。
+      const pluginErrors: string[] = [];
+      for (const key of ["feishu", "qqbot"] as ChannelPluginKey[]) {
+        if (!channelConfigs[key]) continue;
+        const label = key === "feishu" ? "飞书" : "QQ 机器人";
+        if (!window.api?.channels?.ensurePlugin) {
+          pluginErrors.push(`${label}：当前版本缺少插件安装接口，请重启应用`);
+          continue;
+        }
+        savedMsg.value = `⏳ 正在准备${label}插件（缺失时会自动安装，首次约 1–2 分钟）...`;
+        try {
+          const ensured = await window.api.channels.ensurePlugin(key);
+          if (!ensured?.success) {
+            pluginErrors.push(`${label}：${ensured?.error || "插件未就绪"}`);
+          }
+        } catch (e) {
+          pluginErrors.push(`${label}：${e}`);
+        }
+      }
+      await loadPluginPresence();
+
       const fullConfig = (await window.api.config.get()) || {};
       fullConfig.channels = channelConfigs;
 
       const saveRes = await window.api.config.save(fullConfig);
       // app.json 本地落盘失败（硬失败，设置没写进去、重启即丢）优先于同步警告提示
       if (saveRes && saveRes.appConfigSavedOk === false) {
-        savedMsg.value = `❌ 渠道配置保存失败（app.json 未能写入）：${saveRes.appConfigSaveError || "未知错误"}。请检查数据目录权限后重试。`;
+        const pluginHint = pluginErrors.length
+          ? `；插件：${pluginErrors.join("；")}`
+          : "";
+        savedMsg.value = `❌ 渠道配置保存失败（app.json 未能写入）：${saveRes.appConfigSaveError || "未知错误"}。请检查数据目录权限后重试${pluginHint}`;
         return;
       }
       // 网关配置可能因 schema 被官方拒绝（本地 app.json 已存，不丢设置）
-      let syncWarning = "";
+      const warnings: string[] = [];
       if (saveRes && saveRes.openClawSyncOk === false) {
-        syncWarning = `⚠️ 本地配置已保存，但同步到 OpenClaw 未通过校验：${saveRes.openClawSyncError || "未知错误"}。下次启动会自动尝试修复。`;
-        savedMsg.value = syncWarning;
-      } else {
-        savedMsg.value = "✅ 已保存，重启 OpenClaw 后生效";
+        warnings.push(
+          `⚠️ 本地配置已保存，但同步到 OpenClaw 未通过校验：${saveRes.openClawSyncError || "未知错误"}。下次启动会自动尝试修复。`
+        );
+      }
+      if (pluginErrors.length) {
+        warnings.push(
+          `⚠️ 插件未就绪：${pluginErrors.join("；")}。可在上方「渠道插件」里重试安装。`
+        );
       }
 
-      // config.save 内部已同步 openclaw.json，这里刷新「已接入渠道」总览
+      // config.save 内部已同步 openclaw.json，这里刷新渠道总览与插件状态
       await loadChannelStatuses();
+      await loadPluginPresence();
 
-      // 飞书为插件驱动渠道：已配置且插件未安装时，自动安装官方插件
-      const feishuConfigured = !!channelConfigs["feishu"];
-      if (feishuConfigured && window.api?.channels?.installPlugin) {
-        try {
-          const installed =
-            (await window.api.channels.isPluginInstalled?.("feishu")) ?? false;
-          if (!installed) {
-            if (!syncWarning) savedMsg.value = "⏳ 正在安装飞书插件（首次约 1-2 分钟）...";
-            const res = await window.api.channels.installPlugin(
-              "@openclaw/feishu"
-            );
-            if (res?.success) {
-              if (!syncWarning) savedMsg.value = "✅ 飞书插件已安装，请重启 OpenClaw 生效";
-            } else {
-              savedMsg.value = `⚠️ 配置已保存，但插件安装失败：${res?.error || "未知错误"}`;
-            }
-          }
-        } catch (e) {
-          savedMsg.value = `⚠️ 配置已保存，但插件安装失败：${e}`;
-        }
-      }
-
-      // QQ 机器人：插件为受管安装（环境初始化/更新时自动装），缺失时保存时补装
-      const qqbotConfigured = !!channelConfigs["qqbot"];
-      if (qqbotConfigured && window.api?.channels?.installPlugin) {
-        try {
-          const installed =
-            (await window.api.channels.isPluginInstalled?.("qqbot")) ?? false;
-          if (!installed) {
-            if (!syncWarning) savedMsg.value = "⏳ 正在安装 QQ 机器人插件（首次约 1-2 分钟）...";
-            const res = await window.api.channels.installPlugin(
-              "@tencent-connect/openclaw-qqbot"
-            );
-            if (!syncWarning) {
-              savedMsg.value = res?.success
-                ? "✅ QQ 插件已安装，请重启 OpenClaw 生效"
-                : `⚠️ 配置已保存，但 QQ 插件安装失败：${res?.error || "未知错误"}`;
-            }
-          }
-        } catch (e) {
-          savedMsg.value = `⚠️ 配置已保存，但 QQ 插件安装失败：${e}`;
-        }
-      }
+      savedMsg.value = warnings.length
+        ? warnings.join(" ")
+        : "✅ 已保存，重启 OpenClaw 后生效";
     } else {
       throw new Error("主进程安全沙箱配置保存 API 不可用");
     }
@@ -791,6 +888,55 @@ async function save() {
 .cs-empty {
   font-size: var(--text-xs);
   color: var(--text-secondary);
+}
+/* 渠道插件面板：安装/重装入口，五个渠道插件共用一套行（不按渠道分支） */
+.plugin-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.plugin-panel-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-2);
+}
+.plugin-panel-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.plugin-panel-desc {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.plugin-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.plugin-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.plugin-name {
+  min-width: 80px;
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+}
+.plugin-state {
+  flex: 1;
+  font-size: var(--text-xs);
+}
+.plugin-state.ok {
+  color: var(--success);
+}
+.plugin-state.missing {
+  color: var(--warning);
 }
 .channel-card {
   border: 1px solid var(--border);

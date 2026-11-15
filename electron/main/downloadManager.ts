@@ -11,6 +11,11 @@ import { SkillSyncService } from './skillSyncService'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
 import { applyWebhookMigrationMarker, findLegacyWebhookChannels } from './openclawWebhookMarker'
 import { subprocessRegistry } from './subprocessRegistry'
+import {
+  getChannelPluginPresence,
+  isChannelPluginInstalled
+} from './claw/channelPlugins'
+import type { ChannelPluginPresence } from '../../src/types/channels'
 
 const execAsync = promisify(exec)
 const execFileAsync = promisify(execFile)
@@ -61,7 +66,13 @@ export interface EnvInfo {
   nodeVersion?: string
   openClawInstalled: boolean
   openClawVersion?: string
+  /**
+   * 基础渠道插件是否就绪（保留旧语义：只看微信受管插件）。
+   * Setup 的「环境已就绪」闸门依赖它，不能因为某个按需渠道缺失就把环境判成未初始化。
+   */
   channelsInstalled: boolean
+  /** 全部渠道插件安装态；按需渠道（飞书/企微/Slack 等）缺了只影响展示，不影响闸门 */
+  channelPlugins?: ChannelPluginPresence[]
   dataDir: string
   diskFree?: number
 }
@@ -353,16 +364,27 @@ export class DownloadManager extends EventEmitter {
     const clawPath = join(dataDir, 'openclaw', 'node_modules', '.bin', 'openclaw')
     // OpenClaw 只识别它自己受管的插件目录（.openclaw/npm/projects/<hash>/node_modules/...）；
     // 仅装进 openclaw/node_modules 的副本不会被 channels 命令识别，因此以受管目录为准。
+    // 判定统一走渠道插件注册表：要求包内 package.json 完整（空目录/残缺包不算已安装）。
+    const configDir = openClawPaths.configDir(dataDir)
     const weixinPluginPath = this._getWeixinManagedPluginDir()
+    const channelPlugins = getChannelPluginPresence(configDir)
 
     this._writeDebugLog(`[CheckEnv] nodePath: ${nodePath}, exist: ${existsSync(nodePath)}`);
     this._writeDebugLog(`[CheckEnv] clawPath: ${clawPath}, exist: ${existsSync(clawPath)}`);
     this._writeDebugLog(`[CheckEnv] weixinPluginPath: ${weixinPluginPath}, exist: ${existsSync(weixinPluginPath)}`);
+    this._writeDebugLog(
+      `[CheckEnv] channelPlugins: ${channelPlugins
+        .map((p) => `${p.key}=${p.installed ? 'yes' : 'no'}`)
+        .join(', ')}`
+    );
 
     const info: EnvInfo = {
       nodeInstalled: existsSync(nodePath),
       openClawInstalled: existsSync(clawPath),
-      channelsInstalled: existsSync(weixinPluginPath),
+      // 保留旧语义：基础环境闸门只看微信（初始化流程保证它存在）。
+      // 其它渠道缺失只体现在 channelPlugins，避免把「飞书没装」误判成环境未初始化。
+      channelsInstalled: isChannelPluginInstalled(configDir, 'weixin'),
+      channelPlugins,
       dataDir
     }
 
@@ -443,7 +465,13 @@ export class DownloadManager extends EventEmitter {
     }
 
     const managedDir = this._getWeixinManagedPluginDir()
-    if (force) {
+    const alreadyInstalled = isChannelPluginInstalled(openClawPaths.configDir(dataDir), 'weixin')
+    // 受管目录存在但包不完整（安装回滚/半拷贝）：普通 plugins install 会报 already exists，
+    // 必须清掉旧项目目录再装；只有「包完整」才算已安装、可跳过。
+    if (force || (!alreadyInstalled && existsSync(join(managedDir, '..', '..', '..')))) {
+      if (!force) {
+        this._writeDebugLog('[InstallWeixinPlugin] 受管目录残缺，清理后重新安装')
+      }
       // 更新场景：清掉旧的受管插件项目目录，强制 plugins install 重新拉取最新版本。
       const projectDir = join(managedDir, '..', '..', '..')
       try {
@@ -451,7 +479,7 @@ export class DownloadManager extends EventEmitter {
       } catch (e: any) {
         this._writeDebugLog(`[InstallWeixinPlugin] 清理旧受管插件目录失败: ${e.message}`)
       }
-    } else if (existsSync(managedDir)) {
+    } else if (alreadyInstalled) {
       this._writeDebugLog('[InstallWeixinPlugin] 受管微信插件已存在，跳过安装')
       return true
     }
@@ -539,14 +567,19 @@ export class DownloadManager extends EventEmitter {
     }
 
     const managedDir = this._getQQBotManagedPluginDir()
-    if (force) {
+    const alreadyInstalled = isChannelPluginInstalled(openClawPaths.configDir(dataDir), 'qqbot')
+    // 与微信同口径：目录存在但包不完整 → 清掉重装；包完整才跳过
+    if (force || (!alreadyInstalled && existsSync(join(managedDir, '..', '..', '..')))) {
+      if (!force) {
+        this._writeDebugLog('[InstallQQBotPlugin] 受管目录残缺，清理后重新安装')
+      }
       const projectDir = join(managedDir, '..', '..', '..')
       try {
         if (existsSync(projectDir)) rmSync(projectDir, { recursive: true, force: true })
       } catch (e: any) {
         this._writeDebugLog(`[InstallQQBotPlugin] 清理旧受管插件目录失败: ${e.message}`)
       }
-    } else if (existsSync(managedDir)) {
+    } else if (alreadyInstalled) {
       this._writeDebugLog('[InstallQQBotPlugin] 受管 QQ 机器人插件已存在，跳过安装')
       return true
     }
