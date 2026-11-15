@@ -133,7 +133,7 @@ interface PluginContextV1 {
 | `kv` | `get/set/keys`（async） | 本插件命名空间 |
 | `secrets` | `get/set/clear/keys/available` | 仅本插件 `plugin:<id>:*`；不可读宿主密钥 |
 | `notifications` | `show({title, body, silent?})` | 仅标题/正文 |
-| `openclaw` | `status()`、`chat()`、`stream()` | 仅模型调用；会话键强制 `conv:plugin:<id>:*`；不返回 port/baseUrl/token；不可发渠道 |
+| `openclaw` | `status()`、`chat()`（`stream` 预留） | 仅模型调用；会话键强制 `conv:plugin:<id>:*` 且剥离 `projectId`；不返回 port/baseUrl/token；错误 message 为固定安全文案；第三方 v1 不支持流式；不可发渠道 |
 | `http` | `fetch(request)` | 仅 manifest `permissions.http` 域名；经宿主代理；超时/大小上限 |
 | `dialog` | `pickFile(options)` | 仅文件选择；不暴露窗口对象 |
 | `registerIpc` | `(method, handler)` | 仅 `plugin:<id>:<method>`；不含冒号/空白；停用卸载 |
@@ -152,6 +152,10 @@ interface PluginContextV1 {
 | `db.path/request/backup` | 逃生门；仅官方 internal，第三方禁止 |
 
 官方通过 `@umi/plugin-sdk/official` 引入 internal；第三方包构建时该子路径不可用（打包器 external + 运行时不存在）。
+
+### 3.3 手动触发约定（5.0 管理页）
+
+第三方插件可 `ctx.registerIpc('run', handler)` 暴露手动触发入口；宿主「插件管理」页对已安装插件提供「运行一次」按钮，经 `plugin:isolated:invoke` 调用 `run`，返回值以字符串/JSON（截断 200 字符）展示在提示行，仅用于无 UI 插件的调试与验收。非 running（保存配置重启失败/熔断/未启动）时卡片改为显示「启动」按钮，经 `plugin:isolated:start` 调 `startInstalledRecord` 恢复进程（未安装 → NOT_FOUND，已 running 幂等）；running 时保留「运行一次」。未注册 `run` 时调用失败，管理页按 `PLUGIN_NOT_FOUND` 提示「该插件未提供 run 方法」。管理页读取的是 `plugin:isolated:invoke` 的**原始信封**（`{ok,data}` / `{ok:false,error}`）判断 code：`contextIsolation` 下 `contextBridge` 只保留 Error 的 message/name，自定义 `code` 属性会在跨桥时丢失（electron#25596）。
 
 ---
 
@@ -173,6 +177,7 @@ interface PluginIpcHandler {
 ```
 
 - 第三方不接收 Electron `IpcMainInvokeEvent`；`event.sender` 相关流式由宿主 supervisor 转成事件通道（A1 定稿）。
+- **第三方 v1 不支持流式**：service bridge 只传 JSON，流式 handle（AsyncGenerator/Promise/函数）过不了 structured clone。`ctx.services.openclaw.stream` 在 bridge 层拒绝（NOT_FOUND），adapter 在第三方侧直接抛 `PLUGIN_OPERATION_FAILED` 安全错误；事件流 RPC 落地后再开放。
 - 取消：宿主提供 `AbortSignal`；插件应尽快停止并返回 `PLUGIN_ABORTED`。
 - 超时：默认 30s（可配置）；超时返回 `PLUGIN_TIMEOUT`。
 - 背压：高频 chunk 合并/限流，避免 IPC 淹没；上限在 B1 实测后定。
@@ -231,8 +236,8 @@ interface PluginDbApiV1 {
 
 ### 6.2 OpenClaw 边界
 
-- 只给模型调用；会话键强制 `conv:plugin:<id>:*`；不得进入 `conv:work:*` / `conv:<projectId>:*`。
-- `status()` 不返回 port/baseUrl/token；不可调用渠道发送/网关控制。
+- 只给模型调用；会话键强制 `conv:plugin:<id>:*`（adapter 会**剥离 `projectId`**，无键时合成 `conv:plugin:<id>:default`）；不得进入 `conv:work:*` / `conv:<projectId>:*`。
+- `status()` 只回 `{ready, endpointsEnabled, lastError?}`（`lastError` 只保留 `code` + 固定安全文案）；`chat()` 失败也只回 `code` + 固定安全文案，不拼原始 message（原始串可能含 URL/内网 IP/UNC 或盘符路径）；不返回 port/baseUrl/token；`ensureReady`/`getStatus`/`stream` 不对第三方开放（bridge 拒绝，第三方 v1 不支持流式）；不可调用渠道发送/网关控制。
 - 配额/模型策略由宿主设置；超限 `PLUGIN_QUOTA_EXCEEDED`。
 
 ---
@@ -243,6 +248,8 @@ interface PluginDbApiV1 {
 - 限制：深度 ≤ 8、字段数 ≤ 200、字符串长度 ≤ 8KB、正则仅白名单语法（禁回溯风险）；超限拒绝。
 - 设置页只渲染 schema，不执行任意 HTML/JS；label/description 经过转义。
 - `config.get/set/all/onChange` 全 async；变更先校验后写入，失败不落盘。
+- 设置页保存（宿主 `plugin:config:set`）后，正在运行的隔离子进程会被 stop→start 重建，让新的 `ctx.config` 快照立即生效；未运行时不自动拉起。重启失败只记日志并回 `warning`，配置本身仍已落盘。
+- 非 running（crashed/starting/stopped）保存只写盘并回 `restarted:false` + `warning`；crashed/starting 的 supervisor 自动重拉仍用旧 spec，但可用管理页「启动」（`plugin:isolated:start`）按盘上新配置恢复（disabled 熔断同样先 stop 再重建；未启动/重启失败直接点「启动」即可）。
 
 ---
 
@@ -258,7 +265,7 @@ interface PluginDbApiV1 {
 
 - 第三方通道：`plugin:<id>:<method>`（method 不含 `:`/空白）。
 - 返回信封：`{ ok: true, data }` / `{ ok: false, error: { code, message, details? } }`。
-- 错误码新增（A3a 落到 `ERROR_CODES`）：
+- 错误码新增（A3a 落到 `ERROR_CODES`；`PLUGIN_NOT_FOUND` 已于 PLAN-5.0 P2 登记）：
 
 | code | 场景 |
 | --- | --- |

@@ -1912,6 +1912,139 @@ await r.check('U28', '大肥鱼页面所有卡片统一接入 CollapsibleCard', 
   return '公共组件 + 18 张卡片接入 ✓'
 })
 
+await r.check('U30', '插件管理页「运行一次/启动」：隔离子进程入口 + 配置 warning 回显 + 错误按 code', async () => {
+  const src = readFileSync(join(repoRoot, 'src', 'views', 'PluginManager.vue'), 'utf-8')
+
+  // 按钮必须挂在「已安装插件」卡片里（内置插件没有 run 约定，不给入口）
+  const installedStart = src.indexOf('v-for="item in installedList"')
+  assert(installedStart >= 0, '已安装插件卡片存在')
+  const installedSlice = src.slice(installedStart, installedStart + 1600)
+  assert(/运行一次/.test(installedSlice), '已安装插件卡片应有「运行一次」按钮')
+  assert(/@click="runOnce\(item\)"/.test(installedSlice), '按钮必须接 runOnce(item)')
+  assert(/class="btn btn-sm"/.test(installedSlice), '复用现有 btn btn-sm 样式')
+  assert(/runBusy === String\(item\.id\)/.test(installedSlice), '运行中按插件 id 禁用（防连点）')
+  // 非 running 时给「启动」恢复入口（保存配置重启失败/熔断后会停在 stopped）
+  assert(/v-if="isInstalledRunning\(item\)"/.test(installedSlice), 'running 才显示「运行一次」')
+  assert(/v-else/.test(installedSlice), '非 running 显示「启动」')
+  assert(/@click="startInstalled\(item\)"/.test(installedSlice), '启动按钮接 startInstalled(item)')
+  assert(/startBusy === String\(item\.id\)/.test(installedSlice), '启动中按插件 id 禁用（防连点）')
+
+  const runStart = src.indexOf('async function runOnce')
+  assert(runStart >= 0, '应有 runOnce 实现')
+  // 只截到 startInstalled 之前：避免把「启动」实现里的异常兜底也算进 runOnce 的断言
+  const runEnd = src.indexOf('async function startInstalled', runStart)
+  const runSlice = src.slice(runStart, runEnd > runStart ? runEnd : runStart + 2200)
+  // 已安装插件都是 utilityProcess：只能走 plugin:isolated:invoke；
+  // plugin:<id>:<method> 是 builtin in-process 通道，隔离子进程没有宿主侧 handler
+  assert(
+    /window\.api\.plugins\.invokeIsolatedEnvelope\(id, 'run'\)/.test(runSlice),
+    'run 必须经 plugins.invokeIsolatedEnvelope → plugin:isolated:invoke（原始信封）'
+  )
+  // contextBridge 会丢 Error 自定义属性：必须按信封 ok/error.code 分支，不能再读 e.code
+  assert(/if \(res\.ok\)/.test(runSlice), '成功分支按信封 ok 判断')
+  assert(/res\.error\?\.code === 'PLUGIN_NOT_FOUND'/.test(runSlice), 'PLUGIN_NOT_FOUND 按信封 error.code 分支')
+  assert(/该插件未提供 run 方法/.test(runSlice), '未注册 run 的提示文案')
+  assert(/res\.data/.test(runSlice), '成功数据来自信封 data')
+  assert(/运行结果/.test(runSlice), '成功结果写 installNotice')
+  assert(/formatRunResult/.test(runSlice), '返回值要格式化/截断')
+  assert(/installError\.value/.test(runSlice), '失败写 installError')
+  assert(!/\be\.code\b/.test(runSlice), '不得依赖跨桥会丢的 e.code')
+  assert(!/\(e as \{ code/.test(runSlice), '不得从异常对象里读 code')
+  assert(!/message\.includes\(/.test(runSlice), '错误分支不得读 message（AGENTS §4.2）')
+
+  // 配置保存要回显 warning（重启失败 / 当前非 running 未生效两种语义都不能写成「重启失败」）
+  const saveStart = src.indexOf('async function saveConfig')
+  assert(saveStart >= 0, 'saveConfig 存在')
+  const saveSlice = src.slice(saveStart, saveStart + 800)
+  assert(/restarted === false/.test(saveSlice) && /warning/.test(saveSlice), '保存配置要读 restarted/warning')
+  assert(/await loadIsolated\(\)/.test(saveSlice), '保存后刷新隔离子进程状态（失败时切「启动」入口）')
+  assert(/配置已保存：\$\{String\(saved\.warning\)\}/.test(saveSlice), 'warning 原样拼在「配置已保存：」后')
+  assert(!/插件重启失败/.test(saveSlice), '未发起重启时不能写「重启失败」')
+
+  // 「启动」实现：调 preload startInstalled + 刷新 isolated 状态
+  const startStart = src.indexOf('async function startInstalled')
+  assert(startStart >= 0, '应有 startInstalled 实现')
+  const startSlice = src.slice(startStart, startStart + 1200)
+  assert(/window\.api\.plugins\.startInstalledEnvelope\(id\)/.test(startSlice), '启动必须走原始信封 startInstalledEnvelope')
+  assert(/if \(!res\.ok\)/.test(startSlice), '按信封 ok 分支')
+  assert(/res\.error\?\.code/.test(startSlice), '失败按信封 error.code 分支')
+  assert(/loadIsolated\(\)/.test(startSlice), '启动后刷新隔离子进程状态')
+  assert(/已启动/.test(startSlice), '成功提示「已启动」')
+  assert(/installError\.value/.test(startSlice), '失败写 installError')
+  assert(!/e\.code/.test(startSlice), '不依赖跨桥会丢的 e.code')
+
+  // 真实 preload 行为：原始信封跨桥不丢 code（这是 contextBridge 下唯一可靠的 code 通道）
+  assertEq(typeof api.plugins.invokeIsolatedEnvelope, 'function', 'preload 暴露 invokeIsolatedEnvelope')
+  setIpc({
+    'plugin:isolated:invoke': {
+      ok: false,
+      error: { code: 'PLUGIN_NOT_FOUND', message: '插件未注册方法 run' }
+    }
+  })
+  const failure = await api.plugins.invokeIsolatedEnvelope('third', 'run', { x: 1 })
+  assertDeepEq(
+    failure,
+    { ok: false, error: { code: 'PLUGIN_NOT_FOUND', message: '插件未注册方法 run' } },
+    '原始失败信封原样返回（code 不丢）'
+  )
+  const failureCall = calls().find((entry) => entry.channel === 'plugin:isolated:invoke')
+  assert(failureCall, '实际走 plugin:isolated:invoke 通道')
+  assertDeepEq(
+    failureCall.args[0],
+    { id: 'third', method: 'run', payload: { x: 1 } },
+    '参数形状（id/method/payload）'
+  )
+
+  // 成功信封同样原样返回
+  setIpc({ 'plugin:isolated:invoke': { ok: true, data: { ran: true } } })
+  assertDeepEq(
+    await api.plugins.invokeIsolatedEnvelope('third', 'run'),
+    { ok: true, data: { ran: true } },
+    '成功信封原样返回'
+  )
+
+  // 保留原 invokeIsolated（解包 data）兼容其它调用
+  setIpc({ 'plugin:isolated:invoke': { ran: true } })
+  assertDeepEq(await api.plugins.invokeIsolated('third', 'run'), { ran: true }, 'invokeIsolated 仍解包 data')
+
+  // preload 启动入口：原始信封（跨桥不丢 code）+ 旧解包 API 兼容
+  assertEq(typeof api.plugins.startInstalled, 'function', 'preload 暴露 startInstalled')
+  assertEq(typeof api.plugins.startInstalledEnvelope, 'function', 'preload 暴露 startInstalledEnvelope')
+  setIpc({
+    'plugin:isolated:start': {
+      ok: false,
+      error: { code: 'PLUGIN_OPERATION_FAILED', message: '插件当前处于停用状态' }
+    }
+  })
+  assertDeepEq(
+    await api.plugins.startInstalledEnvelope('third'),
+    { ok: false, error: { code: 'PLUGIN_OPERATION_FAILED', message: '插件当前处于停用状态' } },
+    '启动失败信封原样返回（code 不丢）'
+  )
+  setIpc({ 'plugin:isolated:start': { ok: true, data: [{ pluginId: 'third', state: 'running' }] } })
+  assertDeepEq(
+    await api.plugins.startInstalledEnvelope('third'),
+    { ok: true, data: [{ pluginId: 'third', state: 'running' }] },
+    '启动成功信封原样返回'
+  )
+  // 保留旧 startInstalled（解包 statuses）兼容其它调用
+  setIpc({ 'plugin:isolated:start': [{ pluginId: 'third', state: 'running' }] })
+  assertDeepEq(
+    await api.plugins.startInstalled('third'),
+    [{ pluginId: 'third', state: 'running' }],
+    'startInstalled 仍解包 statuses'
+  )
+  const startCall = calls().find((entry) => entry.channel === 'plugin:isolated:start')
+  assert(startCall, 'startInstalled 走 plugin:isolated:start')
+  assertDeepEq(startCall.args[0], { id: 'third' }, '启动参数形状 {id}')
+
+  // 主进程 handler：invoke / start 都已在 pluginRuntime 注册（本任务只在已有 IPC 风格上补 start）
+  const runtimeSrc = readFileSync(join(repoRoot, 'electron', 'main', 'services', 'pluginRuntime.ts'), 'utf-8')
+  assert(/deps\.ipc\.handle\('plugin:isolated:invoke'/.test(runtimeSrc), '宿主 invoke handler 已存在')
+  assert(/deps\.ipc\.handle\('plugin:isolated:start'/.test(runtimeSrc), '宿主 start handler 已注册')
+  return '运行一次/启动入口 ✓'
+})
+
 const result = r.toJSON({})
 
 const ok = printResult(result)

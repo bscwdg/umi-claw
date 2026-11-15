@@ -469,8 +469,29 @@ const api = {
     revokePermissions: (id: string) => call<unknown>('plugin:permissions:revoke', { id }),
     devMode: () => call<{ plugins: boolean; build: boolean; reason: string; warning: string | null }>('plugin:dev-mode'),
     isolatedStatuses: () => call<Array<{ pluginId: string; state: string }>>('plugin:isolated:list'),
+    // 启动/重试：保存配置后进程停在 stopped、或 supervisor 熔断时的恢复入口
+    startInstalled: (id: string) =>
+      call<Array<{ pluginId: string; state: string }>>('plugin:isolated:start', { id }),
+    // 原始信封版：contextBridge 会丢 Error 自定义属性（electron#25596），需要按 code
+    // 分支的 UI 只能读纯 JSON 信封，不能依赖 preload 抛出的 e.code。
+    startInstalledEnvelope: (
+      id: string
+    ): Promise<
+      | { ok: true; data: Array<{ pluginId: string; state: string }> }
+      | { ok: false; error: { code: string; message: string; details?: unknown } }
+    > => ipcRenderer.invoke('plugin:isolated:start', { id }),
     invokeIsolated: <T = unknown>(id: string, method: string, payload?: unknown): Promise<T> =>
       call<T>('plugin:isolated:invoke', { id, method, payload }),
+    // 原始信封入口：contextBridge 跨桥只保留 Error 的 message/name，自定义 code 会丢
+    // （electron#25596）。需要按 code 分支的调用方必须自己拿纯 JSON 信封，不能依赖抛错对象。
+    invokeIsolatedEnvelope: (
+      id: string,
+      method: string,
+      payload?: unknown
+    ): Promise<
+      | { ok: true; data: unknown }
+      | { ok: false; error: { code: string; message: string; details?: unknown } }
+    > => ipcRenderer.invoke('plugin:isolated:invoke', { id, method, payload }),
     install: (packageFile: string, options?: { allowSelfSigned?: boolean; tofuFingerprint?: string }) =>
       call<unknown>('plugin:install', { packageFile, ...options }),
     update: (packageFile: string, options?: { allowSelfSigned?: boolean; tofuFingerprint?: string }) =>

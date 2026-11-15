@@ -50,6 +50,7 @@ import {
 } from './pluginPermissions'
 import { buildPluginPermissionEnv } from './pluginPermissions'
 import { createPluginServiceBridge, type PluginServiceBridge } from './pluginServiceBridge'
+import { ERROR_CODES, errorCodeOf } from './errors'
 import {
   collectPluginDiagnostics,
   inspectPluginPackage,
@@ -327,7 +328,51 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       try {
         return { ok: true, data: await isolationManager!.invoke(id, method, payload?.payload) }
       } catch (e) {
-        return { ok: false, error: { code: 'PLUGIN_OPERATION_FAILED', message: (e as Error)?.message ?? '调用失败' } }
+        // 子进程错误码是插件契约的一部分（如 PLUGIN_NOT_FOUND = 没注册该方法），一律包成
+        // PLUGIN_OPERATION_FAILED 会让渲染端无法按 code 分支（管理页「运行一次」的友好提示
+        // 就走不到）。只透传 ERROR_CODES 里登记的码（errorCodeOf 用 hasOwnProperty 判定，
+        // 原型链上的 toString 之类不算）；未知/伪造 code 继续兜底，不把任意字符串抛给渲染端。
+        const code = errorCodeOf(e) ?? ERROR_CODES.PLUGIN_OPERATION_FAILED
+        return { ok: false, error: { code, message: (e as Error)?.message ?? '调用失败' } }
+      }
+    })
+
+    deps.ipc.removeHandler('plugin:isolated:start')
+    deps.ipc.handle('plugin:isolated:start', async (_e, payload: { id?: string }) => {
+      const id = String(payload?.id ?? '')
+      const record = readInstallState(deps.dataDir()).plugins[id]
+      if (!record) return { ok: false, error: { code: ERROR_CODES.NOT_FOUND, message: '插件未安装：' + id } }
+      if (!isolationManager) {
+        return {
+          ok: false,
+          error: { code: ERROR_CODES.PLUGIN_OPERATION_FAILED, message: '隔离插件运行时未启用，无法启动' }
+        }
+      }
+      // disabled 是用户主动停用：直接启动会绕过 stop 语义（startInstalledRecord 也会 return），
+      // 明确回错，避免 UI 显示「已启动」但进程没起来。
+      if (record.enabled === false) {
+        return {
+          ok: false,
+          error: { code: ERROR_CODES.PLUGIN_OPERATION_FAILED, message: '插件当前处于停用状态，请先重新启用后再启动' }
+        }
+      }
+      // 已 running 时幂等返回：supervisor.start 对重复启动会抛「已启动」，
+      // 不能让 UI 的「重试」按钮在已在运行的插件上报错。
+      const status = isolationManager.statuses().find((item) => item.pluginId === id)
+      const running = status?.state === 'running'
+      try {
+        if (!running) {
+          // disabled（熔断）/crashed/starting 时 manager 里仍有 supervisor，直接 start 会抛
+          // 「隔离插件已启动」。先 stop 把表项清掉，再按盘上新配置重建（显式恢复入口语义）。
+          if (status) await isolationManager.stop(id)
+          await startInstalledRecord(record)
+        }
+        return { ok: true, data: isolationManager.statuses() }
+      } catch (e) {
+        // 启动失败（权限 env 非法/入口不存在/熔断 disabled 等）按登记码回给 UI，
+        // 未知异常兜底 PLUGIN_OPERATION_FAILED。
+        const code = errorCodeOf(e) ?? ERROR_CODES.PLUGIN_OPERATION_FAILED
+        return { ok: false, error: { code, message: (e as Error)?.message ?? '启动失败' } }
       }
     })
 
@@ -427,7 +472,7 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       }
     })
     deps.ipc.removeHandler('plugin:config:set')
-    deps.ipc.handle('plugin:config:set', (_e, payload: { id?: string; config?: unknown }) => {
+    deps.ipc.handle('plugin:config:set', async (_e, payload: { id?: string; config?: unknown }) => {
       const id = String(payload?.id ?? '')
       const record = readInstallState(deps.dataDir()).plugins[id]
       if (!record) return { ok: false, error: { code: 'NOT_FOUND', message: '插件未安装：' + id } }
@@ -436,11 +481,42 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
       try {
         mkdirSync(record.dataDir, { recursive: true })
         const file = join(record.dataDir, 'config.json')
-        writeFileSync(file + '.tmp', JSON.stringify(payload?.config ?? {}, null, 2), 'utf8')
+        writeFileSync(file + '.tmp', JSON.stringify(checked.value, null, 2), 'utf8')
         renameSync(file + '.tmp', file)
-        return { ok: true, data: payload?.config ?? {} }
       } catch (e) {
         return { ok: false, error: { code: 'PLUGIN_OPERATION_FAILED', message: (e as Error)?.message ?? '保存失败' } }
+      }
+      // 隔离子进程的 ctx.config 是启动时的快照（readInstalledConfig）：只写盘不重启的话，
+      // 用户改完设置（比如定时时间）要重启整个 App 才生效。只重建「当前确实在 running」的插件：
+      //   - crashed：supervisor 会按 backoff 自行重拉，配置保存插一脚会和它抢进程；
+      //   - disabled：连续崩溃后的熔断安全态，重启等于绕过熔断；
+      //   - starting：正在启动，等它落定，避免和启动流程打架。
+      // 未运行时顺手拉起还会把用户停用/启动失败的状态悄悄改掉，比配置晚生效更糟。
+      const manager = isolationManager
+      const state = manager?.statuses().find((status) => status.pluginId === id)?.state
+      const running = state === 'running'
+      if (!manager || !running) {
+        // 非 running 时只写盘；启动入口会用盘上新配置重建，所以文案给可执行动作，
+        // 不再统一说「需重启 App」（stopped/从未启动点「启动」就生效；crashed/starting
+        // 的 supervisor 自动重拉才会用旧 spec）。
+        const warning =
+          record.enabled === false
+            ? undefined
+            : state
+              ? `插件当前状态为 ${state}，配置已保存；自动重拉仍用旧配置，可点「启动」用新配置恢复`
+              : '插件当前未运行，配置已保存；点「启动」后生效'
+        return { ok: true, data: { ...checked.value, restarted: false, ...(warning ? { warning } : {}) } }
+      }
+      try {
+        await manager.stop(id)
+        await startInstalledRecord(record)
+        return { ok: true, data: { ...checked.value, restarted: true } }
+      } catch (e) {
+        // 配置已经落盘成功；重启失败只意味着「本次变更未生效」，不能把保存本身
+        // 报成失败（否则 UI 显示保存失败，用户既不知道文件已写、也没有重试出口）。
+        const warning = `${(e as Error)?.message ?? String(e)}；插件已停止，可点「启动」用新配置恢复`
+        deps.logger(`[plugin:${id}] 配置保存后重启失败：${warning}`)
+        return { ok: true, data: { ...checked.value, restarted: false, warning } }
       }
     })
 

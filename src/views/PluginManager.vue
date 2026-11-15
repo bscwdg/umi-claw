@@ -51,6 +51,12 @@
       <div v-for="item in installedList" :key="String(item.id)" class="meta">
         <strong>{{ String(item.name) }}</strong> {{ String(item.version) }} ·
         {{ String(item.trustLevel) }}
+        <button v-if="isInstalledRunning(item)" class="btn btn-sm" :disabled="runBusy === String(item.id)" @click="runOnce(item)">
+          {{ runBusy === String(item.id) ? '运行中…' : '运行一次' }}
+        </button>
+        <button v-else class="btn btn-sm" :disabled="startBusy === String(item.id)" @click="startInstalled(item)">
+          {{ startBusy === String(item.id) ? '启动中…' : '启动' }}
+        </button>
         <button class="btn btn-sm" @click="rollback(item.id)">回滚</button>
         <button class="btn btn-sm" @click="toggleInstalledPermission(item.id)">{{ permissionMap[String(item.id)]?.granted ? '撤销权限' : '授权' }}</button>
         <button class="btn btn-sm btn-danger" @click="uninstall(item.id)">卸载</button>
@@ -220,17 +226,107 @@ const isolatedPlugins = ref<Array<{ pluginId: string; name: string; version: str
 const installed = ref<{ schema: 1; plugins: Record<string, Record<string, unknown>> }>({ schema: 1, plugins: {} })
 const installedList = computed(() => Object.values(installed.value.plugins ?? {}))
 const configValues = ref<Record<string, Record<string, unknown>>>({})
+/** 「运行一次」正在执行的插件 id（防连点） */
+const runBusy = ref('')
+/** 「启动/重试」正在执行的插件 id（防连点） */
+const startBusy = ref('')
+/** 隔离子进程状态表：id 不在表里 = 没有进程（相当于 stopped） */
+const isolatedStateById = computed<Record<string, string>>(() => {
+  const map: Record<string, string> = {}
+  for (const item of isolatedPlugins.value) map[item.pluginId] = item.state
+  return map
+})
+/** running 才给「运行一次」；其它状态给「启动」（恢复入口） */
+function isInstalledRunning(item: Record<string, unknown>): boolean {
+  return isolatedStateById.value[String(item.id)] === 'running'
+}
 function schemaFields(item: Record<string, unknown>): Array<{ key: string; label: string; type: string; enumValues: unknown[] }> {
   const schema = item.configSchema as { properties?: Record<string, { type?: string; title?: string; enum?: unknown[] }> } | undefined
   return Object.entries(schema?.properties ?? {}).map(([key, value]) => ({ key, label: value.title ?? key, type: value.type ?? 'string', enumValues: value.enum ?? [] }))
 }
 async function saveConfig(id: unknown): Promise<void> {
   installError.value = ''
+  installNotice.value = ''
   try {
-    await window.api.plugins.setConfig(String(id), configValues.value[String(id)] ?? {})
-    installNotice.value = '配置已保存'
+    const saved = await window.api.plugins.setConfig(String(id), configValues.value[String(id)] ?? {})
+    // 保存可能把进程停掉（重启失败 / 非 running 不重启）：刷新状态，让卡片切到「启动」恢复入口
+    await loadIsolated()
+    // warning 可能是「重启失败」或「当前非 running、配置未生效」两种语义，
+    // 不能统一写成「重启失败」——后者根本没发起重启。原样拼在「配置已保存：」后面。
+    installNotice.value =
+      saved?.restarted === false && saved?.warning
+        ? `配置已保存：${String(saved.warning)}`
+        : '配置已保存'
   } catch (e) {
     installError.value = (e as Error)?.message ?? '保存配置失败'
+  }
+}
+
+/** 运行结果展示：字符串直出，其余 JSON 截断，避免把整块返回值塞进提示行 */
+function formatRunResult(value: unknown): string {
+  const text = typeof value === 'string' ? value : JSON.stringify(value ?? null)
+  return text.length > 200 ? text.slice(0, 200) + '…' : text
+}
+
+/**
+ * 「运行一次」：给无 UI 的第三方插件一个手动触发入口（约定 registerIpc('run', ...)）。
+ * 已安装插件都是隔离子进程，方法只能经 plugin:isolated:invoke 调；`plugin:<id>:<method>`
+ * 是官方 builtin 插件的 in-process 通道，隔离子进程没有宿主侧 handler。
+ *
+ * 必须用 invokeIsolatedEnvelope 拿原始信封：contextIsolation 下 contextBridge 跨桥只保留
+ * Error 的 message/name，preload 抛出的自定义 e.code 会丢（electron#25596），
+ * 按 e.code 分支在真实渲染进程里是死代码。
+ */
+async function runOnce(item: Record<string, unknown>): Promise<void> {
+  const id = String(item.id)
+  installNotice.value = ''
+  installError.value = ''
+  runBusy.value = id
+  try {
+    const res = await window.api.plugins.invokeIsolatedEnvelope(id, 'run')
+    if (res.ok) {
+      installNotice.value = `「${String(item.name)}」运行结果：${formatRunResult(res.data)}`
+    } else if (res.error?.code === 'PLUGIN_NOT_FOUND') {
+      // PLUGIN_NOT_FOUND = 插件没有注册 run 方法
+      installError.value = 'PLUGIN_NOT_FOUND：该插件未提供 run 方法'
+    } else {
+      installError.value = res.error?.code
+        ? `${res.error.code}：${res.error.message ?? '运行失败'}`
+        : res.error?.message ?? '运行失败'
+    }
+  } catch (e) {
+    // IPC 通道本身失败（主进程异常等）仍兜底；不依赖跨桥后会丢的自定义错误属性
+    installError.value = (e as Error)?.message ?? '运行失败'
+  } finally {
+    runBusy.value = ''
+  }
+}
+
+/**
+ * 「启动/重试」：保存配置重启失败、或 supervisor 熔断后，隔离进程会停在 stopped；
+ * 之前只能重启 App 才能恢复，这里给一个宿主侧恢复入口（走 plugin:isolated:start）。
+ */
+async function startInstalled(item: Record<string, unknown>): Promise<void> {
+  const id = String(item.id)
+  installNotice.value = ''
+  installError.value = ''
+  startBusy.value = id
+  try {
+    // 原始信封：contextBridge 会丢 Error 自定义属性，不能依赖跨桥后的错误属性
+    const res = await window.api.plugins.startInstalledEnvelope(id)
+    if (!res.ok) {
+      const code = res.error?.code
+      installError.value = code
+        ? `${code}：${res.error.message ?? '启动失败'}`
+        : res.error?.message ?? '启动失败'
+      return
+    }
+    await Promise.all([loadInstalled(), loadIsolated()])
+    installNotice.value = `「${String(item.name)}」已启动`
+  } catch (e) {
+    installError.value = (e as Error)?.message ?? '启动失败'
+  } finally {
+    startBusy.value = ''
   }
 }
 const pendingPackage = ref('')
