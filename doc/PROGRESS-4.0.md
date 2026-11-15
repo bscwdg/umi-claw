@@ -2785,3 +2785,13 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 - 独立审查：a3a 事实核对、umi-auditor 对抗复核多轮；GA 前阻塞（boot 数据根、权限生命周期、kill switch、config 校验、会话键 scoping、发布流程）逐项处置。**最后一轮会话键 scoping 修复由 R6 + final7 全量验收覆盖，未再跑第三轮独立子代理复核（已披露）。**
 - 已知限制：含空格 dataDir/用户名显式失败；干净机器卸载 e2e 由单测/打包冒烟替代；官方/伙伴根密钥由发布流水线注入（默认 self-TOFU）；child 只读 appPath/resourcesPath 属 Electron bootstrap 必需；C6 未实现完整 JSON Schema（required/min/max）。
 - 文档：CHANGELOG `[5.0.0]`、PLAN §5.1、RUNBOOK GA 清单、AGENTS 计数已同步；`v5.0.0` tag 指向 `d918d3e`，其后仅文档修正提交。
+
+---
+
+## 2026-11-16 · 第三方插件宿主缺口修复（GA 后）
+
+- 提交：`bc39653` 登记 PLUGIN_NOT_FOUND（ERROR_CODES 17→18）；`1302f59` 第三方 openclaw 会话隔离/错误脱敏/流式收口；`4f052e0` 配置重启、运行一次与启动恢复入口。
+- 修复：生产双层 openclaw 接线（同时修内置 work/marketing 的 status/stream TypeError）；第三方 chat 剥离 projectId、无键合成 `conv:plugin:<id>:default`；status/chat 错误只回 code+固定安全文案；第三方禁用 getStatus/ensureReady/stream（stream handle 无法跨 structured clone，SDK 移除并文档标注 v1 不支持）；配置保存 running 时 stop→start、非 running 回可执行 warning；`plugin:isolated:start` 支持 crashed/disabled 先 stop 再按盘上新配置重建；运行一次/启动改读原始 JSON 信封，避免 contextBridge 丢 code。
+- 验收：typecheck:node/web 0；plugin-service-bridge 18/18；plugin-runtime-isolation 18/18；ui 30/30；db-worker 38/38（`UMI_ACCEPT_NODE` 系统 node）；plugin-install e2e 1/1；startup e2e 1/1；`check:boundary` 0/0/0。全量 accept 仍只有既有 `hot` 环境失败（clean HEAD worktree 同样复现 2/16，与本次 diff 无关）。
+- 对抗审查：`b5360500`（首轮）、`7f83fb34`（复核）、`3c45c434`（终审）。终审结论：安全项（projectId/stream/脱敏/错误码）成立、可提交；P1 熔断恢复与 P2 warning/文案已按终审意见修复后才提交。逐条处置与残余风险见三个提交的 message。
+- 残余风险：熔断/crashed/starting 恢复仅凭 start handler stop→start 语义（R18 覆盖 crashed，disabled 无仓库内测试）；U30 为源码级+preload 桩，无组件挂载/真 contextBridge e2e；openclaw runtime→bridge→adapter 整链无仓库集成测试（终审用仓库外临时脚本验证）；第三方 stream 明确不支持；固定错误文案牺牲诊断信息（VALIDATION_ERROR 已单独映射）；`plugin:config:set` 响应字段与插件同名键可能冲突；保存配置无 busy 防连点；isolated 状态不订阅 `plugin:changed`。
