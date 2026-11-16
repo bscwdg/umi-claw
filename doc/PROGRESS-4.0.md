@@ -2570,3 +2570,15 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 - 只改 `index.cjs` 不同步 `index.cjs.map`，sourcemap 堆栈行号漂移，运行时无影响。
 - 备份按版本号单份保留；同版本号重发包且未整体替换 dist 的极小概率场景不另留底。
 - 超时不取消底层 promise，迟到 rename 理论上与 capture 交错；同目录 rename 原子，实际风险可忽略。
+---
+
+## 2026-11-16 · 5.0 三特性回填（资料包 v1 / 数据目录可更改 / 插件失败重试）
+
+- 来源：`release/5.0` 提交 `9f23227`，以 cherry-pick + 冲突裁剪方式回填为 `ac744a5`；4.x 只做官方内置插件，5.0 第三方插件/隔离进程（permissions / dev-mode / isolated:* / installer / index）整套不回填。
+- 资料包 v1：`character/packBundle.ts` + 角色页导入导出 + zip 守卫（zip-slip / 条目洪水 / STORED 伪造头 / manifest 256KB），character-pack 19 项原样移植。
+- 数据目录：`dataDirBootstrap.ts` + `ipc/host/dataDir.ts` + Setup 页查看/更改/重启；4.0 的 index.ts 原未导入 `dialog`，本回填补齐。
+- 插件重试：`pluginRetry.ts` 纯编排 + lifecycle `retry/retryFailed` + pluginDb `disposeFor` + env 三任务成功后自动重试；PluginManager.vue 按 4.0 卡片结构手工接「重试加载」（不整体搬 5.0 页面），plugin.accept 增 P66/P67（67/67），plugin-retry 8/8。
+- 冲突裁剪记录：pluginRuntime 只留 retry 接线（5.0 专有 handler 全剥，rg 复核零残留）；run-all 只注册 4.0 实际存在的 3 个新套件；ui.accept 移植 U31/U32/U33、弃 5.0 专有的 U30；U28 CollapsibleCard 计数按 5.0 Lead 仲裁同口径 17→18（新增资料包卡，default-collapsed 仍 2 张）。
+- 验收（claw-4.0 worktree 实测）：双 typecheck 0；`check:boundary` 0/0/0；build 绿；character-pack 19/19、data-dir 6/6、plugin-retry 8/8、plugin 67/67、ui 32/32、character.core 110/110、character-content 12/12、host-ipc 31/31、consent 10/10、wizard 17/17、group-config 14/14、group-policy 11/11、one-day e2e 11/11、smoke 7/7（S6/S7 显式跳过）。
+- 环境失败：仅 `hot`（collector 原生崩溃 3221226505，14/16），与 5.0 worktree、干净 HEAD 同症，和本回填无关；总口径 50 套 / 901 项 Recorder 检查（887 通过 + 1 显式跳过 + hot 14 环境失败），node:test 21 条另计。
+- 对抗审查：实现沿用 5.0 两轮子代理审查结论（01a1e390-4c52 / 01a1e390-4e34，含 STORED zip 截断、manifest 256KB、taskRunning 闸、话题 id 重复口径等修复）；回填本身逐文件复核 5.0 专有引用清零、冲突裁剪与 U28 计数变更均附实测证据。
