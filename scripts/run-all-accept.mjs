@@ -36,6 +36,8 @@ const ACCEPT = [
   ['terminal-sessions', 'test/terminal-sessions.accept.mjs'],
   // P45：宿主 IPC 行为级验收（env / claw / config / terminal 四组通道，fake registrar + 注入 deps）
   ['host-ipc', 'test/host-ipc.accept.mjs'],
+  // 5.0：数据目录覆盖解析/校验（CLAW_DATA_DIR > data-location 覆盖 > 便携/默认）
+  ['data-dir', 'test/data-dir.accept.mjs'],
   // 4.5：群聊策略（GroupSettings 模型/迁移/编译成 OpenClaw 配置）+ 随包 feiyu-guard hook 插件
   ['group-policy', 'test/group-policy.accept.mjs'],
   ['group-config', 'test/group-config.accept.mjs'],
@@ -68,8 +70,12 @@ const ACCEPT = [
   ['external-tts', 'test/external-tts.accept.mjs'],
   ['character', 'test/character.core.accept.mjs'],
   ['character-content', 'test/character-content.accept.mjs'],
+  // 5.0：大肥鱼统一资料包（人格/知识/主动消息/记忆 一键导入导出 + zip-slip/上限）
+  ['character-pack', 'test/character-pack.accept.mjs'],
   ['sticker', 'test/sticker.accept.mjs'],
   ['plugin', 'test/plugin.accept.mjs'],
+  // 5.0：失败插件重试编排（pluginRetry：单飞 / dispose 后复核 / afterEnable 失败隔离）
+  ['plugin-retry', 'test/plugin-retry.accept.mjs'],
   ['plugin-contract', 'test/plugin-contract.accept.mjs'],
   ['plugin-isolation', 'test/plugin-isolation.accept.mjs'],
   ['plugin-permissions', 'test/plugin-permissions.accept.mjs'],

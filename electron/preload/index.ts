@@ -46,6 +46,7 @@ import type { StickerImportResult, StickerRecord } from '../main/character/stick
 import type { ContentOverview } from '../main/character/contentStore'
 import type { ContentDeck } from '../main/character/contentEngine'
 import type { BackupExportResult, BackupImportResult } from '../main/character/backupBundle'
+import type { ImportPackResult, SnapshotCurrentResult } from '../main/character/packBundle'
 console.log('✅ preload loaded')
 
 // ── work 域信封解包：IPC 返回 {ok,data} / {ok,error} ────────────────────────
@@ -123,7 +124,17 @@ const api = {
     getPresetModels: (configName: string) =>
       ipcRenderer.invoke('config:getPresetModels', configName),
     refreshModelPresets: () => ipcRenderer.invoke('config:refreshModelPresets'),
-    getModelPresetsInfo: () => ipcRenderer.invoke('config:getModelPresetsInfo')
+    getModelPresetsInfo: () => ipcRenderer.invoke('config:getModelPresetsInfo'),
+    // 5.0：数据目录查看 / 更改 / 重启应用。走 call() 解信封，失败抛 WorkError（带 code）
+    getDataDirInfo: () =>
+      call<{ current: string; override: string | null; overrideUnusable: string | null }>(
+        'config:dataDir:get'
+      ),
+    chooseDataDir: () =>
+      call<{ dataDir: string; previous: string; requiresRestart: boolean } | null>(
+        'config:dataDir:choose'
+      ),
+    restartApp: () => call<{ restarted: boolean }>('config:dataDir:restart')
   },
 
   // 环境
@@ -461,6 +472,8 @@ const api = {
   // 该通道根本没有 handler（invoke 会失败，而不是打到别人的实现上）。
   plugins: {
     list: () => call<PluginStatus[]>('plugin:list'),
+    // 5.0：重试「启用但运行时失败」的内置插件（环境初始化成功后自动恢复，也能手动点）
+    retryFailed: () => call<PluginStatus[]>('plugin:retryFailed'),
     setEnabled: (id: string, enabled: boolean) =>
       call<PluginStatus[]>('plugin:setEnabled', { id, enabled }),
     // B2：权限授权只授予 manifest 已申请的权限（主进程再次校验，渲染端不能凭空扩权）
@@ -940,6 +953,24 @@ const api = {
       import: (path?: string) =>
         call<BackupImportResult | { canceled: true }>(
           'character:backup:import',
+          path ? { path } : {}
+        )
+    },
+    // 5.0 统一资料包 v1（人格/知识/主动消息/记忆）：不传 path 时由宿主弹框选目录
+    pack: {
+      export: (path?: string) =>
+        call<SnapshotCurrentResult | { canceled: true }>(
+          'character:pack:export',
+          path ? { path } : {}
+        ),
+      importFolder: (path?: string) =>
+        call<(ImportPackResult & { backupPath: string }) | { canceled: true }>(
+          'character:pack:import-folder',
+          path ? { path } : {}
+        ),
+      importZip: (path?: string) =>
+        call<(ImportPackResult & { backupPath: string }) | { canceled: true }>(
+          'character:pack:import-zip',
           path ? { path } : {}
         )
     },

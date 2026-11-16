@@ -6,6 +6,7 @@ import { OFFICIAL_MODEL_PRESETS, toOpenClawProviderKey, pruneReservedOpenClawPro
 import { ModelPresetService, type PresetInfo, type RefreshResult } from './modelPresets'
 import { GATEWAY_TOKEN, openClawPaths } from './openClawPaths'
 import { ensurePortableNpmrc } from './portableNpmConfig'
+import { readDataDirOverride, resolveDataDirWithUsableOverride, validateDataDir } from './dataDirBootstrap'
 import { applyOpenClawConfigPatch, buildJsonMergePatch, collectLossyIdArrayReplacePaths, runSerializedOpenClawConfigWrite, type OpenClawPatchResult } from './openClawConfigWriter'
 import {
   applyWebhookMigrationMarker,
@@ -229,6 +230,8 @@ export class ConfigManager {
   private skillManifestPath: string
   /** 官方模型预设服务（overlay → 内置快照加载 + 「拉取最新」在线更新） */
   private modelPresets: ModelPresetService
+  /** 已保存但本次启动不可用的数据目录覆盖（移动盘未就绪时降级；null=没有覆盖或可用） */
+  private dataDirOverrideUnusable: string | null = null
   /** Obsidian MCP 注入器：返回 mcp.servers.obsidian 配置，未启用返回 null */
   private obsidianMcpInjector: (() => Record<string, unknown> | null) | null = null
   /** OpenClaw 对话内语音（tts 块）注入器：返回待写入的 tts 配置，未启用返回 null */
@@ -249,31 +252,39 @@ export class ConfigManager {
 
   constructor() {
     // 确定数据目录
-    // 优先级：CLAW_DATA_DIR 环境变量 > 便携模式 > 默认规则
+    // 优先级：CLAW_DATA_DIR 环境变量 > data-location 覆盖 > 便携模式 > 默认规则
+    // - 覆盖目录：环境初始化页「更改…」写入 <userData>/data-location.json（5.0 新增），
+    //   重启后生效；旧数据不会被自动迁移/删除，用户可自行复制
     // - 便携模式：exe 同级存在 data 文件夹时启用（U 盘携带等场景），
     //   数据跟随程序，更新直接替换程序文件即可
     // - 普通安装默认：%APPDATA%\UmiClaw\data（与安装目录分离，
     //   NSIS 更新时会清空安装目录，数据放安装目录内会被删、也容易被其他程序占用卡住更新）
     // - 设置 CLAW_DATA_DIR 可让本地安装版与开发环境共享同一份 data，
     //   便于使用 openclaw（需通过带环境变量的启动脚本运行，避免双实例同时写同一份数据）
-    const envDataDir = process.env.CLAW_DATA_DIR
-    if (envDataDir) {
-      this.dataDir = envDataDir
-    } else if (app.isPackaged) {
-      const exePath = app.getPath('exe')
-      const portableDataDir = join(dirname(exePath), 'data')
-      if (existsSync(portableDataDir)) {
-        // 便携模式（U 盘等）：exe 同级存在 data 时数据跟随程序走，
-        // 更新时直接替换程序文件即可，数据目录原地不动
-        this.dataDir = portableDataDir
-      } else {
-        // 普通安装：%APPDATA%\UmiClaw\data
-        this.dataDir = join(app.getPath('appData'), 'UmiClaw', 'data')
-      }
-    } else {
-      // 开发环境：项目根目录下的 data 文件夹
-      this.dataDir = join(process.cwd(), 'data')
+    // 注意 userData 的位置由外壳（electron/main/index.ts）在构造本类之前定向，与 dataDir 无关；
+    // 因此覆盖文件不会随数据目录搬走，改目录后仍能被读到。
+    const userDataDir = app.getPath('userData')
+    const portableDataDir = app.isPackaged
+      ? join(dirname(app.getPath('exe')), 'data')
+      : null
+    const candidates = {
+      env: process.env.CLAW_DATA_DIR,
+      override: readDataDirOverride(userDataDir),
+      portable: portableDataDir && existsSync(portableDataDir) ? portableDataDir : null,
+      appData: app.isPackaged ? join(app.getPath('appData'), 'UmiClaw', 'data') : null,
+      dev: app.isPackaged ? null : join(process.cwd(), 'data')
     }
+    // 覆盖目录可能指向已拔出的移动硬盘/U 盘：只按优先级取会让 _ensureDirectories 抛错、
+    // 应用直接起不来。这里先校验可用性，不可用就降级到下一优先级（保留覆盖文件，
+    // 磁盘恢复后重启即可回到用户选定目录），并把原因留给环境页提示。
+    const resolved = resolveDataDirWithUsableOverride(candidates, (dir) => validateDataDir(dir).ok)
+    if (resolved.overrideUnusable) {
+      this.dataDirOverrideUnusable = resolved.overrideUnusable
+      console.warn(
+        `[ConfigManager] 已保存的数据目录当前不可用（已临时回退默认目录）：${resolved.overrideUnusable}`
+      )
+    }
+    this.dataDir = resolved.dataDir
 
     // 设置配置文件路径
     this.configPath = join(this.dataDir, 'config', 'app.json')
@@ -404,6 +415,11 @@ export class ConfigManager {
 
   getDataDir(): string {
     return this.dataDir
+  }
+
+  /** 已保存但本次启动不可用的覆盖目录（供环境页提示「磁盘未就绪，已临时回退」） */
+  getDataDirOverrideUnusable(): string | null {
+    return this.dataDirOverrideUnusable
   }
 
   /**

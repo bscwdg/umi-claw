@@ -43,6 +43,13 @@ import { createStickerStore, type StickerImportInput, type StickerUpdatePatch } 
 import { createContentStore } from './contentStore'
 import { sendSticker } from './stickerSender'
 import { createBackupBundle } from './backupBundle'
+import {
+  importPack,
+  readPackDir,
+  readPackZip,
+  snapshotCurrent,
+  type CharacterPackPlan
+} from './packBundle'
 import type { GenerateProactiveText } from './proactiveWriter'
 import {
   CHARACTER_CHANNELS,
@@ -556,6 +563,47 @@ async function registerCharacterInternal(
     })
     await manager.init()
 
+    // 统一资料包 v1（5.0）：导出走「合并后 deck」（含内置）；导入前用 snapshotCurrent 生成
+    // **完整资料包目录**（persona + 合并后话题/台词 + vault 知识/关系 + 日记）到 <dataDir>/backups，
+    // 覆盖导入会改写的全部内容（zip 备份不含 Obsidian 知识与用户语料，恢复不了同 id 话题覆盖）。
+    const packPreImportBackup = async (): Promise<string> => {
+      const backupsRoot = join(deps.dataDir, 'backups')
+      try {
+        mkdirSync(backupsRoot, { recursive: true })
+        const snapshot = snapshotCurrent({
+          workspaceDir,
+          vaultDir: deps.obsidianVaultPath?.(),
+          dataDir: deps.dataDir,
+          deck: await contentStore.exportMerged(),
+          outputDir: backupsRoot,
+          now: deps.now ? deps.now() : Date.now()
+        })
+        return snapshot.dir
+      } catch (error) {
+        throw new CharacterError(
+          CHARACTER_ERROR_CODES.STORE_IO,
+          `导入前自动备份失败，已中止资料包导入：${(error as Error)?.message ?? String(error)}`
+        )
+      }
+    }
+    const importPackPlan = async (plan: CharacterPackPlan) => {
+      const backupPath = await packPreImportBackup()
+      const result = await importPack({
+        workspaceDir,
+        vaultDir: deps.obsidianVaultPath?.(),
+        plan,
+        content: {
+          importTopics: (raw) => contentStore.importTopics(raw),
+          importLines: (raw) => contentStore.importLines(raw)
+        },
+        now: deps.now ? deps.now() : Date.now(),
+        logger
+      })
+      // 话题/台词可能改过用户语料：让 manager 的进程内内容包缓存失效
+      manager.invalidateContentDeck()
+      return { ...result, backupPath }
+    }
+
     // 语音条（C08）：TTS 16k WAV → SILK → QQ；失败降级文字，不重试
     let voiceSeq = 0
     // 串行化语音发送：msg_seq 的读取-自增不能并发（QQ 会因重复 seq 拒收）
@@ -897,7 +945,22 @@ async function registerCharacterInternal(
               }
             }
           }
-        : {})
+        : {}),
+      // 统一资料包 v1（5.0）：人格/知识/主动消息/记忆 一次导入；导出内容 = 当前（含内置）全量。
+      // 不依赖 backupBundle（kvBulk 缺失也能用）；导入前备份由 packPreImportBackup 用 snapshot 完成。
+      pack: {
+        export: async (outputDir: string) =>
+          snapshotCurrent({
+            workspaceDir,
+            vaultDir: deps.obsidianVaultPath?.(),
+            dataDir: deps.dataDir,
+            deck: await contentStore.exportMerged(),
+            outputDir,
+            now: deps.now ? deps.now() : Date.now()
+          }),
+        importFolder: (packDir: string) => importPackPlan(readPackDir(packDir)),
+        importZip: (zipPath: string) => importPackPlan(readPackZip(zipPath))
+      }
     })
 
     // 设置/互动后 ≤300ms 合并重写人格文件（STATE.md 即时；用户改过的 SOUL/AGENTS 保留）。

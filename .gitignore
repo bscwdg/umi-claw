@@ -28,6 +28,8 @@ config
 /test/.tmp/
 /test/accept-result*.json
 /test/e2e-result.json
+# 本机验收 workaround 的临时 TEMP（便携 Node 低完整性标签/长路径 mklink 场景），不入库
+/t/
 /test/packaged-smoke-*.json
 /test/probe-*.json
 

@@ -120,8 +120,37 @@
               class="text-sm text-muted mono truncate"
               style="max-width: 400px"
             >
-              {{ envInfo?.dataDir || "--" }}
+              {{ dataDirInfo?.current || envInfo?.dataDir || "--" }}
             </div>
+            <div
+              v-if="dataDirNotice"
+              class="text-sm data-dir-notice"
+            >
+              {{ dataDirNotice }}
+            </div>
+            <div
+              v-if="dataDirError"
+              class="text-sm data-dir-error"
+            >
+              {{ dataDirError }}
+            </div>
+          </div>
+          <div class="flex gap-2" style="margin-left: auto">
+            <button
+              class="btn btn-sm"
+              :disabled="dataDirBusy || taskRunning"
+              @click="chooseDataDir"
+            >
+              {{ dataDirBusy ? "选择中…" : "更改…" }}
+            </button>
+            <button
+              v-if="dataDirPending"
+              class="btn btn-sm btn-primary"
+              :disabled="dataDirBusy || taskRunning"
+              @click="restartApp"
+            >
+              立即重启
+            </button>
           </div>
         </div>
       </div>
@@ -528,6 +557,74 @@ function openDataDir() {
   window.api.config.openDataDir();
 }
 
+// ---- 数据目录更改（5.0）----
+//
+// 为什么必须重启：数据目录在 ConfigManager 构造期解析（配置、插件库、网关安装目录都基于它），
+// 运行期改路径会让已打开的库/worker 与新路径打架。所以这里只做「选择 → 校验落盘 → 提示重启」，
+// 不自动迁移/删除任何数据：新目录为空，旧数据留在原目录，由用户自行复制。
+const dataDirBusy = ref(false);
+const dataDirNotice = ref("");
+const dataDirError = ref("");
+/** 已保存覆盖目录但尚未重启（重启前 current 仍是旧目录） */
+const dataDirPending = ref(false);
+const dataDirInfo = ref<{ current: string; override: string | null; overrideUnusable: string | null } | null>(null);
+
+async function loadDataDirInfo() {
+  try {
+    const info = await window.api.config.getDataDirInfo();
+    dataDirInfo.value = info;
+    // 覆盖目录存在但本次启动不可用（移动盘/U 盘未就绪）：已临时回退默认目录，
+    // 不能再提示「重启生效」——重启只会再次回退；磁盘恢复后重启才会切回去。
+    if (info.overrideUnusable) {
+      dataDirPending.value = false;
+      dataDirNotice.value = `已保存的数据目录当前不可用（磁盘未连接或路径无效）：${info.overrideUnusable}。本次已临时使用默认目录，磁盘恢复后重启即可切回。`;
+      return;
+    }
+    // 用户此前已更改过但还没重启：重新进入环境页时要把「待重启」状态还原出来
+    if (info.override && info.override !== info.current) {
+      dataDirPending.value = true;
+      dataDirNotice.value = `已保存新数据目录：${info.override}。需重启生效；新目录为空，旧数据仍在原目录（可先点「打开数据目录」复制）。`;
+    }
+  } catch (e: any) {
+    // 读取覆盖状态失败不影响其它环境卡片
+    dataDirError.value = `读取数据目录状态失败：${e?.message || "未知错误"}`;
+  }
+}
+
+async function chooseDataDir() {
+  if (dataDirBusy.value) return;
+  dataDirBusy.value = true;
+  dataDirNotice.value = "";
+  dataDirError.value = "";
+  try {
+    const res = await window.api.config.chooseDataDir();
+    // 取消是正常路径（主进程回 { ok:true, data:null }），不提示错误
+    if (!res) return;
+    dataDirPending.value = res.requiresRestart;
+    dataDirNotice.value = res.requiresRestart
+      ? `已选择新数据目录：${res.dataDir}。需重启生效；新目录为空，旧数据仍在原目录（可先点「打开数据目录」复制）。`
+      : "数据目录未变化。";
+    await loadDataDirInfo();
+  } catch (e: any) {
+    dataDirError.value = `更改数据目录失败：${e?.message || "未知错误"}`;
+  } finally {
+    dataDirBusy.value = false;
+  }
+}
+
+async function restartApp() {
+  dataDirBusy.value = true;
+  dataDirError.value = "";
+  try {
+    await window.api.config.restartApp();
+    // 主进程会延迟 200ms 再重启：保持按钮禁用，避免用户在退出前重复点击
+    dataDirNotice.value = "正在重启应用…";
+  } catch (e: any) {
+    dataDirError.value = `重启失败：${e?.message || "未知错误"}`;
+    dataDirBusy.value = false;
+  }
+}
+
 async function goToDashboard() {
   // §八：首启向导「Setup 后接续」——向导未完成先开向导弹窗，否则进控制台。
   // work 是插件：停用时 `work:wizard:status` 没有 handler，盲调会抛
@@ -659,6 +756,8 @@ watch(taskRunning, async (running, wasRunning) => {
 });
 
 onMounted(async () => {
+  // 数据目录状态与环境的检测互不阻塞：即使环境探测失败，也要能显示/更改数据目录
+  void loadDataDirInfo();
   try {
     await checkEnv();
   } catch (e) {
@@ -708,6 +807,15 @@ onMounted(async () => {
 .env-name {
   font-size: var(--text-base);
   font-weight: 500;
+}
+/* 数据目录更改提示：成功/待重启用正文色，失败用危险色（不加背景，避免抢环境卡片视觉） */
+.data-dir-notice {
+  margin-top: 2px;
+  color: var(--text-primary);
+}
+.data-dir-error {
+  margin-top: 2px;
+  color: var(--danger);
 }
 .success-card {
   display: flex;

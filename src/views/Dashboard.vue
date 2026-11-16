@@ -331,12 +331,16 @@ window.api.skills.getInstalledSkills().then((s) => (skillCount.value = s.length)
   justify-content: space-between;
 }
 
-/* Status Card */
+/* Status Card
+   窄窗布局预算（900×600 最小窗口）：视口 900 − 侧栏 220 − .content 左右 padding 2×24 ≈ 632，
+   .status-card 再扣 2×24 padding + 2px 边框 ≈ 582px；运行态三颗 btn-lg 约 380px。
+   操作区必须恒定占一行（nowrap + flex-shrink:0），余下宽度交给 .status-main 由正文换行消化；
+   用 flex-wrap:wrap 时按钮总宽一超就会整体折到第二行（用户 2026-11 反馈）。 */
 .status-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--space-3);
   padding: var(--space-6);
   border-radius: var(--radius-lg);
@@ -348,9 +352,25 @@ window.api.skills.getInstalledSkills().then((s) => (skillCount.value = s.length)
   border-color: var(--success-border);
   background: linear-gradient(135deg, var(--success-muted) 0%, var(--bg-surface) 60%);
 }
-.status-main { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
-.status-icon { font-size: var(--text-hero); }
+.status-main { display: flex; align-items: center; gap: var(--space-4); flex: 1; min-width: 0; }
+.status-info { flex: 1; min-width: 0; }
+.status-icon { font-size: var(--text-hero); flex-shrink: 0; }
 .status-title { font-size: var(--text-xl); font-weight: 600; }
+/* 正文自然换行，不用 nowrap/省略号「藏」溢出：省略号会把「按钮被挤走」的回归藏起来 */
+.status-sub { min-width: 0; overflow-wrap: anywhere; }
+/* 模板上的全局 .flex-wrap 是单类选择器，scoped 的 .status-actions[data-v] 优先级更高，
+   这里显式 nowrap 保证操作区永远一行 */
+.status-actions { flex-wrap: nowrap; flex-shrink: 0; }
+.status-actions .btn { flex-shrink: 0; white-space: nowrap; }
+/* 窄窗（<1100px，项目统一断点）把操作按钮降回默认 md 档而不是折行：
+   三颗按钮总宽约 380px → 300px，给左侧状态文案留出可读宽度；尺寸全部走 token */
+@media (max-width: 1100px) {
+  .status-actions .btn {
+    height: var(--control-h-md);
+    padding: 0 12px;
+    font-size: var(--text-sm);
+  }
+}
 
 /* 错误提示吃全局 .alert.alert-danger */
 

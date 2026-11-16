@@ -128,6 +128,7 @@
 
 `--control-h-sm:28px` / `--control-h-md:34px` / `--control-h-lg:40px`。
 同一行的按钮、输入框、下拉框必须同高（默认 md）。
+**同一按钮区只允许一种尺寸档**（`.btn-sm` / 默认 md / `.btn-lg` 不得混排）；弹窗底部操作区尤其如此，关闭/取消不得小于确认/保存按钮。图标按钮 `.btn-icon`（可带 `.btn-sm`）是例外：它表达的是自身方形尺寸，不与并排文字按钮比高。
 
 ### 2.7 阴影 / 层级 / 动效
 
@@ -166,6 +167,7 @@
 
 规则：
 - 禁用态统一 `:disabled`，不另造类；
+- **同一按钮区只允许一种尺寸档**：`.btn-sm` / 默认（md）/ `.btn-lg` 三者不得混排；弹窗底部操作区尤其如此，关闭/取消不得小于确认/保存按钮（默认同挂 md 档）。图标按钮 `.btn-icon`（可带 `.btn-sm`）不受此限，因为它不是并排文字按钮；
 - 弹窗内按钮顺序：取消（无修饰）在左，确认动作在右；危险确认的确认钮挂 `.btn-danger`；
 - 旧写法 `class="btn primary"` / `class="btn ghost"`（CharacterPage）迁移为 `btn btn-primary` / `btn btn-ghost`；
 - 一次性按钮类收编：`.title-btn→.btn-icon`（标题栏特例可保留类名但引用 token）、`.docs-btn/.q-btn/.send-btn/.icon-btn/.help-btn/.notice-close/.link` 按语义并入标准类或改为 `.btn-ghost`/`.btn-icon`。
@@ -198,6 +200,8 @@ ConfirmDialog / ModelPickerModal / WizardModal / UserAgreementModal 四个弹窗
 
 **落地补充——遮罩特例用修饰类，不重定义保留类**：冷启动向导与用户协议弹窗要求「遮罩从标题栏下方开始 + 层级低于普通弹窗」，实现为模板同时挂 `modal-overlay` 与本地修饰类（`.wizard-overlay` / `.agreement-overlay`），修饰类只写 `top: var(--titlebar-h, 0)` 与 `z-index: var(--z-banner)` 两个增量，遮罩底色/blur/flex 骨架仍吃全局类。scoped 中**绝不**出现 `.modal-overlay { ... }` 这类重定义（门禁 globalOverride 会拦截）。
 
+**底部按钮尺寸**：弹窗底部操作区（`.modal-footer` 或本地 `.actions`）只允许一种尺寸档；关闭/取消不得小于确认按钮，禁止 `btn-sm` 与默认混排。落地修复：`UserAgreementModal` 底部「关闭」原为 `btn btn-sm`（28px），与默认档「保存」（34px）并排高度不一致，2026-11 改为 `btn`，两钮统一 34px；右上角 ✕ 仍保留 `btn btn-icon btn-sm`（图标按钮例外，见 §3.1）。紧凑型确认弹窗（ConfirmDialog）两个按钮同挂 `btn-sm` 属「同一档」，不违反本条。
+
 ### 3.7 Toast
 
 - `useToast()` 的 API **不变**；统一样式类：`.toast-container`（fixed 右下、z `--z-toast`）+ `.toast.success/.error/.warning`，底色用语义色实色、白字；
@@ -216,7 +220,7 @@ ConfirmDialog / ModelPickerModal / WizardModal / UserAgreementModal 四个弹窗
   - `max-width:1100px`：`.grid-4→.grid-2`、`.grid-3→.grid-2`，统计卡降列；
   - `max-width:720px`：所有网格降 1 列、`.page-head` 纵向堆叠；
 - 禁止再写不带 `minmax()` 的固定列网格（Config/Skills 现有 auto-fill 写法是正面范例）；两列表单网格（`1fr 1fr`）作为例外允许保留，但容器需具备折行/收缩能力；
-- 侧栏不做折叠（固定 220px），内容区不得依赖固定像素宽度，最小窗口 900×600 下不得横向溢出；flex 行优先补 `flex-wrap` 与 `min-width:0` 保护（Dashboard 状态卡为参考实现）；
+- 侧栏不做折叠（固定 220px），内容区不得依赖固定像素宽度，最小窗口 900×600 下不得横向溢出；flex 行优先补 `min-width:0` 保护，需要恒定同行的操作区用 `flex-wrap:nowrap` + `flex-shrink:0`（Dashboard 状态卡为参考实现），不要靠折行消化宽度；
 - **全幅表面例外**：TerminalPage 是恒定深色的终端表面（`height:100vh`、自带 padding、xterm.js 配色在 JS 内写死），不挂 `.page-container`，与 PetWindow 同属文档化例外，其样式块仅允许引用 `--terminal-bg/--terminal-text` 两个专用静态 token。
 
 ---
@@ -313,7 +317,7 @@ src 组六项归零的口径：白名单四文件（FishState / PetWindow / styl
 
 - [ ] 类名改动后 `plugins/` 16 个组件挂载不受影响（`accept:ui` U1~U16）——待命令行补跑
 - [ ] 7 个主题预设 + 自定义主题下每个改过的页面都目视一遍（重点 light/paper）——待 dev 目视
-- [x] 900×600 最小窗口静态审查：窗口层 `minWidth:900/minHeight:600` 硬约束；固定 px 宽度最大 250px 且均在 flex-wrap/网格容器内；全局网格 1100/720 两断点；Dashboard 状态卡补 flex-wrap + min-width:0
+- [x] 900×600 最小窗口静态审查：窗口层 `minWidth:900/minHeight:600` 硬约束；固定 px 宽度最大 250px 且均在 flex-wrap/网格容器内；全局网格 1100/720 两断点；Dashboard 状态卡操作区 `nowrap + flex-shrink:0`、左侧文本 `min-width:0` 让位换行（<1100px 操作按钮降 md 档，不再折行；见 §3.8）
 - [ ] 禁用态、hover、focus、弹窗打开/关闭过渡无样式丢失——待 dev 目视
 - [ ] 无 Vue 警告（U9 口径）、无行为回归（按钮文案/事件不变，只改 class 与样式）——`accept:ui` 待补跑；模板动态绑定逻辑本次一律未动
 - [x] Grep 总查：错误变量名 0、`rgba(255,255,255` 0、rem 0（白名单外）、scoped 保留类重定义 0、裸 border-radius/font-size 0（白名单外）

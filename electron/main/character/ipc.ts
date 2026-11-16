@@ -18,6 +18,7 @@ import {
 import { CHARACTER_STICKER_CHANNELS } from './stickerStore'
 import { CHARACTER_BACKUP_CHANNELS } from './backupBundle'
 import { CHARACTER_CONTENT_CHANNELS } from './contentStore'
+import { CHARACTER_PACK_CHANNELS } from './packBundle'
 import type { CharacterManager } from './manager'
 import type { PetWindowController } from './petWindow'
 import type { CharacterChatService } from './chat'
@@ -77,6 +78,12 @@ export interface CharacterIpcDeps {
     defaultExportPath: () => string
     export: (path?: string) => Promise<unknown>
     import: (path: string) => Promise<unknown>
+  }
+  /** 统一资料包 v1（5.0）：人格/知识/主动消息/记忆 一键导入导出，导入前由 wiring 整包备份 */
+  pack?: {
+    export: (outputDir: string) => Promise<unknown>
+    importFolder: (packDir: string) => Promise<unknown>
+    importZip: (zipPath: string) => Promise<unknown>
   }
   /** 用户主动消息语料库（话题/台词查看/导入/删除；内置只读，用户语料独立落盘） */
   content?: {
@@ -508,10 +515,74 @@ export function registerCharacterIpc(
     return backup.import(source)
   })
 
+  // ── 统一资料包 v1（5.0）：导出/导入都只在宿主侧弹框选目录，不把路径拼装交给渲染端 ──
+  const requirePack = () => {
+    if (!deps.pack) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '资料包功能未接线')
+    }
+    return deps.pack
+  }
+  handle(CHARACTER_PACK_CHANNELS.export, async (payload) => {
+    const pack = requirePack()
+    const rawPath = (payload as { path?: unknown } | undefined)?.path
+    let target = typeof rawPath === 'string' ? rawPath.trim() : ''
+    if (!target) {
+      const win = BrowserWindow.getFocusedWindow()
+      const options = {
+        title: '选择资料包导出位置（会在其中新建「大肥鱼资料包-时间」文件夹）',
+        properties: ['openDirectory'] as Array<'openDirectory'>
+      }
+      const result = win
+        ? await dialog.showOpenDialog(win, options as never)
+        : await dialog.showOpenDialog(options as never)
+      if (result.canceled || !result.filePaths?.[0]) return { canceled: true }
+      target = result.filePaths[0]
+    }
+    return pack.export(target)
+  })
+  handle(CHARACTER_PACK_CHANNELS.importFolder, async (payload) => {
+    const pack = requirePack()
+    const rawPath = (payload as { path?: unknown } | undefined)?.path
+    let source = typeof rawPath === 'string' ? rawPath.trim() : ''
+    if (!source) {
+      const win = BrowserWindow.getFocusedWindow()
+      const options = {
+        title: '选择大肥鱼资料包文件夹（含 manifest.json 的目录）',
+        properties: ['openDirectory'] as Array<'openDirectory'>
+      }
+      const result = win
+        ? await dialog.showOpenDialog(win, options as never)
+        : await dialog.showOpenDialog(options as never)
+      if (result.canceled || !result.filePaths?.[0]) return { canceled: true }
+      source = result.filePaths[0]
+    }
+    return pack.importFolder(source)
+  })
+  handle(CHARACTER_PACK_CHANNELS.importZip, async (payload) => {
+    const pack = requirePack()
+    const rawPath = (payload as { path?: unknown } | undefined)?.path
+    let source = typeof rawPath === 'string' ? rawPath.trim() : ''
+    if (!source) {
+      const win = BrowserWindow.getFocusedWindow()
+      const options = {
+        title: '选择大肥鱼资料包 zip',
+        properties: ['openFile'] as Array<'openFile'>,
+        filters: [{ name: 'Zip 资料包', extensions: ['zip'] }]
+      }
+      const result = win
+        ? await dialog.showOpenDialog(win, options as never)
+        : await dialog.showOpenDialog(options as never)
+      if (result.canceled || !result.filePaths?.[0]) return { canceled: true }
+      source = result.filePaths[0]
+    }
+    return pack.importZip(source)
+  })
+
   // 本文件额外注册的通道（types.ts 的 CHARACTER_CHANNELS 之外的），disposer 也要摘干净
   const extraChannels = [
     ...Object.values(CHARACTER_STICKER_CHANNELS),
-    ...Object.values(CHARACTER_BACKUP_CHANNELS)
+    ...Object.values(CHARACTER_BACKUP_CHANNELS),
+    ...Object.values(CHARACTER_PACK_CHANNELS)
   ]
 
   return () => {

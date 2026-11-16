@@ -7,8 +7,10 @@
           官方内置插件随安装包分发。停用后它的页面、导航与后台任务会立即卸载，数据保留。
         </p>
       </div>
-      <button class="btn" :disabled="loading" @click="reload">刷新</button>
+      <button class="btn" :disabled="loading || retryBusy" @click="reload">刷新</button>
     </header>
+
+    <p v-if="retryNotice" class="meta retry-notice">{{ retryNotice }}</p>
 
     <p v-if="devMode?.plugins" class="dev-banner">
       ⚠️ {{ devMode.warning }}<span v-if="devMode.build"> 已允许源码构建。</span>
@@ -166,6 +168,17 @@
         >
           {{ busy === p.id ? '处理中…' : buttonText(p) }}
         </button>
+        <!-- 5.0：运行时失败（如启动时便携 Node 还没就绪）直接给重试入口，
+             不再要求用户先停用再启用。尺寸档跟同排「停用/启用」一致（默认档），
+             同一按钮区不允许混尺寸（docs/ui-style-guide.md §2.6/§3.1） -->
+        <button
+          v-if="failedRetryable(p)"
+          class="btn"
+          :disabled="retryBusy || busy === p.id"
+          @click="retryFailedOne(p)"
+        >
+          {{ retryBusy ? '重试中…' : '重试加载' }}
+        </button>
         <router-link v-if="openableRoute(p)" class="btn btn-ghost" :to="openableRoute(p)">
           打开页面
         </router-link>
@@ -221,6 +234,9 @@ const plugins = ref<PluginStatus[]>([])
 const permissionMap = ref<Record<string, { granted: boolean; requested: unknown }>>({})
 const loading = ref(false)
 const loadError = ref('')
+/** 「重试加载」是否在执行（主进程一次重试所有 failed 插件，全局一个 busy） */
+const retryBusy = ref(false)
+const retryNotice = ref('')
 const devMode = ref<{ plugins: boolean; build: boolean; reason: string; warning: string | null } | null>(null)
 const isolatedPlugins = ref<Array<{ pluginId: string; name: string; version: string; state: string }>>([])
 const installed = ref<{ schema: 1; plugins: Record<string, Record<string, unknown>> }>({ schema: 1, plugins: {} })
@@ -474,6 +490,42 @@ function enableBlocked(status: PluginStatus): boolean {
   return !status.enabled && status.error?.stage === 'manifest'
 }
 
+/**
+ * 可手动「重试加载」的失败：启用 + 运行时失败（5.0）。
+ * 清单级失败（stage=manifest）要重新构建，重试没有意义（enableBlocked 已挡住启用按钮）。
+ */
+function failedRetryable(status: PluginStatus): boolean {
+  return status.enabled && status.state === 'failed' && status.error?.stage !== 'manifest'
+}
+
+/**
+ * 重试「启用但加载失败」的插件。
+ *
+ * 原实现只能先停用再启用；环境初始化（便携 Node 就位）后仍 failed 的插件没有任何重试入口。
+ * 主进程 plugin:retryFailed 会先清插件库缓存再重新激活，返回最新全量状态。
+ */
+async function retryFailedPlugins(preparing?: string): Promise<void> {
+  retryBusy.value = true
+  retryNotice.value = preparing ?? ''
+  try {
+    plugins.value = normalizeListPayload(await window.api.plugins.retryFailed())
+    const stillFailed = plugins.value.filter(failedRetryable)
+    retryNotice.value = stillFailed.length
+      ? `已重试加载，仍有 ${stillFailed.length} 个插件失败：${stillFailed.map((p) => p.id).join('、')}`
+      : ''
+  } catch (e) {
+    loadError.value = `重试加载失败：${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    retryBusy.value = false
+  }
+}
+
+function retryFailedOne(status: PluginStatus): void {
+  if (retryBusy.value || busy.value) return
+  // 主进程 API 一次重试所有 failed 插件（不区分单卡），提示语不能写成只重试这一张
+  void retryFailedPlugins(`正在重试加载失败插件（含「${status.name}」）…`)
+}
+
 function buttonText(status: PluginStatus): string {
   if (status.enabled) return '停用'
   return status.state === 'failed' ? '重试启用' : '启用'
@@ -482,12 +534,19 @@ function buttonText(status: PluginStatus): string {
 async function reload(): Promise<void> {
   loading.value = true
   loadError.value = ''
+  retryNotice.value = ''
   try {
     plugins.value = normalizeListPayload(await window.api.plugins.list())
   } catch (e) {
     loadError.value = `读取插件列表失败：${e instanceof Error ? e.message : String(e)}`
   } finally {
     loading.value = false
+  }
+  // 5.0：存在「启用但加载失败」的插件时，刷新顺手重试一次激活。
+  // 典型场景：启动时便携 Node 未就绪导致 work/marketing failed，完成环境初始化后
+  // 旧实现只能重启 App；现在刷新即可恢复（env 任务成功后主进程也会自动重试）。
+  if (!loadError.value && plugins.value.some(failedRetryable)) {
+    await retryFailedPlugins()
   }
   // 「刷新」同时重载角色状态：初始化慢/刚失败时卡片不能变成永久「状态未知」死路
   await loadCharacter()
@@ -732,6 +791,10 @@ onUnmounted(() => {
   margin: var(--space-2) 0 var(--space-3);
   color: var(--text-muted);
   font-size: var(--text-sm);
+}
+/* 重试加载提示用正文色：失败仍在时用户要能注意到（不像普通 meta 那样淡化） */
+.retry-notice {
+  color: var(--text-primary);
 }
 /* 状态徽标与全局 .badge 同构；保留 state-* 动态类名（取值来自插件生命周期），色值吃语义 token */
 .state {
