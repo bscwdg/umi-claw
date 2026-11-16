@@ -16,6 +16,7 @@
 - 🧩 **能力中心** — 查看已安装插件，按需启用/禁用、懒加载；插件拥有独立路由、导航、IPC 与数据迁移
 - 🏪 **官方内置插件 + 受控第三方** — 营销工作台（marketing）与工作版（work）随宿主构建；5.0 起可安装签名 `.umi-plugin`（自签需 TOFU 确认，隔离进程运行）
 - 🐟 **deepseek大肥鱼** — 小孩子才做选择，养小龙虾和养大肥鱼我全都要，默认关闭；应用内与外部渠道聊天、关系成长、每日日记与记忆、主动消息、表情包、语音条、人格包与备份（见下文「大肥鱼角色」）
+- 📦 **大肥鱼资料包（5.0）** — 人格 / 知识 / 主动消息 / 记忆合成一个 `umi-character-pack/1` 目录或 zip，一键导入；当前内容（含内置语料）可一键导出备份、随时恢复
 - 🔌 **插件契约** — 插件能力统一经 `ctx` 注入；配置与密钥归宿主；插件失效不影响宿主启动
 - 🗂 **宿主壳能力保留** — 窗口/导航/设置/OpenClaw 管理/渠道/终端/Obsidian/技能/更新全部保留
 
@@ -43,6 +44,7 @@
 - 📩 **多渠道接入** — 内置微信，支持企业微信官方插件（扫码即接入）、飞书自建应用（长连接，界面一键装插件）
 - 📚 **Obsidian 知识库** — 笔记向量化语义检索，以 MCP 工具喂给模型，按需取片段省 token
 - 💾 **便携模式** — 可放置在 U 盘，数据随身带走
+- 📁 **数据目录可选（5.0）** — 环境初始化页可「更改…」数据目录（校验可写、存 `userData/data-location.json`、重启生效；不自动迁移/删除旧数据，旧目录保留）
 - 🌐 **国内镜像加速** — npmmirror + GitHub 代理，无需翻墙
 - ⚡ **启动可靠性** — 网关就绪态与启动阶段/ETA；webhook 迁移标记兜底（避免每次启动重跑旧迁移）；可选「退出应用时保留网关」，下次启动直接复用（跳过冷启动）；网关日志文件 tail
 - 🎙 **语音** — 火山 TTS / 鱼语音音色与克隆；音色热更（改音色无需重启网关，Key/模式/通道变更仍需重启）
@@ -101,6 +103,7 @@
 - **生活与主动（4.4 增强）**：生活卡确定性抽取 → `fish/LIFE.md`；30s tick 按静默期/免打扰/日上限发主动消息。支持固定/随机间隔（1–720 分钟；1–10/10–30/30–60 分钟、1–3/3–6 小时等区间）与每日上限最高 60；每轮 2–10 条候选（生活卡 + 20 话题 + 约 100 句台词），精确/3-gram 近似去重、话题冷却；规则选中候选后再交给 `feiyu` agent 结合最近聊天与人格生成实际文案，超时/非法/重复输出回退规则候选；未回复按关系轻试探（恋人「在忙吗？我想你了」），2 条未回换话题、≥3 条进入退避（停发；用户互动或满 6 小时无新发送后重置）。失败降级为角色页提示。
 - **表情包（4.4）**：角色页导入本地 PNG/JPEG/GIF/WebP（≤10MB、最多 200 张、sha256 去重），按情绪/标签管理、启用/归档删除；QQ 发图走 `file_type=1` 上传 + `msg_type=7`（当前仅主动发图/手动测试，被动回复未接线；聊天回复内自动配图待后续版本）；主动消息文字送达后约 20% 概率按情绪补一张。
 - **备份（4.4）**：角色页导出/导入单个 zip（manifest + 设置/状态/关系/解锁/桌宠状态 + 人格文件 + workspace 日记 + 表情包）；不含密钥/token、截图、日志和桌宠自定义形象；导入前自动备份、失败回滚，恢复后重载内存态。
+- **统一资料包（5.0）**：角色页「资料包」把当前（含内置）人格 + 合并后主动消息语料 + Obsidian 知识 + 关系记忆/日记导出到任意文件夹；「导入资料包（文件夹）/导入 zip」一次写回四类内容，导入前自动整包备份到 `<dataDir>/backups`，备份失败即中止。格式见 [doc/大肥鱼-使用指南.md](doc/大肥鱼-使用指南.md) §5.3.2；配套技能 `umi-feiyu-pack` 可把微信/QQ 聊天记录、Word/PDF 整理成同格式包。
 - **记忆**：确认年龄后 23:00 自动写日记（workspace + Obsidian `大肥鱼/日记`），失败重试、密钥脱敏、frontmatter 白名单；tags 归一化确保 `大肥鱼/日记` 校验通过。
 - **语音**：TTS 出 16k PCM → SILK → QQ 语音条（失败降级文字，`silk-wasm` 已内置）；外部 TTS 支持 OpenAI 兼容 `/v1/audio/speech`，也支持 Voicebox 原生 `17493`（`/profiles` + `/generate/stream`，自动取 `preset_engine`，固定 WAV）；入站 STT 为预留注入接口，暂未接 QQ 入站（收到的语音不会转写）
 - **多渠道聊天（4.3）**：角色页「聊天渠道」可勾选已配置的单账号外部渠道（QQ/飞书/企微/微信…），把该渠道内被策略放行的会话（含群聊）路由给大肥鱼（文本）；经官方 CLI 写 OpenClaw bindings，保存后需重启网关生效
@@ -233,7 +236,7 @@ umi-claw/
 │   └── installer.nsh           # NSIS 钩子：升级时自动搬迁旧版数据目录
 ├── scripts/
 │   └── run-all-accept.mjs      # 一键跑全部验收
-├── test/                       # 验收：57 套 accept + e2e + 打包态 smoke（合计 62 套 / 2026-11-15 实测全绿）
+├── test/                       # 验收：60 套 accept + e2e×4 + 打包态 smoke（合计 65 套 / 2026-11-16 实测；hot 与 isolation e2e 受本机环境所限）
 │   ├── _lib.mjs                # 验收公共库
 │   ├── _ui.mjs                 # UI 验收公共库
 │   └── fixtures/               # 验收夹具
@@ -291,7 +294,7 @@ npm run dev
 # 类型检查
 npm run typecheck
 
-# 一键跑全部验收（62 套：accept×57 + e2e×4 + smoke；另有 node:test 21 条）
+# 一键跑全部验收（65 套：accept×60 + e2e×4 + smoke；另有 node:test 21 条）
 npm run accept
 ```
 
@@ -361,6 +364,9 @@ window.api.config.save(cfg)           // 保存配置
 window.api.config.reset()             // 恢复默认配置
 window.api.config.getDataDir()        // 获取数据目录路径
 window.api.config.openDataDir()       // 打开数据目录
+window.api.config.getDataDirInfo()    // 当前数据目录 + 已保存待重启的覆盖目录（5.0）
+window.api.config.chooseDataDir()     // 选择新数据目录（校验并落 userData/data-location.json；取消返回 null，5.0）
+window.api.config.restartApp()        // 立即重启应用使数据目录生效（5.0）
 window.api.config.getPresetModels(name) // 获取某服务商的预设模型
 window.api.config.refreshModelPresets() // 「拉取最新」：从 Gitee 上游更新预设，立即生效
 window.api.config.getModelPresetsInfo() // 预设来源信息（overlay/内置快照、更新时间、数量）

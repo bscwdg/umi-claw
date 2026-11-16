@@ -2795,3 +2795,20 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 - 验收：typecheck:node/web 0；plugin-service-bridge 18/18；plugin-runtime-isolation 18/18；ui 30/30；db-worker 38/38（`UMI_ACCEPT_NODE` 系统 node）；plugin-install e2e 1/1；startup e2e 1/1；`check:boundary` 0/0/0。全量 accept 仍只有既有 `hot` 环境失败（clean HEAD worktree 同样复现 2/16，与本次 diff 无关）。
 - 对抗审查：`b5360500`（首轮）、`7f83fb34`（复核）、`3c45c434`（终审）。终审结论：安全项（projectId/stream/脱敏/错误码）成立、可提交；P1 熔断恢复与 P2 warning/文案已按终审意见修复后才提交。逐条处置与残余风险见三个提交的 message。
 - 残余风险：熔断/crashed/starting 恢复仅凭 start handler stop→start 语义（R18 覆盖 crashed，disabled 无仓库内测试）；U30 为源码级+preload 桩，无组件挂载/真 contextBridge e2e；openclaw runtime→bridge→adapter 整链无仓库集成测试（终审用仓库外临时脚本验证）；第三方 stream 明确不支持；固定错误文案牺牲诊断信息（VALIDATION_ERROR 已单独映射）；`plugin:config:set` 响应字段与插件同名键可能冲突；保存配置无 busy 防连点；isolated 状态不订阅 `plugin:changed`。
+---
+
+## 2026-11-16 · 大肥鱼资料包 v1 / 数据目录可更改 / 插件失败重试（GA 后第二批）
+
+- 交付三块：① 大肥鱼统一资料包 v1（`electron/main/character/packBundle.ts` + 角色页导入导出 + zip，覆盖 persona/knowledge/proactive/memory，含 zip-slip/条目洪水/伪造 zip 头守卫，`character-pack` 19 项）；② 数据目录可更改（`dataDirBootstrap.ts` + `ipc/host/dataDir.ts` + Setup 页，启动失败对话框与退出清理重构，`data-dir` 6 项）；③ 插件失败重试编排（`services/pluginRetry.ts` 单飞/dispose 后复核/afterEnable 失败隔离，lifecycle/pluginRuntime/pluginDb 接线 + 插件管理页入口，`plugin-retry` 8 项、`plugin` 74 项）。
+- 验收（2026-11-16 release/5.0 工作区实测）：双 typecheck 0 错；`check:boundary` 三项 0；`npm run build` 绿；相关 accept 全绿（character-pack 19/19、plugin-retry 8/8、data-dir 6/6、plugin 74/74、ui 33/33、one-day 11/11、startup e2e、plugin-install e2e、smoke S1–S5）。全量口径：65 套（ACCEPT 60 + e2e×4 + smoke）、1025 项 Recorder 检查 + `node:test` 21；本机 63 套全绿（1007 通过 + 1 显式跳过 K8）。
+- 环境性失败（干净 HEAD 同样复现，与本批 diff 无关）：`hot` collector 原生崩溃（3221226505/libuv 断言，16 项中 14 失败）；`plugin-isolation.e2e` E1（TEMP 被重定向进仓库导致 fs 权限用例失效）；smoke S6/S7 需 electron-builder 产物（`UMI_ALLOW_PACKAGE_SKIP=1` 可跳）。
+- 事实核对（独立子代理 `01a1e390-4c52-7941-a0af-00614f44b5e4`，只读）：无 P0/P1，12 项 P2；其中 P2-1 带 PoC 实证——STORED zip 中央目录谎报大小会静默截断。处置：属实→已修，`packBundle.ts` 新增 method=0 时 compressed≠declared 硬拒，`character-pack` 补 P18（伪造中央目录/STORED 矛盾/声明 0 有数据四形态）+ P19（2001 条目洪水、manifest>256KB 目录+zip 双拒），独立 PoC 恶意四形态全 REJECTED、诚实包 ACCEPTED；其余 P2 见本条目残余清单。
+- 对抗复核（独立子代理 `01a1e390-4e34-7f53-aada-afba68203857`，只读，与首轮互不可见）：4 项 P1 + 9 项 P2。逐条处置：
+  - P1-1 manifest 256KB 契约漂移（应用 `PACK_MAX_MANIFEST_BYTES` 硬拒、skill 只查通用 4MB）→ 属实已修：skill `pack_common.py` 增 `MAX_MANIFEST_BYTES=256KB`，`validate_pack.py` 专属校验，pack-format/SKILL/conversion-guide 三份文档同口径；反例实测 260KB 拒、200KB 过。
+  - P1-2 文档套件数过期 → 属实已修：AGENTS.md/README.md 按实测改为 65 套 / 1025 项 / 61 个 accept 文件。
+  - P1-3 `index.ts` 2105 行突破 ≤1800 目标 → 前提成立但本次不改：拆 index 属独立重构工作包，与三特性混提违反 §8.2「一次提交只做一件事」，单列后续。
+  - P2-6 Setup「立即重启」缺 `taskRunning` 闸（同卡「更改…」有）→ 属实已修：两按钮统一 `:disabled="dataDirBusy || taskRunning"`，ui 补 U33 断言锁住。
+  - P2-11 无 `/t/` gitignore 规则、skill 残留 `scripts/__pycache__` → 属实已修：.gitignore 增 `/t/`；pyc 已删，四脚本 build→validate→zip→validate zip 端到端复跑全绿。
+  - P2-13 话题 id 重复口径写反（应用是 warn 忽略后者，skill 写成按 id 覆盖且判 error）→ 属实已修：`validate_pack.py` 降级为 warning 并改措辞，三份文档同改；反例实测重复 id exit 0 + 警告文案正确。
+- 接受的残余项（本批不改，理由附后）：导入前备份 32MB 硬上限/无 prune（备份保留策略属独立工作包）；VALIDATION_ERROR 历史错标（错误码语义改动面超出本批）；重启 200ms 窗口（`app.relaunch` 既有口径，需真机观测再调）；`retryFailed` 暂无生产调用方（预留编排入口，插件页后续接线）；skill GB18030 解码兜底（无真实失败样本前不动）；历史 `message.includes` 3 处均在注释里（§3.2 不顺手改老代码）；`index.ts` 行数（见 P1-3）。
+- skill 同步：`D:\work2026\skill\umi-feiyu-pack`（skills 仓库）随本批对齐 manifest 256KB 与话题重复口径；示例包 validate 全绿，build→validate→zip→validate zip 端到端通过，`__pycache__` 不入库。
