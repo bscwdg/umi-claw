@@ -304,6 +304,40 @@ export class PluginHost {
     for (const id of [...this.active.keys()]) await this.deactivate(id)
   }
 
+  /**
+   * 重试单个「运行时失败」的插件（5.0：环境初始化完成后自动恢复，不再逼用户先停用再启用）。
+   *
+   * 只对 **enabled 且 state=failed** 的插件生效；清单级失败（坏 JSON / 缺清单 / id 冲突）
+   * 不重试——那是构建期产物，重试多少次都一样。语义**完全复用 setEnabled(id,true)**：
+   * registry 会把 failed 重置为 validated 并清 error，activate 的 inflight 去重、
+   * 激活超时、停用打断保护全都还在，这里不复制任何激活流程。
+   */
+  async retry(id: string): Promise<PluginStatus> {
+    const record = this.requireRecord(id)
+    if (!record.enabled || record.state !== 'failed') return this.statusOf(record)
+    if (record.error?.stage === 'manifest') return this.statusOf(record)
+    return this.setEnabled(id, true)
+  }
+
+  /**
+   * 重试所有「运行时失败」的插件：并行执行，单个失败不影响其它（与 activateAll 同口径）。
+   * 返回**被尝试的**插件状态；没有可重试目标时返回空数组。
+   */
+  async retryFailed(): Promise<PluginStatus[]> {
+    const targets = this.registry
+      .list()
+      .filter(
+        (record) =>
+          record.enabled && record.state === 'failed' && record.error?.stage !== 'manifest'
+      )
+    const settled = await Promise.allSettled(
+      targets.map((record) => this.setEnabled(record.manifest.id, true))
+    )
+    return settled.map((result, index) =>
+      result.status === 'fulfilled' ? result.value : this.statusOf(targets[index])
+    )
+  }
+
   // ── 内部 ──────────────────────────────────────────────────────────────────
 
   private requireRecord(id: string): PluginRecord {

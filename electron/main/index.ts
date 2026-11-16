@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   shell,
   Tray,
@@ -58,6 +59,8 @@ import { registerClawIpc } from './ipc/host/claw'
 import { registerModelConnectionIpc } from './ipc/host/modelConnection'
 import { registerTerminalIpc } from './ipc/host/terminal'
 import { registerEnvIpc } from './ipc/host/env'
+import { registerDataDirIpc } from './ipc/host/dataDir'
+import { readDataDirOverride, writeDataDirOverride } from './dataDirBootstrap'
 import { registerImportStatusIpc } from './ipc/host/importStatus'
 import { readImportStatus, runLegacyImportRetry } from './services/pluginDataImport'
 import {
@@ -851,6 +854,9 @@ let closeConfirmPending = false
 let envUpdateInFlight = false
 const UPDATE_IN_PROGRESS_ERROR = 'OpenClaw 正在更新，请等待更新完成后再启动'
 
+/** 数据目录「立即重启」只允许触发一次：连点/双发不能把 relaunch 排两次（会拉起两个实例） */
+let dataDirRestartPending = false
+
 /**
  * 统一的应用退出流程：标记退出、清理终端会话并停止 OpenClaw
  */
@@ -1164,7 +1170,50 @@ function registerIpcHandlers(): void {
     decideRollback,
     setUpdateInFlight: (value) => {
       envUpdateInFlight = value
-    }
+    },
+    // 5.0：环境初始化/更新成功后，此前因便携 Node 缺失而激活失败的插件自动重试一次
+    // （没有这一步，用户完成初始化后插件页仍显示「加载失败」，只能重启 App）
+    retryFailedPlugins: () => pluginRuntime?.retryFailedPlugins() ?? Promise.resolve([])
+  })
+
+  // 数据目录查看 / 更改 / 重启应用（5.0：环境初始化页「数据目录」卡）
+  // 覆盖文件写在 userData（不随数据目录搬走）；重启才生效，不自动迁移/删除任何数据
+  registerDataDirIpc(ipcMain, {
+    getCurrent: () => configManager.getDataDir(),
+    getOverride: () => readDataDirOverride(app.getPath('userData')),
+    getOverrideUnusable: () => configManager.getDataDirOverrideUnusable(),
+    chooseDirectory: async (defaultPath) => {
+      const result = await dialog.showOpenDialog({
+        title: '选择数据目录',
+        defaultPath,
+        properties: ['openDirectory', 'createDirectory']
+      })
+      return result.canceled ? null : (result.filePaths[0] ?? null)
+    },
+    setOverride: (dir) => {
+      const written = writeDataDirOverride(app.getPath('userData'), dir)
+      return written.ok
+        ? { ok: true, dataDir: written.dataDir }
+        : { ok: false, code: 'VALIDATION_ERROR', error: written.error }
+    },
+    restart: () => {
+      // 连点/双发防护：relaunch 排两次会拉起两个实例（第二个虽被单实例锁挡住，但会短暂抢焦点）
+      if (dataDirRestartPending) return
+      dataDirRestartPending = true
+      // 延迟 200ms 再动手：先让本次 IPC 回执回到渲染端（invoke 的 Promise 要 settle），
+      // 否则「立即重启」按钮会卡在 loading。
+      setTimeout(() => {
+        // app.exit(0) **不触发 before-quit**：直接退会跳过 performQuitCleanup 的全部清理
+        // （插件 disposeHost/flushConfig/disposeDb、终端 killAll、abortRegistry、
+        // 子进程注册表、网关 handleAppQuit），可能残留 worker/网关并丢未落盘配置。
+        // 所以先走与正常退出一模一样的清理，清理完成后再 relaunch + exit。
+        void performQuitCleanup().finally(() => {
+          app.relaunch()
+          app.exit(0)
+        })
+      }, 200)
+    },
+    logger: (line) => console.log(line)
   })
 
   // 终端 / PTY（4.1 WP5-a 第五批拆到 ipc/host/terminal.ts）
@@ -1671,6 +1720,29 @@ app.whenReady().then(async () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
     else mainWindow?.show()
   })
+}).catch((error: unknown) => {
+  // 启动链里任何未捕获异常（DB / 插件 / 网关初始化…）都会让窗口永远不出现；
+  // 之前的写法只留下一条 console.error，打包 GUI 里用户看到的是「双击没反应」。
+  // 这里用系统对话框显式告知失败原因与日志目录，然后非 0 退出（独立对抗审查 P1-2）。
+  console.error('[Main] 启动失败：', error)
+  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+  let logPath = ''
+  try {
+    // logs 目录在 dev/打包都可用；取不到时退回 userData，不能因为拼接信息再炸一次
+    logPath = app.getPath('logs')
+  } catch {
+    try {
+      logPath = app.getPath('userData')
+    } catch {
+      logPath = ''
+    }
+  }
+  try {
+    dialog.showErrorBox('启动失败', `${message}${logPath ? `\n\n日志目录：${logPath}` : ''}`)
+  } catch {
+    // 无 GUI 会话/对话框不可用时仍要继续退出，不能静默挂着
+  }
+  app.exit(1)
 })
 
 app.on('window-all-closed', () => {
@@ -1679,6 +1751,8 @@ app.on('window-all-closed', () => {
 
 let quitCleanupDone = false
 let quitCleanupRunning = false
+/** 清理进行中的单次 promise：before-quit / 数据目录「立即重启」等并发入口共享同一份（幂等） */
+let quitCleanupPromise: Promise<void> | null = null
 
 /**
  * 退出清理。
@@ -1686,18 +1760,44 @@ let quitCleanupRunning = false
  * Electron **不 await** before-quit 的 async 监听器，所以必须 preventDefault 后自己做
  * 清理，完成后再 app.quit() 一次（审查 R4）。否则插件 deactivate / 配置 flush 只靠
  * 「恰好是微任务」才跑得完，真实异步（worker/HTTP）会丢。
+ *
+ * 清理体（runQuitCleanupSteps）自己**不再** app.quit()：正常退出与数据目录重启共用
+ * performQuitCleanup()，由调用方决定清理后是 quit 还是 relaunch（见它的调用约定）。
  */
 app.on('before-quit', (event) => {
   if (quitCleanupDone) return
   appShuttingDown = true
   event.preventDefault()
   if (quitCleanupRunning) return
-  quitCleanupRunning = true
-  ; (app as any).isQuiting = true
-  void runQuitCleanup()
+  void performQuitCleanup().finally(() => app.quit())
 })
 
-async function runQuitCleanup(): Promise<void> {
+/**
+ * 执行一次退出清理（幂等；**不含**最后那次 app.quit）。
+ *
+ * 调用约定：
+ *   - 正常退出：`performQuitCleanup().finally(() => app.quit())`。清理完再 quit 会再次
+ *     进 before-quit，此时 quitCleanupDone=true 直接放行；
+ *   - 数据目录「立即重启」：`performQuitCleanup().finally(() => { app.relaunch(); app.exit(0) })`。
+ *     必须**先清理再 relaunch**：`app.exit(0)` 不触发 before-quit，直接退会跳过插件
+ *     disposeHost / 配置 flush / 终端 killAll / 子进程注册表收尾 / 网关 handleAppQuit，
+ *     可能残留 worker/网关并丢未落盘配置（独立对抗审查 P1）。
+ *
+ * 并发/重复入口（before-quit、重启按钮连点）共享同一个 promise：不会重复停插件、
+ * 重复关库或重复处理网关；清理中途抛错也会在 runQuitCleanupSteps 的 finally 里置
+ * quitCleanupDone，避免 before-quit 永远 preventDefault 导致退不掉。
+ */
+function performQuitCleanup(): Promise<void> {
+  if (quitCleanupPromise) return quitCleanupPromise
+  quitCleanupRunning = true
+  appShuttingDown = true
+  ;(app as any).isQuiting = true
+  quitCleanupPromise = runQuitCleanupSteps()
+  return quitCleanupPromise
+}
+
+/** 退出清理的实际步骤（不含 app.quit；标记 quitCleanupDone 由 finally 保证） */
+async function runQuitCleanupSteps(): Promise<void> {
   const step = async (name: string, fn: () => Promise<unknown> | undefined, ms: number): Promise<void> => {
     try {
       await Promise.race([
@@ -1708,49 +1808,52 @@ async function runQuitCleanup(): Promise<void> {
       console.error(`[Main] 退出清理 ${name} 失败（继续）:`, e)
     }
   }
-  // 角色模块先落状态（IPC disposer + 将来的窗口/定时器）
-  await step('停用角色模块', () => characterDispose?.(), 1500)
-  if (characterManager) {
-    console.log('[Main] 已停用大肥鱼角色模块')
-    characterManager = null
-  }
-  // 插件先优雅停用：移除 IPC / 清定时器，避免退出过程中还有插件回调在跑
-  await step('停用插件', () => pluginRuntime?.disposeHost(), 3000)
-  // 配置的合并写可能还在 300ms 防抖里，退出前强制落盘
-  await step('插件配置落盘', () => pluginRuntime?.flushConfig(), 2000)
-  await step('关闭插件库', () => pluginRuntime?.disposeDb(), 3000)
-  // 确保在退出前杀死所有子进程，防止孤儿进程
-  terminalSessions.killAll()
-  // 4.2 B3：中止所有插件的在途后台任务（流式生成 / 扫描识别 / 热点采集）。
-  // 由插件 activate 时自注册（services.abort），宿主不再直接引用插件内部函数——
-  // 那曾是一条「宿主反向依赖插件实现」的隐性越界（门禁只扫插件→宿主，扫不到）。
   try {
-    const { total, byPlugin } = abortRegistry.abortAll()
-    if (total > 0) {
-      const detail = Object.entries(byPlugin)
-        .map(([id, n]) => `${id}=${n}`)
-        .join('，')
-      console.log(`[Main] 退出前已中止 ${total} 个在途后台任务（${detail}）`)
+    // 角色模块先落状态（IPC disposer + 将来的窗口/定时器）
+    await step('停用角色模块', () => characterDispose?.(), 1500)
+    if (characterManager) {
+      console.log('[Main] 已停用大肥鱼角色模块')
+      characterManager = null
     }
-  } catch (e) {
-    console.error('[Main] 中止插件后台任务失败:', e)
-  }
-
-  // 注册表内的常驻子进程（marketing DB Worker）先优雅停：
-  // wal_checkpoint(TRUNCATE) → close → exit(0)，避免留下 -wal/-shm 残骸
-  try {
-    const stops = await subprocessRegistry.stopAll(3000)
-    for (const s of stops) {
-      if (!s.ok) console.warn(`[Main] 优雅停止 ${s.name}(pid=${s.pid}) 未成功: ${s.error}`)
+    // 插件先优雅停用：移除 IPC / 清定时器，避免退出过程中还有插件回调在跑
+    await step('停用插件', () => pluginRuntime?.disposeHost(), 3000)
+    // 配置的合并写可能还在 300ms 防抖里，退出前强制落盘
+    await step('插件配置落盘', () => pluginRuntime?.flushConfig(), 2000)
+    await step('关闭插件库', () => pluginRuntime?.disposeDb(), 3000)
+    // 确保在退出前杀死所有子进程，防止孤儿进程
+    terminalSessions.killAll()
+    // 4.2 B3：中止所有插件的在途后台任务（流式生成 / 扫描识别 / 热点采集）。
+    // 由插件 activate 时自注册（services.abort），宿主不再直接引用插件内部函数——
+    // 那曾是一条「宿主反向依赖插件实现」的隐性越界（门禁只扫插件→宿主，扫不到）。
+    try {
+      const { total, byPlugin } = abortRegistry.abortAll()
+      if (total > 0) {
+        const detail = Object.entries(byPlugin)
+          .map(([id, n]) => `${id}=${n}`)
+          .join('，')
+        console.log(`[Main] 退出前已中止 ${total} 个在途后台任务（${detail}）`)
+      }
+    } catch (e) {
+      console.error('[Main] 中止插件后台任务失败:', e)
     }
-  } catch (e) {
-    console.error('[Main] 停止注册表子进程失败:', e)
-  }
-  // 与 quitApp/托盘退出共用同一幂等入口：开启「退出保留网关」时这里不会杀网关
-  await step('停止或保留 OpenClaw', () => clawManager.handleAppQuit(), 8000)
 
-  quitCleanupDone = true
-  app.quit()
+    // 注册表内的常驻子进程（marketing DB Worker）先优雅停：
+    // wal_checkpoint(TRUNCATE) → close → exit(0)，避免留下 -wal/-shm 残骸
+    try {
+      const stops = await subprocessRegistry.stopAll(3000)
+      for (const s of stops) {
+        if (!s.ok) console.warn(`[Main] 优雅停止 ${s.name}(pid=${s.pid}) 未成功: ${s.error}`)
+      }
+    } catch (e) {
+      console.error('[Main] 停止注册表子进程失败:', e)
+    }
+    // 与 quitApp/托盘退出共用同一幂等入口：开启「退出保留网关」时这里不会杀网关
+    await step('停止或保留 OpenClaw', () => clawManager.handleAppQuit(), 8000)
+  } finally {
+    // 必须在 finally 里标记：清理中途抛错时 before-quit 会再进一次，若 done 仍为 false
+    // 会一直 preventDefault → 应用退不掉（重启路径同理会卡住不 relaunch）
+    quitCleanupDone = true
+  }
 }
 
 // 类型扩展

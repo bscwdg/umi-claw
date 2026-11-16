@@ -69,6 +69,13 @@ export interface EnvIpcDeps {
     detail?: string
     at: number
   } | null
+  /**
+   * 环境任务成功后重试「激活失败」的内置插件（5.0）。
+   *
+   * 为什么由 deps 注入而不是直接 import：env IPC 不依赖插件装配层，否则 index.ts ↔
+   * pluginRuntime 之间出现循环依赖。失败只日志：环境任务已经成功，不能因重试失败改写结果。
+   */
+  retryFailedPlugins?: () => Promise<unknown>
 }
 
 const ENV_TASK_BUSY_ERROR = '已有环境任务在进行中，请等待当前任务完成'
@@ -102,6 +109,29 @@ export function registerEnvIpc(
 
   ipc.handle('env:check', () => deps.download.checkEnvironment())
 
+  /**
+   * 环境任务成功后重试「激活失败」的插件（5.0）。
+   *
+   * 必须在 setUpdateInFlight(false) 之后调用：init/update/updateNode 全程闸住外部启动，
+   * 重试激活会 spawn 便携 Node 建插件库，卡在闸门里可能与网关启动互相等待。
+   * 失败只日志 + 吞掉：环境任务本身已成功，不能因重试失败把成功结果改写成失败。
+   *
+   * **回执时长注意**：调用方 `await` 它，所以 env:init / env:update / env:updateNode 的
+   * IPC 回执 = 环境任务耗时 + 插件重试耗时。常规重试是「spawn 便携 Node + 建库」秒级；
+   * 最坏情况下每个失败插件各等满一次激活超时（20s/插件，插件之间并行），不要把回执
+   * 时长误当成纯环境耗时。若日后更在意回执速度，可改成 fire-and-forget（`void`），
+   * 但 UI 就无法在回执里拿到重试后的最终状态。
+   */
+  const retryFailedPluginsAfterEnvTask = async (result: unknown): Promise<void> => {
+    if (!deps.retryFailedPlugins) return
+    if (!(result as { success?: unknown } | null)?.success) return
+    try {
+      await deps.retryFailedPlugins()
+    } catch (e) {
+      console.warn(`[env] 环境任务成功后重试插件激活失败（已忽略）：${(e as Error)?.message ?? e}`)
+    }
+  }
+
   // 初始化/重装会替换 node_modules，且 Node 不满足新核心要求时还会自动升级运行时
   // （升级会结束占用便携 Node 的进程）——所以先停网关，结束后按原状态恢复。
   const envInitImpl = async (options: EnvInitOptions): Promise<EnvOpResult> => {
@@ -134,11 +164,15 @@ export function registerEnvIpc(
       // 与 update / updateNode 共用同一把启动闸：安装期间手动「启动」或网关客户端
       // 自动拉起会抢同一个安装目录与状态库，必须挡在外面。
       deps.setUpdateInFlight(true)
+      let result: EnvOpResult
       try {
-        return await envInitImpl(options)
+        result = await envInitImpl(options)
       } finally {
         deps.setUpdateInFlight(false)
       }
+      // 闸门已释放：环境初始化补齐了便携 Node，此前激活失败的内置插件应能恢复
+      await retryFailedPluginsAfterEnvTask(result)
+      return result
     })
   )
 
@@ -271,11 +305,15 @@ export function registerEnvIpc(
       // 全程闸住外部启动（claw:start/restart、网关客户端自动拉起），
       // 防止 doctor 迁移 / update repair 与手动启动抢同一个状态库
       deps.setUpdateInFlight(true)
+      let result: UpdateResult
       try {
-        return await envUpdateImpl(options)
+        result = await envUpdateImpl(options)
       } finally {
         deps.setUpdateInFlight(false)
       }
+      // 更新可能恢复/替换了运行时；闸门释放后再重试此前激活失败的插件
+      await retryFailedPluginsAfterEnvTask(result)
+      return result
     })
   )
   ipc.handle('env:checkLatest', async (_e, options: EnvIdOptions) =>
@@ -312,11 +350,15 @@ export function registerEnvIpc(
       // Node 更新会替换正在使用的运行时并停/起网关，同样要闸住外部启动，
       // 否则手动「启动」可能在 node_modules 被替换到一半时拉起进程。
       deps.setUpdateInFlight(true)
+      let result: UpdateResult
       try {
-        return await updateNodeImpl(options)
+        result = await updateNodeImpl(options)
       } finally {
         deps.setUpdateInFlight(false)
       }
+      // Node 运行时替换完成后，此前因便携 Node 缺失/不可写而失败的插件可以重试激活
+      await retryFailedPluginsAfterEnvTask(result)
+      return result
     })
   )
 }

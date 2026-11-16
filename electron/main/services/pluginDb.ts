@@ -23,6 +23,14 @@ export interface PluginDbServiceOptions {
 
 export interface PluginDbService {
   forPlugin(info: { id: string; dir: string }): PluginDbApi
+  /**
+   * 只关闭一个插件的库连接（清缓存）。
+   *
+   * 用途：插件首次激活因便携 Node 缺失失败后，entries 里会留着「启动失败/半初始化」的
+   * DatabaseClient；环境初始化完成后重试激活前要先把它清掉。**不能 disposeAll**：
+   * 已激活插件手里的 ctx.db 引用会一起失效，用户只是初始化环境不该波及它们。
+   */
+  disposeFor(pluginId: string): Promise<void>
   /** 退出时统一关闭所有插件库 worker */
   disposeAll(): Promise<void>
 }
@@ -137,6 +145,17 @@ export function createPluginDbService(opts: PluginDbServiceOptions): PluginDbSer
 
       entries.set(id, { api, client })
       return api
+    },
+
+    async disposeFor(pluginId: string) {
+      const entry = entries.get(pluginId)
+      if (!entry) return
+      entries.delete(pluginId)
+      try {
+        await entry.client.dispose()
+      } catch {
+        // 关闭失败不影响重试：下一次 forPlugin 会建全新 client
+      }
     },
 
     async disposeAll() {

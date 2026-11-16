@@ -2981,6 +2981,328 @@ await r.check(
   }
 )
 
+// ── P66/P67 5.0：环境初始化完成后重试激活（failed → 恢复）────────────────────
+// 背景（真实故障）：新电脑首次启动时便携 Node 还不存在 → pluginDb 的 DatabaseClient
+// 首请求抛 SETUP_REQUIRED → work/marketing 激活失败并被记成 failed；env:init 补齐 Node
+// 之后没有任何重试入口（页面「刷新」只重读 plugin:list），用户只能重启 App。
+await r.check(
+  'P66',
+  'retryFailed：首次激活失败 → 重试后成功；未启用插件与清单级失败不被重试',
+  async () => {
+    const ipc = createFakeIpc()
+    // 临时插件目录：retry 走的是真实 registry/lifecycle 路径，dir 只用于构造插件记录
+    const pluginDir = mkdtempSync(join(tmpdir(), 'umi-plugin-retry-'))
+    let attempts = 0
+    let disabledLoads = 0
+    const registry = new PluginRegistry({ persistedEnabled: { flaky: true, off: false } })
+    registry.register({
+      dir: pluginDir,
+      source: '<test>',
+      manifest: { ...manifest, id: 'flaky' },
+      loadMain: async () => ({
+        activate: (ctx) => {
+          attempts += 1
+          // 第一轮模拟「便携 Node 未就绪」→ 插件库打开失败
+          if (attempts === 1) throw new Error('未找到便携 Node 运行时')
+          ctx.registerIpc('ping', () => 'pong')
+        }
+      })
+    })
+    registry.register({
+      dir: pluginDir,
+      source: '<test>',
+      manifest: { ...manifest, id: 'off', defaultEnabled: false },
+      loadMain: async () => {
+        disabledLoads += 1
+        return { activate: () => undefined }
+      }
+    })
+    // 清单级失败（坏 JSON）：enabled=false，重试没有意义
+    registry.addFailed(
+      'badmanifest',
+      { code: 'PLUGIN_MANIFEST_INVALID', message: 'plugin.json 解析失败' },
+      { dir: pluginDir, source: '<test>' }
+    )
+
+    const host = makeHost(registry, ipc)
+    try {
+      const first = await host.activateAll()
+      assertEq(first.find((s) => s.id === 'flaky').state, 'failed', '首轮激活失败')
+      assertEq(
+        first.find((s) => s.id === 'flaky').error.code,
+        'PLUGIN_ACTIVATION_FAILED',
+        '失败码保留（渲染端按 code 分支）'
+      )
+      assertEq(
+        host.statuses().find((s) => s.id === 'off').state,
+        'validated',
+        '未启用插件保持 validated'
+      )
+
+      const retried = await host.retryFailed()
+      assertEq(
+        retried.length,
+        1,
+        '只有「启用 + 运行时失败」的插件被重试（实际 ' + retried.map((s) => s.id).join(',') + '）'
+      )
+      const flaky = host.statuses().find((s) => s.id === 'flaky')
+      assertEq(flaky.state, 'activated', '重试后恢复 activated：' + JSON.stringify(flaky.error))
+      assertEq(flaky.error, undefined, '成功后清掉失败记录')
+      assertEq(attempts, 2, '确实重新激活了一次')
+      assertEq(ipc.handlers.has('plugin:flaky:ping'), true, '重试后通道真的注册了')
+      assertEq(await ipc.invoke('plugin:flaky:ping'), 'pong', '重试后的通道可调用')
+
+      // 未启用插件：加载入口一次都不该被调（retry 不能顺手激活停用插件）
+      assertEq(disabledLoads, 0, '未启用插件不被重试（不加载入口）')
+      // 清单级失败：保持 failed，不会被「重试」洗白
+      assertEq(
+        host.statuses().find((s) => s.id === 'badmanifest').state,
+        'failed',
+        '清单级失败保持 failed'
+      )
+      // 已激活：retry 幂等，不重复 activate
+      const again = await host.retry('flaky')
+      assertEq(again.state, 'activated', 'retry 已激活插件幂等')
+      assertEq(attempts, 2, '已激活插件不重复 activate')
+      // 没有失败目标 → 空数组，且不再触发激活
+      assertEq((await host.retryFailed()).length, 0, '无失败目标时 retryFailed 返回空数组')
+      assertEq(attempts, 2, '空重试不触发 activate')
+    } finally {
+      await host.disposeAll()
+      rmSync(pluginDir, { recursive: true, force: true })
+    }
+    return '首次失败 → 重试成功；停用/清单级失败不重试'
+  }
+)
+
+await r.check(
+  'P67',
+  'retryFailed：并发去重 + 停用打断不绕过保护；生产接线（lifecycle/runtime/preload/env 自动重试）',
+  async () => {
+    const pluginDir = mkdtempSync(join(tmpdir(), 'umi-plugin-retry-race-'))
+    try {
+      // 1) 并发去重：retryFailed 与 retry 同时进来，activate 只跑一次
+      const ipc = createFakeIpc()
+      let activations = 0
+      let releaseGate = null
+      const gate = new Promise((resolve) => {
+        releaseGate = resolve
+      })
+      const registry = new PluginRegistry({ persistedEnabled: { race: true } })
+      registry.register({
+        dir: pluginDir,
+        source: '<test>',
+        manifest: { ...manifest, id: 'race' },
+        loadMain: async () => ({
+          activate: async (ctx) => {
+            activations += 1
+            if (activations === 1) throw new Error('首轮失败')
+            await gate
+            ctx.registerIpc('ping', () => 'pong')
+          }
+        })
+      })
+      const host = makeHost(registry, ipc, { activationTimeoutMs: 2000 })
+      try {
+        const first = await host.activateAll()
+        assertEq(first.find((s) => s.id === 'race').state, 'failed', '首轮失败')
+        const retryPromise = host.retryFailed()
+        // 第二次 retry 看到的已是 validated（registry 在 setEnabled 时重置），不能再启动一次激活
+        const secondView = await host.retry('race')
+        assertEq(secondView.state, 'validated', '并发 retry 看到已重置为 validated')
+        releaseGate()
+        const retried = await retryPromise
+        assertEq(retried[0].state, 'activated', '并发重试最终 activated')
+        assertEq(activations, 2, '并发重试只多激活一次（首轮失败 + 重试）')
+        assertEq(ipc.handlers.size, 1, '只注册一条通道（没有重复 handler）')
+      } finally {
+        await host.disposeAll()
+      }
+
+      // 2) 停用打断：重试中的在途激活必须能被 setEnabled(false) 关闭，迟到注册被拒
+      const ipc2 = createFakeIpc()
+      let hangRelease = null
+      const hangGate = new Promise((resolve) => {
+        hangRelease = resolve
+      })
+      let hangAttempts = 0
+      const registry2 = new PluginRegistry({ persistedEnabled: { hang: true } })
+      registry2.register({
+        dir: pluginDir,
+        source: '<test>',
+        manifest: { ...manifest, id: 'hang' },
+        loadMain: async () => ({
+          activate: async (ctx) => {
+            hangAttempts += 1
+            if (hangAttempts === 1) throw new Error('首轮失败')
+            await hangGate
+            ctx.registerIpc('late', () => 'late')
+          }
+        })
+      })
+      const host2 = makeHost(registry2, ipc2, { activationTimeoutMs: 5000 })
+      try {
+        await host2.activateAll()
+        const pending = host2.retryFailed()
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        const disabled = await host2.setEnabled('hang', false)
+        assertEq(disabled.state, 'disabled', '重试中的激活可被停用打断')
+        hangRelease()
+        await pending.catch(() => undefined)
+        await new Promise((resolve) => setTimeout(resolve, 60))
+        assertEq(ipc2.handlers.size, 0, '停用后不留迟到注册的通道')
+        assertEq(host2.statuses().find((s) => s.id === 'hang').jobCount, 0, '不留定时任务')
+      } finally {
+        await host2.disposeAll()
+      }
+    } finally {
+      rmSync(pluginDir, { recursive: true, force: true })
+    }
+
+    // 3) 生产接线（静态锁）：
+    //    lifecycle 的 retry 必须复用 setEnabled 语义（不能复制一套激活流程），
+    //    runtime 必须按插件清库缓存后重试，preload 暴露 API，env 三个任务成功后自动触发。
+    const lifecycleSrc = readFileSync(
+      join(repoRoot, 'electron', 'main', 'kernel', 'lifecycle.ts'),
+      'utf8'
+    )
+    assert(/async retryFailed\(\): Promise<PluginStatus\[\]>/.test(lifecycleSrc), 'lifecycle 提供 retryFailed()')
+    assert(/async retry\(id: string\): Promise<PluginStatus>/.test(lifecycleSrc), 'lifecycle 提供 retry(id)')
+    assert(
+      /return this\.setEnabled\(id, true\)/.test(lifecycleSrc),
+      'lifecycle.retry 必须复用 setEnabled（不复制激活流程）'
+    )
+    assert(
+      /record\.error\?\.stage !== 'manifest'/.test(lifecycleSrc),
+      '清单级失败不参与重试'
+    )
+
+    const runtimeSrc = readFileSync(
+      join(repoRoot, 'electron', 'main', 'services', 'pluginRuntime.ts'),
+      'utf8'
+    )
+    assert(/retryFailedPlugins\(\): Promise<PluginStatus\[\]>/.test(runtimeSrc), 'runtime 暴露 retryFailedPlugins')
+    assert(/deps\.ipc\.handle\('plugin:retryFailed'/.test(runtimeSrc), 'runtime 注册 plugin:retryFailed')
+    assert(
+      /dbService\?\.disposeFor\(id\)/.test(runtimeSrc),
+      '重试前按插件清库缓存（不能 disposeAll 误伤已激活插件）'
+    )
+    // 编排逻辑已抽到 services/pluginRetry.ts（单飞 + 逐目标复核，P1-4/P1-5）；
+    // runtime 只做接线与状态返回，避免两套实现漂移。
+    assert(/createPluginRetrier/.test(runtimeSrc), 'runtime 复用 createPluginRetrier（生产重试编排唯一真源）')
+    assert(
+      /pluginRetrier\.retryFailed\(\)/.test(runtimeSrc),
+      'runtime.retryFailedPlugins 委托给 pluginRetrier'
+    )
+    assert(
+      !/disposeFor\(record\.manifest\.id\)/.test(runtimeSrc),
+      'runtime 不再内联旧的 dispose→setEnabled 循环（防两套编排漂移）'
+    )
+    const retryModuleSrc = readFileSync(
+      join(repoRoot, 'electron', 'main', 'services', 'pluginRetry.ts'),
+      'utf8'
+    )
+    assert(
+      /after\?\.state === 'activated'/.test(retryModuleSrc),
+      '只对重试成功（activated）的插件补 afterEnable，不碰未成功/未启用插件'
+    )
+    assert(
+      /host\.afterEnable\?\.\(id\)/.test(retryModuleSrc),
+      '重试成功后补调宿主 afterEnable（work→用户协议迁移，旧数据+Node 被删后 init 免重启）'
+    )
+    assert(
+      /afterEnable 失败（不影响重试结果）/.test(retryModuleSrc),
+      'afterEnable 失败只日志，不改变重试结果'
+    )
+    assert(/if \(inflight\) return inflight/.test(retryModuleSrc), '重试单飞（并发调用合并为同一轮）')
+
+    const pluginDbSrc = readFileSync(
+      join(repoRoot, 'electron', 'main', 'services', 'pluginDb.ts'),
+      'utf8'
+    )
+    assert(/disposeFor\(pluginId: string\): Promise<void>/.test(pluginDbSrc), 'pluginDb 提供 disposeFor')
+
+    const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf8')
+    assert(preloadSrc.includes("'plugin:retryFailed'"), 'preload 暴露 plugin:retryFailed')
+    assert(
+      /retryFailed: \(\) => call<PluginStatus\[\]>\('plugin:retryFailed'\)/.test(preloadSrc),
+      'preload 的 plugins.retryFailed(): Promise<PluginStatus[]>'
+    )
+
+    const envSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'host', 'env.ts'), 'utf8')
+    assert(/retryFailedPlugins\?: \(\) => Promise<unknown>/.test(envSrc), 'env deps 注入 retryFailedPlugins')
+    assert(/retryFailedPluginsAfterEnvTask/.test(envSrc), 'env 成功路径调用重试')
+    const calls = envSrc.match(/await retryFailedPluginsAfterEnvTask\(result\)/g) || []
+    assertEq(calls.length, 3, 'env:init / env:update / env:updateNode 三条成功路径都触发重试')
+    assert(
+      /finally\s*\{\s*deps\.setUpdateInFlight\(false\)\s*\}[\s\S]{0,120}await retryFailedPluginsAfterEnvTask/.test(
+        envSrc
+      ),
+      '重试必须在启动闸释放之后（避免与网关启动互锁）'
+    )
+
+    // 渲染端：失败卡片给「重试加载」，「刷新」遇到 failed 也自动重试（不再要求先停用再启用）
+    const managerSrc = readFileSync(join(repoRoot, 'src', 'views', 'PluginManager.vue'), 'utf8')
+    assert(/window\.api\.plugins\.retryFailed\(\)/.test(managerSrc), '插件管理页走 plugins.retryFailed()')
+    assert(/重试加载/.test(managerSrc), '失败卡片有「重试加载」按钮')
+    assert(
+      /plugins\.value\.some\(failedRetryable\)/.test(managerSrc),
+      '「刷新」时对 failed 插件自动重试'
+    )
+    assert(
+      /\.error\?\.stage !== 'manifest'/.test(managerSrc),
+      '清单级失败不给重试入口（要重新构建）'
+    )
+
+    const hostSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf8')
+    assert(
+      hostSrc.includes('pluginRuntime?.retryFailedPlugins()'),
+      'index 把 runtime 的重试能力注入 env IPC'
+    )
+    return '并发/停用语义 + 生产接线 ✓'
+  }
+)
+
+// ── P68 pluginDb.disposeFor：重试激活前按插件清库缓存（真 worker） ──────────────
+await r.check(
+  'P68',
+  'pluginDb.disposeFor：按插件清缓存后重新建库可用（重试激活前的缓存清理，不误伤其它插件）',
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'umi-db-retry-'))
+    const pluginDir = join(root, 'alpha')
+    mkdirSync(join(pluginDir, 'migrations'), { recursive: true })
+    writeFileSync(
+      join(pluginDir, 'migrations', '001_init.sql'),
+      'CREATE TABLE IF NOT EXISTS notes (id TEXT PRIMARY KEY, body TEXT NOT NULL, created_at INTEGER);',
+      'utf-8'
+    )
+    const svc = createPluginDbService({
+      dataDir: join(root, 'data'),
+      nodePath: resolveNodePath(),
+      workerScriptPath: join(repoRoot, 'resources', 'database', 'db-worker.mjs')
+    })
+    try {
+      const first = svc.forPlugin({ id: 'alpha', dir: pluginDir })
+      await first.migrate()
+      await first.create('notes', { id: 'n1', body: 'before', created_at: 1 })
+      assertEq((await first.list('notes')).length, 1, '首次建库可用')
+
+      await svc.disposeFor('ghost')
+      // 未建过的插件是 no-op（重试列表里可能有从未成功建库的插件）
+      await svc.disposeFor('alpha')
+      const second = svc.forPlugin({ id: 'alpha', dir: pluginDir })
+      assert(second !== first, 'disposeFor 后拿到新 client（旧失败/半初始化缓存已清）')
+      await second.migrate()
+      assertEq((await second.list('notes')).length, 1, '重新建库后数据仍在（worker 重开同一库）')
+      assertEq(svc.forPlugin({ id: 'alpha', dir: pluginDir }), second, '同一插件再次 forPlugin 复用新缓存')
+    } finally {
+      await svc.disposeAll()
+      rmSync(root, { recursive: true, force: true })
+    }
+    return 'disposeFor 按插件清缓存 ✓'
+  }
+)
+
 const result = r.toJSON()
 const ok = printResult(result)
 writeJson(join(__dirname, 'accept-result-plugin.json'), result)

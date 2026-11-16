@@ -34,7 +34,7 @@
         <div class="actions">
           <button
             v-if="!blocking"
-            class="btn btn-sm"
+            class="btn"
             @click="close"
           >关闭</button>
           <button
@@ -191,6 +191,9 @@ async function submit(): Promise<void> {
   font-size: var(--text-sm);
   margin: 0 0 var(--space-3);
 }
+/* 底部操作区：关闭/取消与确认按钮只允许一种尺寸档（默认 md = 34px），
+   禁止 btn-sm 与默认混排（docs/ui-style-guide.md §2.6/§3.1/§3.6）；
+   右上角 ✕ 是图标按钮，保留 .btn.btn-icon.btn-sm 不受此限 */
 .actions {
   display: flex;
   justify-content: flex-end;

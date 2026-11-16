@@ -1849,7 +1849,9 @@ await r.check('U28', '大肥鱼页面所有卡片统一接入 CollapsibleCard', 
     settingsSrc.includes("import CollapsibleCard from '@/views/components/CollapsibleCard.vue'"),
     '详细设置必须复用公共组件'
   )
-  assertEq((pageSrc.match(/<CollapsibleCard/g) || []).length, 17, '角色页 17 张卡片全部替换')
+  // character-pack：新增第 18 张「资料包（人格 / 知识 / 主动消息 / 记忆）」卡，
+// 属预期功能扩展（2026-11-16 Lead 仲裁同意 17→18）；default-collapsed 仍只有 2 张，不放宽。
+assertEq((pageSrc.match(/<CollapsibleCard/g) || []).length, 18, '角色页 18 张卡片全部替换')
   assert(!/<section class="card">/.test(pageSrc), '角色页不得残留未折叠的普通卡片')
   assert(
     /<CollapsibleCard title="主动消息语料" default-collapsed>/.test(pageSrc),
@@ -1910,6 +1912,105 @@ await r.check('U28', '大肥鱼页面所有卡片统一接入 CollapsibleCard', 
   assertEq(buttons[1].props['aria-expanded'], true, '点击后切换为展开')
   assertEq(collapsedBody.style.display !== 'none', true, '点击后正文恢复')
   return '公共组件 + 18 张卡片接入 ✓'
+})
+
+await r.check('U31', '控制台状态卡：操作区恒定一行、左侧文本让位换行（900×600 预算内）', async () => {
+  const dashSrc = readFileSync(join(repoRoot, 'src', 'views', 'Dashboard.vue'), 'utf-8')
+  /** 取精确选择器的规则体（含单行规则；先剥注释、选择器从行首精确开始，避免跨规则假绿） */
+  const ruleBody = (source, selector) => {
+    const clean = source.replace(/\/\*[\s\S]*?\*\//g, '')
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const m = new RegExp(`^\\s*${escaped}\\s*(?:,\\s*[^{}]+)?\\{([\\s\\S]*?)\\}`, 'm').exec(clean)
+    return m?.[1] || ''
+  }
+
+  const cardRule = ruleBody(dashSrc, '.status-card')
+  assert(/display:\s*flex/.test(cardRule), '.status-card 必须是 flex 容器')
+  assert(/flex-wrap:\s*nowrap/.test(cardRule), '状态卡桌面宽度必须 nowrap（flex-wrap:wrap 会把按钮甩到第二行）')
+  // 注释里会提到旧写法，先剥注释再判「不得回退」
+  const dashClean = dashSrc.replace(/\/\*[\s\S]*?\*\//g, '')
+  assert(!/flex-wrap:\s*wrap/.test(dashClean), 'Dashboard 不得再有 flex-wrap: wrap 布局（折行回归）')
+
+  const mainRule = ruleBody(dashSrc, '.status-main')
+  assert(/flex:\s*1\b/.test(mainRule), '.status-main 必须 flex:1 吃掉剩余宽度')
+  assert(/min-width:\s*0/.test(mainRule), '.status-main 必须 min-width:0（否则内容撑破容器、按钮被挤出）')
+
+  const infoRule = ruleBody(dashSrc, '.status-info')
+  assert(/min-width:\s*0/.test(infoRule), '.status-info 必须 min-width:0 让长文案在自己列内换行')
+
+  // 左侧正文保留换行能力：用 nowrap/省略号「藏」溢出会把按钮挤走，属于错误修法
+  const subRule = ruleBody(dashSrc, '.status-sub')
+  assert(subRule !== '', '.status-sub 需要显式布局规则（可收缩 + 允许换行）')
+  assert(!/white-space:\s*nowrap/.test(subRule), '.status-sub 不得 nowrap（会横向溢出）')
+  assert(!/text-overflow:\s*ellipsis/.test(subRule), '.status-sub 不得用省略号掩盖溢出')
+
+  const actionsRule = ruleBody(dashSrc, '.status-actions')
+  assert(/flex-wrap:\s*nowrap/.test(actionsRule), '.status-actions 必须 nowrap（三颗按钮永远一行）')
+  assert(/flex-shrink:\s*0/.test(actionsRule), '.status-actions 不得被压缩')
+
+  const actionBtnRule = ruleBody(dashSrc, '.status-actions .btn')
+  assert(/flex-shrink:\s*0/.test(actionBtnRule), '操作区按钮不得收缩')
+  assert(/white-space:\s*nowrap/.test(actionBtnRule), '操作区按钮文字不得换行')
+
+  // 宽度不够时降档而不是折行：<1100px 断点把 btn-lg 降回默认 md 档（高度/字号走 token）
+  assert(
+    /@media\s*\(max-width:\s*1100px\)[\s\S]*?\.status-actions \.btn\s*\{[\s\S]*?height:\s*var\(--control-h-md\)/.test(dashSrc),
+    '<1100px 断点必须把操作按钮降为默认 md 档（而不是折行）'
+  )
+  return '状态卡 nowrap + 左侧换行 + 窄窗降档，900×600 预算内不折行 ✓'
+})
+
+// ── U32 用户协议弹窗：底部操作区按钮同一尺寸档（关闭不得小于保存） ──
+
+await r.check('U32', '用户协议弹窗：底部关闭/保存同尺寸档（默认 md），图标按钮不受影响', async () => {
+  const src = readFileSync(join(repoRoot, 'src', 'views', 'components', 'UserAgreementModal.vue'), 'utf-8')
+  const actions = /<div class="actions">([\s\S]*?)<\/div>/.exec(src)?.[1] || ''
+  assert(actions !== '', '弹窗底部必须有 .actions 操作区')
+  const buttons = [...actions.matchAll(/<button\b[\s\S]*?>/g)].map((m) => m[0])
+  assertEq(buttons.length, 2, `底部操作区应有「关闭」+「保存/同意并继续」两个按钮（实际 ${buttons.length}）`)
+  const classOf = (tag) => (tag.match(/class="([^"]*)"/) || ['', ''])[1]
+  const classes = buttons.map(classOf)
+
+  assert(classes.every((c) => /\bbtn\b/.test(c)), '两个按钮都必须挂全局 .btn 基类')
+  // 同一按钮区只允许一种尺寸档：禁止 btn-sm / btn-lg 与默认混排
+  const sized = classes.filter((c) => /\bbtn-(?:sm|lg)\b/.test(c))
+  assertEq(sized.length, 0, `底部按钮不得挂 btn-sm/btn-lg（实际 ${JSON.stringify(sized)}）`)
+  assert(classes.some((c) => /\bbtn-primary\b/.test(c)), '保存/同意按钮保留主动作色 btn-primary')
+
+  // 关闭按钮与保存同高（--control-h-md = 34px）：允许 btn-ghost 等颜色修饰，但不得带尺寸档
+  const closeClass = classes.find((c) => !/\bbtn-primary\b/.test(c))
+  assert(closeClass !== undefined, '应有次要动作（关闭）按钮')
+  assert(/\bbtn\b/.test(closeClass), '关闭按钮必须挂 .btn 默认档')
+  assert(!/\bbtn-(?:sm|lg)\b/.test(closeClass), '关闭按钮不得挂 btn-sm/btn-lg（尺寸档必须与保存一致）')
+  assert(!/\bbtn-icon\b/.test(closeClass), '底部关闭按钮是文字按钮，不是图标按钮')
+
+  // 右上角 ✕ 是图标按钮：保留 btn-icon（允许 btn-sm），不要被顺手改成文字按钮同档
+  assert(
+    /class="btn btn-icon btn-sm"[^>]*title="关闭"/.test(src),
+    '右上角 ✕ 保持 btn btn-icon btn-sm（图标按钮例外）'
+  )
+
+  // 规范必须写死同口径，否则下个弹窗还会混排
+  const guide = readFileSync(join(repoRoot, 'docs', 'ui-style-guide.md'), 'utf-8')
+  assert(guide.includes('同一按钮区只允许一种尺寸档'), 'UI 规范必须写明「同一按钮区只允许一种尺寸档」')
+  assert(guide.includes('关闭/取消不得小于确认/保存按钮'), 'UI 规范必须写明「关闭/取消不得小于确认/保存按钮」')
+  return '底部两钮同挂默认档（34px），图标按钮例外保留 ✓'
+})
+
+await r.check('U33', '数据目录「更改…/立即重启」在环境任务运行期间禁用（taskRunning 闸，对抗审查 P2-6）', async () => {
+  const setupSrc = readFileSync(join(repoRoot, 'src', 'views', 'Setup.vue'), 'utf-8')
+
+  // 两个按钮都必须同时挂 dataDirBusy 与 taskRunning：环境任务在跑时禁止改目录/重启
+  assert(
+    /:disabled="dataDirBusy \|\| taskRunning"\s+@click="chooseDataDir"/.test(setupSrc),
+    '「更改…」按钮缺少 taskRunning 禁用闸'
+  )
+  assert(
+    /:disabled="dataDirBusy \|\| taskRunning"\s+@click="restartApp"/.test(setupSrc),
+    '「立即重启」按钮缺少 taskRunning 禁用闸'
+  )
+
+  return '数据目录两按钮在任务运行期间均禁用 ✓'
 })
 
 const result = r.toJSON({})

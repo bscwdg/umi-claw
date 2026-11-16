@@ -32,6 +32,8 @@ import { PLUGIN_MAIN_ENTRIES } from '../kernel/plugins.main.generated'
 import { createPluginDbService, type PluginDbService } from './pluginDb'
 import { createPluginKvService } from './pluginKv'
 import { PluginSecretStore } from './pluginSecrets'
+import { createPluginRetrier, toRetryCandidates } from './pluginRetry'
+import { ERROR_CODES } from './errors'
 
 type PluginDbApi = ReturnType<PluginDbService['forPlugin']>
 
@@ -95,6 +97,14 @@ import { join } from 'node:path'
 export interface PluginRuntime {
   init(): Promise<void>
   statuses(): PluginStatus[]
+  /**
+   * 重试所有「启用但运行时失败」的内置插件（5.0）。
+   *
+   * 场景：首次启动时便携 Node 还不存在 → 插件库 worker 打不开 → work/marketing 激活失败
+   * 被记成 failed；用户完成环境初始化后，此前没有任何重试入口（刷新只重读 plugin:list）。
+   * 返回最新全量插件状态。
+   */
+  retryFailedPlugins(): Promise<PluginStatus[]>
   /** 营销域会话键解析用：未启用 → false */
   isEnabled(id: string): boolean
   /** 插件库（未初始化 / 未启用由调用方决定是否读） */
@@ -115,6 +125,33 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
 
   const broadcastStatus = (): void => {
     deps.broadcast('plugin:changed', statuses())
+  }
+
+  // 失败插件重试编排（5.0）：单飞 + 逐目标复核，避免「env 自动重试」与「插件页刷新重试」
+  // 并发时关掉刚激活插件的库、或把用户刚停用的插件重新启用（独立审查 P1-5）。
+  // 真正的状态机语义（failed→validated→activate）仍在 lifecycle.retry，这里不复制激活流程。
+  const pluginRetrier = createPluginRetrier({
+    list: () => toRetryCandidates(host?.statuses() ?? []),
+    disposeFor: async (id) => {
+      await dbService?.disposeFor(id)
+    },
+    retry: (id) => host?.retry(id) ?? Promise.resolve(),
+    afterEnable: deps.afterEnable ? (id) => deps.afterEnable!(id) : undefined,
+    broadcast: broadcastStatus,
+    logger: deps.logger
+  })
+
+  /**
+   * 重试所有「启用 + 运行时失败」的内置插件（5.0）。
+   *
+   * 场景：启动时便携 Node 还不存在 → 插件库 worker 打不开 → work/marketing 激活失败被记成
+   * failed；用户完成环境初始化后，此前没有任何重试入口（刷新只重读 plugin:list）。
+   * 返回最新全量插件状态（渲染端直接用）、并发调用合并为同一轮（pluginRetry 单飞）。
+   */
+  const retryFailedPlugins = async (): Promise<PluginStatus[]> => {
+    if (!host || !registry) return statuses()
+    await pluginRetrier.retryFailed()
+    return statuses()
   }
 
   const buildServiceFactories = (dataDir: string): ServiceFactories => {
@@ -164,6 +201,22 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     deps.ipc.removeHandler('plugin:list')
     deps.ipc.handle('plugin:list', () => ({ ok: true, data: statuses() }))
 
+    deps.ipc.removeHandler('plugin:retryFailed')
+    deps.ipc.handle('plugin:retryFailed', async () => {
+      try {
+        return { ok: true, data: await retryFailedPlugins() }
+      } catch (e) {
+        // 重试链路异常（而非单个插件激活失败，后者已被 host 隔离成 failed 状态）：
+        // 用既有 PLUGIN_OPERATION_FAILED 回信封，渲染端按 code 提示，不需要新错误码
+        return {
+          ok: false,
+          error: {
+            code: ERROR_CODES.PLUGIN_OPERATION_FAILED,
+            message: (e as Error)?.message ?? '重试加载插件失败'
+          }
+        }
+      }
+    })
     deps.ipc.removeHandler('plugin:setEnabled')
     deps.ipc.handle('plugin:setEnabled', async (_e, payload: { id?: string; enabled?: boolean }) => {
       const id = String(payload?.id ?? '')
@@ -308,6 +361,8 @@ export function createPluginRuntime(deps: PluginRuntimeDeps): PluginRuntime {
     },
 
     statuses,
+
+    retryFailedPlugins,
 
     isEnabled(id) {
       return registry?.isEnabled(id) ?? false

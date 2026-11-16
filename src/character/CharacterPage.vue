@@ -471,6 +471,25 @@
       <p v-if="backupHint" class="hint">{{ backupHint }}</p>
     </CollapsibleCard>
 
+    <CollapsibleCard title="资料包（人格 / 知识 / 主动消息 / 记忆）">
+      <p class="hint">
+        把技能生成或本机导出的资料包（<code>manifest.json</code> 的 schema 为
+        <code>umi-character-pack/1</code>）一次导入四类内容：人格文件、Obsidian 知识（世界书/角色卡/关系/约定）、
+        主动消息话题与台词、关系记忆与日记。导入前会自动把当前内容整包备份到
+        <code>data/backups/大肥鱼资料包-时间/</code>（失败会中止导入），
+        需要回滚时用「导入资料包（文件夹）」选那个备份目录即可；
+        知识与关系同名不覆盖（加序号），日记同日跳过。
+        导出会在所选文件夹里新建「大肥鱼资料包-时间」子目录，内容为当前（含内置）全量；
+        若超出资料包上限会截断或跳过部分内容，并在结果里明确提示。
+      </p>
+      <div class="row">
+        <button class="btn" :disabled="busy || packBusy" @click="exportPack">导出资料包</button>
+        <button class="btn" :disabled="busy || packBusy" @click="importPackFolder">导入资料包（文件夹）</button>
+        <button class="btn" :disabled="busy || packBusy" @click="importPackZip">导入 zip</button>
+      </div>
+      <p v-if="packHint" class="hint">{{ packHint }}</p>
+    </CollapsibleCard>
+
     <CollapsibleCard title="今天的日记">
       <p class="hint">{{ memoryText }}</p>
       <div class="row">
@@ -1309,6 +1328,135 @@ function importBackup(): void {
       })
     }
   )
+}
+
+// ── 统一资料包（5.0）：人格/知识/主动消息/记忆 一键导入导出（地址/弹框都由宿主处理）──
+const packBusy = ref(false)
+const packHint = ref('')
+type PackSnapshotView = {
+  dir: string
+  bytes: number
+  counts: {
+    persona: number
+    topics: number
+    lineGroups: number
+    knowledge: number
+    relations: number
+    diaries: number
+  }
+  warnings: string[]
+}
+type PackImportView = {
+  source: string
+  counts: {
+    persona: string[]
+    topics: { added: number; updated: number; total: number } | null
+    lines: { groupsAdded: number; linesAdded: number; totalLines: number } | null
+    knowledge: number
+    relations: number
+    diaries: number
+    diariesSkipped: number
+  }
+  warnings: string[]
+  errors: string[]
+  backupPath: string
+}
+
+function packWarningsText(warnings: string[]): string {
+  if (!warnings?.length) return ''
+  const head = warnings.slice(0, 3).join('；')
+  return `；提示：${head}${warnings.length > 3 ? '…' : ''}`
+}
+
+async function exportPack(): Promise<void> {
+  packHint.value = ''
+  await run(async () => {
+    packBusy.value = true
+    try {
+      const result = await window.api.character.pack.export()
+      if ('canceled' in result) return
+      const data = result as PackSnapshotView
+      const c = data.counts
+      // 导出会为「产物一定能再导入」而截断超限内容：必须明确提示，不能只说「已导出」
+      const truncated = (data.warnings ?? []).some(
+        (warning) => warning.includes('截断') || warning.includes('超过') || warning.includes('上限')
+      )
+      packHint.value =
+        (truncated ? '已导出，但部分内容被截断/跳过：' : '已导出到：') +
+        `${data.dir}（人格 ${c.persona} / 话题 ${c.topics} / 台词组 ${c.lineGroups} / ` +
+        `知识 ${c.knowledge} / 关系 ${c.relations} / 日记 ${c.diaries}）` +
+        packWarningsText(data.warnings)
+      showToast(truncated ? '资料包已导出，但有内容被截断（看下方提示）' : '资料包已导出')
+    } finally {
+      packBusy.value = false
+    }
+  })
+}
+
+function runPackImport(action: () => Promise<void>): void {
+  askConfirm(
+    {
+      title: '导入资料包',
+      message:
+        '会把资料包里的人格/知识/主动消息/关系记忆与日记导入当前大肥鱼；导入前自动把当前内容整包备份到 ' +
+        'data/backups/大肥鱼资料包-时间/（可用「导入资料包（文件夹）」恢复），备份失败会中止导入；' +
+        '知识与关系写 Obsidian（需要已配置 vault），同名不覆盖、日记同日跳过。确定导入？',
+      confirmText: '导入',
+      danger: true
+    },
+    () => {
+      packHint.value = ''
+      void run(async () => {
+        packBusy.value = true
+        try {
+          await action()
+        } finally {
+          packBusy.value = false
+        }
+      })
+    }
+  )
+}
+
+function importPackFolder(): void {
+  runPackImport(async () => {
+    const result = await window.api.character.pack.importFolder()
+    if ('canceled' in result) return
+    showPackImportResult(result as PackImportView)
+  })
+}
+
+function importPackZip(): void {
+  runPackImport(async () => {
+    const result = await window.api.character.pack.importZip()
+    if ('canceled' in result) return
+    showPackImportResult(result as PackImportView)
+  })
+}
+
+function showPackImportResult(data: PackImportView): void {
+  const c = data.counts
+  const topics = c.topics ? `${c.topics.added} 新增 / ${c.topics.updated} 覆盖` : '0'
+  const lines = c.lines ? `${c.lines.groupsAdded} 组 / ${c.lines.linesAdded} 句` : '0'
+  const skipped = c.diariesSkipped > 0 ? `（同日跳过 ${c.diariesSkipped} 篇）` : ''
+  const errors = data.errors?.length ? `；失败 ${data.errors.length} 项：${data.errors.join('；')}` : ''
+  packHint.value =
+    `已导入：人格 ${c.persona.length} 个 / 话题 ${topics} / 台词 ${lines} / 知识 ${c.knowledge} 篇 / ` +
+    `关系 ${c.relations} 篇 / 日记 ${c.diaries} 篇${skipped}；导入前备份（可用「导入资料包（文件夹）」恢复）：${data.backupPath}` +
+    errors +
+    packWarningsText(data.warnings)
+  const wroteAny =
+    c.persona.length > 0 ||
+    Boolean(c.topics && (c.topics.added > 0 || c.topics.updated > 0)) ||
+    Boolean(c.lines && c.lines.linesAdded > 0) ||
+    c.knowledge > 0 ||
+    c.relations > 0 ||
+    c.diaries > 0
+  if (errors) showToast('资料包已部分导入（看下方提示）')
+  else if (!wroteAny) showToast('资料包没有新增内容（已存在或被跳过）')
+  else showToast('资料包已导入')
+  void refresh()
+  void refreshMemories()
 }
 
 interface MemoryDiaryView { date: string; chars: number; excerpt: string; source: string }
