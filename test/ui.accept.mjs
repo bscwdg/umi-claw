@@ -21,7 +21,7 @@
 //
 // 用法：node test/ui.accept.mjs（npm run accept:ui）
 
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Recorder, assert, assertEq, assertDeepEq, printResult, writeJson, __dirname, repoRoot, domainUiSrc, waitFor } from './_lib.mjs'
@@ -2307,6 +2307,38 @@ await r.check('U35', '知识/人格「查看文件」：按钮、通道与打开
 })
 
 
+await r.check('U36', '本地向量模型：下载安装/离线导入/卸载入口 + IPC 全链路', async () => {
+  const obsSrc = readFileSync(join(repoRoot, 'src', 'views', 'ObsidianPage.vue'), 'utf-8')
+  const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
+  const miscSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'host', 'misc.ts'), 'utf-8')
+  const managerSrc = readFileSync(join(repoRoot, 'electron', 'main', 'obsidian', 'obsidianManager.ts'), 'utf-8')
+  assert(obsSrc.includes('本地模型（需下载）'), '知识库页应有本地模型来源页签')
+  assert(/async function installLocalModel/.test(obsSrc), '应有下载安装入口')
+  assert(/async function importLocalModel/.test(obsSrc), '应有离线包导入入口')
+  assert(/async function confirmRemoveLocalModel/.test(obsSrc), '应有卸载确认链路')
+  assert(obsSrc.includes('ConfirmDialog'), '卸载必须走宿主 ConfirmDialog')
+  for (const ch of ['status', 'install', 'cancel', 'remove', 'selectZip', 'import']) {
+    assert(preloadSrc.includes(`'obsidian:localModel:${ch}'`), 'preload 应暴露 obsidian:localModel:' + ch)
+    assert(miscSrc.includes(`'obsidian:localModel:${ch}'`), '主进程应注册 obsidian:localModel:' + ch)
+  }
+  assert(managerSrc.includes('getLocalModelStatus'), 'Manager 应暴露状态查询')
+  assert(managerSrc.includes('removeLocalModel'), 'Manager 应暴露卸载')
+  assert(managerSrc.includes('isEmbeddingConfigured'), 'Manager 应暴露 embedding 可用性（知识体检用）')
+  const indexSrc = readFileSync(join(repoRoot, 'electron', 'main', 'index.ts'), 'utf-8')
+  assert(indexSrc.includes("'obsidian:local-model-progress'"), '主进程应把安装进度转发到渲染端')
+  assert(/installing: true/.test(obsSrc), '安装点击后应乐观置 installing（否则取消/进度不可达）')
+  assert(/onLocalModelProgress/.test(obsSrc), '知识库页应订阅本地模型安装进度')
+  assert(/phase === 'downloading'/.test(obsSrc), '进度事件应驱动 installing 状态')
+  assert(existsSync(join(repoRoot, 'resources', 'embedding-models', 'local-embedding-manifest.json')), '应内置 direct 清单')
+  assert(existsSync(join(repoRoot, 'resources', 'obsidian', 'local-selftest.mjs')), '应内置自检脚本')
+  return '本地模型页签/安装/离线导入/卸载 + IPC 全链路 ✓'
+})
+
+// ── U31 控制台状态卡：窄窗按钮不折行（静态样式锁，回归到 flex-wrap 折行即变红） ──
+//
+// 900×600 最小窗口预算：900 − 侧栏 220 − .content 左右 padding 2×24 ≈ 632，
+// .status-card 再扣 2×24 padding + 2px 边框 ≈ 582px。运行态三颗 btn-lg 约 380px，
+// 必须恒定占一行；宽度不够时走 <1100px 断点降档（默认 md），而不是把按钮折到第二行。
 await r.check('U31', '控制台状态卡：操作区恒定一行、左侧文本让位换行（900×600 预算内）', async () => {
   const dashSrc = readFileSync(join(repoRoot, 'src', 'views', 'Dashboard.vue'), 'utf-8')
   /** 取精确选择器的规则体（含单行规则；先剥注释、选择器从行首精确开始，避免跨规则假绿） */

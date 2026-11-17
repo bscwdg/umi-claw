@@ -75,6 +75,9 @@ const ACCEPT = [
   // 失败插件重试编排（pluginRetry：单飞 / dispose 后复核 / afterEnable 失败隔离）
   ['plugin-retry', 'test/plugin-retry.accept.mjs'],
   ['consent', 'test/consent.accept.mjs'],
+  // 本地向量模型：安装器（下载/校验/镜像回退/取消/卸载/离线导入）+ 分词与知识体检
+  ['obsidian-local-model', 'test/obsidian-local-model.accept.mjs'],
+  ['obsidian-local-embedding', 'test/obsidian-local-embedding.accept.mjs'],
   ['ui', 'test/ui.accept.mjs']
 ]
 // 全部单模块绿后
