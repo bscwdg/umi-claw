@@ -500,6 +500,12 @@ const api = {
     getConfig: () => ipcRenderer.invoke('obsidian:getConfig'),
     saveConfig: (cfg: any) => ipcRenderer.invoke('obsidian:saveConfig', cfg),
     selectVault: () => ipcRenderer.invoke('obsidian:selectVault'),
+    openVault: (path?: string) =>
+      ipcRenderer.invoke('obsidian:openVault', path) as Promise<{
+        ok: boolean
+        path: string
+        error?: string
+      }>,
     getIndexStatus: () => ipcRenderer.invoke('obsidian:getIndexStatus'),
     rebuildIndex: () => ipcRenderer.invoke('obsidian:rebuildIndex'),
     cancelIndex: () => ipcRenderer.invoke('obsidian:cancelIndex'),
@@ -850,7 +856,9 @@ const api = {
           'character:persona:export'
         ),
       import: (pkg: unknown) =>
-        call<{ written: string[]; backupDir?: string | null }>('character:persona:import', pkg)
+        call<{ written: string[]; backupDir?: string | null }>('character:persona:import', pkg),
+      open: () =>
+        call<{ ok: boolean; path: string; error?: string }>('character:persona:open')
     },
     knowledge: {
       import: (files: Array<{ name: string; text: string }>, category: string) =>

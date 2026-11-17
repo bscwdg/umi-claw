@@ -1,6 +1,6 @@
-import { app, dialog } from 'electron'
+import { app, dialog, shell } from 'electron'
 import { spawn } from 'child_process'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { readFileSync, writeFileSync, statSync, mkdirSync, existsSync, unlinkSync } from 'fs'
 import { EventEmitter } from 'events'
 import { ConfigManager } from '../configManager'
@@ -70,6 +70,22 @@ export class ObsidianManager extends EventEmitter {
       appConfigSavedOk: saved.appConfigSavedOk,
       ...(saved.appConfigSavedOk === false ? { appConfigSaveError: saved.appConfigSaveError } : {})
     }
+  }
+
+  /** 在系统文件管理器里打开 vault；传入路径优先（知识库页未保存的草稿），否则用已保存配置 */
+  async openVault(inputPath?: string): Promise<{ ok: boolean; path: string; error?: string }> {
+    const raw = String(inputPath ?? this.getObsidianConfig().vaultPath ?? '').trim()
+    if (!raw) return { ok: false, path: '', error: '未配置 Obsidian Vault 路径' }
+    const vaultPath = resolve(raw)
+    let isDir = false
+    try {
+      isDir = statSync(vaultPath).isDirectory()
+    } catch {
+      isDir = false
+    }
+    if (!isDir) return { ok: false, path: vaultPath, error: 'Vault 目录不存在，请重新选择' }
+    const error = await shell.openPath(vaultPath)
+    return error ? { ok: false, path: vaultPath, error } : { ok: true, path: vaultPath }
   }
 
   async selectVault(): Promise<{ path: string; warning?: string } | null> {

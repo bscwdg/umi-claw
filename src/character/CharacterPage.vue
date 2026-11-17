@@ -96,6 +96,7 @@
       <div class="row actions-row">
         <button class="btn" :disabled="busy" @click="exportPersona">导出人格包</button>
         <button class="btn" :disabled="busy" @click="pickPersonaFile">导入人格包</button>
+        <button class="btn btn-outline" :disabled="busy" @click="openPersonaFolder">查看文件</button>
         <input
           ref="personaFileInput"
           type="file"
@@ -122,6 +123,13 @@
         </select>
         <button class="btn" :disabled="busy" @click="pickKnowledgeFiles">选择文件并导入</button>
         <button class="btn btn-outline" :disabled="busy" @click="rebuildKnowledgeIndex">重建索引</button>
+        <button
+          class="btn btn-outline"
+          :disabled="busy || !knowledgeHealth?.vaultExists"
+          @click="openKnowledgeFolder"
+        >
+          查看文件
+        </button>
         <input
           ref="knowledgeFileInput"
           type="file"
@@ -2207,6 +2215,24 @@ async function refreshKnowledgeHealth(): Promise<void> {
   } catch {
     knowledgeHealth.value = null
   }
+}
+
+async function openPersonaFolder(): Promise<void> {
+  await run(async () => {
+    const result = await window.api.character.persona.open()
+    if (!result.ok) throw new Error(result.error || '打开人格 workspace 失败')
+    personaHint.value = '已打开人格 workspace；SOUL/IDENTITY/AGENTS/USER 都在这里'
+    showToast('已打开人格文件夹')
+  })
+}
+
+async function openKnowledgeFolder(): Promise<void> {
+  await run(async () => {
+    const result = await window.api.obsidian.openVault()
+    if (!result.ok) throw new Error(result.error || '打开 Obsidian vault 失败')
+    knowledgeHint.value = '已打开 Obsidian vault；知识笔记在「大肥鱼/」目录'
+    showToast('已打开知识文件夹')
+  })
 }
 
 async function rebuildKnowledgeIndex(): Promise<void> {

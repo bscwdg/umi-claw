@@ -45,6 +45,8 @@ export interface CharacterIpcDeps {
   persona?: {
     export: () => Promise<unknown>
     import: (raw: unknown) => Promise<{ written: string[]; backupDir?: string | null }>
+    /** 在系统文件管理器里打开人格 workspace（SOUL/IDENTITY/AGENTS/USER 等） */
+    open?: () => Promise<unknown>
   }
   /** 知识导入（4.3）：把用户文件写进 Obsidian 大肥鱼/<类别>/，不新增知识库 */
   knowledge?: {
@@ -424,6 +426,12 @@ export function registerCharacterIpc(
       throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '人格包功能未接线')
     }
     return deps.persona.import(raw)
+  })
+  handle(CHARACTER_CHANNELS.personaOpen, () => {
+    if (!deps.persona?.open) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '人格文件查看未接线')
+    }
+    return deps.persona.open()
   })
   handle(CHARACTER_CHANNELS.knowledgeStatus, () => {
     if (!deps.knowledge?.status) {

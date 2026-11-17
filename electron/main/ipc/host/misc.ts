@@ -13,6 +13,8 @@ export interface ObsidianIpcApi {
   getObsidianConfig(): unknown
   saveObsidianConfig(cfg: unknown): unknown
   selectVault(): Promise<unknown>
+  /** 在系统文件管理器里打开当前 vault（知识「查看文件」）；可传未保存的草稿路径 */
+  openVault(path?: string): Promise<unknown>
   getIndexStatus(): unknown
   rebuildIndex(): Promise<unknown>
   cancelIndex(): unknown
@@ -93,6 +95,7 @@ export function registerMiscIpc(deps: MiscIpcDeps): void {
   ipcMain.handle('obsidian:getConfig', () => deps.obsidian().getObsidianConfig())
   ipcMain.handle('obsidian:saveConfig', (_e, cfg) => deps.obsidian().saveObsidianConfig(cfg))
   ipcMain.handle('obsidian:selectVault', async () => deps.obsidian().selectVault())
+  ipcMain.handle('obsidian:openVault', async (_e, path?: string) => deps.obsidian().openVault(path))
   ipcMain.handle('obsidian:getIndexStatus', () => deps.obsidian().getIndexStatus())
   ipcMain.handle('obsidian:rebuildIndex', async () => {
     try {

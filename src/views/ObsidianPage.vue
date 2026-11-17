@@ -32,6 +32,7 @@
         <div class="flex gap-2">
           <input class="form-input" v-model="cfg.vaultPath" placeholder="选择 Obsidian 笔记库根目录" />
           <button class="btn" @click="selectVault">📁 选择文件夹</button>
+          <button class="btn btn-outline" :disabled="!cfg.vaultPath || openingVault" @click="openVault">查看文件</button>
         </div>
         <div v-if="cfg.vaultPath && !cfg.enabled" class="text-sm" style="color: var(--warning); margin-top: 6px">
           ⚠ 已配置 vault 但未启用集成，开启后才会注入到 openclaw.json 的 mcp.servers.obsidian
@@ -335,6 +336,7 @@ const status = ref<IndexStatus>({
 })
 const progress = ref<{ phase: string; processed: number; total: number; message?: string } | null>(null)
 const saving = ref(false)
+const openingVault = ref(false)
 const testing = ref(false)
 const embeddingTestResult = ref<{ success: boolean; dim?: number; error?: string } | null>(null)
 
@@ -466,6 +468,24 @@ async function selectVault() {
   if (!res) return
   cfg.value.vaultPath = res.path
   if (res.warning) showToast(res.warning, 'error')
+}
+
+/** 在资源管理器里打开当前 vault（优先用输入框草稿，避免未保存时打开旧目录）；知识笔记在「大肥鱼/」 */
+async function openVault() {
+  if (!cfg.value.vaultPath.trim() || openingVault.value) return
+  openingVault.value = true
+  try {
+    const res = await window.api.obsidian.openVault(cfg.value.vaultPath.trim())
+    if (!res.ok) {
+      showToast(res.error || '打开 Vault 失败', 'error')
+      return
+    }
+    showToast('已打开 Vault；大肥鱼的知识在「大肥鱼/」目录')
+  } catch (e: any) {
+    showToast(`打开 Vault 失败：${e?.message ?? '未知原因'}`, 'error')
+  } finally {
+    openingVault.value = false
+  }
 }
 
 async function save() {
