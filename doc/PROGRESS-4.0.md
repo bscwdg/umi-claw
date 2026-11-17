@@ -2812,3 +2812,11 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
   - P2-13 话题 id 重复口径写反（应用是 warn 忽略后者，skill 写成按 id 覆盖且判 error）→ 属实已修：`validate_pack.py` 降级为 warning 并改措辞，三份文档同改；反例实测重复 id exit 0 + 警告文案正确。
 - 接受的残余项（本批不改，理由附后）：导入前备份 32MB 硬上限/无 prune（备份保留策略属独立工作包）；VALIDATION_ERROR 历史错标（错误码语义改动面超出本批）；重启 200ms 窗口（`app.relaunch` 既有口径，需真机观测再调）；`retryFailed` 暂无生产调用方（预留编排入口，插件页后续接线）；skill GB18030 解码兜底（无真实失败样本前不动）；历史 `message.includes` 3 处均在注释里（§3.2 不顺手改老代码）；`index.ts` 行数（见 P1-3）。
 - skill 同步：`D:\work2026\skill\umi-feiyu-pack`（skills 仓库）随本批对齐 manifest 256KB 与话题重复口径；示例包 validate 全绿，build→validate→zip→validate zip 端到端通过，`__pycache__` 不入库。
+
+## 2026-11-18 · 知识库本地向量模型（可选下载，不随安装包）
+
+- 需求：用户不会注册 embedding 时，可在知识库页选择「本地模型（需下载）」，从官方/国内镜像下载 bge-small-zh-v1.5（512 维）与 ONNX Runtime 到数据目录；支持离线 zip 导入与卸载；安装包仍不内置模型。
+- 实现：`electron/main/obsidian/localModel.ts`（清单/下载/校验/自检/原子安装/卸载/离线导入）+ `resources/obsidian/local-embedding.mjs`（BERT WordPiece + ORT 懒加载 + CLS 归一化）+ `local-selftest.mjs`；`embeddings.mjs` local adapter；indexer/mcp-server/search 本地模式凭据门槛与默认 400 字符分块；IPC/preload/知识库页；`<dataDir>/models/embedding/` 存储，随包仅两份清单。
+- 顺带修复：无 embedding 凭据/本地未安装时，角色知识体检不再误报 searchable（`knowledgeHealth.ts` 新增 `embedding-not-configured` blocker，`characterHost` 接 `isEmbeddingConfigured`）。
+- 验收：`obsidian-local-model` 8/8、`obsidian-local-embedding` 8/8；真实直连安装 54.1MB→自检 512 维→索引/检索通过；真实离线包 runtime+model 导入+卸载通过；本地目录篡改被加载前 sha256 校验拒绝。
+- 对抗审查：B1 typecheck 3 错、B2 MCP 增量分块 800 vs 400 已修；H1 安装状态不可达、H2 加载零哈希、H3 installed 只看目录、H4 id/version 路径、H5 卸载竞态、H6 state 非原子、H7 先删后 rename 已修；H8/H9 并发/取消已加固；M1 磁盘预检已补。未采纳：M5 embeddingReady 改必填（会破坏既有纯函数调用方，保留默认 true 并靠 characterHost 显式传值）。

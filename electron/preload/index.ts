@@ -559,6 +559,18 @@ const api = {
       const handler = (_: unknown, data: any) => cb(data)
       ipcRenderer.on('obsidian:index-progress', handler)
       return () => ipcRenderer.off('obsidian:index-progress', handler)
+    },
+    // 本地向量模型（模型本体下载到数据目录，不随安装包）
+    getLocalModelStatus: () => ipcRenderer.invoke('obsidian:localModel:status'),
+    installLocalModel: () => ipcRenderer.invoke('obsidian:localModel:install'),
+    cancelLocalModelInstall: () => ipcRenderer.invoke('obsidian:localModel:cancel'),
+    removeLocalModel: () => ipcRenderer.invoke('obsidian:localModel:remove'),
+    selectLocalModelZip: () => ipcRenderer.invoke('obsidian:localModel:selectZip'),
+    importLocalModel: (zipPath: string) => ipcRenderer.invoke('obsidian:localModel:import', zipPath),
+    onLocalModelProgress: (cb: (data: any) => void) => {
+      const handler = (_: unknown, data: any) => cb(data)
+      ipcRenderer.on('obsidian:local-model-progress', handler)
+      return () => ipcRenderer.off('obsidian:local-model-progress', handler)
     }
   },
 

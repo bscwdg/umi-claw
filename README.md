@@ -615,17 +615,26 @@ openclaw pairing approve feishu <配对码>  # 审批通过
 OpenClaw 通过 MCP 工具按需检索片段，不用把整个知识库塞进上下文。
 
 - **向量库本地存储**：`data/config/.openclaw/obsidian/index.db`（node:sqlite，零原生依赖）
-- **embedding 两种来源**：预设（复用模型配置里已填 key 的服务商：百炼/智谱/硅基流动/豆包/OpenAI/本地 Ollama）或自定义（直填 baseUrl/key，可接 Cohere 等）
+- **embedding 三种来源**：
+  - 预设：复用模型配置里已填 key 的服务商（百炼/智谱/硅基流动/豆包/OpenAI/本地 Ollama）；
+  - 自定义：直填 baseUrl/key，可接 Cohere 等；
+  - **本地模型（需下载）**：无需注册/API Key，点「下载并安装」后从官方/国内镜像下载
+    bge-small-zh-v1.5（512 维，模型+运行时约 54MB）到数据目录，离线推理；也支持从离线 zip 导入。
+    **模型不随安装包**，随包只有两份清单（`resources/embedding-models/`）。
 - **增量索引**：全量重建支持 mtime+hash 跳过未变文件；MCP server 常驻 watcher 监听 vault 变更，笔记增删改 1.5s 内自动增量索引
 
 ### 使用步骤
 
-1. 在「模型配置」为某服务商填好 API Key（或在知识库页用自定义 embedding 直填凭据）
+1. 二选一：
+   - 在「模型配置」为某服务商填好 API Key（或在知识库页用自定义 embedding 直填凭据）；
+   - 没有 API Key：在知识库页选「本地模型（需下载）」→「下载并安装」（或从离线包安装）。
 2. 进入「知识库」页，选择 Obsidian Vault 目录
-3. 选择 embedding 模型并点击「测试连通」
-4. 点击「重建索引」（首次较慢，后续增量）
+3. 选择 embedding 模型并点击「测试连通」（本地模型会真实加载一次做自检）
+4. 点击「重建索引」（首次较慢，后续增量；本地模式固定 400 字符分块，避免 512 token 截断）
 5. 打开「启用 Obsidian 集成」并保存配置
 6. 重启 OpenClaw，模型即可调用知识库工具
+
+> 本地模型可在知识库页「卸载」删除（会清空 `<dataDir>/models/embedding/`）；卸载前需先切到其他 embedding 来源。
 
 ### MCP 工具
 

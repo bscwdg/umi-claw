@@ -41,10 +41,18 @@ try {
     baseUrl: process.env.OBS_EMBEDDING_BASE_URL,
     apiKey: process.env.OBS_EMBEDDING_API_KEY,
     model: process.env.OBS_EMBEDDING_MODEL,
-    adapter: process.env.OBS_EMBEDDING_ADAPTER || 'openai'
+    adapter: process.env.OBS_EMBEDDING_ADAPTER || 'openai',
+    runtimeDir: process.env.OBS_EMBEDDING_LOCAL_RUNTIME_DIR,
+    modelDir: process.env.OBS_EMBEDDING_LOCAL_MODEL_DIR
   }
-  if (!cfg.baseUrl || !cfg.apiKey || !cfg.model) {
-    throw new Error('未配置 embedding 凭据，请先在「知识库」页配置并保存')
+  const localMode = cfg.adapter === 'local'
+  const configured = localMode
+    ? !!(cfg.runtimeDir && cfg.modelDir)
+    : !!(cfg.baseUrl && cfg.apiKey && cfg.model)
+  if (!configured) {
+    throw new Error(localMode
+      ? '本地模型目录缺失，请先在「知识库」页重新安装本地模型'
+      : '未配置 embedding 凭据，请先在「知识库」页配置并保存')
   }
 
   const t0 = Date.now()

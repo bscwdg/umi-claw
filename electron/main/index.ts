@@ -1714,6 +1714,12 @@ app.whenReady().then(async () => {
       mainWindow.webContents.send('obsidian:index-progress', data)
     }
   })
+  // 本地向量模型下载/安装进度转发（知识库页展示安装进度）
+  obsidianManager.on('local-model-progress', (data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('obsidian:local-model-progress', data)
+    }
+  })
 
   // 注（合并点）：work 域的 Gateway / DB / Manager 已在上方、marketing 装配之前构造。
   // 2.0 原本在这里用 marketingDatabase 再初始化一遍 voice 的整段代码**已删除**：
