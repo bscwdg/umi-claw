@@ -9,6 +9,8 @@
 //   persona.json                     PersonaPackage v1（可只含部分槽位）
 //   proactive/topics.json            fish-topics/1 话题卡
 //   proactive/lines.json             fish-lines/1 台词组
+//   proactive/life-cards.json        fish-life-cards/1 生活卡（可选）
+//   proactive/overrides.json         fish-content-overrides/1 内置停用清单（可选）
 //   knowledge/<类别>/**/*.md          类别白名单：世界书 / 角色卡 / 关系/约定
 //   memory/relations/<约定|大事记>/**/*.md
 //   memory/diaries/YYYY-MM-DD.md
@@ -48,6 +50,12 @@ import {
   type TopicCard,
   type TopicDeck
 } from './contentEngine'
+import { parseLifeDeck, type LifeDeck } from './contentCards'
+import {
+  hasAnyOverride,
+  parseContentOverrides,
+  type ContentOverrides
+} from './contentOverrides'
 import type { ImportLinesResult, ImportTopicsResult } from './contentStore'
 import {
   KNOWLEDGE_CATEGORIES,
@@ -80,7 +88,8 @@ import { CharacterError, CHARACTER_ERROR_CODES } from './types'
 export const CHARACTER_PACK_CHANNELS = {
   export: 'character:pack:export',
   importFolder: 'character:pack:import-folder',
-  importZip: 'character:pack:import-zip'
+  importZip: 'character:pack:import-zip',
+  preview: 'character:pack:preview'
 } as const
 
 export const PACK_SCHEMA = 'umi-character-pack/1'
@@ -88,6 +97,8 @@ export const PACK_MANIFEST = 'manifest.json'
 export const PACK_PERSONA = 'persona.json'
 export const PACK_TOPICS = 'proactive/topics.json'
 export const PACK_LINES = 'proactive/lines.json'
+export const PACK_LIFE_CARDS = 'proactive/life-cards.json'
+export const PACK_OVERRIDES = 'proactive/overrides.json'
 export const PACK_KNOWLEDGE_DIR = 'knowledge'
 export const PACK_RELATIONS_DIR = 'memory/relations'
 export const PACK_DIARIES_DIR = 'memory/diaries'
@@ -100,6 +111,7 @@ export const PACK_MAX_FILE_BYTES = KNOWLEDGE_MAX_FILE_BYTES
 export const PACK_MAX_KNOWLEDGE_FILES = 300
 export const PACK_MAX_TOPICS = 200
 export const PACK_MAX_LINE_GROUPS = 50
+export const PACK_MAX_LIFE_CARDS = 200
 export const PACK_MAX_RELATIONS = 400
 /** zip 条目数上限：正常包几百条，2000 足够且能拦住条目洪水 */
 export const PACK_MAX_ENTRIES = 2000
@@ -111,6 +123,7 @@ export const PACK_WARNINGS_MAX = 40
 export const PACK_PERSONA_MAX_FILE_BYTES = 512 * 1024
 export const PACK_PERSONA_MAX_TOTAL_BYTES = 2 * 1024 * 1024
 export const PACK_TARGETS = ['persona', 'knowledge', 'proactive', 'memory'] as const
+export type CharacterPackTarget = (typeof PACK_TARGETS)[number]
 
 export interface CharacterPackManifest {
   schema: string
@@ -147,6 +160,10 @@ export interface CharacterPackPlan {
   knowledge: PackKnowledgeItem[]
   relations: PackRelationItem[]
   diaries: PackDiaryItem[]
+  /** 用户生活卡（可选）；归档里有就按用户生活卡导入 */
+  lifeCards: LifeDeck | null
+  /** 内置项停用清单（可选）：话题/台词/生活卡 */
+  overrides: ContentOverrides | null
   warnings: string[]
   /** 包来源（目录路径或 zip 路径），只用于展示/日志 */
   source: string
@@ -154,10 +171,32 @@ export interface CharacterPackPlan {
   bytes: number
 }
 
+/** 归档预览：只读摘要，导入前给渲染端确认（不写盘、不备份） */
+export interface PackPreviewSummary {
+  source: string
+  manifest: CharacterPackManifest
+  bytes: number
+  counts: {
+    persona: number
+    topics: number
+    lineGroups: number
+    lines: number
+    lifeCards: number
+    knowledge: number
+    /** 是否包含内置停用清单（有内容时才算） */
+    overrides: boolean
+    knowledgeByCategory: Partial<Record<KnowledgeCategory, number>>
+    relations: number
+    diaries: number
+  }
+  warnings: string[]
+}
+
 export interface SnapshotCounts {
   persona: number
   topics: number
   lineGroups: number
+  lifeCards: number
   knowledge: number
   relations: number
   diaries: number
@@ -180,6 +219,10 @@ export interface SnapshotCurrentOptions {
   dataDir?: string
   /** 合并后的主动消息语料（含内置+用户）；不传则跳过 proactive/ 并 warning */
   deck?: ContentDeck
+  /** 合并后的生活卡（含内置+用户）；不传则跳过 life-cards */
+  lifeDeck?: LifeDeck
+  /** 内置项停用清单；传了才写 overrides（应用导出永远传，保证换机不复活） */
+  overrides?: ContentOverrides
   /** 用户选定的导出位置；会在其中新建 大肥鱼资料包-<时间>/ 子目录 */
   outputDir: string
   now?: number
@@ -189,6 +232,9 @@ export interface SnapshotCurrentOptions {
 export interface PackContentImporter {
   importTopics: (raw: unknown) => Promise<ImportTopicsResult>
   importLines: (raw: unknown) => Promise<ImportLinesResult>
+  /** 可选：生活卡/停用清单（旧调用方不传时只 warning，不阻断） */
+  importLifeCards?: (raw: unknown) => Promise<{ added: number; updated: number; total: number }>
+  importOverrides?: (raw: unknown) => Promise<ContentOverrides>
 }
 
 export interface ImportPackOptions {
@@ -196,6 +242,8 @@ export interface ImportPackOptions {
   vaultDir?: string
   plan: CharacterPackPlan
   content: PackContentImporter
+  /** 只导入勾选的目标；不传 = 全部（兼容旧调用） */
+  targets?: readonly CharacterPackTarget[]
   now?: number
   logger?: (message: string) => void
 }
@@ -206,6 +254,9 @@ export interface ImportPackResult {
     persona: PersonaSlot[]
     topics: ImportTopicsResult | null
     lines: ImportLinesResult | null
+    lifeCards: number
+    /** 是否应用了停用清单（没有文件时为 false） */
+    overridesApplied: boolean
     knowledge: number
     relations: number
     diaries: number
@@ -559,10 +610,34 @@ function buildPlan(
     lines = parseLinesJson(readEntryJson(byName, PACK_LINES, PACK_MAX_JSON_BYTES), warn)
   }
 
+  // 生活卡 / 停用清单（向后兼容可选）：旧归档没有这两个文件，保持现有行为
+  let lifeCards: LifeDeck | null = null
+  if (byName.has(PACK_LIFE_CARDS)) {
+    lifeCards = parseLifeDeck(readEntryJson(byName, PACK_LIFE_CARDS, PACK_MAX_JSON_BYTES))
+    if (lifeCards.cards.length === 0) {
+      warn('proactive/life-cards.json 没有合法生活卡，已忽略')
+      lifeCards = null
+    }
+  }
+  let overrides: ContentOverrides | null = null
+  if (byName.has(PACK_OVERRIDES)) {
+    overrides = parseContentOverrides(readEntryJson(byName, PACK_OVERRIDES, PACK_MAX_JSON_BYTES))
+    if (hasAnyOverride(overrides)) {
+      warn('归档包含内置停用清单，导入会整体覆盖本机停用状态')
+    }
+  }
+
   const knowledge: PackKnowledgeItem[] = []
   const relations: PackRelationItem[] = []
   const diaries: PackDiaryItem[] = []
-  const known = new Set([PACK_MANIFEST, PACK_PERSONA, PACK_TOPICS, PACK_LINES])
+  const known = new Set([
+    PACK_MANIFEST,
+    PACK_PERSONA,
+    PACK_TOPICS,
+    PACK_LINES,
+    PACK_LIFE_CARDS,
+    PACK_OVERRIDES
+  ])
 
   for (const name of [...byName.keys()].sort()) {
     if (known.has(name)) continue
@@ -638,9 +713,11 @@ function buildPlan(
     !persona &&
     !topics &&
     !lines &&
+    !lifeCards &&
     knowledge.length === 0 &&
     relations.length === 0 &&
-    diaries.length === 0
+    diaries.length === 0 &&
+    !(overrides && hasAnyOverride(overrides))
   ) {
     throw badPayload('资料包没有可导入的内容（人格/主动消息/知识/记忆都为空）')
   }
@@ -650,6 +727,8 @@ function buildPlan(
     persona,
     topics,
     lines,
+    lifeCards,
+    overrides,
     knowledge,
     relations,
     diaries,
@@ -954,6 +1033,7 @@ export function snapshotCurrent(options: SnapshotCurrentOptions): SnapshotCurren
     persona: 0,
     topics: 0,
     lineGroups: 0,
+    lifeCards: 0,
     knowledge: 0,
     relations: 0,
     diaries: 0
@@ -1058,6 +1138,33 @@ export function snapshotCurrent(options: SnapshotCurrentOptions): SnapshotCurren
     }
   }
 
+  // 2b) 生活卡与停用清单：可选；应用导出时永远带 overrides，换机后内置停用状态不复活
+  const lifeCards = options.lifeDeck?.cards ?? []
+  const pickedLifeCards = lifeCards.slice(0, PACK_MAX_LIFE_CARDS)
+  if (lifeCards.length > pickedLifeCards.length) {
+    warn(
+      `生活卡超过 ${PACK_MAX_LIFE_CARDS} 张，已截断到 ${PACK_MAX_LIFE_CARDS} 张`
+    )
+  }
+  if (pickedLifeCards.length > 0) {
+    const deck: LifeDeck = {
+      schema: 'fish-life-cards/1',
+      version: options.lifeDeck?.version || '1.0.0',
+      cards: pickedLifeCards
+    }
+    counts.lifeCards = pickedLifeCards.length
+    files.push({
+      rel: PACK_LIFE_CARDS,
+      data: Buffer.from(`${JSON.stringify(deck, null, 2)}\n`, 'utf8')
+    })
+  }
+  if (options.overrides) {
+    files.push({
+      rel: PACK_OVERRIDES,
+      data: Buffer.from(`${JSON.stringify(options.overrides, null, 2)}\n`, 'utf8')
+    })
+  }
+
   // 3) 知识与关系记忆：从既有 Obsidian vault 白名单目录扫描，正文原样（导入时剥 frontmatter 再写）
   if (!vault) {
     warn('未配置 Obsidian vault，知识与关系记忆已跳过')
@@ -1144,7 +1251,8 @@ export function snapshotCurrent(options: SnapshotCurrentOptions): SnapshotCurren
   const targets: string[] = []
   if (counts.persona > 0) targets.push('persona')
   if (counts.relations > 0 || counts.diaries > 0) targets.push('memory')
-  if (counts.topics > 0 || counts.lineGroups > 0) targets.push('proactive')
+  if (counts.topics > 0 || counts.lineGroups > 0 || counts.lifeCards > 0) targets.push('proactive')
+  else if (options.overrides && hasAnyOverride(options.overrides)) targets.push('proactive')
   if (counts.knowledge > 0) targets.push('knowledge')
   const manifest: CharacterPackManifest = {
     schema: PACK_SCHEMA,
@@ -1195,8 +1303,103 @@ function uniqueMarkdownName(dir: string, name: string): string {
   return candidate
 }
 
+/** 归档预览摘要：调用方在 readPackDir/readPackZip 之后使用；不写盘、不备份 */
+export function summarizePack(plan: CharacterPackPlan): PackPreviewSummary {
+  const knowledgeByCategory: Partial<Record<KnowledgeCategory, number>> = {}
+  for (const item of plan.knowledge) {
+    knowledgeByCategory[item.category] = (knowledgeByCategory[item.category] ?? 0) + 1
+  }
+  const lineGroups = plan.lines ? Object.keys(plan.lines.groups).length : 0
+  const lines = plan.lines
+    ? Object.values(plan.lines.groups).reduce((sum, list) => sum + list.length, 0)
+    : 0
+  return {
+    source: plan.source,
+    manifest: plan.manifest,
+    bytes: plan.bytes,
+    counts: {
+      persona: plan.persona ? Object.keys(plan.persona.files).length : 0,
+      topics: plan.topics ? plan.topics.topics.length : 0,
+      lineGroups,
+      lines,
+      lifeCards: plan.lifeCards ? plan.lifeCards.cards.length : 0,
+      knowledge: plan.knowledge.length,
+      overrides: plan.overrides ? hasAnyOverride(plan.overrides) : false,
+      knowledgeByCategory,
+      relations: plan.relations.length,
+      diaries: plan.diaries.length
+    },
+    warnings: [...plan.warnings]
+  }
+}
+
+/** 按勾选目标裁剪 plan；importPack 只写裁剪后的部分，预览/导入共用同一口径 */
+export function filterPackPlan(
+  plan: CharacterPackPlan,
+  targets: readonly CharacterPackTarget[]
+): CharacterPackPlan {  const selected = new Set(targets)
+  return {
+    ...plan,
+    persona: selected.has('persona') ? plan.persona : null,
+    topics: selected.has('proactive') ? plan.topics : null,
+    lines: selected.has('proactive') ? plan.lines : null,
+    lifeCards: selected.has('proactive') ? plan.lifeCards : null,
+    overrides: selected.has('proactive') ? plan.overrides : null,
+    knowledge: selected.has('knowledge') ? plan.knowledge : [],
+    relations: selected.has('memory') ? plan.relations : [],
+    diaries: selected.has('memory') ? plan.diaries : []
+  }
+}
+
+/**
+ * 导入前过滤「归档里被停用清单标记的内置项」：
+ * 应用导出的合并 deck 会包含内置卡/内置句，若同包 overrides 已把它们停用，
+ * 直接写进用户 deck 会把它们以「用户卡」身份复活（且同 id 会出现两条）。
+ * 只过滤 proactive 内容；overrides 本身仍会应用。
+ */
+export function stripDisabledProactive(plan: CharacterPackPlan): CharacterPackPlan {
+  const overrides = plan.overrides
+  if (!overrides) return plan
+  const disabledTopics = new Set(overrides.kinds.topics.disabledIds)
+  const disabledGroups = new Set(overrides.kinds.lines.disabledGroups)
+  const disabledLines = new Set(
+    overrides.kinds.lines.disabledLines.map((item) => `${item.group}\u0000${item.line}`)
+  )
+  const disabledLifeCards = new Set(overrides.kinds.lifeCards.disabledIds)
+  const topics = plan.topics
+    ? (() => {
+        const list = plan.topics.topics.filter((topic) => !disabledTopics.has(topic.id))
+        return list.length > 0 ? { ...plan.topics, topics: list } : null
+      })()
+    : null
+  const lines = plan.lines
+    ? (() => {
+        const groups = Object.fromEntries(
+          Object.entries(plan.lines.groups)
+            .filter(([group]) => !disabledGroups.has(group))
+            .map(([group, list]) => [
+              group,
+              list.filter((line) => !disabledLines.has(`${group}\u0000${line}`))
+            ])
+            .filter(([, list]) => (list as string[]).length > 0)
+        )
+        return Object.keys(groups).length > 0 ? { ...plan.lines, groups } : null
+      })()
+    : null
+  const lifeCards = plan.lifeCards
+    ? (() => {
+        const cards = plan.lifeCards.cards.filter((card) => !disabledLifeCards.has(card.id))
+        return cards.length > 0 ? { ...plan.lifeCards, cards } : null
+      })()
+    : null
+  return { ...plan, topics, lines, lifeCards }
+}
+
 export async function importPack(options: ImportPackOptions): Promise<ImportPackResult> {
-  const plan = options.plan
+  const selectedPlan = options.targets
+    ? filterPackPlan(options.plan, options.targets)
+    : options.plan
+  const plan = stripDisabledProactive(selectedPlan)
   const workspaceDir = String(options.workspaceDir ?? '').trim()
   if (!workspaceDir) throw badPayload('缺少角色 workspace 目录')
   if (!plan || typeof plan !== 'object') throw badPayload('缺少资料包解析结果')
@@ -1212,6 +1415,8 @@ export async function importPack(options: ImportPackOptions): Promise<ImportPack
       persona: [],
       topics: null,
       lines: null,
+      lifeCards: 0,
+      overridesApplied: false,
       knowledge: 0,
       relations: 0,
       diaries: 0,
@@ -1252,6 +1457,30 @@ export async function importPack(options: ImportPackOptions): Promise<ImportPack
       result.counts.lines = await options.content.importLines(plan.lines)
     } catch (error) {
       fail('台词导入', error)
+    }
+  }
+  if (plan.lifeCards) {
+    try {
+      if (!options.content.importLifeCards) {
+        warn('当前内容库不支持生活卡，已跳过归档里的生活卡')
+      } else {
+        const imported = await options.content.importLifeCards(plan.lifeCards)
+        result.counts.lifeCards = imported.added + imported.updated
+      }
+    } catch (error) {
+      fail('生活卡导入', error)
+    }
+  }
+  if (plan.overrides) {
+    try {
+      if (!options.content.importOverrides) {
+        warn('当前内容库不支持停用清单，归档里的停用状态未应用')
+      } else {
+        await options.content.importOverrides(plan.overrides)
+        result.counts.overridesApplied = true
+      }
+    } catch (error) {
+      fail('停用清单导入', error)
     }
   }
 
@@ -1349,6 +1578,8 @@ export async function importPack(options: ImportPackOptions): Promise<ImportPack
     result.counts.persona.length +
     (result.counts.topics ? 1 : 0) +
     (result.counts.lines ? 1 : 0) +
+    result.counts.lifeCards +
+    (result.counts.overridesApplied ? 1 : 0) +
     result.counts.knowledge +
     result.counts.relations +
     result.counts.diaries
@@ -1366,9 +1597,11 @@ export async function importPack(options: ImportPackOptions): Promise<ImportPack
   logger(
     `[character] 资料包已导入：人格 ${result.counts.persona.length} / 话题 ${
       result.counts.topics?.added ?? 0
-    } 张新增 / 台词 ${result.counts.lines?.linesAdded ?? 0} 句 / 知识 ${
-      result.counts.knowledge
-    } 篇 / 关系 ${result.counts.relations} 篇 / 日记 ${result.counts.diaries} 篇` +
+    } 张新增 / 台词 ${result.counts.lines?.linesAdded ?? 0} 句 / 生活卡 ${
+      result.counts.lifeCards
+    } 张 / 知识 ${result.counts.knowledge} 篇 / 关系 ${result.counts.relations} 篇 / 日记 ${
+      result.counts.diaries
+    } 篇` +
       (errors.length ? `；${errors.length} 项失败` : '')
   )
   return result

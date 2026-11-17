@@ -16,6 +16,7 @@
           <button
             class="btn btn-sm"
             :class="danger ? 'btn-danger' : 'btn-primary'"
+            :disabled="confirmDisabled"
             @click="onConfirm"
           >
             {{ confirmText }}
@@ -36,6 +37,7 @@ withDefaults(
     confirmText?: string;
     cancelText?: string;
     danger?: boolean;
+    confirmDisabled?: boolean;
   }>(),
   {
     title: "请确认",
@@ -44,6 +46,7 @@ withDefaults(
     confirmText: "确定",
     cancelText: "取消",
     danger: false,
+    confirmDisabled: false,
   }
 );
 

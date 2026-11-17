@@ -1849,10 +1849,31 @@ await r.check('U28', '大肥鱼页面所有卡片统一接入 CollapsibleCard', 
     settingsSrc.includes("import CollapsibleCard from '@/views/components/CollapsibleCard.vue'"),
     '详细设置必须复用公共组件'
   )
-  // character-pack：新增第 18 张「资料包（人格 / 知识 / 主动消息 / 记忆）」卡，
-// 属预期功能扩展（2026-11-16 Lead 仲裁同意 17→18）；default-collapsed 仍只有 2 张，不放宽。
-assertEq((pageSrc.match(/<CollapsibleCard/g) || []).length, 18, '角色页 18 张卡片全部替换')
+  // character-pack（task-4；5.1 顶部归档入口）：第 18 张「大肥鱼归档」卡，位于「当前状态」之前；
+  // 导入前必须先预览、按分类勾选。default-collapsed 由 2 张扩到 4 张：人格/备份属「高级单项导入」，
+  // 主入口收敛到顶部归档卡后默认折叠（5.1 用户确认；非放宽，是入口收敛的显式契约变更）。
+  assertEq((pageSrc.match(/<CollapsibleCard/g) || []).length, 18, '角色页 18 张卡片全部替换')
   assert(!/<section class="card">/.test(pageSrc), '角色页不得残留未折叠的普通卡片')
+  assert(
+    pageSrc.indexOf('<CollapsibleCard title="大肥鱼归档">') >= 0 &&
+      pageSrc.indexOf('<CollapsibleCard title="大肥鱼归档">') <
+        pageSrc.indexOf('<CollapsibleCard title="当前状态">'),
+    '归档卡必须在页面顶部（当前状态之前）'
+  )
+  assert(pageSrc.includes('openArchivePreview(\'zip\')'), '归档卡提供 zip 导入入口')
+  assert(pageSrc.includes('openArchivePreview(\'folder\')'), '归档卡提供文件夹导入入口')
+  assert(pageSrc.includes('openArchivePreview(\'zip\', true)'), '归档卡提供只导知识快捷入口')
+  assert(pageSrc.includes('archiveDialogVisible'), '导入前必须弹预览确认框')
+  assert(pageSrc.includes('hasSelectedArchiveTargets'), '预览必须按分类勾选并防止空选')
+  assert(pageSrc.includes('packNeedsIndex'), '导入知识后必须提示重建索引')
+  assert(!pageSrc.includes('title="资料包（人格 / 知识 / 主动消息 / 记忆）"'), '旧资料包卡已并入顶部归档卡')
+  // 5.1 内容管理：三类内容同一套编辑/停用/恢复；表单 + 高级 JSON
+  assert(pageSrc.includes("contentTab === 'lifeCards'"), '内容管理含生活卡 tab')
+  assert(pageSrc.includes('contentLibrary.list'), '内容管理经通用内容库按 kind 拉取')
+  assert(pageSrc.includes('setContentDisabled'), '内置项可停用/恢复')
+  assert(pageSrc.includes('openContentEditor'), '内容可新增/编辑')
+  assert(pageSrc.includes('高级 JSON'), '内容编辑必须提供高级 JSON')
+  assert(pageSrc.includes('applyContentEditorJson'), '高级 JSON 可应用到表单')
   assert(
     /<CollapsibleCard title="主动消息语料" default-collapsed>/.test(pageSrc),
     '主动消息语料默认折叠'
@@ -1861,7 +1882,15 @@ assertEq((pageSrc.match(/<CollapsibleCard/g) || []).length, 18, '角色页 18 �
     /<CollapsibleCard title="桌宠形象" default-collapsed>/.test(pageSrc),
     '桌宠形象默认折叠'
   )
-  assertEq((pageSrc.match(/\sdefault-collapsed(?=>)/g) || []).length, 2, '只允许指定的两张卡片默认折叠')
+  assert(
+    /<CollapsibleCard title="人格" default-collapsed>/.test(pageSrc),
+    '人格（高级单项导入）默认折叠'
+  )
+  assert(
+    /<CollapsibleCard title="备份" default-collapsed>/.test(pageSrc),
+    '备份默认折叠'
+  )
+  assertEq((pageSrc.match(/\sdefault-collapsed(?=>)/g) || []).length, 4, '只允许指定的四张卡片默认折叠')
   assert(!settingsSrc.includes('default-collapsed'), '详细设置卡片保持默认展开')
   assert(settingsSrc.includes(':deep(.collapsible-body)'), '详细设置保持原有 8px 标题间距')
   assert(/<CollapsibleCard title="详细设置" card-class="settings">/.test(settingsSrc), '详细设置卡片保留 settings 样式类')

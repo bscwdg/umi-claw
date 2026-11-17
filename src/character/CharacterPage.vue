@@ -13,6 +13,31 @@
     <p v-if="error" class="alert alert-danger">{{ error }}</p>
     <p v-if="toast" class="alert alert-success">{{ toast }}</p>
 
+    <CollapsibleCard title="大肥鱼归档">
+      <p class="hint">
+        把 skill 生成的归档包（人格 / 知识 / 主动消息 / 记忆）一次导入：先预览、按分类勾选，确认后自动整包备份；
+        只想补知识就点「只导入知识」。归档包是 <code>umi-character-pack/1</code>，不是「技能」页安装的技能包。
+        只改单项时用下方对应卡片（人格 / 知识 / 主动消息语料 / 备份）。
+      </p>
+      <div class="row actions-row">
+        <button class="btn btn-primary" :disabled="busy || packBusy" @click="openArchivePreview('zip')">
+          导入归档（zip）
+        </button>
+        <button class="btn" :disabled="busy || packBusy" @click="openArchivePreview('folder')">
+          导入归档（文件夹）
+        </button>
+        <button class="btn" :disabled="busy || packBusy" @click="openArchivePreview('zip', true)">
+          只导入知识
+        </button>
+        <button class="btn btn-ghost" :disabled="busy || packBusy" @click="exportPack">导出归档</button>
+      </div>
+      <p v-if="packHint" class="hint">{{ packHint }}</p>
+      <div v-if="packNeedsIndex" class="row">
+        <button class="btn" :disabled="busy" @click="rebuildKnowledgeIndex">重建索引</button>
+        <span class="hint">导入知识后重建索引，她才能检索到。</span>
+      </div>
+    </CollapsibleCard>
+
     <CollapsibleCard title="当前状态">
       <div class="grid-3 stat-grid">
         <div><span class="k">功能</span><span class="v">{{ status.enabled ? '已启用' : '未启用' }}</span></div>
@@ -63,7 +88,7 @@
       </div>
     </CollapsibleCard>
 
-    <CollapsibleCard title="人格">
+    <CollapsibleCard title="人格" default-collapsed>
       <p class="hint">
         人格 = SOUL / IDENTITY / AGENTS / USER 四个文件。导出可备份或换到别的机器；导入会先备份旧人格，
         导入后这些文件视为你手写的内容，不会再被模板覆盖。
@@ -285,12 +310,17 @@
     <CollapsibleCard title="主动消息语料" default-collapsed>
       <p class="hint">
         内置 {{ contentOverview?.builtinTopicCount ?? 0 }} 张话题、{{ contentOverview?.lineGroups.length ?? 0 }}
-        个台词组只读；可导入自己的 JSON 语料。话题按 id 接管内置卡（删除后回落内置），台词按组追加去重。
+        个台词组；内置项可以「停用/恢复」，话题/台词/生活卡都可以新增、编辑、删除自己的版本。
+        话题按 id 接管内置卡，台词按组追加去重；改动下一轮主动消息立即生效。
       </p>
       <div class="row actions-row">
         <button class="btn" :disabled="contentBusy" @click="pickTopicsFile">导入话题</button>
         <button class="btn" :disabled="contentBusy" @click="pickLinesFile">导入台词</button>
         <button class="btn" :disabled="contentBusy" @click="exportContentDeck">导出当前语料</button>
+        <button class="btn btn-primary" :disabled="contentBusy" @click="openContentEditor(contentTab)">
+          新增{{ contentTabLabel }}
+        </button>
+        <button class="btn" :disabled="contentBusy" @click="restoreContentKind">恢复内置{{ contentTabLabel }}</button>
         <button
           class="btn btn-danger"
           :disabled="contentBusy || !hasUserContent"
@@ -313,55 +343,167 @@
           @change="onLinesFilePicked"
         />
       </div>
+      <div class="row content-tabs">
+        <button
+          v-for="tab in CONTENT_TABS"
+          :key="tab.kind"
+          class="btn btn-sm"
+          :class="{ 'btn-primary': contentTab === tab.kind }"
+          :disabled="contentBusy"
+          @click="switchContentTab(tab.kind)"
+        >
+          {{ tab.label }}
+        </button>
+      </div>
       <p v-if="contentHint" class="hint">{{ contentHint }}</p>
+      <p v-if="contentLibraryError" class="alert alert-danger">{{ contentLibraryError }}</p>
 
-      <h4 class="memo-title">话题（{{ contentOverview?.topics.length ?? 0 }} 张）</h4>
-      <ul class="corpus-list">
-        <li v-for="topic in contentOverview?.topics ?? []" :key="topic.id" class="corpus-item">
+      <!-- 话题 -->
+      <ul v-if="contentTab === 'topics'" class="corpus-list">
+        <li
+          v-for="topic in contentTopicItems"
+          :key="`${topic.source}-${topic.id}`"
+          class="corpus-item"
+          :class="{ 'corpus-disabled': topic.disabled }"
+        >
           <span class="corpus-name">{{ topic.title }}</span>
           <span class="corpus-meta">
-            {{ topic.id }}<template v-if="topic.seasons.length"> · {{ topic.seasons.join('、') }}</template>
+            {{ topic.id }}<template v-if="topic.seasons?.length"> · {{ topic.seasons.join('、') }}</template>
           </span>
           <span :class="['badge', topic.source === 'user' ? 'badge-success' : 'badge-info']">
             {{ topic.source === 'user' ? '我的' : '内置' }}
           </span>
-          <button
-            v-if="topic.source === 'user'"
-            class="btn btn-sm btn-danger"
-            :disabled="contentBusy"
-            @click="removeTopic(topic.id)"
-          >
-            删除
-          </button>
-          <span v-else class="corpus-locked">只读</span>
+          <span v-if="topic.disabled" class="corpus-locked">已停用</span>
+          <template v-if="topic.source === 'builtin'">
+            <button
+              v-if="!topic.disabled"
+              class="btn btn-sm"
+              :disabled="contentBusy"
+              @click="openContentEditor('topics', topic, true)"
+            >
+              编辑副本
+            </button>
+            <button
+              class="btn btn-sm"
+              :class="topic.disabled ? '' : 'btn-danger'"
+              :disabled="contentBusy"
+              @click="setContentDisabled('topics', topic.id, !topic.disabled)"
+            >
+              {{ topic.disabled ? '恢复' : '停用' }}
+            </button>
+          </template>
+          <template v-else>
+            <button class="btn btn-sm" :disabled="contentBusy" @click="openContentEditor('topics', topic)">
+              编辑
+            </button>
+            <button class="btn btn-sm btn-danger" :disabled="contentBusy" @click="removeContentItem('topics', topic.id)">
+              删除
+            </button>
+          </template>
         </li>
       </ul>
 
-      <h4 class="memo-title">台词组（{{ contentOverview?.lineGroups.length ?? 0 }} 组）</h4>
-      <div v-for="group in contentOverview?.lineGroups ?? []" :key="group.name" class="corpus-group">
-        <div class="corpus-group-head">
-          <span class="corpus-name">{{ group.name }}</span>
-          <span class="corpus-meta">内置 {{ group.builtinLines.length }} 句 · 我的 {{ group.userLines.length }} 句</span>
-        </div>
-        <ul v-if="group.userLines.length" class="corpus-list">
-          <li
-            v-for="(line, index) in group.userLines"
-            :key="`${group.name}-${index}`"
-            class="corpus-item"
-          >
-            <span class="corpus-line">{{ line }}</span>
-            <span class="badge badge-success">我的</span>
+      <!-- 台词 -->
+      <div v-if="contentTab === 'lines'">
+        <div v-for="group in contentLineGroups" :key="group.name" class="corpus-group">
+          <div class="corpus-group-head">
+            <span class="corpus-name">{{ group.name }}</span>
+            <span class="corpus-meta">
+              内置 {{ group.builtinLines.length }} 句 · 我的 {{ group.userLines.length }} 句
+            </span>
             <button
-              class="btn btn-sm btn-danger"
+              class="btn btn-sm"
+              :class="group.disabled ? '' : 'btn-danger'"
               :disabled="contentBusy"
-              @click="removeLine(group.name, index)"
+              @click="setContentDisabled('lines', `${group.name}::`, !group.disabled)"
             >
+              {{ group.disabled ? '整组恢复' : '整组停用' }}
+            </button>
+            <button class="btn btn-sm" :disabled="contentBusy" @click="openContentEditor('lines', { group: group.name })">
+              新增
+            </button>
+          </div>
+          <ul class="corpus-list">
+            <li
+              v-for="line in group.lines"
+              :key="line.key"
+              class="corpus-item"
+              :class="{ 'corpus-disabled': line.disabled }"
+            >
+              <span class="corpus-line">{{ line.text }}</span>
+              <span :class="['badge', line.source === 'user' ? 'badge-success' : 'badge-info']">
+                {{ line.source === 'user' ? '我的' : '内置' }}
+              </span>
+              <span v-if="line.disabled" class="corpus-locked">已停用</span>
+              <template v-if="line.source === 'builtin'">
+                <button
+                  v-if="!group.disabled"
+                  class="btn btn-sm"
+                  :class="line.disabled ? '' : 'btn-danger'"
+                  :disabled="contentBusy"
+                  @click="setContentDisabled('lines', line.key, !line.disabled)"
+                >
+                  {{ line.disabled ? '恢复' : '停用' }}
+                </button>
+                <span v-else class="corpus-locked">整组已停用</span>
+              </template>
+              <template v-else>
+                <button class="btn btn-sm" :disabled="contentBusy" @click="openContentEditor('lines', line)">
+                  编辑
+                </button>
+                <button class="btn btn-sm btn-danger" :disabled="contentBusy" @click="removeContentItem('lines', line.key)">
+                  删除
+                </button>
+              </template>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- 生活卡 -->
+      <ul v-if="contentTab === 'lifeCards'" class="corpus-list">
+        <li
+          v-for="card in contentLifeItems"
+          :key="`${card.source}-${card.id}`"
+          class="corpus-item"
+          :class="{ 'corpus-disabled': card.disabled }"
+        >
+          <span class="corpus-name">{{ card.activity }}</span>
+          <span class="corpus-meta">
+            {{ card.id }} · {{ card.slots?.join('、') }} · 阶段 {{ card.minStage }} · 权重 {{ card.weight }}
+          </span>
+          <span :class="['badge', card.source === 'user' ? 'badge-success' : 'badge-info']">
+            {{ card.source === 'user' ? '我的' : '内置' }}
+          </span>
+          <span v-if="card.disabled" class="corpus-locked">已停用</span>
+          <template v-if="card.source === 'builtin'">
+            <button
+              v-if="!card.disabled"
+              class="btn btn-sm"
+              :disabled="contentBusy"
+              @click="openContentEditor('lifeCards', card, true)"
+            >
+              编辑副本
+            </button>
+            <button
+              class="btn btn-sm"
+              :class="card.disabled ? '' : 'btn-danger'"
+              :disabled="contentBusy"
+              @click="setContentDisabled('lifeCards', card.id, !card.disabled)"
+            >
+              {{ card.disabled ? '恢复' : '停用' }}
+            </button>
+          </template>
+          <template v-else>
+            <button class="btn btn-sm" :disabled="contentBusy" @click="openContentEditor('lifeCards', card)">
+              编辑
+            </button>
+            <button class="btn btn-sm btn-danger" :disabled="contentBusy" @click="removeContentItem('lifeCards', card.id)">
               删除
             </button>
-          </li>
-        </ul>
-        <p v-else class="hint">该组暂无你的自定义句（内置 {{ group.builtinLines.length }} 句只读）</p>
-      </div>
+          </template>
+        </li>
+      </ul>
     </CollapsibleCard>
 
     <CollapsibleCard title="互动">
@@ -456,7 +598,7 @@
       <p v-if="stickersHint" class="hint">{{ stickersHint }}</p>
     </CollapsibleCard>
 
-    <CollapsibleCard title="备份">
+    <CollapsibleCard title="备份" default-collapsed>
       <p class="hint">
         导出成一个 zip：她的设置/状态/关系数值/解锁/桌宠状态、人格文件、workspace 记忆日记、表情包。
         <strong>不含</strong>密钥/token/截图/日志、桌宠自定义形象文件；Obsidian vault 里的笔记不打包，
@@ -469,25 +611,6 @@
         <span class="hint">{{ backupBusy ? '处理中…' : '默认保存到 data/backups/character-<时间>.zip' }}</span>
       </div>
       <p v-if="backupHint" class="hint">{{ backupHint }}</p>
-    </CollapsibleCard>
-
-    <CollapsibleCard title="资料包（人格 / 知识 / 主动消息 / 记忆）">
-      <p class="hint">
-        把技能生成或本机导出的资料包（<code>manifest.json</code> 的 schema 为
-        <code>umi-character-pack/1</code>）一次导入四类内容：人格文件、Obsidian 知识（世界书/角色卡/关系/约定）、
-        主动消息话题与台词、关系记忆与日记。导入前会自动把当前内容整包备份到
-        <code>data/backups/大肥鱼资料包-时间/</code>（失败会中止导入），
-        需要回滚时用「导入资料包（文件夹）」选那个备份目录即可；
-        知识与关系同名不覆盖（加序号），日记同日跳过。
-        导出会在所选文件夹里新建「大肥鱼资料包-时间」子目录，内容为当前（含内置）全量；
-        若超出资料包上限会截断或跳过部分内容，并在结果里明确提示。
-      </p>
-      <div class="row">
-        <button class="btn" :disabled="busy || packBusy" @click="exportPack">导出资料包</button>
-        <button class="btn" :disabled="busy || packBusy" @click="importPackFolder">导入资料包（文件夹）</button>
-        <button class="btn" :disabled="busy || packBusy" @click="importPackZip">导入 zip</button>
-      </div>
-      <p v-if="packHint" class="hint">{{ packHint }}</p>
     </CollapsibleCard>
 
     <CollapsibleCard title="今天的日记">
@@ -579,6 +702,158 @@
     >
       <p class="modal-message">{{ confirmMessage }}</p>
     </ConfirmDialog>
+
+    <!-- 归档预览：先解析、后导入；不写盘、不备份 -->
+    <ConfirmDialog
+      v-model:visible="archiveDialogVisible"
+      icon="📦"
+      title="导入大肥鱼归档"
+      confirm-text="开始导入"
+      cancel-text="取消"
+      :confirm-disabled="!hasSelectedArchiveTargets"
+      @confirm="confirmArchiveImport"
+      @cancel="archiveDialogVisible = false"
+    >
+      <div v-if="archivePreview" class="archive-preview">
+        <p class="hint">
+          {{ archivePreview.preview.manifest.name }} · {{ archivePreview.preview.manifest.createdAt }} ·
+          {{ formatBytes(archivePreview.preview.bytes) }}<br />
+          来源：<code>{{ archivePreview.path }}</code>
+        </p>
+        <label
+          class="archive-target"
+          :class="{ disabled: archivePreview.preview.counts.persona === 0 }"
+        >
+          <input
+            v-model="archiveTargets.persona"
+            type="checkbox"
+            :disabled="archivePreview.preview.counts.persona === 0"
+          />
+          人格 {{ archivePreview.preview.counts.persona }} 个文件 → workspace（覆盖现有，先备份）
+        </label>
+        <label
+          class="archive-target"
+          :class="{ disabled: !knowledgeHealth?.vaultExists || archivePreview.preview.counts.knowledge === 0 }"
+        >
+          <input
+            v-model="archiveTargets.knowledge"
+            type="checkbox"
+            :disabled="!knowledgeHealth?.vaultExists || archivePreview.preview.counts.knowledge === 0"
+          />
+          知识 {{ archivePreview.preview.counts.knowledge }} 篇 → Obsidian 大肥鱼/
+          <template v-if="!knowledgeHealth?.vaultExists">（未配置 vault，暂时不可选）</template>
+        </label>
+        <label
+          class="archive-target"
+          :class="{
+            disabled:
+              archivePreview.preview.counts.topics === 0 &&
+              archivePreview.preview.counts.lineGroups === 0 &&
+              archivePreview.preview.counts.lifeCards === 0 &&
+              !archivePreview.preview.counts.overrides
+          }"
+        >
+          <input
+            v-model="archiveTargets.proactive"
+            type="checkbox"
+            :disabled="
+              archivePreview.preview.counts.topics === 0 &&
+              archivePreview.preview.counts.lineGroups === 0 &&
+              archivePreview.preview.counts.lifeCards === 0 &&
+              !archivePreview.preview.counts.overrides
+            "
+          />
+          主动消息 {{ archivePreview.preview.counts.topics }} 张话题 /
+          {{ archivePreview.preview.counts.lineGroups }} 组
+          {{ archivePreview.preview.counts.lines }} 句 /
+          {{ archivePreview.preview.counts.lifeCards }} 张生活卡
+          <template v-if="archivePreview.preview.counts.overrides">（含停用清单）</template>
+          → 用户语料
+        </label>
+        <label
+          class="archive-target"
+          :class="{
+            disabled:
+              archivePreview.preview.counts.relations === 0 &&
+              archivePreview.preview.counts.diaries === 0
+          }"
+        >
+          <input
+            v-model="archiveTargets.memory"
+            type="checkbox"
+            :disabled="
+              archivePreview.preview.counts.relations === 0 &&
+              archivePreview.preview.counts.diaries === 0
+            "
+          />
+          记忆 {{ archivePreview.preview.counts.relations }} 篇关系 /
+          {{ archivePreview.preview.counts.diaries }} 篇日记 → Obsidian / workspace
+        </label>
+        <p
+          v-for="warning in archivePreview.preview.warnings.slice(0, 5)"
+          :key="warning"
+          class="hint"
+        >
+          ⚠ {{ warning }}
+        </p>
+        <div class="row">
+          <button class="btn btn-sm" type="button" @click="selectAllArchiveTargets">全选</button>
+          <button class="btn btn-sm" type="button" @click="selectKnowledgeOnly">只选知识</button>
+        </div>
+      </div>
+    </ConfirmDialog>
+
+    <!-- 内容编辑：表单 + 高级 JSON；保存后由 contentLibrary upsert，宿主负责缓存失效 -->
+    <ConfirmDialog
+      v-model:visible="contentEditorVisible"
+      icon="✏️"
+      :title="contentEditorTitle"
+      confirm-text="保存"
+      cancel-text="取消"
+      @confirm="saveContentEditor"
+      @cancel="contentEditorVisible = false"
+    >
+      <div v-if="contentEditor" class="content-editor">
+        <template v-if="contentEditor.kind === 'topics'">
+          <label class="archive-target">ID<input v-model="contentEditor.draft.id" class="form-input" :disabled="contentEditor.mode !== 'new'" /></label>
+          <label class="archive-target">标题<input v-model="contentEditor.draft.title" class="form-input" /></label>
+          <label class="archive-target">什么时候用<input v-model="contentEditor.draft.when" class="form-input" /></label>
+          <label class="archive-target">她的态度<input v-model="contentEditor.draft.stance" class="form-input" /></label>
+          <label class="archive-target">细节（每行一条）<textarea v-model="contentEditor.draft.detailsText" class="form-input" rows="3" /></label>
+          <label class="archive-target">开场钩子（每行一条）<textarea v-model="contentEditor.draft.hooksText" class="form-input" rows="3" /></label>
+          <label class="archive-target">示例一句<textarea v-model="contentEditor.draft.sample" class="form-input" rows="2" /></label>
+          <label class="archive-target">
+            <input v-model="contentEditor.draft.requiresChatMention" type="checkbox" />
+            需要聊天里提到才触发
+          </label>
+          <label class="archive-target">时段（逗号分隔：morning/noon/afternoon/evening/night）<input v-model="contentEditor.draft.slotsText" class="form-input" /></label>
+          <label class="archive-target">季节（逗号分隔：spring/summer/autumn/winter，空=全年）<input v-model="contentEditor.draft.seasonsText" class="form-input" /></label>
+        </template>
+        <template v-else-if="contentEditor.kind === 'lifeCards'">
+          <label class="archive-target">ID<input v-model="contentEditor.draft.id" class="form-input" :disabled="contentEditor.mode !== 'new'" /></label>
+          <label class="archive-target">今天做了什么<input v-model="contentEditor.draft.activity" class="form-input" /></label>
+          <label class="archive-target">心情<input v-model="contentEditor.draft.mood" class="form-input" /></label>
+          <label class="archive-target">小目标<input v-model="contentEditor.draft.goal" class="form-input" /></label>
+          <label class="archive-target">钩子<input v-model="contentEditor.draft.hook" class="form-input" /></label>
+          <label class="archive-target">时段（逗号分隔）<input v-model="contentEditor.draft.slotsText" class="form-input" /></label>
+          <label class="archive-target">最低阶段（0-4）<input v-model.number="contentEditor.draft.minStage" type="number" min="0" max="4" class="form-input" /></label>
+          <label class="archive-target">权重（1-10）<input v-model.number="contentEditor.draft.weight" type="number" min="1" max="10" class="form-input" /></label>
+        </template>
+        <template v-else>
+          <label class="archive-target">组名（小写短横线，如 greeting）<input v-model="contentEditor.draft.group" class="form-input" /></label>
+          <label class="archive-target">台词<textarea v-model="contentEditor.draft.text" class="form-input" rows="3" /></label>
+        </template>
+        <details class="mt-3">
+          <summary class="hint">高级 JSON（可复制/粘贴；粘贴后点「应用到表单」）</summary>
+          <textarea v-model="contentEditorJson" class="form-input" rows="8" />
+          <div class="row">
+            <button class="btn btn-sm" type="button" @click="applyContentEditorJson">应用到表单</button>
+            <button class="btn btn-sm" type="button" @click="syncContentEditorJson">从表单刷新 JSON</button>
+          </div>
+          <p v-if="contentEditorError" class="hint">{{ contentEditorError }}</p>
+        </details>
+      </div>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -632,6 +907,105 @@ const linesFileInput = ref<HTMLInputElement | null>(null)
 const contentOverview = ref<ContentOverview | null>(null)
 const contentBusy = ref(false)
 const contentHint = ref('')
+type ContentTab = 'topics' | 'lines' | 'lifeCards'
+interface ContentTopicItem {
+  id: string
+  title: string
+  when?: string
+  stance?: string
+  details?: string[]
+  hooks?: string[]
+  sample?: string
+  slots?: string[]
+  seasons?: string[]
+  requiresChatMention?: boolean
+  source: 'builtin' | 'user'
+  disabled?: boolean
+}
+interface ContentLineItem {
+  key: string
+  group: string
+  text: string
+  source: 'builtin' | 'user'
+  disabled: boolean
+}
+interface ContentLifeItem {
+  id: string
+  activity: string
+  mood?: string
+  goal?: string
+  hook?: string
+  slots?: string[]
+  minStage?: number
+  weight?: number
+  source: 'builtin' | 'user'
+  disabled?: boolean
+}
+const CONTENT_TABS: Array<{ kind: ContentTab; label: string }> = [
+  { kind: 'topics', label: '话题' },
+  { kind: 'lines', label: '台词' },
+  { kind: 'lifeCards', label: '生活卡' }
+]
+const contentTab = ref<ContentTab>('topics')
+const contentTopicItems = ref<ContentTopicItem[]>([])
+const contentLineItems = ref<ContentLineItem[]>([])
+const contentLifeItems = ref<ContentLifeItem[]>([])
+const contentOverrides = ref<{
+  kinds?: {
+    lines?: { disabledGroups?: string[]; disabledLines?: Array<{ group: string; line: string }> }
+  }
+} | null>(null)
+const contentLibraryError = ref('')
+const contentTabLabel = computed(
+  () => CONTENT_TABS.find((tab) => tab.kind === contentTab.value)?.label ?? '内容'
+)
+const contentLineGroups = computed(() => {
+  const map = new Map<
+    string,
+    {
+      name: string
+      lines: ContentLineItem[]
+      builtinLines: ContentLineItem[]
+      userLines: ContentLineItem[]
+      disabled: boolean
+    }
+  >()
+  for (const item of contentLineItems.value) {
+    const group =
+      map.get(item.group) ??
+      { name: item.group, lines: [], builtinLines: [], userLines: [], disabled: false }
+    group.lines.push(item)
+    if (item.source === 'builtin') group.builtinLines.push(item)
+    else group.userLines.push(item)
+    map.set(item.group, group)
+  }
+  for (const group of map.values()) {
+    group.disabled = Boolean(
+      contentOverrides.value?.kinds?.lines?.disabledGroups?.includes(group.name)
+    )
+  }
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
+})
+
+interface ContentEditorState {
+  kind: ContentTab
+  mode: 'new' | 'edit' | 'copy'
+  draft: Record<string, string | number | boolean>
+  /** 台词编辑时记录原 key，保存时先删旧句再追加新句（台词没有稳定 id） */
+  original?: { key: string; group: string; text: string }
+}
+const contentEditorVisible = ref(false)
+const contentEditor = ref<ContentEditorState | null>(null)
+const contentEditorJson = ref('')
+const contentEditorError = ref('')
+const contentEditorTitle = computed(() => {
+  const editor = contentEditor.value
+  if (!editor) return '编辑内容'
+  const action = editor.mode === 'new' ? '新增' : editor.mode === 'copy' ? '编辑副本' : '编辑'
+  const label =
+    editor.kind === 'topics' ? '话题' : editor.kind === 'lifeCards' ? '生活卡' : '台词'
+  return `${action}${label}`
+})
 const hasUserContent = computed(
   () => (contentOverview.value?.userTopicCount ?? 0) > 0 || (contentOverview.value?.userLineCount ?? 0) > 0
 )
@@ -1330,9 +1704,18 @@ function importBackup(): void {
   )
 }
 
-// ── 统一资料包（5.0）：人格/知识/主动消息/记忆 一键导入导出（地址/弹框都由宿主处理）──
+// ── 大肥鱼归档（5.0）：人格/知识/主动消息/记忆 一键导入导出（顶部入口 + 预览 + 按类勾选）──
 const packBusy = ref(false)
 const packHint = ref('')
+const packNeedsIndex = ref(false)
+const archiveDialogVisible = ref(false)
+const archiveTargets = ref({
+  persona: true,
+  knowledge: true,
+  proactive: true,
+  memory: true
+})
+type ArchiveTargetKey = keyof typeof archiveTargets.value
 type PackSnapshotView = {
   dir: string
   bytes: number
@@ -1340,6 +1723,7 @@ type PackSnapshotView = {
     persona: number
     topics: number
     lineGroups: number
+    lifeCards: number
     knowledge: number
     relations: number
     diaries: number
@@ -1352,6 +1736,8 @@ type PackImportView = {
     persona: string[]
     topics: { added: number; updated: number; total: number } | null
     lines: { groupsAdded: number; linesAdded: number; totalLines: number } | null
+    lifeCards: number
+    overridesApplied: boolean
     knowledge: number
     relations: number
     diaries: number
@@ -1361,6 +1747,33 @@ type PackImportView = {
   errors: string[]
   backupPath: string
 }
+interface ArchivePreviewView {
+  source: string
+  manifest: { name: string; createdAt: string; schema: string }
+  bytes: number
+  counts: {
+    persona: number
+    topics: number
+    lineGroups: number
+    lines: number
+    lifeCards: number
+    knowledge: number
+    knowledgeByCategory: Partial<Record<string, number>>
+    overrides: boolean
+    relations: number
+    diaries: number
+  }
+  warnings: string[]
+}
+interface ArchiveState {
+  kind: 'folder' | 'zip'
+  path: string
+  preview: ArchivePreviewView
+}
+const archivePreview = ref<ArchiveState | null>(null)
+const hasSelectedArchiveTargets = computed(() =>
+  (Object.keys(archiveTargets.value) as ArchiveTargetKey[]).some((key) => archiveTargets.value[key])
+)
 
 function packWarningsText(warnings: string[]): string {
   if (!warnings?.length) return ''
@@ -1384,53 +1797,89 @@ async function exportPack(): Promise<void> {
       packHint.value =
         (truncated ? '已导出，但部分内容被截断/跳过：' : '已导出到：') +
         `${data.dir}（人格 ${c.persona} / 话题 ${c.topics} / 台词组 ${c.lineGroups} / ` +
-        `知识 ${c.knowledge} / 关系 ${c.relations} / 日记 ${c.diaries}）` +
+        `生活卡 ${c.lifeCards} / 知识 ${c.knowledge} / 关系 ${c.relations} / 日记 ${c.diaries}）` +
         packWarningsText(data.warnings)
-      showToast(truncated ? '资料包已导出，但有内容被截断（看下方提示）' : '资料包已导出')
+      showToast(truncated ? '归档已导出，但有内容被截断（看下方提示）' : '归档已导出')
     } finally {
       packBusy.value = false
     }
   })
 }
 
-function runPackImport(action: () => Promise<void>): void {
-  askConfirm(
-    {
-      title: '导入资料包',
-      message:
-        '会把资料包里的人格/知识/主动消息/关系记忆与日记导入当前大肥鱼；导入前自动把当前内容整包备份到 ' +
-        'data/backups/大肥鱼资料包-时间/（可用「导入资料包（文件夹）」恢复），备份失败会中止导入；' +
-        '知识与关系写 Obsidian（需要已配置 vault），同名不覆盖、日记同日跳过。确定导入？',
-      confirmText: '导入',
-      danger: true
-    },
-    () => {
-      packHint.value = ''
-      void run(async () => {
-        packBusy.value = true
-        try {
-          await action()
-        } finally {
-          packBusy.value = false
-        }
-      })
+/** 打开预览：只解析不写盘；knowledgeOnly=true 时只勾选知识 */
+async function openArchivePreview(kind: 'folder' | 'zip', knowledgeOnly = false): Promise<void> {
+  archivePreview.value = null
+  archiveDialogVisible.value = false
+  packHint.value = ''
+  await run(async () => {
+    packBusy.value = true
+    try {
+      await refreshKnowledgeHealth()
+      const result = await window.api.character.pack.preview(kind)
+      if ('canceled' in result) return
+      const data = result as { path: string; preview: ArchivePreviewView }
+      const c = data.preview.counts
+      const vaultReady = Boolean(knowledgeHealth.value?.vaultExists)
+      archivePreview.value = { kind, path: data.path, preview: data.preview }
+      archiveTargets.value = {
+        persona: !knowledgeOnly && c.persona > 0,
+        knowledge: c.knowledge > 0 && vaultReady,
+        proactive: !knowledgeOnly && (c.topics > 0 || c.lineGroups > 0 || c.lifeCards > 0 || c.overrides),
+        memory: !knowledgeOnly && (c.relations > 0 || c.diaries > 0)
+      }
+      if (knowledgeOnly && !archiveTargets.value.knowledge) {
+        error.value = c.knowledge === 0
+          ? '这个归档里没有知识'
+          : '未配置 Obsidian vault，无法只导入知识'
+        return
+      }
+      archiveDialogVisible.value = true
+    } finally {
+      packBusy.value = false
     }
-  )
-}
-
-function importPackFolder(): void {
-  runPackImport(async () => {
-    const result = await window.api.character.pack.importFolder()
-    if ('canceled' in result) return
-    showPackImportResult(result as PackImportView)
   })
 }
 
-function importPackZip(): void {
-  runPackImport(async () => {
-    const result = await window.api.character.pack.importZip()
-    if ('canceled' in result) return
-    showPackImportResult(result as PackImportView)
+function selectAllArchiveTargets(): void {
+  const c = archivePreview.value?.preview.counts
+  if (!c) return
+  const vaultReady = Boolean(knowledgeHealth.value?.vaultExists)
+  archiveTargets.value = {
+    persona: c.persona > 0,
+    knowledge: c.knowledge > 0 && vaultReady,
+    proactive: c.topics > 0 || c.lineGroups > 0 || c.lifeCards > 0 || c.overrides,
+    memory: c.relations > 0 || c.diaries > 0
+  }
+}
+
+function selectKnowledgeOnly(): void {
+  archiveTargets.value = {
+    persona: false,
+    knowledge: true,
+    proactive: false,
+    memory: false
+  }
+}
+
+async function confirmArchiveImport(): Promise<void> {
+  const state = archivePreview.value
+  if (!state || !hasSelectedArchiveTargets.value) return
+  const targets = (Object.keys(archiveTargets.value) as ArchiveTargetKey[]).filter(
+    (key) => archiveTargets.value[key]
+  )
+  archiveDialogVisible.value = false
+  await run(async () => {
+    packBusy.value = true
+    try {
+      const result =
+        state.kind === 'folder'
+          ? await window.api.character.pack.importFolder(state.path, targets)
+          : await window.api.character.pack.importZip(state.path, targets)
+      if ('canceled' in result) return
+      showPackImportResult(result as PackImportView)
+    } finally {
+      packBusy.value = false
+    }
   })
 }
 
@@ -1440,23 +1889,27 @@ function showPackImportResult(data: PackImportView): void {
   const lines = c.lines ? `${c.lines.groupsAdded} 组 / ${c.lines.linesAdded} 句` : '0'
   const skipped = c.diariesSkipped > 0 ? `（同日跳过 ${c.diariesSkipped} 篇）` : ''
   const errors = data.errors?.length ? `；失败 ${data.errors.length} 项：${data.errors.join('；')}` : ''
+  packNeedsIndex.value = c.knowledge > 0
   packHint.value =
-    `已导入：人格 ${c.persona.length} 个 / 话题 ${topics} / 台词 ${lines} / 知识 ${c.knowledge} 篇 / ` +
-    `关系 ${c.relations} 篇 / 日记 ${c.diaries} 篇${skipped}；导入前备份（可用「导入资料包（文件夹）」恢复）：${data.backupPath}` +
+    `已导入：人格 ${c.persona.length} 个 / 话题 ${topics} / 台词 ${lines} / 生活卡 ${c.lifeCards} 张 / 知识 ${c.knowledge} 篇 / ` +
+    `关系 ${c.relations} 篇 / 日记 ${c.diaries} 篇${skipped}；导入前备份（可用「导入归档（文件夹）」恢复）：${data.backupPath}` +
     errors +
     packWarningsText(data.warnings)
   const wroteAny =
     c.persona.length > 0 ||
     Boolean(c.topics && (c.topics.added > 0 || c.topics.updated > 0)) ||
     Boolean(c.lines && c.lines.linesAdded > 0) ||
+    c.lifeCards > 0 ||
     c.knowledge > 0 ||
     c.relations > 0 ||
     c.diaries > 0
-  if (errors) showToast('资料包已部分导入（看下方提示）')
-  else if (!wroteAny) showToast('资料包没有新增内容（已存在或被跳过）')
-  else showToast('资料包已导入')
+  if (errors) showToast('归档已部分导入（看下方提示）')
+  else if (!wroteAny) showToast('归档没有新增内容（已存在或被跳过）')
+  else showToast('归档已导入')
   void refresh()
   void refreshMemories()
+  void refreshContent()
+  if (c.knowledge > 0) void refreshKnowledgeHealth()
 }
 
 interface MemoryDiaryView { date: string; chars: number; excerpt: string; source: string }
@@ -1895,6 +2348,265 @@ async function refreshContent(): Promise<void> {
   } catch (e) {
     error.value = (e as Error)?.message || '读取语料库失败'
   }
+  await refreshContentLibrary()
+}
+
+/** 三类内容 + 停用清单：内容管理页一次拉齐；失败只影响本卡，不阻断聊天 */
+async function refreshContentLibrary(): Promise<void> {
+  try {
+    const [topics, lines, lifeCards, overrides] = await Promise.all([
+      window.api.character.contentLibrary.list('topics'),
+      window.api.character.contentLibrary.list('lines'),
+      window.api.character.contentLibrary.list('lifeCards'),
+      window.api.character.contentLibrary.overrides()
+    ])
+    contentTopicItems.value = topics as ContentTopicItem[]
+    contentLineItems.value = lines as ContentLineItem[]
+    contentLifeItems.value = lifeCards as ContentLifeItem[]
+    contentOverrides.value = overrides as typeof contentOverrides.value
+    contentLibraryError.value = ''
+  } catch (e) {
+    contentLibraryError.value = (e as Error)?.message || '读取内容库失败'
+  }
+}
+
+function switchContentTab(kind: ContentTab): void {
+  contentTab.value = kind
+  contentHint.value = ''
+  contentLibraryError.value = ''
+}
+
+function splitLines(value: string): string[] {
+  return String(value ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+}
+
+function splitCsv(value: string): string[] {
+  return String(value ?? '')
+    .split(/[,，]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+/** 打开编辑器：new=新增；edit=编辑自己的；copy=以内置为底复制成自己的覆盖卡 */
+function openContentEditor(
+  kind: ContentTab,
+  item?: ContentTopicItem | ContentLineItem | ContentLifeItem | { group: string },
+  copy = false
+): void {
+  contentEditorError.value = ''
+  contentEditorVisible.value = true
+  if (kind === 'topics') {
+    const topic = item as ContentTopicItem | undefined
+    contentEditor.value = {
+      kind,
+      mode: topic ? (copy ? 'copy' : 'edit') : 'new',
+      draft: {
+        id: topic?.id ?? '',
+        title: topic?.title ?? '',
+        when: topic?.when ?? '',
+        stance: topic?.stance ?? '',
+        detailsText: (topic?.details ?? []).join('\n'),
+        hooksText: (topic?.hooks ?? []).join('\n'),
+        sample: topic?.sample ?? '',
+        requiresChatMention: Boolean(topic?.requiresChatMention),
+        slotsText: (topic?.slots ?? []).join(','),
+        seasonsText: (topic?.seasons ?? []).join(',')
+      }
+    }
+  } else if (kind === 'lifeCards') {
+    const card = item as ContentLifeItem | undefined
+    contentEditor.value = {
+      kind,
+      mode: card?.activity ? (copy ? 'copy' : 'edit') : 'new',
+      draft: {
+        id: card?.id ?? '',
+        activity: card?.activity ?? '',
+        mood: card?.mood ?? '',
+        goal: card?.goal ?? '',
+        hook: card?.hook ?? '',
+        slotsText: (card?.slots ?? []).join(','),
+        minStage: card?.minStage ?? 0,
+        weight: card?.weight ?? 1
+      }
+    }
+  } else {
+    const line = item as ContentLineItem | undefined
+    contentEditor.value = {
+      kind,
+      mode: line?.text ? 'edit' : 'new',
+      draft: {
+        group: line?.group ?? '',
+        text: line?.text ?? ''
+      },
+      ...(line?.text && line.source === 'user'
+        ? { original: { key: line.key, group: line.group, text: line.text } }
+        : {})
+    }
+  }
+  syncContentEditorJson()
+}
+
+/** 编辑器表单 → 应用契约对象（保存与高级 JSON 共用，避免两套字段漂移） */
+function buildContentItem(editor: ContentEditorState): Record<string, unknown> {
+  const draft = editor.draft
+  if (editor.kind === 'topics') {
+    return {
+      id: String(draft.id ?? '').trim(),
+      title: String(draft.title ?? '').trim(),
+      when: String(draft.when ?? '').trim(),
+      stance: String(draft.stance ?? '').trim(),
+      details: splitLines(String(draft.detailsText ?? '')),
+      hooks: splitLines(String(draft.hooksText ?? '')),
+      sample: String(draft.sample ?? '').trim(),
+      requiresChatMention: Boolean(draft.requiresChatMention),
+      slots: splitCsv(String(draft.slotsText ?? '')),
+      seasons: splitCsv(String(draft.seasonsText ?? ''))
+    }
+  }
+  if (editor.kind === 'lifeCards') {
+    return {
+      id: String(draft.id ?? '').trim(),
+      activity: String(draft.activity ?? '').trim(),
+      mood: String(draft.mood ?? '').trim(),
+      goal: String(draft.goal ?? '').trim(),
+      hook: String(draft.hook ?? '').trim(),
+      slots: splitCsv(String(draft.slotsText ?? '')),
+      minStage: Number(draft.minStage ?? 0),
+      weight: Number(draft.weight ?? 1)
+    }
+  }
+  return {
+    group: String(draft.group ?? '').trim(),
+    text: String(draft.text ?? '').trim()
+  }
+}
+
+function syncContentEditorJson(): void {
+  const editor = contentEditor.value
+  contentEditorJson.value = JSON.stringify(editor ? buildContentItem(editor) : {}, null, 2)
+}
+
+/** 高级 JSON → 表单：接受契约对象（数组字段）或表单字段（*Text），两者都映射到 draft */
+function applyContentEditorJson(): void {
+  contentEditorError.value = ''
+  try {
+    const parsed = JSON.parse(contentEditorJson.value)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('JSON 顶层必须是对象')
+    }
+    const editor = contentEditor.value
+    if (!editor) return
+    const src = parsed as Record<string, unknown>
+    const draft = editor.draft
+    const setString = (key: string, value: unknown): void => {
+      if (typeof value === 'string') draft[key] = value
+    }
+    if (editor.kind === 'topics') {
+      if (editor.mode === 'new') setString('id', src.id)
+      for (const key of ['title', 'when', 'stance', 'sample']) setString(key, src[key])
+      if (Array.isArray(src.details)) draft.detailsText = src.details.map(String).join('\n')
+      else setString('detailsText', src.detailsText)
+      if (Array.isArray(src.hooks)) draft.hooksText = src.hooks.map(String).join('\n')
+      else setString('hooksText', src.hooksText)
+      if (Array.isArray(src.slots)) draft.slotsText = src.slots.map(String).join(',')
+      else setString('slotsText', src.slotsText)
+      if (Array.isArray(src.seasons)) draft.seasonsText = src.seasons.map(String).join(',')
+      else setString('seasonsText', src.seasonsText)
+      if (typeof src.requiresChatMention === 'boolean') {
+        draft.requiresChatMention = src.requiresChatMention
+      }
+    } else if (editor.kind === 'lifeCards') {
+      if (editor.mode === 'new') setString('id', src.id)
+      for (const key of ['activity', 'mood', 'goal', 'hook']) setString(key, src[key])
+      if (Array.isArray(src.slots)) draft.slotsText = src.slots.map(String).join(',')
+      else setString('slotsText', src.slotsText)
+      if (typeof src.minStage === 'number') draft.minStage = src.minStage
+      if (typeof src.weight === 'number') draft.weight = src.weight
+    } else {
+      setString('group', src.group)
+      setString('text', src.text)
+    }
+    contentHint.value = '已从 JSON 应用到表单，点「保存」才会写入'
+    syncContentEditorJson()
+  } catch (e) {
+    contentEditorError.value = (e as Error)?.message || 'JSON 解析失败'
+  }
+}
+
+async function saveContentEditor(): Promise<void> {
+  const editor = contentEditor.value
+  if (!editor) return
+  contentEditorVisible.value = false
+  await runContent(async () => {
+    const item = buildContentItem(editor)
+    const saved = await window.api.character.contentLibrary.upsert(editor.kind, item)
+    // 台词没有稳定 id：先确保新句写入，再删旧句；upsert 失败时旧句不会丢
+    if (
+      editor.kind === 'lines' &&
+      editor.original &&
+      (editor.original.group !== String(item.group) || editor.original.text !== String(item.text))
+    ) {
+      await window.api.character.contentLibrary.remove('lines', editor.original.key)
+    }
+    contentHint.value =
+      editor.mode === 'copy'
+        ? '已保存为你的版本（会覆盖同 id 内置项）'
+        : '已保存'
+    await refreshContent()
+    showToast(
+      saved && (saved as { added?: boolean }).added === false ? '内容已更新' : '内容已保存'
+    )
+  })
+}
+
+async function setContentDisabled(kind: ContentTab, key: string, disabled: boolean): Promise<void> {
+  await runContent(async () => {
+    await window.api.character.contentLibrary.disable(kind, key, disabled)
+    contentHint.value = disabled ? '已停用该内置项（可随时恢复）' : '已恢复该内置项'
+    await refreshContent()
+    showToast(disabled ? '已停用' : '已恢复')
+  })
+}
+
+function removeContentItem(kind: ContentTab, key: string): void {
+  askConfirm(
+    {
+      title: '删除我的内容',
+      message:
+        kind === 'lines'
+          ? '只删除你自己添加的这句台词，内置句不受影响。确定删除？'
+          : '只删除你自己添加的这张卡；若是同 id 覆盖了内置，删除后会回落到内置版本。确定删除？',
+      confirmText: '删除'
+    },
+    () =>
+      runContent(async () => {
+        const changed = await window.api.character.contentLibrary.remove(kind, key)
+        if (!changed) throw new Error('该内容不存在或属于内置只读项')
+        contentHint.value = '已删除我的内容'
+        await refreshContent()
+        showToast('已删除')
+      })
+  )
+}
+
+function restoreContentKind(): void {
+  askConfirm(
+    {
+      title: `恢复内置${contentTabLabel.value}`,
+      message: `将清除「${contentTabLabel.value}」里所有「停用内置项」的标记，恢复后内置内容会重新参与主动消息。确定恢复？`,
+      confirmText: '恢复'
+    },
+    () =>
+      runContent(async () => {
+        await window.api.character.contentLibrary.restore(contentTab.value)
+        contentHint.value = `已恢复内置${contentTabLabel.value}`
+        await refreshContent()
+        showToast('已恢复内置内容')
+      })
+  )
 }
 
 async function runContent(fn: () => Promise<void>): Promise<void> {
@@ -2228,6 +2940,19 @@ h3 + .hint {
 .memo-item { display: flex; align-items: center; gap: var(--space-3); }
 .memo-item .hint { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; }
 .memo-readonly { white-space: pre-wrap; max-height: 240px; overflow: auto; margin: var(--space-2) 0 0; }
+
+/* 内容管理：tab、停用态置灰、表单/JSON 编辑器 */
+.content-tabs { margin: var(--space-2) 0 var(--space-3); gap: var(--space-2); }
+.corpus-disabled { opacity: 0.55; }
+.content-editor { display: flex; flex-direction: column; gap: var(--space-2); max-height: 60vh; overflow: auto; }
+.content-editor .form-input { width: 100%; box-sizing: border-box; }
+.content-editor textarea { resize: vertical; font-family: inherit; }
+
+/* 归档预览：四类目标勾选；disabled 行置灰但仍展示落点说明 */
+.archive-preview { display: flex; flex-direction: column; gap: var(--space-2); max-height: 50vh; overflow: auto; }
+.archive-target { display: flex; align-items: flex-start; gap: var(--space-2); font-size: var(--text-sm); line-height: 1.4; }
+.archive-target.disabled { opacity: 0.5; }
+.archive-target input { margin-top: 2px; flex: 0 0 auto; }
 
 /* 主动消息语料库：内置/我的两来源列表，徽标复用全局 .badge，删除钮复用 .btn-sm.btn-danger */
 .corpus-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }

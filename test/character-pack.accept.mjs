@@ -49,6 +49,9 @@ const {
   readPackDir,
   readPackZip,
   snapshotCurrent,
+  summarizePack,
+  filterPackPlan,
+  stripDisabledProactive,
   importPack
 } = packMod
 const { createContentStore } = contentMod
@@ -775,9 +778,9 @@ await suite.check('P10', '人格未初始化导出只 warning 不失败；导入
 })
 
 // ── P11：通道命名合规 ─────────────────────────────────────────────────────
-await suite.check('P11', '通道命名合规：character:pack:*，3 个通道', async () => {
+await suite.check('P11', '通道命名合规：character:pack:*，4 个通道', async () => {
   const channels = Object.values(CHARACTER_PACK_CHANNELS)
-  assertEq(channels.length, 3, '3 个资料包通道')
+  assertEq(channels.length, 4, '4 个资料包通道（含预览）')
   for (const channel of channels) {
     assert(/^character:pack:[a-z-]+$/.test(channel), `通道命名合规：${channel}`)
   }
@@ -1073,8 +1076,8 @@ await suite.check('P17', '导出截断会产出「截断」warning；角色页�
   const pageSrc = readFileSync(join(repoRoot, 'src', 'character', 'CharacterPage.vue'), 'utf8')
   assert(pageSrc.includes('已导出，但部分内容被截断/跳过'), '资源包导出结果要明确提示被截断')
   assert(
-    pageSrc.includes('资料包已导出，但有内容被截断'),
-    '截断时 toast 不能只说「资料包已导出」'
+    pageSrc.includes('归档已导出，但有内容被截断'),
+    '截断时 toast 不能只说「归档已导出」'
   )
 })
 
@@ -1172,6 +1175,287 @@ await suite.check('P19', '条目数 >2000 拒绝；manifest >256KB 目录包/zip
   const bigZip = join(root, 'big-manifest.zip')
   writeFileSync(bigZip, makeZip([{ name: 'manifest.json', data: bigManifest }]))
   expectBadPayload(() => readPackZip(bigZip), 'zip manifest 超 256KB')
+})
+
+// ── P20：归档预览摘要 + 按目标裁剪（只导知识不碰人格/语料/日记）────────────
+await suite.check('P20', '预览摘要计数正确；只导知识时人格/语料/记忆零变化', async () => {
+  const root = mkRoot('p20')
+  const env = makeEnv(root)
+  const packDir = makeFullPackDir(root)
+  const plan = readPackDir(packDir)
+  const summary = summarizePack(plan)
+  assertEq(summary.manifest.schema, PACK_SCHEMA, '预览带 schema')
+  assertEq(summary.counts.persona, 2, '预览人格槽位数')
+  assertEq(summary.counts.knowledge, 3, '预览知识篇数')
+  assertEq(summary.counts.knowledgeByCategory['世界书'], 1, '预览世界书分类计数')
+  assertEq(summary.counts.topics, 2, '预览话题数')
+  assertEq(summary.counts.lineGroups, 2, '预览台词组数')
+  assertEq(summary.counts.lines, 3, '预览台词句数')
+  assertEq(summary.counts.relations, 2, '预览关系篇数')
+  assertEq(summary.counts.diaries, 1, '预览合法日记数')
+
+  const filtered = filterPackPlan(plan, ['knowledge'])
+  assertEq(filtered.persona, null, '只导知识：人格被裁掉')
+  assertEq(filtered.topics, null, '只导知识：话题被裁掉')
+  assertEq(filtered.lines, null, '只导知识：台词被裁掉')
+  assertEq(filtered.relations.length, 0, '只导知识：关系被裁掉')
+  assertEq(filtered.diaries.length, 0, '只导知识：日记被裁掉')
+  assertEq(filtered.knowledge.length, 3, '只导知识：知识保留')
+
+  const store = makeStore(env.dataDir)
+  writeFileRel(env.workspaceDir, 'SOUL.md', '# 原人格')
+  const imported = await importPack({
+    workspaceDir: env.workspaceDir,
+    vaultDir: env.vaultDir,
+    plan,
+    targets: ['knowledge'],
+    content: {
+      importTopics: (raw) => store.importTopics(raw),
+      importLines: (raw) => store.importLines(raw)
+    }
+  })
+  assertEq(imported.counts.persona.length, 0, '只导知识：未写人格')
+  assertEq(readFileRel(env.workspaceDir, 'SOUL.md'), '# 原人格', '只导知识：原人格保留')
+  assertEq(imported.counts.topics, null, '只导知识：未写话题')
+  assertEq(imported.counts.lines, null, '只导知识：未写台词')
+  assertEq(imported.counts.knowledge, 3, '只导知识：知识写入 3 篇')
+  assertEq(imported.counts.relations, 0, '只导知识：未写关系')
+  assertEq(imported.counts.diaries, 0, '只导知识：未写日记')
+  assertEq(existsRel(env.workspaceDir, 'memory/2026-01-01.md'), false, '只导知识：workspace 无日记')
+  assertEq(existsRel(env.vaultDir, '大肥鱼/世界书/世界一.md'), true, '知识落到 vault')
+})
+
+// ── P21：生活卡与停用清单往返（可选文件；UI/内容库依赖）──────────────────────
+await suite.check('P21', '生活卡/停用清单：归档导入与导出往返', async () => {
+  const root = mkRoot('p21')
+  const env = makeEnv(root)
+  const packDir = join(root, 'pack-extras')
+  writeFileRel(packDir, 'manifest.json', manifestJson({ targets: ['proactive'] }))
+  writeFileRel(
+    packDir,
+    'proactive/topics.json',
+    topicDeck([{ id: 'hidden-topic', sample: '应被停用清单过滤' }])
+  )
+  writeFileRel(
+    packDir,
+    'proactive/life-cards.json',
+    JSON.stringify({
+      schema: 'fish-life-cards/1',
+      version: '1.0.0',
+      cards: [
+        {
+          id: 'life-sample',
+          slots: ['morning'],
+          minStage: 0,
+          activity: '吃了两大碗白饭',
+          mood: '满足',
+          goal: '中午再添一碗',
+          hook: '本机今天吃了很多',
+          weight: 3
+        }
+      ]
+    })
+  )
+  writeFileRel(
+    packDir,
+    'proactive/overrides.json',
+    JSON.stringify({
+      schema: 'fish-content-overrides/1',
+      version: '1.0.0',
+      kinds: {
+        topics: { disabledIds: ['builtin-a'] },
+        lines: { disabledGroups: [], disabledLines: [] },
+        lifeCards: { disabledIds: [] }
+      }
+    })
+  )
+  const plan = readPackDir(packDir)
+  assertEq(plan.lifeCards?.cards.length, 1, '解析归档生活卡')
+  assertEq(plan.overrides?.kinds.topics.disabledIds.length, 1, '解析停用清单')
+  const summary = summarizePack(plan)
+  assertEq(summary.counts.lifeCards, 1, '预览生活卡数')
+
+  const store = makeStore(env.dataDir)
+  const imported = await importPack({
+    workspaceDir: env.workspaceDir,
+    plan,
+    content: {
+      importTopics: (raw) => store.importTopics(raw),
+      importLines: (raw) => store.importLines(raw),
+      importLifeCards: (raw) => store.importLifeDeck(raw),
+      importOverrides: (raw) => store.importOverrides(raw)
+    }
+  })
+  assertEq(imported.counts.lifeCards, 1, '生活卡导入计数')
+  assertEq(imported.counts.overridesApplied, true, '停用清单已应用')
+  assertEq(store.paths().lifeCardsPath.endsWith('life-cards.user.json'), true, '生活卡路径')
+  assertEq(readFileRel(env.dataDir, 'character/content/life-cards.user.json').includes('life-sample'), true, '生活卡落盘')
+  const overrides = await store.overrides()
+  assertEq(overrides.kinds.topics.disabledIds.includes('builtin-a'), true, '停用清单落盘')
+  assertEq(overrides.kinds.lifeCards.disabledIds.length, 0, '本用例生活卡未停用')
+  const merged = await store.mergeLifeDeck()
+  assertEq(merged.cards.some((card) => card.id === 'life-sample'), true, '合并后含用户生活卡')
+
+  const out = join(root, 'out-extras')
+  mkdirSync(out, { recursive: true })
+  const snapshot = snapshotCurrent({
+    workspaceDir: env.workspaceDir,
+    vaultDir: env.vaultDir,
+    outputDir: out,
+    deck: builtinDeck(),
+    lifeDeck: merged,
+    overrides
+  })
+  assertEq(snapshot.counts.lifeCards, 1, '导出生活卡计数')
+  const exported = existsRel(snapshot.dir, 'proactive/life-cards.json')
+  assertEq(exported, true, '导出 life-cards.json')
+  assertEq(existsRel(snapshot.dir, 'proactive/overrides.json'), true, '导出 overrides.json')
+})
+
+// ── P22：preload/UI 契约：预览必须返回 { path, preview }（防 P0 形状漂移）──
+await suite.check('P22', '归档预览 IPC 返回 { path, preview }，preload/UI 按同一形状读取', async () => {
+  const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf8')
+  const ipcSrc = readFileSync(
+    join(repoRoot, 'electron', 'main', 'character', 'ipc.ts'),
+    'utf8'
+  )
+  const pageSrc = readFileSync(join(repoRoot, 'src', 'character', 'CharacterPage.vue'), 'utf8')
+  assert(preloadSrc.includes('preview: PackPreviewSummary'), 'preload 预览类型必须是 PackPreviewSummary')
+  assert(preloadSrc.includes('{ path: string; preview: PackPreviewSummary }'), 'preload 预览返回形状')
+  assert(ipcSrc.includes('return { path: source, preview }'), 'ipc 必须把 path 与预览一起返回')
+  assert(pageSrc.includes('data.preview.counts'), 'UI 必须从 preview 读计数')
+})
+
+// ── P23：停用清单与归档同包：不能把被停用的内置项以用户卡复活 ──────────────
+await suite.check('P23', 'stripDisabledProactive：停用的内置话题/台词/生活卡不写进用户 deck', async () => {
+  const root = mkRoot('p23')
+  const env = makeEnv(root)
+  const packDir = join(root, 'pack-disabled')
+  writeFileRel(packDir, 'manifest.json', manifestJson({ targets: ['proactive'] }))
+  writeFileRel(
+    packDir,
+    'proactive/topics.json',
+    topicDeck([
+      { id: 'builtin-a', sample: '应被停用' },
+      { id: 'keep-topic', sample: '应保留' }
+    ])
+  )
+  writeFileRel(
+    packDir,
+    'proactive/lines.json',
+    lineDeck({ greeting: ['内置问候', '保留问候'], night: ['整组停用'] })
+  )
+  writeFileRel(
+    packDir,
+    'proactive/life-cards.json',
+    JSON.stringify({
+      schema: 'fish-life-cards/1',
+      version: '1.0.0',
+      cards: [
+        { id: 'life-disabled', activity: '停用卡', mood: '平静', goal: '', hook: '', weight: 1 },
+        { id: 'life-keep', activity: '保留卡', mood: '平静', goal: '', hook: '', weight: 1 }
+      ]
+    })
+  )
+  writeFileRel(
+    packDir,
+    'proactive/overrides.json',
+    JSON.stringify({
+      schema: 'fish-content-overrides/1',
+      version: '1.0.0',
+      kinds: {
+        topics: { disabledIds: ['builtin-a'] },
+        lines: { disabledGroups: ['night'], disabledLines: [] },
+        lifeCards: { disabledIds: ['life-disabled'] }
+      }
+    })
+  )
+  const plan = readPackDir(packDir)
+  const stripped = stripDisabledProactive(plan)
+  assertEq(
+    stripped.topics.topics.some((topic) => topic.id === 'builtin-a'),
+    false,
+    '停用话题从导入计划中剔除'
+  )
+  assertEq(
+    stripped.lines.groups.night,
+    undefined,
+    '停用整组从导入计划中剔除'
+  )
+  assertEq(
+    stripped.lifeCards.cards.some((card) => card.id === 'life-disabled'),
+    false,
+    '停用生活卡从导入计划中剔除'
+  )
+
+  const store = makeStore(env.dataDir)
+  const imported = await importPack({
+    workspaceDir: env.workspaceDir,
+    plan,
+    content: {
+      importTopics: (raw) => store.importTopics(raw),
+      importLines: (raw) => store.importLines(raw),
+      importLifeCards: (raw) => store.importLifeDeck(raw),
+      importOverrides: (raw) => store.importOverrides(raw)
+    }
+  })
+  assertEq(imported.counts.overridesApplied, true, '停用清单已应用')
+  const userTopics = JSON.parse(readFileRel(env.dataDir, 'character/content/topics.user.json'))
+  assertEq(
+    userTopics.topics.some((topic) => topic.id === 'builtin-a'),
+    false,
+    '停用话题没有以用户卡复活'
+  )
+  const merged = await store.mergeForEngine(builtinDeck())
+  assertEq(
+    merged.topics.topics.some((topic) => topic.id === 'builtin-a'),
+    false,
+    '引擎合并后仍不可见'
+  )
+})
+
+// ── P24：只含停用清单的归档可导出/可再导入（targets 与空包判定）──────────────
+await suite.check('P24', '只含 overrides 的归档：导出 targets=proactive，能再读回并应用', async () => {
+  const root = mkRoot('p24')
+  const env = makeEnv(root)
+  const overrides = {
+    schema: 'fish-content-overrides/1',
+    version: '1.0.0',
+    kinds: {
+      topics: { disabledIds: ['builtin-a'] },
+      lines: { disabledGroups: [], disabledLines: [] },
+      lifeCards: { disabledIds: [] }
+    }
+  }
+  const out = join(root, 'out-only-overrides')
+  mkdirSync(out, { recursive: true })
+  const snapshot = snapshotCurrent({
+    workspaceDir: env.workspaceDir,
+    vaultDir: env.vaultDir,
+    outputDir: out,
+    overrides
+  })
+  assertEq(snapshot.counts.persona, 0, '没有内容时人格 0')
+  const manifest = JSON.parse(readFileRel(snapshot.dir, 'manifest.json'))
+  assertEq(manifest.targets.includes('proactive'), true, 'overrides 计入 proactive')
+  assertEq(existsRel(snapshot.dir, 'proactive/overrides.json'), true, 'overrides 已写出')
+
+  const plan = readPackDir(snapshot.dir)
+  assertEq(summarizePack(plan).counts.overrides, true, '预览标记含停用清单')
+  const store = makeStore(env.dataDir)
+  const imported = await importPack({
+    workspaceDir: env.workspaceDir,
+    plan,
+    content: {
+      importTopics: (raw) => store.importTopics(raw),
+      importLines: (raw) => store.importLines(raw),
+      importOverrides: (raw) => store.importOverrides(raw)
+    }
+  })
+  assertEq(imported.counts.overridesApplied, true, '只导停用清单也执行成功')
+  assertEq(imported.errors.length, 0, '没有误报失败')
+  const stored = await store.overrides()
+  assertEq(stored.kinds.topics.disabledIds.includes('builtin-a'), true, '停用清单已落盘')
 })
 
 const result = suite.toJSON()

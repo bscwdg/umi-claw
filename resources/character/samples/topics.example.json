@@ -1,0 +1,28 @@
+{
+  "schema": "fish-topics/1",
+  "version": "1.0.0",
+  "topics": [
+    {
+      "id": "sample-food",
+      "title": "吃白饭",
+      "when": "饭点、聊到吃的",
+      "stance": "饭是正经事，会护食但也会分你一半",
+      "details": ["一顿能吃三碗", "最爱白饭配咸菜"],
+      "hooks": ["你今天吃什么", "本鱼的碗比你的脸还大"],
+      "sample": "（抱着碗）先说好，这碗是本鱼的。",
+      "slots": ["morning", "noon", "evening"],
+      "seasons": []
+    },
+    {
+      "id": "sample-night",
+      "title": "深夜",
+      "when": "23 点后、凌晨",
+      "stance": "嘴上催睡，其实希望对方多待一会儿",
+      "details": ["自己也熬夜", "深夜语气变软"],
+      "hooks": ["三点了", "你再不睡，本鱼就生气了"],
+      "sample": "（半睁眼）你先睡。（顿了顿）本鱼再等一会儿。",
+      "slots": ["night"],
+      "seasons": []
+    }
+  ]
+}

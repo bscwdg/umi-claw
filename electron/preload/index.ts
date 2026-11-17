@@ -44,9 +44,15 @@ import type { BootstrapReport } from '../main/character/bootstrap'
 import type { CharacterChatStreamEvent } from '../main/character/chat'
 import type { StickerImportResult, StickerRecord } from '../main/character/stickerStore'
 import type { ContentOverview } from '../main/character/contentStore'
+import type { ContentLibraryKind } from '../main/character/contentLibrary'
 import type { ContentDeck } from '../main/character/contentEngine'
 import type { BackupExportResult, BackupImportResult } from '../main/character/backupBundle'
-import type { ImportPackResult, SnapshotCurrentResult } from '../main/character/packBundle'
+import type {
+  CharacterPackTarget,
+  ImportPackResult,
+  PackPreviewSummary,
+  SnapshotCurrentResult
+} from '../main/character/packBundle'
 console.log('✅ preload loaded')
 
 // ── work 域信封解包：IPC 返回 {ok,data} / {ok,error} ────────────────────────
@@ -905,6 +911,20 @@ const api = {
         call<{ topics: number; lines: number }>('character:content:reset', { kind }),
       exportMerged: () => call<ContentDeck>('character:content:export')
     },
+    // 通用内容库（话题/台词/生活卡）：UI 与未来 agent 工具共用；停用/恢复作用于内置项
+    contentLibrary: {
+      list: (kind: ContentLibraryKind) =>
+        call<unknown[]>('character:content:list', { kind }),
+      upsert: (kind: ContentLibraryKind, item: unknown) =>
+        call<unknown>('character:content:upsert', { kind, item }),
+      remove: (kind: ContentLibraryKind, key: string) =>
+        call<boolean>('character:content:remove', { kind, key }),
+      disable: (kind: ContentLibraryKind, key: string, disabled: boolean) =>
+        call<unknown>('character:content:disable', { kind, key, disabled }),
+      restore: (kind?: ContentLibraryKind) =>
+        call<unknown>('character:content:restore', kind ? { kind } : {}),
+      overrides: () => call<unknown>('character:content:overrides')
+    },
     backup: {
       export: () => call<BackupExportResult | { canceled: true }>('character:backup:export', {}),
       // 不传 path 时由宿主弹 zip 选择框；传 path 供自动化/测试直接指定
@@ -921,15 +941,21 @@ const api = {
           'character:pack:export',
           path ? { path } : {}
         ),
-      importFolder: (path?: string) =>
+      /** 只解析不写盘：导入前预览；kind 决定弹 zip 还是文件夹选择框 */
+      preview: (kind: 'folder' | 'zip', path?: string) =>
+        call<{ path: string; preview: PackPreviewSummary } | { canceled: true }>(
+          'character:pack:preview',
+          path ? { kind, path } : { kind }
+        ),
+      importFolder: (path?: string, targets?: readonly CharacterPackTarget[]) =>
         call<(ImportPackResult & { backupPath: string }) | { canceled: true }>(
           'character:pack:import-folder',
-          path ? { path } : {}
+          { ...(path ? { path } : {}), ...(targets ? { targets } : {}) }
         ),
-      importZip: (path?: string) =>
+      importZip: (path?: string, targets?: readonly CharacterPackTarget[]) =>
         call<(ImportPackResult & { backupPath: string }) | { canceled: true }>(
           'character:pack:import-zip',
-          path ? { path } : {}
+          { ...(path ? { path } : {}), ...(targets ? { targets } : {}) }
         )
     },
     // 4.3：外部渠道聊天绑定（渠道消息路由到 feiyu；写操作要求角色已启用）

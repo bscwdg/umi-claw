@@ -359,6 +359,14 @@ export class CharacterManager {
     this.contentDeckCache = null
   }
 
+  /**
+   * 生活卡（内置或用户）变更后调用：丢弃进程内生活卡缓存，
+   * 下一次 getLifeDeck 经 loadLifeDeck 重新合并，避免「新增/停用生活卡要重启才生效」。
+   */
+  invalidateLifeDeck(): void {
+    this.lifeDeckCache = null
+  }
+
   async updateSettings(patch: unknown): Promise<CharacterSettings> {
     return this.withMutation(() => this.updateSettingsImpl(patch))
   }
