@@ -2013,7 +2013,8 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
     assert(runtimeSrc.includes(needle), 'pluginRuntime 应包含 ' + needle)
   }
 
-  // 4.1 WP5-a 第一批：窗口/app/log/shell/dialog/obsidian 共 19 个宿主通道拆到 ipc/host/misc.ts
+  // 4.1 WP5-a 第一批：窗口/app/log/shell/dialog/obsidian 共 20 个宿主通道拆到 ipc/host/misc.ts
+  // （2026-11 知识「查看文件」新增 obsidian:openVault，19→20）
   const miscSrc = readFileSync(
     join(repoRoot, 'electron', 'main', 'ipc', 'host', 'misc.ts'),
     'utf-8'
@@ -2032,6 +2033,7 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
     'obsidian:getConfig',
     'obsidian:saveConfig',
     'obsidian:selectVault',
+    'obsidian:openVault',
     'obsidian:getIndexStatus',
     'obsidian:rebuildIndex',
     'obsidian:cancelIndex',
@@ -2211,7 +2213,7 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
   const importCount = countHandles(importStatusSrc, 'ipc')
   const dataDirCount = countHandles(dataDirSrc, 'ipc')
   assertEq(hostCount, 0, 'index.ts 应不再直接注册 ipcMain.handle')
-  assertEq(miscCount, 19, 'misc.ts 应注册 19 个通道')
+  assertEq(miscCount, 20, 'misc.ts 应注册 20 个通道')
   assertEq(skillsCount, 11, 'skills.ts 应注册 11 个通道')
   // 4.5：channels 新增 ensurePlugin（通用安装/重装）+ getPluginPresence（全量安装态），4 → 6
   assertEq(channelsCount, 6, 'channels.ts 应注册 6 个通道（4.5 渠道插件统一安装/重装）')
@@ -2234,10 +2236,10 @@ await r.check('P44', '宿主入口不再注册 marketing 5 组 IPC，装配只�
       envCount +
       importCount +
       dataDirCount,
-    70,
-    '宿主 handler 总数应为 61+2+1+1+2+3（4.0.2 P2 import + 4.2 B2 runtimeProbe + QQ 登录前置 + 4.5 渠道插件安装/状态 + 5.0 数据目录）'
+    71,
+    '宿主 handler 总数应为 62+2+1+1+2+3（2026-11 obsidian:openVault + 4.0.2 P2 import + 4.2 B2 runtimeProbe + QQ 登录前置 + 4.5 渠道插件安装/状态 + 5.0 数据目录）'
   )
-  return '宿主零注册 / 插件全注册 / 装配在 runtime / 61+2+1+1+2+3 通道守恒'
+  return '宿主零注册 / 插件全注册 / 装配在 runtime / 62+2+1+1+2+3 通道守恒'
 })
 
 // ── P43 旧库导入走服务注入（防「清单忘了 inject」导致死代码）─────────────────
