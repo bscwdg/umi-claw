@@ -1977,6 +1977,23 @@ await r.check('U34', '角色页归档预览真交互：预览弹窗/只选知识
     }
     return null
   }
+  function findCardButton(root, title, text) {
+    for (const node of walk(root)) {
+      if (node.tag !== 'section') continue
+      if (!String(node.props?.class ?? '').includes('collapsible-card')) continue
+      const heading = [...walk(node)]
+        .filter((child) => child.tag === 'h3')
+        .map((child) => [...walk(child)].map((leaf) => leaf.text ?? '').join(''))
+        .join('')
+      if (!heading.includes(title)) continue
+      return [...walk(node)].find((child) => {
+        if (child.tag !== 'button') return false
+        const label = [...walk(child)].map((leaf) => leaf.text ?? '').join('')
+        return label.includes(text)
+      })
+    }
+    return null
+  }
   const invokes = []
   function findFieldInput(root, label) {
     for (const node of walk(root)) {
@@ -2112,6 +2129,14 @@ await r.check('U34', '角色页归档预览真交互：预览弹窗/只选知识
         disable: async () => ({}),
         restore: async () => ({})
       },
+      persona: {
+        export: async () => ({ version: 1, herName: '测试', exportedAt: 0, files: {} }),
+        import: async () => ({ written: [] }),
+        open: async () => {
+          invokes.push({ name: 'personaOpen' })
+          return { ok: true, path: '/persona' }
+        }
+      },
       pack: { preview, importZip, importFolder, export: async () => ({ canceled: true }) }
     },
     {
@@ -2121,7 +2146,15 @@ await r.check('U34', '角色页归档预览真交互：预览弹窗/只选知识
       }
     }
   )
-  const pageApi = { character }
+  const pageApi = {
+    character,
+    obsidian: {
+      openVault: async (path) => {
+        invokes.push({ name: 'vaultOpen', path })
+        return { ok: true, path: path || '/vault' }
+      }
+    }
+  }
 
   const bundle = compileVuePage('src/character/CharacterPage.vue', 'ui-character-archive', {
     routerStub: stubs.routerStub,
@@ -2226,8 +2259,53 @@ await r.check('U34', '角色页归档预览真交互：预览弹窗/只选知识
   assertEq(saved.kind, 'topics', '保存的是话题')
   assertEq(saved.item.title, '新标题', '标题输入必须写进 upsert item')
   assertEq(saved.item.id, '', '新增话题 id 默认空（由用户填）')
-  return '真挂载：预览弹窗 + 只选知识 + 导入 targets + lg 表单 + 保存链路 ✓'
+
+  // 知识/人格「查看文件」：真点击 → 真 IPC 方法
+  const knowledgeView = findCardButton(mounted.root, '知识', '查看文件')
+  assert(knowledgeView, '知识卡应有「查看文件」按钮')
+  knowledgeView.props.onClick()
+  await flushTicks(6)
+  assert(invokes.some((item) => item.name === 'vaultOpen'), '知识查看应调 obsidian.openVault')
+  const personaToggle = findCardToggle(mounted.root, '人格')
+  assert(personaToggle, '人格卡应可展开')
+  personaToggle.props.onClick()
+  await flushTicks(3)
+  const personaView = findCardButton(mounted.root, '人格', '查看文件')
+  assert(personaView, '人格卡应有「查看文件」按钮')
+  personaView.props.onClick()
+  await flushTicks(6)
+  assert(invokes.some((item) => item.name === 'personaOpen'), '人格查看应调 character.persona.open')
+  return '真挂载：预览/导入 targets + lg 表单 + 保存链路 + 查看文件 ✓'
 })
+
+await r.check('U35', '知识/人格「查看文件」：按钮、通道与打开路径全链路', async () => {
+  const obsSrc = readFileSync(join(repoRoot, 'src', 'views', 'ObsidianPage.vue'), 'utf-8')
+  const charSrc = readFileSync(join(repoRoot, 'src', 'character', 'CharacterPage.vue'), 'utf-8')
+  const preloadSrc = readFileSync(join(repoRoot, 'electron', 'preload', 'index.ts'), 'utf-8')
+  const miscSrc = readFileSync(join(repoRoot, 'electron', 'main', 'ipc', 'host', 'misc.ts'), 'utf-8')
+  const charIpcSrc = readFileSync(join(repoRoot, 'electron', 'main', 'character', 'ipc.ts'), 'utf-8')
+  const charTypesSrc = readFileSync(join(repoRoot, 'electron', 'main', 'character', 'types.ts'), 'utf-8')
+  const charWiringSrc = readFileSync(join(repoRoot, 'electron', 'main', 'character', 'wiring.ts'), 'utf-8')
+
+  assert(/查看文件/.test(obsSrc), '知识库页 Vault 路径旁应有「查看文件」按钮')
+  assert(/async function openVault/.test(obsSrc), '知识库页要接 openVault')
+  assert(/@click="openVault"/.test(obsSrc), '知识库页「查看文件」必须绑 openVault')
+  assert(/openVault\(cfg\.value\.vaultPath\.trim\(\)\)/.test(obsSrc), '知识库页打开当前草稿路径（未保存也能开对目录）')
+  assert(/@click="openKnowledgeFolder"/.test(charSrc), '角色页知识卡「查看文件」必须绑 openKnowledgeFolder')
+  assert(/@click="openPersonaFolder"/.test(charSrc), '人格卡「查看文件」必须绑 openPersonaFolder')
+  assert(charSrc.includes('window.api.obsidian.openVault()'), '角色页调用 obsidian.openVault')
+  assert(/async function openPersonaFolder/.test(charSrc), '人格卡也要有查看文件入口')
+  assert(charSrc.includes('window.api.character.persona.open()'), '人格查看调用 character.persona.open')
+  assert(preloadSrc.includes("'obsidian:openVault'"), 'preload 应暴露 obsidian:openVault')
+  assert(preloadSrc.includes("'character:persona:open'"), 'preload 应暴露 character:persona:open')
+  assert(charTypesSrc.includes("personaOpen: 'character:persona:open'"), 'channel 常量应注册 personaOpen')
+  assert(charIpcSrc.includes('CHARACTER_CHANNELS.personaOpen'), 'character ipc 应注册 personaOpen handler')
+  assert(/shell\.openPath\(workspaceDir\)/.test(charWiringSrc), '人格查看应打开 workspaceDir')
+  assert(miscSrc.includes("'obsidian:openVault'"), '主进程应注册 obsidian:openVault')
+  assert(/shell\.openPath/.test(readFileSync(join(repoRoot, 'electron', 'main', 'obsidian', 'obsidianManager.ts'), 'utf-8')), 'openVault 用系统文件管理器打开')
+  return '知识查看文件入口 + IPC 全链路 ✓'
+})
+
 
 await r.check('U31', '控制台状态卡：操作区恒定一行、左侧文本让位换行（900×600 预算内）', async () => {
   const dashSrc = readFileSync(join(repoRoot, 'src', 'views', 'Dashboard.vue'), 'utf-8')

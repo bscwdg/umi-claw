@@ -4028,6 +4028,7 @@ await recorder.check('C84', 'character 新通道三处一致：types/ipc/preload
   for (const ch of [
     'character:persona:export',
     'character:persona:import',
+    'character:persona:open',
     'character:knowledge:import',
     'character:knowledge:status',
     'character:memory:list',
@@ -4044,7 +4045,7 @@ await recorder.check('C84', 'character 新通道三处一致：types/ipc/preload
     assert(typesSrc.includes(ch), ch + ' 应在 CHARACTER_CHANNELS 常量里')
     assert(preloadSrc.includes("'" + ch + "'"), ch + ' 应在 preload 暴露')
   }
-  for (const name of ['personaExport', 'personaImport', 'knowledgeImport', 'knowledgeStatus', 'memoryList', 'memoryRead', 'memorySave', 'memoryDelete', 'petAppearanceGet', 'petAppearanceImport', 'petAppearanceClear', 'chatChannelsList', 'chatChannelsSet', 'chatChannelsClear']) {
+  for (const name of ['personaExport', 'personaImport', 'personaOpen', 'knowledgeImport', 'knowledgeStatus', 'memoryList', 'memoryRead', 'memorySave', 'memoryDelete', 'petAppearanceGet', 'petAppearanceImport', 'petAppearanceClear', 'chatChannelsList', 'chatChannelsSet', 'chatChannelsClear']) {
     assert(ipcSrc.includes('CHARACTER_CHANNELS.' + name), 'ipc 应注册 ' + name)
   }
   assert(ipcSrc.includes('deps.persona') && ipcSrc.includes('deps.knowledge'), '未接 deps 时要能报 NOT_READY')
