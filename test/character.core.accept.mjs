@@ -4051,6 +4051,24 @@ await recorder.check('C84', 'character 新通道三处一致：types/ipc/preload
   assert(ipcSrc.includes('deps.memoryAdmin'), '记忆管理未接 deps 时要能报 NOT_READY')
   assert(ipcSrc.includes('deps.petAppearance'), '桌宠形象未接 deps 时要能报 NOT_READY')
   assert(ipcSrc.includes('deps.chatChannels'), '聊天渠道未接 deps 时要能报 NOT_READY')
+  // 5.1 通用内容库通道：preload 与 ipc 两侧必须一致（不能只在 UI 里写通道名）
+  for (const ch of [
+    'character:content:list',
+    'character:content:upsert',
+    'character:content:remove',
+    'character:content:disable',
+    'character:content:restore',
+    'character:content:overrides'
+  ]) {
+    assert(preloadSrc.includes("'" + ch + "'"), ch + ' 应在 preload 暴露')
+  }
+  for (const name of ['list', 'upsert', 'remove', 'disable', 'restore', 'overrides']) {
+    assert(
+      ipcSrc.includes('CHARACTER_CONTENT_LIBRARY_CHANNELS.' + name),
+      'ipc 应注册内容库 ' + name
+    )
+  }
+  assert(ipcSrc.includes('deps.contentLibrary'), '内容库未接 deps 时要能报 NOT_READY')
   return '通道 types/ipc/preload 三处一致 ✓'
 })
 

@@ -1,0 +1,26 @@
+{
+  "schema": "fish-life-cards/1",
+  "version": "1.0.0",
+  "cards": [
+    {
+      "id": "sample-life-rice",
+      "slots": ["morning", "noon"],
+      "minStage": 0,
+      "activity": "吃了两大碗白饭",
+      "mood": "满足",
+      "goal": "中午再添一碗",
+      "hook": "本鱼今天吃了很多，真的很多",
+      "weight": 3
+    },
+    {
+      "id": "sample-life-window",
+      "slots": ["afternoon"],
+      "minStage": 0,
+      "activity": "看了很久窗外",
+      "mood": "安静",
+      "goal": "想要一个能晒到太阳的位置",
+      "hook": "今天光斑有点多",
+      "weight": 2
+    }
+  ]
+}

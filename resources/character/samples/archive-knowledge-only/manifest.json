@@ -1,0 +1,7 @@
+{
+  "schema": "umi-character-pack/1",
+  "name": "示例·只含知识的归档",
+  "createdAt": "2026-11-17T00:00:00+08:00",
+  "targets": ["knowledge"],
+  "source": "Umi Claw 内置示例：只导知识，不碰人格/语料/记忆"
+}

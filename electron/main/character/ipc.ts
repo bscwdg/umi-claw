@@ -18,7 +18,15 @@ import {
 import { CHARACTER_STICKER_CHANNELS } from './stickerStore'
 import { CHARACTER_BACKUP_CHANNELS } from './backupBundle'
 import { CHARACTER_CONTENT_CHANNELS } from './contentStore'
-import { CHARACTER_PACK_CHANNELS } from './packBundle'
+import {
+  CHARACTER_CONTENT_LIBRARY_CHANNELS,
+  type ContentLibraryKind
+} from './contentLibrary'
+import {
+  CHARACTER_PACK_CHANNELS,
+  PACK_TARGETS,
+  type CharacterPackTarget
+} from './packBundle'
 import type { CharacterManager } from './manager'
 import type { PetWindowController } from './petWindow'
 import type { CharacterChatService } from './chat'
@@ -82,8 +90,10 @@ export interface CharacterIpcDeps {
   /** 统一资料包 v1（5.0）：人格/知识/主动消息/记忆 一键导入导出，导入前由 wiring 整包备份 */
   pack?: {
     export: (outputDir: string) => Promise<unknown>
-    importFolder: (packDir: string) => Promise<unknown>
-    importZip: (zipPath: string) => Promise<unknown>
+    /** 只解析不写盘；导入前给渲染端确认 */
+    preview: (kind: 'folder' | 'zip', source: string) => Promise<unknown>
+    importFolder: (packDir: string, targets?: readonly CharacterPackTarget[]) => Promise<unknown>
+    importZip: (zipPath: string, targets?: readonly CharacterPackTarget[]) => Promise<unknown>
   }
   /** 用户主动消息语料库（话题/台词查看/导入/删除；内置只读，用户语料独立落盘） */
   content?: {
@@ -94,6 +104,15 @@ export interface CharacterIpcDeps {
     deleteLine: (group: string, index: number) => Promise<unknown>
     reset: (kind: 'topics' | 'lines' | 'all') => Promise<unknown>
     exportMerged: () => Promise<unknown>
+  }
+  /** 通用内容库 facade（话题/台词/生活卡增删改 + 内置停用/恢复；UI 与未来 agent 工具共用） */
+  contentLibrary?: {
+    list: (kind: ContentLibraryKind) => Promise<unknown[]>
+    upsert: (kind: ContentLibraryKind, item: unknown) => Promise<unknown>
+    remove: (kind: ContentLibraryKind, key: string) => Promise<boolean>
+    disable: (kind: ContentLibraryKind, key: string, disabled: boolean) => Promise<unknown>
+    restore: (kind?: ContentLibraryKind) => Promise<unknown>
+    overrides: () => Promise<unknown>
   }
 }
 
@@ -130,6 +149,38 @@ function buildStickerPreview(target: {
   } catch {
     return { dataUrl: null, thumbnail: false }
   }
+}
+
+/** 归档预览/导入共用的宿主侧选择框；返回 null 表示用户取消 */
+async function pickPackSource(kind: 'folder' | 'zip'): Promise<string | null> {
+  const win = BrowserWindow.getFocusedWindow()
+  const options =
+    kind === 'folder'
+      ? {
+          title: '选择大肥鱼归档文件夹（含 manifest.json 的目录）',
+          properties: ['openDirectory'] as Array<'openDirectory'>
+        }
+      : {
+          title: '选择大肥鱼归档 zip',
+          properties: ['openFile'] as Array<'openFile'>,
+          filters: [{ name: 'Zip 归档包', extensions: ['zip'] }]
+        }
+  const result = win
+    ? await dialog.showOpenDialog(win, options as never)
+    : await dialog.showOpenDialog(options as never)
+  return result.canceled ? null : (result.filePaths?.[0] ?? null)
+}
+
+/** 只保留合法目标；不传 = undefined（全部）；传空数组 = 一个都不导入；非数组直接拒 */
+function readPackTargets(raw: unknown): CharacterPackTarget[] | undefined {
+  if (raw === undefined) return undefined
+  if (!Array.isArray(raw)) {
+    throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '导入目标必须是数组')
+  }
+  const allowed = new Set<string>(PACK_TARGETS)
+  return raw.filter(
+    (item): item is CharacterPackTarget => typeof item === 'string' && allowed.has(item)
+  )
 }
 
 export function registerCharacterIpc(
@@ -469,6 +520,45 @@ export function registerCharacterIpc(
   })
   handle(CHARACTER_CONTENT_CHANNELS.exportMerged, () => requireContent().exportMerged())
 
+  // ── 通用内容库：话题/台词/生活卡的增删改 + 内置停用/恢复（UI 与未来 agent 工具共用）──
+  const requireLibrary = () => {
+    if (!deps.contentLibrary) {
+      throw new CharacterError(CHARACTER_ERROR_CODES.NOT_READY, '内容库功能未接线')
+    }
+    return deps.contentLibrary
+  }
+  const readKind = (raw: unknown): ContentLibraryKind => {
+    if (raw !== 'topics' && raw !== 'lines' && raw !== 'lifeCards') {
+      throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '未知内容类型（topics/lines/lifeCards）')
+    }
+    return raw
+  }
+  handle(CHARACTER_CONTENT_LIBRARY_CHANNELS.list, (payload) => {
+    const kind = readKind((payload as { kind?: unknown } | undefined)?.kind)
+    return requireLibrary().list(kind)
+  })
+  handle(CHARACTER_CONTENT_LIBRARY_CHANNELS.upsert, (payload) => {
+    const raw = (payload ?? {}) as { kind?: unknown; item?: unknown }
+    return requireLibrary().upsert(readKind(raw.kind), raw.item)
+  })
+  handle(CHARACTER_CONTENT_LIBRARY_CHANNELS.remove, (payload) => {
+    const raw = (payload ?? {}) as { kind?: unknown; key?: unknown }
+    const key = typeof raw.key === 'string' ? raw.key : ''
+    if (!key) throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '缺少内容 key')
+    return requireLibrary().remove(readKind(raw.kind), key)
+  })
+  handle(CHARACTER_CONTENT_LIBRARY_CHANNELS.disable, (payload) => {
+    const raw = (payload ?? {}) as { kind?: unknown; key?: unknown; disabled?: unknown }
+    const key = typeof raw.key === 'string' ? raw.key : ''
+    if (!key) throw new CharacterError(CHARACTER_ERROR_CODES.BAD_PAYLOAD, '缺少内容 key')
+    return requireLibrary().disable(readKind(raw.kind), key, raw.disabled !== false)
+  })
+  handle(CHARACTER_CONTENT_LIBRARY_CHANNELS.restore, (payload) => {
+    const kind = (payload as { kind?: unknown } | undefined)?.kind
+    return requireLibrary().restore(kind === undefined ? undefined : readKind(kind))
+  })
+  handle(CHARACTER_CONTENT_LIBRARY_CHANNELS.overrides, () => requireLibrary().overrides())
+
   // ── 4.4 单文件备份（zip）：导出/导入都不把路径交给渲染端拼，选择框在宿主侧 ──
   const requireBackup = () => {
     if (!deps.backup) {
@@ -540,49 +630,43 @@ export function registerCharacterIpc(
     }
     return pack.export(target)
   })
+  handle(CHARACTER_PACK_CHANNELS.preview, async (payload) => {
+    const pack = requirePack()
+    const raw = (payload ?? {}) as { kind?: unknown; path?: unknown }
+    const kind: 'folder' | 'zip' = raw.kind === 'folder' ? 'folder' : 'zip'
+    const source = typeof raw.path === 'string' && raw.path.trim()
+      ? raw.path.trim()
+      : await pickPackSource(kind)
+    if (!source) return { canceled: true }
+    const preview = await pack.preview(kind, source)
+    // preload/UI 契约：{ path, preview }；不能只返回摘要，否则渲染端拿不到来源路径
+    return { path: source, preview }
+  })
   handle(CHARACTER_PACK_CHANNELS.importFolder, async (payload) => {
     const pack = requirePack()
-    const rawPath = (payload as { path?: unknown } | undefined)?.path
-    let source = typeof rawPath === 'string' ? rawPath.trim() : ''
-    if (!source) {
-      const win = BrowserWindow.getFocusedWindow()
-      const options = {
-        title: '选择大肥鱼资料包文件夹（含 manifest.json 的目录）',
-        properties: ['openDirectory'] as Array<'openDirectory'>
-      }
-      const result = win
-        ? await dialog.showOpenDialog(win, options as never)
-        : await dialog.showOpenDialog(options as never)
-      if (result.canceled || !result.filePaths?.[0]) return { canceled: true }
-      source = result.filePaths[0]
-    }
-    return pack.importFolder(source)
+    const raw = (payload ?? {}) as { path?: unknown; targets?: unknown }
+    const source = typeof raw.path === 'string' && raw.path.trim()
+      ? raw.path.trim()
+      : await pickPackSource('folder')
+    if (!source) return { canceled: true }
+    return pack.importFolder(source, readPackTargets(raw.targets))
   })
   handle(CHARACTER_PACK_CHANNELS.importZip, async (payload) => {
     const pack = requirePack()
-    const rawPath = (payload as { path?: unknown } | undefined)?.path
-    let source = typeof rawPath === 'string' ? rawPath.trim() : ''
-    if (!source) {
-      const win = BrowserWindow.getFocusedWindow()
-      const options = {
-        title: '选择大肥鱼资料包 zip',
-        properties: ['openFile'] as Array<'openFile'>,
-        filters: [{ name: 'Zip 资料包', extensions: ['zip'] }]
-      }
-      const result = win
-        ? await dialog.showOpenDialog(win, options as never)
-        : await dialog.showOpenDialog(options as never)
-      if (result.canceled || !result.filePaths?.[0]) return { canceled: true }
-      source = result.filePaths[0]
-    }
-    return pack.importZip(source)
+    const raw = (payload ?? {}) as { path?: unknown; targets?: unknown }
+    const source = typeof raw.path === 'string' && raw.path.trim()
+      ? raw.path.trim()
+      : await pickPackSource('zip')
+    if (!source) return { canceled: true }
+    return pack.importZip(source, readPackTargets(raw.targets))
   })
 
   // 本文件额外注册的通道（types.ts 的 CHARACTER_CHANNELS 之外的），disposer 也要摘干净
   const extraChannels = [
     ...Object.values(CHARACTER_STICKER_CHANNELS),
     ...Object.values(CHARACTER_BACKUP_CHANNELS),
-    ...Object.values(CHARACTER_PACK_CHANNELS)
+    ...Object.values(CHARACTER_PACK_CHANNELS),
+    ...Object.values(CHARACTER_CONTENT_LIBRARY_CHANNELS)
   ]
 
   return () => {

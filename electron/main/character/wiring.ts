@@ -13,7 +13,7 @@ import { applyAgentPatch, createOpenClawCliRunner, removeAgentEntry } from './ag
 import { createProactiveSender } from './proactiveSender'
 import { CHARACTER_AGENT_ID, CHARACTER_AGENT_MODEL, readAgentEntry } from './agentConfig'
 import { loadPersonaTemplates, runBootstrap } from './bootstrap'
-import { parseLifeDeck } from './contentCards'
+import { parseLifeDeck, type LifeDeck } from './contentCards'
 import { createEmptyContentDeck, parseContentDeck, type ContentDeck } from './contentEngine'
 import { deliverVoice, type QqBotCreds } from './qqVoice'
 import { sendQqProactiveText, parseQqC2cOpenid } from './qqProactiveText'
@@ -41,6 +41,7 @@ import { PetWindowController, type PetMenuAction } from './petWindow'
 import { CharacterChatService, type CharacterChatFn } from './chat'
 import { createStickerStore, type StickerImportInput, type StickerUpdatePatch } from './stickerStore'
 import { createContentStore } from './contentStore'
+import { createContentLibrary } from './contentLibrary'
 import { sendSticker } from './stickerSender'
 import { createBackupBundle } from './backupBundle'
 import {
@@ -48,7 +49,9 @@ import {
   readPackDir,
   readPackZip,
   snapshotCurrent,
-  type CharacterPackPlan
+  summarizePack,
+  type CharacterPackPlan,
+  type CharacterPackTarget
 } from './packBundle'
 import type { GenerateProactiveText } from './proactiveWriter'
 import {
@@ -222,11 +225,26 @@ async function registerCharacterInternal(
         return createEmptyContentDeck()
       }
     }
+    const loadBuiltinLifeDeck = async (): Promise<LifeDeck> => {
+      try {
+        const file = join(dirname(deps.personaSourceDir), 'cards', 'life-cards.v1.json')
+        return parseLifeDeck(JSON.parse(readFileSync(file, 'utf8')))
+      } catch (error) {
+        logger(
+          `[character] 内置生活卡加载失败，退回空卡池: ${(error as Error)?.message ?? String(error)}`
+        )
+        return { schema: 'fish-life-cards/1', version: '0.0.0', cards: [] }
+      }
+    }
     const contentStore = createContentStore({
       dataDir: deps.dataDir,
       loadBuiltin: loadBuiltinContentDeck,
+      loadBuiltinLife: loadBuiltinLifeDeck,
       logger
     })
+    // 通用内容库 facade：IPC/UI 与未来的 agent 工具都经它做「列出/新增/删除/停用/恢复」，
+    // 避免每种内容类型各写一套 CRUD；新增内容类型只需扩展 contentLibrary。
+    const contentLibrary = createContentLibrary({ store: contentStore, logger })
     // 4.4 单文件备份：zip 内含 manifest + kv(settings/state/day) + 人格 + workspace 日记 + 表情包，
     // 不含密钥/token/截图/日志；kvBulk 缺省时降级为「未接线」，不影响角色其它功能
     const backupBundle = deps.kvBulk
@@ -354,10 +372,8 @@ async function registerCharacterInternal(
         )
         return clampPetPosition(x, y, width, height, (near ?? primary).workArea)
       },
-      loadLifeDeck: async () => {
-        const file = join(dirname(deps.personaSourceDir), 'cards', 'life-cards.v1.json')
-        return parseLifeDeck(JSON.parse(readFileSync(file, 'utf8')))
-      },
+      // 生活卡：内置 + 用户覆盖 + 停用清单，统一由 contentStore 合并；编辑后 invalidateLifeDeck 生效
+      loadLifeDeck: async () => contentStore.exportLifeMerged(),
       // 话题/台词内容包：内置 resources 只读语料 + 用户语料合并；用户文件缺失/损坏由 contentStore 回落，不阻断主动消息
       loadContentDeck: async () => contentStore.mergeForEngine(),
       writeLifeDoc: async (text) => {
@@ -516,6 +532,8 @@ async function registerCharacterInternal(
           removeSafe(join(workspaceDir, '.fish-managed.json'))
           // 人格备份里也是用户数据（USER.md 等）：全量删除必须一起清，否则"删除全部"不彻底
           removeSafe(join(workspaceDir, '.persona-backup'))
+          // 用户语料/停用清单/生活卡都在 character/content；删除全部必须一并清，否则重建后仍停用/仍有旧卡
+          removeSafe(join(deps.dataDir, 'character', 'content'))
           // 自定义桌宠形象属于用户数据：删除全部时一并清（放在同一 all 分支，保持删除语义集中）
           {
             const meta = await readPetAppearanceMeta()
@@ -575,6 +593,8 @@ async function registerCharacterInternal(
           vaultDir: deps.obsidianVaultPath?.(),
           dataDir: deps.dataDir,
           deck: await contentStore.exportMerged(),
+          lifeDeck: await contentStore.exportLifeMerged(),
+          overrides: await contentStore.exportOverrides(),
           outputDir: backupsRoot,
           now: deps.now ? deps.now() : Date.now()
         })
@@ -586,21 +606,25 @@ async function registerCharacterInternal(
         )
       }
     }
-    const importPackPlan = async (plan: CharacterPackPlan) => {
+    const importPackPlan = async (plan: CharacterPackPlan, targets?: readonly CharacterPackTarget[]) => {
       const backupPath = await packPreImportBackup()
       const result = await importPack({
         workspaceDir,
         vaultDir: deps.obsidianVaultPath?.(),
         plan,
+        targets,
         content: {
           importTopics: (raw) => contentStore.importTopics(raw),
-          importLines: (raw) => contentStore.importLines(raw)
+          importLines: (raw) => contentStore.importLines(raw),
+          importLifeCards: (raw) => contentStore.importLifeDeck(raw),
+          importOverrides: (raw) => contentStore.importOverrides(raw)
         },
         now: deps.now ? deps.now() : Date.now(),
         logger
       })
-      // 话题/台词可能改过用户语料：让 manager 的进程内内容包缓存失效
+      // 话题/台词/生活卡/停用清单都可能改过进程内缓存；两类缓存都失效，下一次 tick 立刻生效
       manager.invalidateContentDeck()
+      manager.invalidateLifeDeck()
       return { ...result, backupPath }
     }
 
@@ -927,6 +951,37 @@ async function registerCharacterInternal(
         },
         exportMerged: () => contentStore.exportMerged()
       },
+      // 通用内容库：编辑/停用/恢复后按 kind 让对应缓存失效；话题/台词→内容包，生活卡→生活卡池
+      contentLibrary: {
+        list: (kind) => contentLibrary.list(kind),
+        upsert: async (kind, item) => {
+          const result = await contentLibrary.upsert(kind, item)
+          if (kind === 'lifeCards') manager.invalidateLifeDeck()
+          else manager.invalidateContentDeck()
+          return result
+        },
+        remove: async (kind, key) => {
+          const changed = await contentLibrary.remove(kind, key)
+          if (changed) {
+            if (kind === 'lifeCards') manager.invalidateLifeDeck()
+            else manager.invalidateContentDeck()
+          }
+          return changed
+        },
+        disable: async (kind, key, disabled) => {
+          const overrides = await contentLibrary.disable(kind, key, disabled)
+          if (kind === 'lifeCards') manager.invalidateLifeDeck()
+          else manager.invalidateContentDeck()
+          return overrides
+        },
+        restore: async (kind) => {
+          const overrides = await contentLibrary.restore(kind)
+          if (kind === undefined || kind === 'lifeCards') manager.invalidateLifeDeck()
+          if (kind === undefined || kind !== 'lifeCards') manager.invalidateContentDeck()
+          return overrides
+        },
+        overrides: () => contentLibrary.overrides()
+      },
       // 4.4 单文件备份：export/import 的路径由 IPC 层弹框选择，这里只做打包/恢复
       ...(backupBundle
         ? {
@@ -955,11 +1010,17 @@ async function registerCharacterInternal(
             vaultDir: deps.obsidianVaultPath?.(),
             dataDir: deps.dataDir,
             deck: await contentStore.exportMerged(),
+            lifeDeck: await contentStore.exportLifeMerged(),
+            overrides: await contentStore.exportOverrides(),
             outputDir,
             now: deps.now ? deps.now() : Date.now()
           }),
-        importFolder: (packDir: string) => importPackPlan(readPackDir(packDir)),
-        importZip: (zipPath: string) => importPackPlan(readPackZip(zipPath))
+        preview: async (kind: 'folder' | 'zip', source: string) =>
+          summarizePack(kind === 'folder' ? readPackDir(source) : readPackZip(source)),
+        importFolder: (packDir: string, targets?: readonly CharacterPackTarget[]) =>
+          importPackPlan(readPackDir(packDir), targets),
+        importZip: (zipPath: string, targets?: readonly CharacterPackTarget[]) =>
+          importPackPlan(readPackZip(zipPath), targets)
       }
     })
 
