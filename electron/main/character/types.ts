@@ -42,6 +42,7 @@ export const CHARACTER_CHANNELS = {
   deleteData: 'character:delete',
   personaExport: 'character:persona:export',
   personaImport: 'character:persona:import',
+  personaOpen: 'character:persona:open',
   knowledgeImport: 'character:knowledge:import',
   knowledgeStatus: 'character:knowledge:status',
   chatChannelsList: 'character:channels:list',

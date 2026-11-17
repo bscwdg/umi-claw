@@ -3,7 +3,7 @@
 // index.ts 只调用一次 registerCharacter()；其余模块不直接 import 本目录以外的东西。
 // 初始化失败只降级角色自身，绝不阻断宿主启动（红线 2）。
 
-import { globalShortcut, screen } from 'electron'
+import { globalShortcut, screen, shell } from 'electron'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { CharacterManager } from './manager'
@@ -825,7 +825,14 @@ async function registerCharacterInternal(
       // 4.3 人格包：只读写 workspace 的 4 个用户人格文件；导入前备份、导入后不受模板覆盖
       persona: {
         export: async () => exportPersonaPackage(workspaceDir),
-        import: async (raw) => importPersonaPackage(workspaceDir, raw)
+        import: async (raw) => importPersonaPackage(workspaceDir, raw),
+        open: async () => {
+          mkdirSync(workspaceDir, { recursive: true })
+          const error = await shell.openPath(workspaceDir)
+          return error
+            ? { ok: false, path: workspaceDir, error }
+            : { ok: true, path: workspaceDir }
+        }
       },
       // 4.3 P3 记忆/关系管理：列表/读取/日记编辑/单条归档删除（id 必须来自列表白名单）
       memoryAdmin: {
