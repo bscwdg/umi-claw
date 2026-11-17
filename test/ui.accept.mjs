@@ -1945,7 +1945,7 @@ await r.check('U28', '大肥鱼页面所有卡片统一接入 CollapsibleCard', 
 
 // U29：真挂载角色页，走「顶部归档 → 预览 → 只选知识 → 确认导入」真实点击链路。
 // 只读代码/字符串断言抓不到 preview IPC 形状错误（上一轮 P0 就是这么漏的）。
-await r.check('U29', '角色页归档预览真交互：预览弹窗/只选知识/导入 targets 正确', async () => {
+await r.check('U34', '角色页归档预览真交互：预览弹窗/只选知识/导入 targets 正确', async () => {
   function* walk(node) {
     if (!node) return
     yield node
@@ -1953,15 +1953,43 @@ await r.check('U29', '角色页归档预览真交互：预览弹窗/只选知识
   }
   function findButton(root, text) {
     for (const node of walk(root)) {
-      const label = (node.children ?? []).map((child) => child.text ?? '').join('')
-      if (node.tag === 'button' && label.includes(text)) return node
+      if (node.tag !== 'button') continue
+      const label = [...walk(node)].map((child) => child.text ?? '').join('')
+      if (label.includes(text)) return node
     }
     return null
   }
   const flushTicks = async (n = 6) => {
     for (let i = 0; i < n; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
   }
+  function findCardToggle(root, title) {
+    for (const node of walk(root)) {
+      if (node.tag !== 'section') continue
+      if (!String(node.props?.class ?? '').includes('collapsible-card')) continue
+      const heading = [...walk(node)]
+        .filter((child) => child.tag === 'h3')
+        .map((child) => [...walk(child)].map((leaf) => leaf.text ?? '').join(''))
+        .join('')
+      if (!heading.includes(title)) continue
+      return [...walk(node)].find((child) =>
+        String(child.props?.class ?? '').includes('collapsible-toggle')
+      )
+    }
+    return null
+  }
   const invokes = []
+  function findFieldInput(root, label) {
+    for (const node of walk(root)) {
+      if (!String(node.props?.class ?? '').includes('form-group')) continue
+      const labels = [...walk(node)]
+        .filter((child) => String(child.props?.class ?? '').includes('form-label'))
+        .map((child) => [...walk(child)].map((leaf) => leaf.text ?? '').join(''))
+        .join('')
+      if (!labels.includes(label)) continue
+      return [...walk(node)].find((child) => child.tag === 'input')
+    }
+    return null
+  }
   const preview = async (kind) => {
     invokes.push({ name: 'preview', kind })
     return {
@@ -2076,7 +2104,10 @@ await r.check('U29', '角色页归档预览真交互：预览弹窗/只选知识
       contentLibrary: {
         list: async () => [],
         overrides: async () => ({ kinds: { lines: { disabledGroups: [], disabledLines: [] } } }),
-        upsert: async () => ({}),
+        upsert: async (kind, item) => {
+          invokes.push({ name: 'upsert', kind, item })
+          return {}
+        },
         remove: async () => true,
         disable: async () => ({}),
         restore: async () => ({})
@@ -2113,6 +2144,12 @@ await r.check('U29', '角色页归档预览真交互：预览弹窗/只选知识
   assert(html.includes('示例归档'), '预览弹窗显示归档名')
   assert(html.includes('知识 2 篇'), '预览弹窗显示知识计数')
   assert(html.includes('含停用清单'), '预览弹窗显示停用清单标记')
+  assert(
+    [...walk(mounted.root)].some((node) =>
+      String(node.props?.class ?? '').includes('modal-md')
+    ),
+    '归档预览弹窗必须用 modal-md（默认 sm 太窄）'
+  )
 
   const onlyKnowledge = findButton(mounted.root, '只选知识')
   assert(onlyKnowledge, '预览弹窗应有「只选知识」')
@@ -2142,8 +2179,54 @@ await r.check('U29', '角色页归档预览真交互：预览弹窗/只选知识
   const imports = invokes.filter((x) => x.name === 'importZip')
   assertEq(imports.length, 2, '快捷入口确认后再导入一次')
   assertDeepEq(imports[1].targets, ['knowledge'], '快捷入口也只导知识')
-  assertEq(mounted.warnings.filter((w) => /Unknown|Failed to resolve|Invalid/.test(w)).length, 0, '挂载/交互无 Vue 解析告警')
-  return '真挂载：预览弹窗 + 只选知识 + 导入 targets ✓'
+  assertEq(mounted.warnings.filter((w) => /Unknown|Failed to resolve|Invalid/.test(w)).length, 0, '挂载期无 Vue 解析告警')
+
+  // 内容编辑弹窗：必须是 lg 宽度 + form-group 纵向字段（标签在控件上方），不是横排 archive-target
+  const contentCard = findCardToggle(mounted.root, '主动消息语料')
+  assert(contentCard, '主动消息语料卡存在')
+  contentCard.props.onClick()
+  await flushTicks(4)
+  const addTopic = findButton(mounted.root, '新增话题')
+  assert(addTopic, '内容管理有「新增话题」')
+  addTopic.props.onClick()
+  await flushTicks(8)
+  const modal = [...walk(mounted.root)].find((node) =>
+    String(node.props?.class ?? '').includes('modal-lg')
+  )
+  assert(modal, '内容编辑弹窗必须用 modal-lg（默认 modal-sm 太窄）')
+  const formGroups = [...walk(modal)].filter((node) =>
+    String(node.props?.class ?? '').includes('form-group')
+  )
+  assertEq(formGroups.length, 9, `话题编辑应有 9 个 form-group，实际 ${formGroups.length}`)
+  const formLabels = [...walk(modal)].filter((node) =>
+    String(node.props?.class ?? '').includes('form-label')
+  )
+  assertEq(formLabels.length, 9, `每个字段应有 form-label，实际 ${formLabels.length}`)
+  const fullNodes = [...walk(modal)].filter((node) =>
+    /(^|\s)full(\s|$)/.test(String(node.props?.class ?? ''))
+  )
+  assert(fullNodes.length >= 4, `文本域/复选框/JSON 应跨整行，实际 full 节点 ${fullNodes.length}`)
+  const editorArchiveTargets = [...walk(modal)].filter((node) =>
+    String(node.props?.class ?? '').includes('archive-target')
+  )
+  assertEq(editorArchiveTargets.length, 0, '编辑表单不得再用横排 archive-target 布局')
+
+  // 字段绑定/保存链路：改标题 → 保存 → upsert 收到改后的值（防 v-model 字段名写错假绿）
+  const titleInput = findFieldInput(modal, '标题')
+  assert(titleInput, '编辑弹窗应有标题输入框')
+  titleInput.value = '新标题'
+  titleInput.listeners.input[0]({ target: titleInput })
+  await flushTicks(2)
+  const save = findButton(modal, '保存')
+  assert(save, '编辑弹窗应有保存按钮')
+  save.props.onClick()
+  await flushTicks(10)
+  const saved = invokes.find((item) => item.name === 'upsert')
+  assert(saved, '点保存必须调 contentLibrary.upsert')
+  assertEq(saved.kind, 'topics', '保存的是话题')
+  assertEq(saved.item.title, '新标题', '标题输入必须写进 upsert item')
+  assertEq(saved.item.id, '', '新增话题 id 默认空（由用户填）')
+  return '真挂载：预览弹窗 + 只选知识 + 导入 targets + lg 表单 + 保存链路 ✓'
 })
 
 await r.check('U30', '插件管理页「运行一次/启动」：隔离子进程入口 + 配置 warning 回显 + 错误按 code', async () => {
@@ -2363,7 +2446,26 @@ await r.check('U32', '用户协议弹窗：底部关闭/保存同尺寸档（默
   const guide = readFileSync(join(repoRoot, 'docs', 'ui-style-guide.md'), 'utf-8')
   assert(guide.includes('同一按钮区只允许一种尺寸档'), 'UI 规范必须写明「同一按钮区只允许一种尺寸档」')
   assert(guide.includes('关闭/取消不得小于确认/保存按钮'), 'UI 规范必须写明「关闭/取消不得小于确认/保存按钮」')
-  return '底部两钮同挂默认档（34px），图标按钮例外保留 ✓'
+
+  // 全弹窗底部统一默认 md：ConfirmDialog / ModelPicker / Skills 安装弹窗不得再挂 btn-sm
+  const footerAudit = [
+    ['src/views/components/ConfirmDialog.vue', /<div class="modal-footer">([\s\S]*?)<\/div>/],
+    ['src/views/components/ModelPickerModal.vue', /<div class="modal-footer">([\s\S]*?)<\/div>/],
+    ['src/views/Skills.vue', /<div class="modal-footer">([\s\S]*?)<\/div>/]
+  ]
+  for (const [rel, re] of footerAudit) {
+    const src = readFileSync(join(repoRoot, rel), 'utf-8')
+    const footer = re.exec(src)?.[1] || ''
+    assert(footer !== '', rel + ' 应有 modal-footer')
+    const tags = [...footer.matchAll(/<button\b[\s\S]*?>/g)].map((m) => m[0])
+    assert(tags.length >= 1, rel + ' 底部至少一个按钮')
+    for (const tag of tags) {
+      const cls = (tag.match(/class="([^"]*)"/) || ['', ''])[1]
+      assert(/\bbtn\b/.test(cls), rel + ' 底部按钮必须挂 .btn')
+      assert(!/\bbtn-(?:sm|lg)\b/.test(cls), rel + ' 底部按钮必须统一默认 md：' + cls)
+    }
+  }
+  return '底部两钮同挂默认档（34px），所有弹窗口径一致 ✓'
 })
 
 await r.check('U33', '数据目录「更改…/立即重启」在环境任务运行期间禁用（taskRunning 闸，对抗审查 P2-6）', async () => {
