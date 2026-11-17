@@ -205,14 +205,14 @@
           </div>
           <div class="modal-footer">
             <button
-              class="btn btn-sm"
+              class="btn"
               @click="cancelInstall"
               :disabled="installing"
             >
               取消
             </button>
             <button
-              class="btn btn-sm btn-primary"
+              class="btn btn-primary"
               @click="confirmInstall"
               :disabled="installing || installCount === 0"
             >

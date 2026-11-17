@@ -158,8 +158,8 @@
 | `.btn-success` | 绿描边浅绿底（现状保留） | 启动/确认类正向动作 |
 | `.btn-danger` | 红描边浅红底（现状保留） | 删除/停用/退出 |
 | `.btn-warning` | 黄描边浅黄底（**新增**） | 重试、风险提醒 |
-| `.btn-ghost` | 透明无底（**新增，修复空类**） | 卡片内弱动作、第三顺位 |
-| `.btn-outline` | 透明底 + accent 描边 + accent 字（**新增**） | 次级但需要存在感的动作 |
+| `.btn-ghost` | 淡表面底 + 细描边（**2026-11 从「透明无底」调整**：旧样式在深/浅主题下都看不出是按钮） | 卡片内弱动作、第三顺位 |
+| `.btn-outline` | 透明/淡 accent 底 + accent 描边 + **主文字色**（浅色主题下 accent 直接当文字对比不足，2026-11 调整） | 次级但需要存在感的动作 |
 
 **尺寸**：`.btn-sm`（28px）、默认（34px）、`.btn-lg`（40px）、`.btn-icon`（34×34 方形；`.btn-icon.btn-sm` 28×28）。
 
@@ -172,12 +172,19 @@
 - 旧写法 `class="btn primary"` / `class="btn ghost"`（CharacterPage）迁移为 `btn btn-primary` / `btn btn-ghost`；
 - 一次性按钮类收编：`.title-btn→.btn-icon`（标题栏特例可保留类名但引用 token）、`.docs-btn/.q-btn/.send-btn/.icon-btn/.help-btn/.notice-close/.link` 按语义并入标准类或改为 `.btn-ghost`/`.btn-icon`。
 
+**列表行内动作（2026-11 补充）**：同一行只放 2–3 个动作，按语义挂修饰类，不用无修饰 `.btn` 表示可操作状态（深/浅主题下容易与卡片底混在一起）：
+- 编辑/编辑副本/新增 → `.btn-outline`（accent 描边，次级但有存在感）；
+- 停用/删除 → `.btn-danger`；
+- 恢复 → `.btn-success`（仅指列表行内的恢复；工具条「恢复内置全部」可继续用 `.btn-outline`）；
+- 导出/刷新等第三顺位 → `.btn-ghost`。
+
 ### 3.2 表单
 
 - `.form-group`（纵向组，gap `--space-2`）、`.form-label`、`.form-hint`（xs 字、secondary 色）、`.form-error-text`（xs 字、`--danger`）；
 - `.form-input` / `.form-select` / `.form-textarea`：高 `--control-h-md`（textarea 高度自适应、设 min-height）、圆角 sm、聚焦时 `border-color:var(--accent)` + `box-shadow:0 0 0 3px var(--accent-muted)`；
 - 错误态：控件加 `.is-error`（danger 描边 + danger 淡底）；
-- CharacterPage 的裸 `input/select` 全部改挂 `.form-input/.form-select`，删除 scoped 重定义。
+- CharacterPage 的裸 `input/select` 全部改挂 `.form-input/.form-select`，删除 scoped 重定义；
+- **多字段弹窗表单（2026-11 补充）**：必须用全局 `size="lg"` 弹窗 + `.form-group`（`.form-label` 在上、控件在下），两列网格用本地布局类 `grid-template-columns:repeat(2,minmax(0,1fr))`；文本域/复选框/JSON 区跨整行（`grid-column:1/-1`）。**禁止把 label 文案与 input 横排塞进同一个 `display:flex` 行**（内容编辑弹窗曾因此错位）。
 
 ### 3.3 卡片 `.card`
 
@@ -198,9 +205,11 @@
 尺寸修饰：`.modal-sm`(400px) / `.modal-md`(560px) / `.modal-lg`(720px)，统一 `max-width:92vw`。
 ConfirmDialog / ModelPickerModal / WizardModal / UserAgreementModal 四个弹窗迁移到该基类，删除各自的遮罩重定义。
 
+**ConfirmDialog 尺寸选择（2026-11 补充）**：默认 `size="sm"`（二次确认）；归档预览等 4 行复选内容用 `size="md"`；多字段编辑表单（话题/生活卡/台词）用 `size="lg"`，配合 §3.2 的两列 `.form-group`。宽屏只是给表单空间，不改变底部按钮同尺寸档规则。
+
 **落地补充——遮罩特例用修饰类，不重定义保留类**：冷启动向导与用户协议弹窗要求「遮罩从标题栏下方开始 + 层级低于普通弹窗」，实现为模板同时挂 `modal-overlay` 与本地修饰类（`.wizard-overlay` / `.agreement-overlay`），修饰类只写 `top: var(--titlebar-h, 0)` 与 `z-index: var(--z-banner)` 两个增量，遮罩底色/blur/flex 骨架仍吃全局类。scoped 中**绝不**出现 `.modal-overlay { ... }` 这类重定义（门禁 globalOverride 会拦截）。
 
-**底部按钮尺寸**：弹窗底部操作区（`.modal-footer` 或本地 `.actions`）只允许一种尺寸档；关闭/取消不得小于确认按钮，禁止 `btn-sm` 与默认混排。落地修复：`UserAgreementModal` 底部「关闭」原为 `btn btn-sm`（28px），与默认档「保存」（34px）并排高度不一致，2026-11 改为 `btn`，两钮统一 34px；右上角 ✕ 仍保留 `btn btn-icon btn-sm`（图标按钮例外，见 §3.1）。紧凑型确认弹窗（ConfirmDialog）两个按钮同挂 `btn-sm` 属「同一档」，不违反本条。
+**底部按钮尺寸**：弹窗底部操作区（`.modal-footer` 或本地 `.actions`）只允许一种尺寸档；关闭/取消不得小于确认按钮，禁止 `btn-sm` 与默认混排。2026-11 统一口径：**所有弹窗底部按钮都用默认 md（34px）**，包括 ConfirmDialog、Skills 安装弹窗、ModelPickerModal；只有右上角 ✕ 图标按钮例外（`btn btn-icon btn-sm`）。
 
 ### 3.7 Toast
 

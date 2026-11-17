@@ -129,7 +129,7 @@
 
       <div class="modal-footer">
         <span class="text-sm text-muted footer-hint">改动保存后需点页面「💾 保存配置」生效</span>
-        <button class="btn btn-sm" @click="requestClose">关闭</button>
+        <button class="btn" @click="requestClose">关闭</button>
       </div>
     </div>
 
