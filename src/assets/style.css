@@ -221,22 +221,22 @@ h3 { font-size: var(--text-base); font-weight: 600; }
 .btn-warning:hover { background: color-mix(in srgb, var(--warning) 25%, transparent); }
 
 .btn-ghost {
-  background: transparent;
-  border-color: transparent;
-  color: var(--text-secondary);
+  background: var(--surface-1);
+  border-color: var(--border-muted);
+  color: var(--text-primary);
 }
 .btn-ghost:hover {
-  background: var(--hover-overlay);
-  border-color: transparent;
+  background: var(--surface-2);
+  border-color: var(--border);
   color: var(--text-primary);
 }
 
 .btn-outline {
-  background: transparent;
+  background: var(--accent-muted);
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--text-primary);
 }
-.btn-outline:hover { background: var(--accent-muted); }
+.btn-outline:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 
 /* 渠道品牌修饰（仅渠道相关页面） */
 .btn-weixin {

@@ -1,7 +1,7 @@
 <template>
   <transition name="fade">
     <div v-if="visible" class="modal-overlay" @click.self="onCancel">
-      <div class="modal-card modal-sm">
+      <div class="modal-card" :class="`modal-${size}`">
         <div class="modal-header">
           <span class="modal-icon">{{ icon }}</span>
           <h4>{{ title }}</h4>
@@ -12,9 +12,9 @@
           </slot>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-sm" @click="onCancel">{{ cancelText }}</button>
+          <button class="btn" @click="onCancel">{{ cancelText }}</button>
           <button
-            class="btn btn-sm"
+            class="btn"
             :class="danger ? 'btn-danger' : 'btn-primary'"
             :disabled="confirmDisabled"
             @click="onConfirm"
@@ -38,6 +38,7 @@ withDefaults(
     cancelText?: string;
     danger?: boolean;
     confirmDisabled?: boolean;
+    size?: "sm" | "md" | "lg";
   }>(),
   {
     title: "请确认",
@@ -47,6 +48,7 @@ withDefaults(
     cancelText: "取消",
     danger: false,
     confirmDisabled: false,
+    size: "sm",
   }
 );
 

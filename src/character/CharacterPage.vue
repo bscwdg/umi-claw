@@ -23,17 +23,17 @@
         <button class="btn btn-primary" :disabled="busy || packBusy" @click="openArchivePreview('zip')">
           导入归档（zip）
         </button>
-        <button class="btn" :disabled="busy || packBusy" @click="openArchivePreview('folder')">
+        <button class="btn btn-outline" :disabled="busy || packBusy" @click="openArchivePreview('folder')">
           导入归档（文件夹）
         </button>
-        <button class="btn" :disabled="busy || packBusy" @click="openArchivePreview('zip', true)">
+        <button class="btn btn-outline" :disabled="busy || packBusy" @click="openArchivePreview('zip', true)">
           只导入知识
         </button>
-        <button class="btn btn-ghost" :disabled="busy || packBusy" @click="exportPack">导出归档</button>
+        <button class="btn" :disabled="busy || packBusy" @click="exportPack">导出归档</button>
       </div>
       <p v-if="packHint" class="hint">{{ packHint }}</p>
       <div v-if="packNeedsIndex" class="row">
-        <button class="btn" :disabled="busy" @click="rebuildKnowledgeIndex">重建索引</button>
+        <button class="btn btn-outline" :disabled="busy" @click="rebuildKnowledgeIndex">重建索引</button>
         <span class="hint">导入知识后重建索引，她才能检索到。</span>
       </div>
     </CollapsibleCard>
@@ -121,7 +121,7 @@
           <option value="关系/约定">关系 / 约定</option>
         </select>
         <button class="btn" :disabled="busy" @click="pickKnowledgeFiles">选择文件并导入</button>
-        <button class="btn btn-ghost" :disabled="busy" @click="rebuildKnowledgeIndex">重建索引</button>
+        <button class="btn btn-outline" :disabled="busy" @click="rebuildKnowledgeIndex">重建索引</button>
         <input
           ref="knowledgeFileInput"
           type="file"
@@ -153,7 +153,7 @@
         她当前还检索不到这些知识：{{ knowledgeReasonText }}。按提示处理后点「重新检查」。
       </p>
       <div class="row">
-        <button class="btn btn-ghost" :disabled="busy" @click="refreshKnowledgeHealth">重新检查</button>
+        <button class="btn btn-outline" :disabled="busy" @click="refreshKnowledgeHealth">重新检查</button>
       </div>
       <p v-if="knowledgeHealth && knowledgeHealth.warnings && knowledgeHealth.warnings.length" class="hint">
         提示：{{ knowledgeWarningText }}（旧索引通常仍可用）
@@ -259,7 +259,7 @@
         >
           断开聊天渠道
         </button>
-        <button class="btn btn-ghost" :disabled="chatChannelsBusy" @click="refreshChatChannels">
+        <button class="btn btn-outline" :disabled="chatChannelsBusy" @click="refreshChatChannels">
           重新检查
         </button>
       </div>
@@ -314,13 +314,13 @@
         话题按 id 接管内置卡，台词按组追加去重；改动下一轮主动消息立即生效。
       </p>
       <div class="row actions-row">
-        <button class="btn" :disabled="contentBusy" @click="pickTopicsFile">导入话题</button>
-        <button class="btn" :disabled="contentBusy" @click="pickLinesFile">导入台词</button>
+        <button class="btn btn-outline" :disabled="contentBusy" @click="pickTopicsFile">导入话题</button>
+        <button class="btn btn-outline" :disabled="contentBusy" @click="pickLinesFile">导入台词</button>
         <button class="btn" :disabled="contentBusy" @click="exportContentDeck">导出当前语料</button>
         <button class="btn btn-primary" :disabled="contentBusy" @click="openContentEditor(contentTab)">
           新增{{ contentTabLabel }}
         </button>
-        <button class="btn" :disabled="contentBusy" @click="restoreContentKind">恢复内置{{ contentTabLabel }}</button>
+        <button class="btn btn-outline" :disabled="contentBusy" @click="restoreContentKind">恢复内置{{ contentTabLabel }}</button>
         <button
           class="btn btn-danger"
           :disabled="contentBusy || !hasUserContent"
@@ -348,7 +348,7 @@
           v-for="tab in CONTENT_TABS"
           :key="tab.kind"
           class="btn btn-sm"
-          :class="{ 'btn-primary': contentTab === tab.kind }"
+          :class="contentTab === tab.kind ? 'btn-primary' : ''"
           :disabled="contentBusy"
           @click="switchContentTab(tab.kind)"
         >
@@ -377,7 +377,7 @@
           <template v-if="topic.source === 'builtin'">
             <button
               v-if="!topic.disabled"
-              class="btn btn-sm"
+              class="btn btn-outline btn-sm"
               :disabled="contentBusy"
               @click="openContentEditor('topics', topic, true)"
             >
@@ -385,7 +385,7 @@
             </button>
             <button
               class="btn btn-sm"
-              :class="topic.disabled ? '' : 'btn-danger'"
+              :class="topic.disabled ? 'btn-success' : 'btn-danger'"
               :disabled="contentBusy"
               @click="setContentDisabled('topics', topic.id, !topic.disabled)"
             >
@@ -393,7 +393,7 @@
             </button>
           </template>
           <template v-else>
-            <button class="btn btn-sm" :disabled="contentBusy" @click="openContentEditor('topics', topic)">
+            <button class="btn btn-outline btn-sm" :disabled="contentBusy" @click="openContentEditor('topics', topic)">
               编辑
             </button>
             <button class="btn btn-sm btn-danger" :disabled="contentBusy" @click="removeContentItem('topics', topic.id)">
@@ -413,13 +413,13 @@
             </span>
             <button
               class="btn btn-sm"
-              :class="group.disabled ? '' : 'btn-danger'"
+              :class="group.disabled ? 'btn-success' : 'btn-danger'"
               :disabled="contentBusy"
               @click="setContentDisabled('lines', `${group.name}::`, !group.disabled)"
             >
               {{ group.disabled ? '整组恢复' : '整组停用' }}
             </button>
-            <button class="btn btn-sm" :disabled="contentBusy" @click="openContentEditor('lines', { group: group.name })">
+            <button class="btn btn-outline btn-sm" :disabled="contentBusy" @click="openContentEditor('lines', { group: group.name })">
               新增
             </button>
           </div>
@@ -439,7 +439,7 @@
                 <button
                   v-if="!group.disabled"
                   class="btn btn-sm"
-                  :class="line.disabled ? '' : 'btn-danger'"
+                  :class="line.disabled ? 'btn-success' : 'btn-danger'"
                   :disabled="contentBusy"
                   @click="setContentDisabled('lines', line.key, !line.disabled)"
                 >
@@ -448,7 +448,7 @@
                 <span v-else class="corpus-locked">整组已停用</span>
               </template>
               <template v-else>
-                <button class="btn btn-sm" :disabled="contentBusy" @click="openContentEditor('lines', line)">
+                <button class="btn btn-outline btn-sm" :disabled="contentBusy" @click="openContentEditor('lines', line)">
                   编辑
                 </button>
                 <button class="btn btn-sm btn-danger" :disabled="contentBusy" @click="removeContentItem('lines', line.key)">
@@ -479,7 +479,7 @@
           <template v-if="card.source === 'builtin'">
             <button
               v-if="!card.disabled"
-              class="btn btn-sm"
+              class="btn btn-outline btn-sm"
               :disabled="contentBusy"
               @click="openContentEditor('lifeCards', card, true)"
             >
@@ -487,7 +487,7 @@
             </button>
             <button
               class="btn btn-sm"
-              :class="card.disabled ? '' : 'btn-danger'"
+              :class="card.disabled ? 'btn-success' : 'btn-danger'"
               :disabled="contentBusy"
               @click="setContentDisabled('lifeCards', card.id, !card.disabled)"
             >
@@ -495,7 +495,7 @@
             </button>
           </template>
           <template v-else>
-            <button class="btn btn-sm" :disabled="contentBusy" @click="openContentEditor('lifeCards', card)">
+            <button class="btn btn-outline btn-sm" :disabled="contentBusy" @click="openContentEditor('lifeCards', card)">
               编辑
             </button>
             <button class="btn btn-sm btn-danger" :disabled="contentBusy" @click="removeContentItem('lifeCards', card.id)">
@@ -628,7 +628,7 @@
         日记保存只改本地记忆（她召回用），Obsidian 原始日记不动。
       </p>
       <div class="row">
-        <button class="btn btn-ghost" :disabled="busy" @click="refreshMemoriesGuarded">刷新列表</button>
+        <button class="btn btn-outline" :disabled="busy" @click="refreshMemoriesGuarded">刷新列表</button>
         <span class="hint">关系：{{ relationshipSummary }}</span>
       </div>
       <div v-if="memoryEditor" class="memo-editor">
@@ -710,6 +710,7 @@
       title="导入大肥鱼归档"
       confirm-text="开始导入"
       cancel-text="取消"
+      size="md"
       :confirm-disabled="!hasSelectedArchiveTargets"
       @confirm="confirmArchiveImport"
       @cancel="archiveDialogVisible = false"
@@ -797,8 +798,8 @@
           ⚠ {{ warning }}
         </p>
         <div class="row">
-          <button class="btn btn-sm" type="button" @click="selectAllArchiveTargets">全选</button>
-          <button class="btn btn-sm" type="button" @click="selectKnowledgeOnly">只选知识</button>
+          <button class="btn btn-outline btn-sm" type="button" @click="selectAllArchiveTargets">全选</button>
+          <button class="btn btn-ghost btn-sm" type="button" @click="selectKnowledgeOnly">只选知识</button>
         </div>
       </div>
     </ConfirmDialog>
@@ -810,47 +811,109 @@
       :title="contentEditorTitle"
       confirm-text="保存"
       cancel-text="取消"
+      size="lg"
       @confirm="saveContentEditor"
       @cancel="contentEditorVisible = false"
     >
       <div v-if="contentEditor" class="content-editor">
         <template v-if="contentEditor.kind === 'topics'">
-          <label class="archive-target">ID<input v-model="contentEditor.draft.id" class="form-input" :disabled="contentEditor.mode !== 'new'" /></label>
-          <label class="archive-target">标题<input v-model="contentEditor.draft.title" class="form-input" /></label>
-          <label class="archive-target">什么时候用<input v-model="contentEditor.draft.when" class="form-input" /></label>
-          <label class="archive-target">她的态度<input v-model="contentEditor.draft.stance" class="form-input" /></label>
-          <label class="archive-target">细节（每行一条）<textarea v-model="contentEditor.draft.detailsText" class="form-input" rows="3" /></label>
-          <label class="archive-target">开场钩子（每行一条）<textarea v-model="contentEditor.draft.hooksText" class="form-input" rows="3" /></label>
-          <label class="archive-target">示例一句<textarea v-model="contentEditor.draft.sample" class="form-input" rows="2" /></label>
-          <label class="archive-target">
+          <label class="form-group">
+            <span class="form-label">ID</span>
+            <input v-model="contentEditor.draft.id" class="form-input" :disabled="contentEditor.mode !== 'new'" />
+          </label>
+          <label class="form-group">
+            <span class="form-label">标题</span>
+            <input v-model="contentEditor.draft.title" class="form-input" />
+          </label>
+          <label class="form-group">
+            <span class="form-label">什么时候用</span>
+            <input v-model="contentEditor.draft.when" class="form-input" />
+          </label>
+          <label class="form-group">
+            <span class="form-label">她的态度</span>
+            <input v-model="contentEditor.draft.stance" class="form-input" />
+          </label>
+          <label class="form-group full">
+            <span class="form-label">细节（每行一条）</span>
+            <textarea v-model="contentEditor.draft.detailsText" class="form-textarea" rows="3"></textarea>
+          </label>
+          <label class="form-group full">
+            <span class="form-label">开场钩子（每行一条）</span>
+            <textarea v-model="contentEditor.draft.hooksText" class="form-textarea" rows="3"></textarea>
+          </label>
+          <label class="form-group full">
+            <span class="form-label">示例一句</span>
+            <textarea v-model="contentEditor.draft.sample" class="form-textarea" rows="2"></textarea>
+          </label>
+          <label class="content-check full">
             <input v-model="contentEditor.draft.requiresChatMention" type="checkbox" />
             需要聊天里提到才触发
           </label>
-          <label class="archive-target">时段（逗号分隔：morning/noon/afternoon/evening/night）<input v-model="contentEditor.draft.slotsText" class="form-input" /></label>
-          <label class="archive-target">季节（逗号分隔：spring/summer/autumn/winter，空=全年）<input v-model="contentEditor.draft.seasonsText" class="form-input" /></label>
+          <label class="form-group">
+            <span class="form-label">时段（逗号分隔：morning/noon/afternoon/evening/night）</span>
+            <input v-model="contentEditor.draft.slotsText" class="form-input" />
+          </label>
+          <label class="form-group">
+            <span class="form-label">季节（逗号分隔：spring/summer/autumn/winter，空=全年）</span>
+            <input v-model="contentEditor.draft.seasonsText" class="form-input" />
+          </label>
         </template>
         <template v-else-if="contentEditor.kind === 'lifeCards'">
-          <label class="archive-target">ID<input v-model="contentEditor.draft.id" class="form-input" :disabled="contentEditor.mode !== 'new'" /></label>
-          <label class="archive-target">今天做了什么<input v-model="contentEditor.draft.activity" class="form-input" /></label>
-          <label class="archive-target">心情<input v-model="contentEditor.draft.mood" class="form-input" /></label>
-          <label class="archive-target">小目标<input v-model="contentEditor.draft.goal" class="form-input" /></label>
-          <label class="archive-target">钩子<input v-model="contentEditor.draft.hook" class="form-input" /></label>
-          <label class="archive-target">时段（逗号分隔）<input v-model="contentEditor.draft.slotsText" class="form-input" /></label>
-          <label class="archive-target">最低阶段（0-4）<input v-model.number="contentEditor.draft.minStage" type="number" min="0" max="4" class="form-input" /></label>
-          <label class="archive-target">权重（1-10）<input v-model.number="contentEditor.draft.weight" type="number" min="1" max="10" class="form-input" /></label>
+          <label class="form-group">
+            <span class="form-label">ID</span>
+            <input v-model="contentEditor.draft.id" class="form-input" :disabled="contentEditor.mode !== 'new'" />
+          </label>
+          <label class="form-group">
+            <span class="form-label">今天做了什么</span>
+            <input v-model="contentEditor.draft.activity" class="form-input" />
+          </label>
+          <label class="form-group">
+            <span class="form-label">心情</span>
+            <input v-model="contentEditor.draft.mood" class="form-input" />
+          </label>
+          <label class="form-group">
+            <span class="form-label">小目标</span>
+            <input v-model="contentEditor.draft.goal" class="form-input" />
+          </label>
+          <label class="form-group">
+            <span class="form-label">钩子</span>
+            <input v-model="contentEditor.draft.hook" class="form-input" />
+          </label>
+          <label class="form-group">
+            <span class="form-label">时段（逗号分隔）</span>
+            <input v-model="contentEditor.draft.slotsText" class="form-input" />
+          </label>
+          <label class="form-group">
+            <span class="form-label">最低阶段（0-4）</span>
+            <input v-model.number="contentEditor.draft.minStage" type="number" min="0" max="4" class="form-input" />
+          </label>
+          <label class="form-group">
+            <span class="form-label">权重（1-10）</span>
+            <input v-model.number="contentEditor.draft.weight" type="number" min="1" max="10" class="form-input" />
+          </label>
         </template>
         <template v-else>
-          <label class="archive-target">组名（小写短横线，如 greeting）<input v-model="contentEditor.draft.group" class="form-input" /></label>
-          <label class="archive-target">台词<textarea v-model="contentEditor.draft.text" class="form-input" rows="3" /></label>
+          <label class="form-group full">
+            <span class="form-label">组名（小写短横线，如 greeting）</span>
+            <input v-model="contentEditor.draft.group" class="form-input" />
+          </label>
+          <label class="form-group full">
+            <span class="form-label">台词</span>
+            <textarea v-model="contentEditor.draft.text" class="form-textarea" rows="3"></textarea>
+          </label>
         </template>
-        <details class="mt-3">
-          <summary class="hint">高级 JSON（可复制/粘贴；粘贴后点「应用到表单」）</summary>
-          <textarea v-model="contentEditorJson" class="form-input" rows="8" />
+        <details class="content-json full">
+          <summary class="form-hint">高级 JSON（可复制/粘贴；粘贴后点「应用到表单」）</summary>
+          <textarea v-model="contentEditorJson" class="form-textarea" rows="8"></textarea>
           <div class="row">
-            <button class="btn btn-sm" type="button" @click="applyContentEditorJson">应用到表单</button>
-            <button class="btn btn-sm" type="button" @click="syncContentEditorJson">从表单刷新 JSON</button>
+            <button class="btn btn-outline btn-sm" type="button" @click="applyContentEditorJson">
+              应用到表单
+            </button>
+            <button class="btn btn-ghost btn-sm" type="button" @click="syncContentEditorJson">
+              从表单刷新 JSON
+            </button>
           </div>
-          <p v-if="contentEditorError" class="hint">{{ contentEditorError }}</p>
+          <p v-if="contentEditorError" class="form-error-text">{{ contentEditorError }}</p>
         </details>
       </div>
     </ConfirmDialog>
@@ -2941,12 +3004,37 @@ h3 + .hint {
 .memo-item .hint { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin: 0; }
 .memo-readonly { white-space: pre-wrap; max-height: 240px; overflow: auto; margin: var(--space-2) 0 0; }
 
-/* 内容管理：tab、停用态置灰、表单/JSON 编辑器 */
+/* 内容管理：tab、停用态置灰；编辑弹窗用 lg + 两列表单，标签在控件上方不横挤 */
 .content-tabs { margin: var(--space-2) 0 var(--space-3); gap: var(--space-2); }
-.corpus-disabled { opacity: 0.55; }
-.content-editor { display: flex; flex-direction: column; gap: var(--space-2); max-height: 60vh; overflow: auto; }
-.content-editor .form-input { width: 100%; box-sizing: border-box; }
-.content-editor textarea { resize: vertical; font-family: inherit; }
+/* 停用置灰只压文字/徽标，不压行内动作按钮——否则「恢复」本身的对比度也会被 55% 透明度拖低 */
+.corpus-disabled .corpus-name,
+.corpus-disabled .corpus-meta,
+.corpus-disabled .corpus-line,
+.corpus-disabled .badge {
+  opacity: 0.55;
+}
+.content-editor {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+.content-editor .full { grid-column: 1 / -1; }
+.content-editor .form-group { min-width: 0; }
+.content-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.content-json {
+  padding: var(--space-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+}
+.content-json .form-textarea { margin-top: var(--space-2); }
+.content-json .row { margin-top: var(--space-2); }
 
 /* 归档预览：四类目标勾选；disabled 行置灰但仍展示落点说明 */
 .archive-preview { display: flex; flex-direction: column; gap: var(--space-2); max-height: 50vh; overflow: auto; }
