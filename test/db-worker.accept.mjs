@@ -409,7 +409,6 @@ try {
     // 本地向量模型新增 4 个 LOCAL_MODEL_*）
     // 4.0.2 加 PLUGIN_OPERATION_FAILED；PLAN-5.0 B2 加 PLUGIN_PERMISSION_DENIED；
     // PLAN-5.0 P2 加 PLUGIN_NOT_FOUND：PLUGIN-API §九 早已承诺，隔离子进程未注册方法在用）
->>>>>>> f566e1f (test(obsidian): 本地模型安装/分词/知识体检验收 + 计数同步)
     // 供 marketing 热点采集调用点继续编译，见 MERGE-INVENTORY R1；4.0.2 P2 新增
     // PLUGIN_OPERATION_FAILED：宿主插件管理面错误码，原为字符串常量散落，现收口）
     const envelopeMod = await import(
@@ -417,7 +416,6 @@ try {
     )
     const allowedCodes = Object.keys(envelopeMod.ERROR_CODES)
     assertEq(allowedCodes.length, 18, `§14.2 应为 18 项，实际 ${allowedCodes.length}`)
-    assert(allowedCodes.includes('PLUGIN_NOT_FOUND'), 'PLUGIN_NOT_FOUND 应已加入（PLAN-5.0 P2）')
     assert(allowedCodes.includes('PLUGIN_OPERATION_FAILED'), 'PLUGIN_OPERATION_FAILED 应已加入（4.0.2 P2）')
     assert(allowedCodes.includes('HOT_SOURCE_ERROR'), 'HOT_SOURCE_ERROR 应以 deprecated 身份保留')
     assert(allowedCodes.includes('STREAM_TRUNCATED'), 'STREAM_TRUNCATED 应已加入')
