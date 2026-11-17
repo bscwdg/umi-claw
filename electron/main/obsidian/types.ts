@@ -5,10 +5,53 @@
  */
 
 /** embedding 请求格式适配器（见 embeddings.mjs 的 adapter 分派） */
-export type EmbeddingAdapter = 'openai' | 'cohere'
+export type EmbeddingAdapter = 'openai' | 'cohere' | 'local'
 
-/** embedding 来源：预设（复用模型配置的 provider）或自定义（直填 baseUrl/key/model） */
-export type EmbeddingSource = 'preset' | 'custom'
+/**
+ * embedding 来源：
+ * - preset：复用模型配置的 provider（云端）
+ * - custom：直填 baseUrl/key/model（任意外部服务）
+ * - local：本机下载并加载的小模型（不随安装包，运行时在数据目录）
+ */
+export type EmbeddingSource = 'preset' | 'custom' | 'local'
+
+/** 本地模型选择（只存 id/version；绝对路径按 dataDir 推导，数据目录可搬移） */
+export interface LocalEmbeddingConfig {
+  modelId: string
+  version: string
+}
+
+/** 本地模型安装进度（主进程 → 渲染端事件） */
+export interface LocalModelProgress {
+  phase: 'downloading' | 'verifying' | 'installing' | 'self_test' | 'done' | 'error'
+  downloadedBytes: number
+  totalBytes: number
+  /** 当前文件（相对包根路径） */
+  file?: string
+  message?: string
+}
+
+/** 本地模型安装状态（知识库页展示） */
+export interface LocalModelStatus {
+  /** 运行时与模型都已安装且状态文件存在 */
+  installed: boolean
+  installing: boolean
+  runtime: { id: string; version: string } | null
+  model: { id: string; version: string; name: string; dim: number; sizeBytes: number } | null
+  progress: LocalModelProgress | null
+  lastError: string | null
+  /** 应用内置清单里的可安装项（即使未安装也返回，供 UI 显示大小/名称） */
+  available: {
+    modelId: string
+    version: string
+    name: string
+    dim: number
+    sizeBytes: number
+    totalDownloadBytes: number
+  } | null
+  /** 平台是否受支持（当前仅 win32-x64） */
+  supported: boolean
+}
 
 /** Obsidian 配置（持久化于 app.json 的 obsidian 字段） */
 export interface ObsidianConfig {
@@ -36,6 +79,9 @@ export interface ObsidianConfig {
     dim: number
     adapter: EmbeddingAdapter
   }
+
+  // ── local 模式字段（只存选择；模型/运行时在 <dataDir>/models/embedding/） ──
+  localEmbedding?: LocalEmbeddingConfig
 
   /** 单块目标字符数，默认 800 */
   chunkSize?: number

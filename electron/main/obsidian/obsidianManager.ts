@@ -6,7 +6,20 @@ import { EventEmitter } from 'events'
 import { ConfigManager } from '../configManager'
 import { openClawPaths } from '../openClawPaths'
 import { EMBEDDING_PRESETS } from '../modelConfig'
-import type { ObsidianConfig, ObsidianIndexStatus, ObsidianIndexProgress, ObsidianSearchHit, EmbeddingAdapter } from './types'
+import { AppError, ERROR_CODES } from '../services/errors'
+import {
+  LocalModelManager,
+  localModelArchiveManifestPath,
+  localModelManifestPath
+} from './localModel'
+import type {
+  ObsidianConfig,
+  ObsidianIndexStatus,
+  ObsidianIndexProgress,
+  ObsidianSearchHit,
+  EmbeddingAdapter,
+  LocalModelStatus
+} from './types'
 
 const DEFAULT_OBSIDIAN_CONFIG: ObsidianConfig = {
   enabled: false,
@@ -35,6 +48,7 @@ export class ObsidianManager extends EventEmitter {
   private indexing = false
   private lastError: string | null = null
   private currentProc: import('child_process').ChildProcess | null = null
+  private _localModel: LocalModelManager | null = null
 
   constructor(configManager: ConfigManager) {
     super()
@@ -45,11 +59,33 @@ export class ObsidianManager extends EventEmitter {
     return this.configManager.getDataDir()
   }
 
+  /** 资源根目录（dev: 项目根/resources；pack: resourcesPath/resources） */
+  private getResourcesRoot(): string {
+    return app.isPackaged
+      ? join(process.resourcesPath, 'resources')
+      : join(app.getAppPath(), 'resources')
+  }
+
+  /** 本地模型管理器（懒创建：清单/数据目录都就绪后才读盘） */
+  private get localModel(): LocalModelManager {
+    if (!this._localModel) {
+      const resourcesRoot = this.getResourcesRoot()
+      this._localModel = new LocalModelManager({
+        dataDir: this.dataDir,
+        manifestPath: localModelManifestPath(resourcesRoot),
+        archiveManifestPath: localModelArchiveManifestPath(resourcesRoot),
+        nodePath: this.configManager.getNodePath(),
+        selftestScriptPath: this.getScriptPath('local-selftest.mjs'),
+        logger: (message) => console.log('[local-model]', message)
+      })
+      this._localModel.on('progress', (progress) => this.emit('local-model-progress', progress))
+    }
+    return this._localModel
+  }
+
   /** 资源目录下的 .mjs 脚本绝对路径（dev: 项目根/resources；pack: resourcesPath/resources） */
   private getScriptPath(name: string): string {
-    const isDev = !app.isPackaged
-    const resRoot = isDev ? join(app.getAppPath(), 'resources') : join(process.resourcesPath, 'resources')
-    return join(resRoot, 'obsidian', name)
+    return join(this.getResourcesRoot(), 'obsidian', name)
   }
 
   getObsidianConfig(): ObsidianConfig {
@@ -62,7 +98,23 @@ export class ObsidianManager extends EventEmitter {
     // 返回值透出（openClawSyncOk=false + 原因），由 IPC/前端提示，不再静默提示「成功」——
     // 与 save 路径「同步失败要告知」的方针保持一致。app.json 落盘失败（appConfigSavedOk=false）
     // 同样透出，避免 Obsidian 页在本地没存成时仍提示成功。
-    const saved = await this.configManager.saveConfig({ obsidian: cfg } as any)
+    let next = cfg
+    if (cfg.embeddingSource === 'local') {
+      const status = this.localModel.getStatus()
+      if (!status.installed) {
+        throw new AppError(
+          ERROR_CODES.LOCAL_MODEL_NOT_INSTALLED,
+          '本地模型尚未安装完成，请先在知识库页下载安装，或切换到云端 embedding'
+        )
+      }
+      const modelId = cfg.localEmbedding?.modelId || status.model?.id || status.available?.modelId
+      const version = cfg.localEmbedding?.version || status.model?.version || status.available?.version
+      if (!modelId || !version) {
+        throw new AppError(ERROR_CODES.LOCAL_MODEL_NOT_INSTALLED, '本地模型状态异常（缺少 modelId/version），请重新安装')
+      }
+      next = { ...cfg, localEmbedding: { modelId, version } }
+    }
+    const saved = await this.configManager.saveConfig({ obsidian: next } as any)
     return {
       ...this.getObsidianConfig(),
       openClawSyncOk: saved.openClawSyncOk,
@@ -108,8 +160,27 @@ export class ObsidianManager extends EventEmitter {
    * 从当前配置解析 embedding 凭据 + adapter。
    * - preset 模式：从选定 provider 取 baseUrl/apiKey，adapter 来自对应预设
    * - custom 模式：直接用 customEmbedding 字段，不依赖任何 provider
+   * - local 模式：不联网；返回数据目录里的运行时/模型绝对路径
    */
-  private resolveEmbedding(cfg: ObsidianConfig) {
+  private resolveEmbedding(cfg: ObsidianConfig): {
+    baseUrl: string
+    apiKey: string
+    model: string
+    adapter: EmbeddingAdapter
+    runtimeDir?: string
+    modelDir?: string
+  } {
+    if (cfg.embeddingSource === 'local') {
+      const paths = this.localModel.getInstalledPaths()
+      return {
+        baseUrl: '',
+        apiKey: '',
+        model: cfg.localEmbedding?.modelId || 'local-embedding',
+        adapter: 'local',
+        runtimeDir: paths?.runtimeDir,
+        modelDir: paths?.modelDir
+      }
+    }
     if (cfg.embeddingSource === 'custom' && cfg.customEmbedding) {
       const c = cfg.customEmbedding
       return { baseUrl: c.baseUrl, apiKey: c.apiKey, model: c.model, adapter: c.adapter || 'openai' }
@@ -143,14 +214,23 @@ export class ObsidianManager extends EventEmitter {
         OBS_EMBEDDING_API_KEY: emb.apiKey,
         OBS_EMBEDDING_MODEL: emb.model,
         OBS_EMBEDDING_ADAPTER: emb.adapter,
+        ...(emb.adapter === 'local'
+          ? {
+              OBS_EMBEDDING_LOCAL_RUNTIME_DIR: emb.runtimeDir || '',
+              OBS_EMBEDDING_LOCAL_MODEL_DIR: emb.modelDir || ''
+            }
+          : {}),
         // 主动检索开关：'0' 时 search_notes 用中性描述（只在用户明确要求时检索）
         OBS_PROACTIVE_SEARCH: cfg.proactiveSearch === false ? '0' : '1'
       }
     }
   }
 
-  /** 测试 embedding 连通，返回向量维度。支持 preset/providerId 与 custom 两种入参形态 */
-  async testEmbedding(arg: { providerId: string; model: string } | { baseUrl: string; apiKey: string; model: string; adapter: EmbeddingAdapter }): Promise<{ dim: number }> {
+  /** 测试 embedding 连通，返回向量维度。支持 preset/providerId、custom、local 三种入参形态 */
+  async testEmbedding(arg: { providerId: string; model: string } | { baseUrl: string; apiKey: string; model: string; adapter: EmbeddingAdapter } | { local: true }): Promise<{ dim: number }> {
+    if ('local' in arg) {
+      return this.localModel.selfTest()
+    }
     let base: string, apiKey: string, model: string, adapter: EmbeddingAdapter = 'openai'
     if ('providerId' in arg) {
       const provider = this.configManager.getConfig().providers.find((p) => p.id === arg.providerId)
@@ -203,7 +283,12 @@ export class ObsidianManager extends EventEmitter {
     if (!existsSync(nodePath)) throw new Error('未找到 Node.js 运行时，请先初始化环境')
 
     const emb = this.resolveEmbedding(this.getObsidianConfig())
-    if (!emb.baseUrl || !emb.apiKey || !emb.model) {
+    const localMode = emb.adapter === 'local'
+    if (localMode) {
+      if (!emb.runtimeDir || !emb.modelDir) {
+        throw new Error('本地模型尚未安装完成，请先在知识库页安装本地模型')
+      }
+    } else if (!emb.baseUrl || !emb.apiKey || !emb.model) {
       throw new Error('未配置 embedding 凭据，请先选择/填写 embedding 模型并保存配置')
     }
 
@@ -220,7 +305,13 @@ export class ObsidianManager extends EventEmitter {
       OBS_EMBEDDING_BASE_URL: emb.baseUrl,
       OBS_EMBEDDING_API_KEY: emb.apiKey,
       OBS_EMBEDDING_MODEL: emb.model,
-      OBS_EMBEDDING_ADAPTER: emb.adapter
+      OBS_EMBEDDING_ADAPTER: emb.adapter,
+      ...(localMode
+        ? {
+            OBS_EMBEDDING_LOCAL_RUNTIME_DIR: emb.runtimeDir || '',
+            OBS_EMBEDDING_LOCAL_MODEL_DIR: emb.modelDir || ''
+          }
+        : {})
     }
     const limit = Math.max(1, Math.min(arg.limit || 5, 20))
     const spawnArgs = [script, '--db', dbPath, '--query', query, '--limit', String(limit)]
@@ -274,6 +365,14 @@ export class ObsidianManager extends EventEmitter {
    * 否则新旧维度向量混存，cosine 检索产生 NaN/维度不匹配）。
    */
   private embeddingSignature(cfg: ObsidianConfig): string {
+    if (cfg.embeddingSource === 'local') {
+      // 以实际安装 state 为准：重装/离线导入新版本后即使配置还没重新保存，
+      // 签名也必须变化，否则会继续用旧索引（同维模型时是静默错检索）。
+      const installed = this.localModel.getStatus()
+      const modelId = installed.model?.id || cfg.localEmbedding?.modelId || ''
+      const version = installed.model?.version || cfg.localEmbedding?.version || ''
+      return `local|${modelId}|${version}`
+    }
     if (cfg.embeddingSource === 'custom') {
       const c = cfg.customEmbedding
       return `custom|${c?.model || ''}|${c?.adapter || 'openai'}`
@@ -286,6 +385,9 @@ export class ObsidianManager extends EventEmitter {
     const cfg = this.getObsidianConfig()
     if (!cfg.vaultPath) throw new Error('未配置 vault 路径')
     if (this.indexing) throw new Error('索引进行中，请稍候')
+    if (cfg.embeddingSource === 'local' && !this.localModel.getStatus().installed) {
+      throw new Error('本地模型尚未安装完成，请先安装本地模型或切换 embedding 来源')
+    }
 
     // 切换 embedding 模型/adapter 时必须清库：维度变化会导致旧向量与新向量混存，
     // cosine 检索时维度不匹配产生 NaN 污染 top-K。
@@ -312,6 +414,11 @@ export class ObsidianManager extends EventEmitter {
     mkdirSync(openClawPaths.obsidianDir(this.dataDir), { recursive: true })
 
     const emb = this.resolveEmbedding(cfg)
+    const localMode = emb.adapter === 'local'
+    if (localMode && (!emb.runtimeDir || !emb.modelDir)) {
+      this.indexing = false
+      throw new Error('本地模型尚未安装完成，请先在知识库页安装本地模型')
+    }
     // 只透传子进程需要的环境变量，不继承 Electron 主进程的全部 env，
     // 避免用户的 OPENAI_API_KEY / ANTHROPIC_API_KEY 等敏感变量泄漏到子进程。
     // SYSTEMROOT/SYSTEMDRIVE/TEMP/TMP 是 Windows 上 node 网络/加密/临时文件的
@@ -327,13 +434,22 @@ export class ObsidianManager extends EventEmitter {
       OBS_EMBEDDING_BASE_URL: emb.baseUrl,
       OBS_EMBEDDING_API_KEY: emb.apiKey,
       OBS_EMBEDDING_MODEL: emb.model,
-      OBS_EMBEDDING_ADAPTER: emb.adapter
+      OBS_EMBEDDING_ADAPTER: emb.adapter,
+      ...(localMode
+        ? {
+            OBS_EMBEDDING_LOCAL_RUNTIME_DIR: emb.runtimeDir || '',
+            OBS_EMBEDDING_LOCAL_MODEL_DIR: emb.modelDir || ''
+          }
+        : {})
     }
+    // bge-small-zh 最大 512 token；中文约 1 字 ≈ 1 token，默认 800 字符会截断。
+    // 本地模式强制 400 字符（用户配置的 chunkSize 只在云端模式生效）。
+    const effectiveChunkSize = localMode ? 400 : (cfg.chunkSize || 800)
 
     return new Promise((resolve) => {
       const proc = spawn(nodePath, [
         indexerScript, '--vault', cfg.vaultPath, '--db', dbPath,
-        '--chunk-size', String(cfg.chunkSize || 800),
+        '--chunk-size', String(effectiveChunkSize),
         '--max-chunks', String(cfg.maxChunksPerNote || 50)
       ], { env, windowsHide: true, shell: false })
       this.currentProc = proc
@@ -406,11 +522,14 @@ export class ObsidianManager extends EventEmitter {
     const dir = openClawPaths.obsidianDir(this.dataDir)
     mkdirSync(dir, { recursive: true })
     const cfg = this.getObsidianConfig()
+    const embeddingModel = cfg.embeddingSource === 'local'
+      ? (cfg.localEmbedding?.modelId || 'local-embedding')
+      : (cfg.embeddingModel || null)
     const status = {
       noteCount: data.noteCount,
       chunkCount: data.chunkCount,
       lastIndexedAt: Date.now(),
-      embeddingModel: cfg.embeddingModel || null,
+      embeddingModel,
       embeddingSignature: this.embeddingSignature(cfg),
       embeddingDim: data.embeddingDim || null,
       vaultPath: cfg.vaultPath || null,
@@ -440,6 +559,73 @@ export class ObsidianManager extends EventEmitter {
       lastError: this.lastError,
       truncatedFiles: Array.isArray(saved.truncatedFiles) ? saved.truncatedFiles : [],
       embedErrors: Array.isArray(saved.embedErrors) ? saved.embedErrors : []
+    }
+  }
+
+  // ── 本地向量模型（安装/卸载/离线导入） ──
+
+  getLocalModelStatus(): LocalModelStatus {
+    return this.localModel.getStatus()
+  }
+
+  async installLocalModel(): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.localModel.install()
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  cancelLocalModelInstall(): { success: boolean } {
+    this.localModel.cancel()
+    return { success: true }
+  }
+
+  async removeLocalModel(): Promise<{ success: boolean; error?: string }> {
+    const cfg = this.getObsidianConfig()
+    if (cfg.embeddingSource === 'local') {
+      return { success: false, error: '当前知识库正在使用本地模型，请先切换到云端/自定义 embedding 并保存，再卸载' }
+    }
+    try {
+      await this.localModel.remove()
+      return { success: true }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  /** 选择离线包 zip（主进程弹文件选择器；返回 null 表示取消） */
+  async selectLocalModelZip(): Promise<{ path: string } | null> {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      title: '选择本地模型离线包',
+      filters: [{ name: '模型离线包', extensions: ['zip'] }]
+    })
+    if (result.canceled || !result.filePaths.length) return null
+    return { path: result.filePaths[0] }
+  }
+
+  async importLocalModel(zipPath: string): Promise<{ success: boolean; kind?: 'runtime' | 'model'; id?: string; version?: string; error?: string }> {
+    try {
+      const result = await this.localModel.importFromFile(zipPath)
+      return { success: true, ...result }
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+
+  /** 当前 embedding 是否真的可用（供角色知识体检/记忆检索就绪判定） */
+  isEmbeddingConfigured(): boolean {
+    try {
+      const cfg = this.getObsidianConfig()
+      if (cfg.embeddingSource === 'local') {
+        return this.localModel.getStatus().installed
+      }
+      const emb = this.resolveEmbedding(cfg)
+      return Boolean(emb.baseUrl && emb.apiKey && emb.model)
+    } catch {
+      return false
     }
   }
 }

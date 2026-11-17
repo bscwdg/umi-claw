@@ -20,6 +20,13 @@ export interface ObsidianIpcApi {
   cancelIndex(): unknown
   testEmbedding(arg: unknown): Promise<unknown>
   testSearch(arg: unknown): Promise<unknown>
+  /** 本地向量模型：安装状态/安装/取消/卸载/离线包导入 */
+  getLocalModelStatus(): unknown
+  installLocalModel(): Promise<unknown>
+  cancelLocalModelInstall(): unknown
+  removeLocalModel(): Promise<unknown>
+  selectLocalModelZip(): Promise<unknown>
+  importLocalModel(zipPath: string): Promise<unknown>
 }
 
 export interface MiscIpcDeps {
@@ -113,4 +120,12 @@ export function registerMiscIpc(deps: MiscIpcDeps): void {
   ipcMain.handle('obsidian:getEmbeddingPresets', () => EMBEDDING_PRESETS)
   // 检索测试：失败时抛出，由渲染进程统一捕获展示
   ipcMain.handle('obsidian:testSearch', async (_e, arg) => deps.obsidian().testSearch(arg))
+
+  // ── 本地向量模型（下载/卸载/离线导入；模型本体在数据目录，不随安装包） ──
+  ipcMain.handle('obsidian:localModel:status', () => deps.obsidian().getLocalModelStatus())
+  ipcMain.handle('obsidian:localModel:install', async () => deps.obsidian().installLocalModel())
+  ipcMain.handle('obsidian:localModel:cancel', () => deps.obsidian().cancelLocalModelInstall())
+  ipcMain.handle('obsidian:localModel:remove', async () => deps.obsidian().removeLocalModel())
+  ipcMain.handle('obsidian:localModel:selectZip', async () => deps.obsidian().selectLocalModelZip())
+  ipcMain.handle('obsidian:localModel:import', async (_e, zipPath: string) => deps.obsidian().importLocalModel(zipPath))
 }

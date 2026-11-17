@@ -2582,3 +2582,11 @@ npm 重装/升级会覆盖）的 `resolveVoiceSource`/`resolveVoiceSource2` 把 
 - 验收（claw-4.0 worktree 实测）：双 typecheck 0；`check:boundary` 0/0/0；build 绿；character-pack 19/19、data-dir 6/6、plugin-retry 8/8、plugin 67/67、ui 32/32、character.core 110/110、character-content 12/12、host-ipc 31/31、consent 10/10、wizard 17/17、group-config 14/14、group-policy 11/11、one-day e2e 11/11、smoke 7/7（S6/S7 显式跳过）。
 - 环境失败：仅 `hot`（collector 原生崩溃 3221226505，14/16），与 5.0 worktree、干净 HEAD 同症，和本回填无关；总口径 50 套 / 901 项 Recorder 检查（887 通过 + 1 显式跳过 + hot 14 环境失败），node:test 21 条另计。
 - 对抗审查：实现沿用 5.0 两轮子代理审查结论（01a1e390-4c52 / 01a1e390-4e34，含 STORED zip 截断、manifest 256KB、taskRunning 闸、话题 id 重复口径等修复）；回填本身逐文件复核 5.0 专有引用清零、冲突裁剪与 U28 计数变更均附实测证据。
+
+## 2026-11-18 · 知识库本地向量模型（可选下载，不随安装包）
+
+- 需求：用户不会注册 embedding 时，可在知识库页选择「本地模型（需下载）」，从官方/国内镜像下载 bge-small-zh-v1.5（512 维）与 ONNX Runtime 到数据目录；支持离线 zip 导入与卸载；安装包仍不内置模型。
+- 实现：`electron/main/obsidian/localModel.ts`（清单/下载/校验/自检/原子安装/卸载/离线导入）+ `resources/obsidian/local-embedding.mjs`（BERT WordPiece + ORT 懒加载 + CLS 归一化）+ `local-selftest.mjs`；`embeddings.mjs` local adapter；indexer/mcp-server/search 本地模式凭据门槛与默认 400 字符分块；IPC/preload/知识库页；`<dataDir>/models/embedding/` 存储，随包仅两份清单。
+- 顺带修复：无 embedding 凭据/本地未安装时，角色知识体检不再误报 searchable（`knowledgeHealth.ts` 新增 `embedding-not-configured` blocker，`characterHost` 接 `isEmbeddingConfigured`）。
+- 验收：`obsidian-local-model` 8/8、`obsidian-local-embedding` 8/8；真实直连安装 54.1MB→自检 512 维→索引/检索通过；真实离线包 runtime+model 导入+卸载通过；本地目录篡改被加载前 sha256 校验拒绝。
+- 对抗审查：B1 typecheck 3 错、B2 MCP 增量分块 800 vs 400 已修；H1 安装状态不可达、H2 加载零哈希、H3 installed 只看目录、H4 id/version 路径、H5 卸载竞态、H6 state 非原子、H7 先删后 rename 已修；H8/H9 并发/取消已加固；M1 磁盘预检已补。未采纳：M5 embeddingReady 改必填（会破坏既有纯函数调用方，保留默认 true 并靠 characterHost 显式传值）。

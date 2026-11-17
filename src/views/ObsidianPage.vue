@@ -66,6 +66,9 @@
           <button class="source-tab" :class="{ active: cfg.embeddingSource === 'custom' }" @click="setSource('custom')">
             自定义
           </button>
+          <button class="source-tab" :class="{ active: cfg.embeddingSource === 'local' }" @click="setSource('local')">
+            本地模型（需下载）
+          </button>
         </div>
       </div>
 
@@ -95,7 +98,7 @@
       </div>
 
       <!-- custom 模式：直填凭据，接任意 OpenAI 兼容或 Cohere 服务 -->
-      <div v-else class="form-group">
+      <div v-else-if="cfg.embeddingSource === 'custom'" class="form-group">
         <span class="form-label">自定义 Embedding 服务</span>
         <div class="flex gap-2" style="margin-bottom: 8px">
           <select class="form-select" v-model="cfg.customEmbedding!.adapter" style="max-width: 200px">
@@ -118,6 +121,80 @@
         <span class="text-muted text-sm">
           不依赖模型配置，直填即可。可接 Mistral / Jina / Voyage 等任意 OpenAI 兼容服务，或 Cohere。
         </span>
+      </div>
+
+      <!-- local 模式：内置离线模型（模型/运行时下载到数据目录，不随安装包） -->
+      <div v-else class="form-group">
+        <span class="form-label">内置离线模型</span>
+        <div v-if="localStatus && !localStatus.supported" class="text-sm" style="color: var(--danger)">
+          当前平台暂不支持本地模型（仅 Windows x64）。
+        </div>
+        <template v-else>
+          <div class="local-model-card">
+            <div style="flex: 1">
+              <div style="font-weight: 600; margin-bottom: 4px">
+                {{ localStatus?.available?.name || 'bge-small-zh-v1.5（中文，512 维）' }}
+              </div>
+              <div class="text-muted text-sm">
+                无需注册 / 无需 API Key，笔记只在本机处理；安装包不内置模型，首次使用需下载
+                {{ formatSize(localStatus?.available?.totalDownloadBytes || 0) }}（模型 + 运行时）。
+              </div>
+              <div v-if="localStatus?.installed" class="text-sm" style="color: var(--success); margin-top: 4px">
+                ✓ 已安装：{{ localStatus.model?.name }} · {{ localStatus.model?.dim }} 维 · 离线可用
+              </div>
+              <div v-else-if="localStatus?.installing" class="text-sm" style="margin-top: 4px">
+                正在安装，请勿关闭应用…
+              </div>
+            </div>
+            <div class="flex gap-2" style="align-items:flex-start">
+              <button
+                v-if="!localStatus?.installed && !localStatus?.installing"
+                class="btn btn-primary"
+                @click="installLocalModel"
+                :disabled="localBusy"
+              >
+                下载并安装
+              </button>
+              <button v-if="localBusy || localStatus?.installing" class="btn btn-danger" @click="cancelLocalModelInstall">
+                取消安装
+              </button>
+              <button
+                v-if="localStatus?.installed"
+                class="btn"
+                @click="testEmbedding"
+                :disabled="testing"
+              >
+                {{ testing ? '测试中...' : '🔌 测试连通' }}
+              </button>
+              <button v-if="localStatus?.installed" class="btn" @click="removeLocalModel">
+                卸载
+              </button>
+            </div>
+          </div>
+
+          <div class="flex gap-2" style="margin-top: 10px">
+            <button class="btn" @click="importLocalModel" :disabled="localBusy">从离线包安装…</button>
+            <span class="text-muted text-sm" style="align-self:center">
+              内网/无网环境可先用本机 zip 离线包（与应用内置清单匹配后才允许安装）。
+            </span>
+          </div>
+
+          <div v-if="localStatus?.progress && (localBusy || localStatus?.installing)" class="progress-wrap" style="margin-top: 10px">
+            <div class="progress-bar">
+              <div class="progress-fill" :style="{ width: localProgressPct + '%' }"></div>
+            </div>
+            <div class="text-muted text-sm">{{ localProgressText }}</div>
+          </div>
+          <div v-if="localStatus?.lastError" class="text-sm" style="color: var(--danger); margin-top: 8px">
+            ⚠ {{ localStatus.lastError }}
+          </div>
+          <div v-if="embeddingTestResult" class="text-sm" :style="{ color: embeddingTestResult.success ? 'var(--success)' : 'var(--danger)' }" style="margin-top: 6px">
+            {{ embeddingTestResult.success ? `✓ 本地模型可用，维度 ${embeddingTestResult.dim}` : `✗ ${embeddingTestResult.error}` }}
+          </div>
+          <span class="text-muted text-sm" style="display:block; margin-top: 8px">
+            离线小模型质量低于云端 embedding，适合日常笔记检索；切换模型/版本会清空现有索引并重建。
+          </span>
+        </template>
       </div>
     </div>
 
@@ -240,10 +317,10 @@
     <div class="card section">
       <div class="label" style="margin-bottom: 8px">使用步骤</div>
       <ol class="text-sm steps">
-        <li>在「模型配置」为某服务商填好 API Key（通义千问 / 智谱 / 硅基流动 / 豆包 / OpenAI）</li>
+        <li>选择 embedding 来源：云端（在「模型配置」填好 API Key）或「本地模型（需下载）」（无需注册，首次使用下载约 54MB）</li>
         <li>选择 Vault 路径（你的 Obsidian 笔记库目录）</li>
-        <li>选择 Embedding 模型并测试连通</li>
-        <li>点击「重建索引」（首次较慢，后续增量）</li>
+        <li>选择/安装 embedding 模型并测试连通（本地模型会真实加载自检）</li>
+        <li>点击「重建索引」（首次较慢，后续增量；本地模式固定 400 字符分块）</li>
         <li>启用集成并保存配置</li>
         <li>重启 OpenClaw，模型即可调用 <span class="mono">mcp__obsidian__search_notes</span> 等工具</li>
       </ol>
@@ -254,12 +331,23 @@
         <div class="toast" :class="toast.type">{{ toast.msg }}</div>
       </div>
     </transition>
+
+    <ConfirmDialog
+      v-model:visible="removeConfirmVisible"
+      icon="⚠️"
+      title="卸载本地模型？"
+      message="会删除已下载的模型与运行时（约 54MB），不影响笔记与索引库；之后可随时重新下载。"
+      confirm-text="卸载"
+      danger
+      @confirm="confirmRemoveLocalModel"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useToast } from '@/composables/useToast'
+import ConfirmDialog from '@/views/components/ConfirmDialog.vue'
 
 const { toast, showToast } = useToast()
 
@@ -273,11 +361,12 @@ interface CustomEmbedding {
 interface ObsidianConfig {
   enabled: boolean
   vaultPath: string
-  embeddingSource: 'preset' | 'custom'
+  embeddingSource: 'preset' | 'custom' | 'local'
   embeddingProviderId: string
   embeddingModel: string
   embeddingAdapter: 'openai' | 'cohere'
   customEmbedding?: CustomEmbedding
+  localEmbedding?: { modelId: string; version: string }
   chunkSize?: number
   maxChunksPerNote?: number
   proactiveSearch?: boolean
@@ -302,6 +391,23 @@ interface EmbeddingPreset {
   modelId: string
   dim: number
   adapter: 'openai' | 'cohere'
+}
+interface LocalModelStatus {
+  installed: boolean
+  installing: boolean
+  supported: boolean
+  runtime: { id: string; version: string } | null
+  model: { id: string; version: string; name: string; dim: number; sizeBytes: number } | null
+  progress: { phase: string; downloadedBytes: number; totalBytes: number; file?: string; message?: string } | null
+  lastError: string | null
+  available: {
+    modelId: string
+    version: string
+    name: string
+    dim: number
+    sizeBytes: number
+    totalDownloadBytes: number
+  } | null
 }
 
 // 与后端 PROVIDERS_WITHOUT_EMBEDDING 对应：这些 provider 无 embedding 接口
@@ -339,6 +445,29 @@ const saving = ref(false)
 const openingVault = ref(false)
 const testing = ref(false)
 const embeddingTestResult = ref<{ success: boolean; dim?: number; error?: string } | null>(null)
+const localStatus = ref<LocalModelStatus | null>(null)
+const localBusy = ref(false)
+const removeConfirmVisible = ref(false)
+
+const localProgressPct = computed(() => {
+  const p = localStatus.value?.progress
+  if (!p || !p.totalBytes) return 0
+  return Math.max(0, Math.min(100, Math.round((p.downloadedBytes / p.totalBytes) * 100)))
+})
+const localProgressText = computed(() => {
+  const p = localStatus.value?.progress
+  if (!p) return ''
+  const prefix: Record<string, string> = {
+    downloading: '下载中',
+    verifying: '校验中',
+    installing: '安装中',
+    self_test: '自检中',
+    done: '完成',
+    error: '失败'
+  }
+  const pct = p.totalBytes ? ` ${Math.round((p.downloadedBytes / p.totalBytes) * 100)}%` : ''
+  return `${prefix[p.phase] || p.phase}${pct}${p.file ? ` · ${p.file}` : ''}`
+})
 
 const progressPct = computed(() => {
   const p = progress.value
@@ -402,7 +531,7 @@ const unavailableProviders = computed(() => {
     .map((id) => names[id] || id)
 })
 
-function setSource(s: 'preset' | 'custom') {
+function setSource(s: 'preset' | 'custom' | 'local') {
   cfg.value.embeddingSource = s
   if (s === 'custom') {
     // 切到自定义时清空 preset 字段，避免来回切时保存了 stale 的旧预设值
@@ -411,7 +540,118 @@ function setSource(s: 'preset' | 'custom') {
     cfg.value.embeddingAdapter = 'openai'
     embeddingPresetId.value = ''
   }
+  if (s === 'local' && localStatus.value?.model) {
+    cfg.value.localEmbedding = {
+      modelId: localStatus.value.model.id,
+      version: localStatus.value.model.version
+    }
+  }
   embeddingTestResult.value = null
+}
+
+async function refreshLocalStatus() {
+  try {
+    localStatus.value = await window.api.obsidian.getLocalModelStatus()
+  } catch {
+    localStatus.value = null
+  }
+}
+
+async function installLocalModel() {
+  if (localBusy.value) return
+  localBusy.value = true
+  // 乐观置 installing：IPC 是长任务（54MB 下载），期间拿不到 status；
+  // 否则「取消安装/进度条」在本页面永远不出现（只有离开再回来才看到 installing）。
+  if (localStatus.value) localStatus.value = { ...localStatus.value, installing: true }
+  else {
+    localStatus.value = {
+      installed: false, installing: true, supported: true, runtime: null, model: null,
+      progress: null, lastError: null, available: null
+    }
+  }
+  try {
+    const r = await window.api.obsidian.installLocalModel()
+    await refreshLocalStatus()
+    if (r?.success) {
+      showToast('本地模型安装完成；请保存配置并重启 OpenClaw 生效', 'success')
+      if (localStatus.value?.model) {
+        cfg.value.localEmbedding = {
+          modelId: localStatus.value.model.id,
+          version: localStatus.value.model.version
+        }
+      }
+    } else if (String(r?.error || '').includes('取消')) {
+      showToast('已取消安装', 'success')
+    } else {
+      showToast('本地模型安装失败：' + (r?.error || '未知错误'), 'error')
+    }
+  } catch (e: any) {
+    showToast('本地模型安装失败：' + e.message, 'error')
+  } finally {
+    localBusy.value = false
+    await refreshLocalStatus()
+  }
+}
+
+async function cancelLocalModelInstall() {
+  try {
+    await window.api.obsidian.cancelLocalModelInstall()
+    showToast('已取消安装', 'success')
+  } catch (e: any) {
+    showToast('取消失败：' + e.message, 'error')
+  } finally {
+    await refreshLocalStatus()
+  }
+}
+
+async function importLocalModel() {
+  if (localBusy.value) return
+  try {
+    const picked = await window.api.obsidian.selectLocalModelZip()
+    if (!picked?.path) return
+    localBusy.value = true
+    const r = await window.api.obsidian.importLocalModel(picked.path)
+    await refreshLocalStatus()
+    if (r?.success) {
+      showToast(`离线包导入成功（${r.kind === 'runtime' ? '运行时' : '模型'} ${r.id} ${r.version}）`, 'success')
+      if (localStatus.value?.model) {
+        cfg.value.localEmbedding = {
+          modelId: localStatus.value.model.id,
+          version: localStatus.value.model.version
+        }
+      }
+    } else {
+      showToast('离线包导入失败：' + (r?.error || '未知错误'), 'error')
+    }
+  } catch (e: any) {
+    showToast('离线包导入失败：' + e.message, 'error')
+  } finally {
+    localBusy.value = false
+  }
+}
+
+function removeLocalModel() {
+  if (cfg.value.embeddingSource === 'local') {
+    showToast('当前知识库正在使用本地模型，请先切换到云端/自定义 embedding 并保存', 'error')
+    return
+  }
+  removeConfirmVisible.value = true
+}
+
+async function confirmRemoveLocalModel() {
+  removeConfirmVisible.value = false
+  try {
+    const r = await window.api.obsidian.removeLocalModel()
+    if (r?.success) {
+      showToast('本地模型已卸载', 'success')
+    } else {
+      showToast('卸载失败：' + (r?.error || '未知错误'), 'error')
+    }
+  } catch (e: any) {
+    showToast('卸载失败：' + e.message, 'error')
+  } finally {
+    await refreshLocalStatus()
+  }
 }
 
 /** 上次索引被截断的笔记列表（来自 status） */
@@ -420,12 +660,23 @@ const truncatedFiles = computed(() => status.value.truncatedFiles || [])
 const embedErrorFiles = computed(() => status.value.embedErrors || [])
 
 let offProgress: (() => void) | null = null
+let offLocalProgress: (() => void) | null = null
 
 async function load() {
   try {
     cfg.value = await window.api.obsidian.getConfig()
     presets.value = await window.api.obsidian.getEmbeddingPresets()
     status.value = await window.api.obsidian.getIndexStatus()
+    await refreshLocalStatus()
+    if (!cfg.value.customEmbedding) {
+      cfg.value.customEmbedding = { baseUrl: '', apiKey: '', model: '', dim: 1024, adapter: 'openai' }
+    }
+    if (cfg.value.embeddingSource === 'local' && localStatus.value?.model) {
+      cfg.value.localEmbedding = {
+        modelId: localStatus.value.model.id,
+        version: localStatus.value.model.version
+      }
+    }
     // 取已配置（填了 API Key）的 provider id，供「无 embedding 接口」提示
     try {
       const appCfg = await window.api.config.get()
@@ -501,6 +752,18 @@ async function save() {
       return
     }
   }
+  if (cfg.value.embeddingSource === 'local') {
+    if (!localStatus.value?.installed) {
+      showToast('本地模型尚未安装完成，请先下载安装或从离线包导入', 'error')
+      return
+    }
+    if (localStatus.value.model) {
+      cfg.value.localEmbedding = {
+        modelId: localStatus.value.model.id,
+        version: localStatus.value.model.version
+      }
+    }
+  }
   saving.value = true
   try {
     // 深拷贝脱掉 Vue 响应式 Proxy，否则 IPC 结构化克隆会报 "An object could not be cloned"
@@ -573,6 +836,17 @@ async function testEmbedding() {
   testing.value = true
   embeddingTestResult.value = null
   try {
+    if (cfg.value.embeddingSource === 'local') {
+      if (!localStatus.value?.installed) {
+        showToast('请先安装本地模型', 'error')
+        testing.value = false
+        return
+      }
+      const r = await window.api.obsidian.testEmbedding({ local: true })
+      embeddingTestResult.value = { success: true, dim: r.dim }
+      testing.value = false
+      return
+    }
     const arg =
       cfg.value.embeddingSource === 'custom' && cfg.value.customEmbedding
         ? {
@@ -661,9 +935,26 @@ onMounted(() => {
       window.api.obsidian.getIndexStatus().then((s) => (status.value = s))
     }
   })
+  offLocalProgress = window.api.obsidian.onLocalModelProgress((data: any) => {
+    if (!localStatus.value) {
+      localStatus.value = {
+        installed: false, installing: true, supported: true, runtime: null, model: null,
+        progress: data, lastError: null, available: null
+      }
+    } else {
+      localStatus.value.progress = data
+      if (data.phase === 'downloading' || data.phase === 'verifying' || data.phase === 'installing' || data.phase === 'self_test') {
+        localStatus.value.installing = true
+      }
+    }
+    if (data.phase === 'done' || data.phase === 'error') {
+      refreshLocalStatus()
+    }
+  })
 })
 onUnmounted(() => {
   offProgress?.()
+  offLocalProgress?.()
 })
 </script>
 
@@ -855,5 +1146,15 @@ onUnmounted(() => {
   word-break: break-all;
   max-height: 160px;
   overflow-y: auto;
+}
+/* ── 本地模型卡片 ── */
+.local-model-card {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+  background: var(--bg-overlay);
+  align-items: flex-start;
 }
 </style>

@@ -1,0 +1,395 @@
+{
+  "schema": 1,
+  "generatedAt": "2026-11-18T00:33:23+08:00",
+  "strategy": "direct",
+  "repo": "https://gitee.com/bscwdg/umi-claw-models",
+  "offlineArchiveManifest": "local-embedding-manifest.archive.json",
+  "totalDownloadBytes": 56740905,
+  "runtimes": [
+    {
+      "id": "onnxruntime-node-win-x64",
+      "version": "1.31.1",
+      "platform": "win32-x64",
+      "entry": "node_modules/onnxruntime-node",
+      "license": "MIT",
+      "files": [
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/backend-impl.js",
+          "sizeBytes": 7357,
+          "sha256": "7ec5d5b37145f23fb776d11cb8dab749caa162fade9eddab100d8edfe56c3de4",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/backend-impl.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/backend-impl.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/backend.js",
+          "sizeBytes": 433,
+          "sha256": "325aaee7a2649ea27629666f3ca01c0d80b9751e704ce502e43a8352390749b4",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/backend.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/backend.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/env-impl.js",
+          "sizeBytes": 969,
+          "sha256": "35cd8cac33973538eab471b68622c86c35a6896f4307d1a74c9ca0eda7abbac6",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/env-impl.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/env-impl.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/env.js",
+          "sizeBytes": 366,
+          "sha256": "22c7647f8ca1c1b83b437a92b95fee1457fcb72866fa029616b8f146dc609be8",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/env.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/env.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/index.js",
+          "sizeBytes": 2008,
+          "sha256": "4c532c6b100d176594e0175757fe373d09e12abd5277695c376a40affddfaace",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/index.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/index.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/inference-session-impl.js",
+          "sizeBytes": 9960,
+          "sha256": "80455e8b5278e66721c1f680765fb430502771edb2854683652cec696474d971",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/inference-session-impl.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/inference-session-impl.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/inference-session.js",
+          "sizeBytes": 467,
+          "sha256": "458be26f316c5068d32a56ddbc30ca0aa687c636e079b3d161a69f0f14a683f1",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/inference-session.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/inference-session.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/lora-adapter-impl.js",
+          "sizeBytes": 1104,
+          "sha256": "490c28348ae9681d8b73f5c15e31c093a3a27cb90af3d77e9a284b28899d4cad",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/lora-adapter-impl.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/lora-adapter-impl.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/lora-adapter.js",
+          "sizeBytes": 432,
+          "sha256": "18c3f4b891c2a9f758fd223061f006b40b36cff39aed46c42cda50e9546d8668",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/lora-adapter.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/lora-adapter.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/onnx-model.js",
+          "sizeBytes": 211,
+          "sha256": "667f5fdac4b6df25e17f8a864d4dc619507f541f9fa0aafb6d3572fcca1e25e5",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/onnx-model.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/onnx-model.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/onnx-value.js",
+          "sizeBytes": 211,
+          "sha256": "8446854766f4955ce438a7338216f49223767ecc508bb502b73a3dc1a1f1998e",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/onnx-value.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/onnx-value.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/package.json",
+          "sizeBytes": 20,
+          "sha256": "091a04fa67c7907b98e106fcff8b964e13129754fce72d24f3025b97c4887fa3",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/package.json",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/package.json"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/tensor-conversion-impl.js",
+          "sizeBytes": 8067,
+          "sha256": "9815e72c0bb91896035de93b3113a2256a1a998bc53c7b5e6bf5fb4e93714766",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/tensor-conversion-impl.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/tensor-conversion-impl.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/tensor-conversion.js",
+          "sizeBytes": 218,
+          "sha256": "28cc462d4a9ea556ecc86c0e6d16a51d61b58d5bc5b4b7b48976b14bc8035bdc",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/tensor-conversion.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/tensor-conversion.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/tensor-factory-impl.js",
+          "sizeBytes": 11656,
+          "sha256": "a3204838a2c14416e4e61c968dc17c663ab3c9b8b2c4a8b7f2a1c5b06e3e5173",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/tensor-factory-impl.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/tensor-factory-impl.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/tensor-factory.js",
+          "sizeBytes": 215,
+          "sha256": "13b8d735350b828a49bda8aeec50b1dac888cf42268006efc4312f50a88b6906",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/tensor-factory.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/tensor-factory.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/tensor-impl-type-mapping.js",
+          "sizeBytes": 2995,
+          "sha256": "333110edbbffdb7575ea340cb341bcaf691862d6594a649db28097f7d8cb19b7",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/tensor-impl-type-mapping.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/tensor-impl-type-mapping.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/tensor-impl.js",
+          "sizeBytes": 16458,
+          "sha256": "11645352ba5d08971344717d3339f86aac560f84f29229b2ebe07f1ec8aa8905",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/tensor-impl.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/tensor-impl.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/tensor-utils-impl.js",
+          "sizeBytes": 2213,
+          "sha256": "e7b1db989d33d54bdd1807b080a0989ff0b10d5f7dd8c93b92bbf293103aa4d5",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/tensor-utils-impl.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/tensor-utils-impl.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/tensor-utils.js",
+          "sizeBytes": 213,
+          "sha256": "d3f577e90dc2257c72ac728e5e6355c34af0342d971158d9f22b69d22aa97b8d",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/tensor-utils.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/tensor-utils.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/tensor.js",
+          "sizeBytes": 393,
+          "sha256": "9097114de356750f36f28776fa6ccd08d13694f0f9aac9e7669c30b6c43153f7",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/tensor.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/tensor.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/trace.js",
+          "sizeBytes": 2496,
+          "sha256": "faecd0df94998d786e2085d56aa6003449f1ac3b35c350e0d2762498604e5d72",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/trace.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/trace.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/type-helper.js",
+          "sizeBytes": 212,
+          "sha256": "7f786da8d2a611ad751c70a74edf4d9acfccd26be8e5c6b1cb730f982892bf32",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/type-helper.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/type-helper.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/dist/cjs/version.js",
+          "sizeBytes": 361,
+          "sha256": "d83ca5483dba1d108ec2cac1b6d0f3e11d865546e897683a6ec825c93193723c",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/dist/cjs/version.js",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/dist/cjs/version.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/package.json",
+          "sizeBytes": 977,
+          "sha256": "c8e59240260cd3d230f1417765e0dbe098323ef65a5785991059de1bd5d7cde0",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/package.json",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/package.json"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-common/README.md",
+          "sizeBytes": 497,
+          "sha256": "3081e0b29169cf9b34f94bae12302d659fca817d7eae3bdcac4261d7301853ff",
+          "urls": [
+            "https://unpkg.com/onnxruntime-common@1.31.1/README.md",
+            "https://cdn.jsdelivr.net/npm/onnxruntime-common@1.31.1/README.md"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-node/bin/napi-v6/win32/x64/onnxruntime_binding.node",
+          "sizeBytes": 358200,
+          "sha256": "8d9f996ff7dcc60c4899aa87aa7abe07d806f9c314882f44a001d0fd8a23d16f",
+          "urls": [
+            "https://registry.npmmirror.com/onnxruntime-node/1.31.1/files/bin/napi-v6/win32/x64/onnxruntime_binding.node",
+            "https://unpkg.com/onnxruntime-node@1.31.1/bin/napi-v6/win32/x64/onnxruntime_binding.node"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-node/bin/napi-v6/win32/x64/onnxruntime.dll",
+          "sizeBytes": 31736672,
+          "sha256": "beb6e1edba0e74c132453fe4df113da2ea2b99ef8ea7dfc25696a872efd11c45",
+          "urls": [
+            "https://registry.npmmirror.com/onnxruntime-node/1.31.1/files/bin/napi-v6/win32/x64/onnxruntime.dll",
+            "https://unpkg.com/onnxruntime-node@1.31.1/bin/napi-v6/win32/x64/onnxruntime.dll"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-node/dist/backend.js",
+          "sizeBytes": 6316,
+          "sha256": "67e1c8bf72817a4dd0d598aa660ba431a9b3e90c6504e002a902e13bee523cf2",
+          "urls": [
+            "https://registry.npmmirror.com/onnxruntime-node/1.31.1/files/dist/backend.js",
+            "https://unpkg.com/onnxruntime-node@1.31.1/dist/backend.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-node/dist/binding.js",
+          "sizeBytes": 1590,
+          "sha256": "2a85ac5de943c7222aae5ca2897f52d73891f528d4295b701fab077470c668c0",
+          "urls": [
+            "https://registry.npmmirror.com/onnxruntime-node/1.31.1/files/dist/binding.js",
+            "https://unpkg.com/onnxruntime-node@1.31.1/dist/binding.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-node/dist/index.js",
+          "sizeBytes": 1602,
+          "sha256": "019eb02133b94b1f7fdf2d89eb93b590ce1288d271f7b280647fb3978e6391fa",
+          "urls": [
+            "https://registry.npmmirror.com/onnxruntime-node/1.31.1/files/dist/index.js",
+            "https://unpkg.com/onnxruntime-node@1.31.1/dist/index.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-node/dist/version.js",
+          "sizeBytes": 361,
+          "sha256": "d83ca5483dba1d108ec2cac1b6d0f3e11d865546e897683a6ec825c93193723c",
+          "urls": [
+            "https://registry.npmmirror.com/onnxruntime-node/1.31.1/files/dist/version.js",
+            "https://unpkg.com/onnxruntime-node@1.31.1/dist/version.js"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-node/package.json",
+          "sizeBytes": 1593,
+          "sha256": "41aedb3e877786245ab4dc0f533cda63f7d971b5c5fec171eafca9fb9572a8d5",
+          "urls": [
+            "https://registry.npmmirror.com/onnxruntime-node/1.31.1/files/package.json",
+            "https://unpkg.com/onnxruntime-node@1.31.1/package.json"
+          ]
+        },
+        {
+          "path": "node_modules/onnxruntime-node/README.md",
+          "sizeBytes": 3347,
+          "sha256": "5386273c1bb0309f3395b317e10057bd99d92250a57869521c23fdc80968a160",
+          "urls": [
+            "https://registry.npmmirror.com/onnxruntime-node/1.31.1/files/README.md",
+            "https://unpkg.com/onnxruntime-node@1.31.1/README.md"
+          ]
+        }
+      ]
+    }
+  ],
+  "models": [
+    {
+      "id": "bge-small-zh-v1.5-int8",
+      "name": "内置离线模型 · bge-small-zh-v1.5（中文，512 维）",
+      "version": "1.0.0",
+      "dim": 512,
+      "maxTokens": 512,
+      "pooling": "cls",
+      "normalize": true,
+      "queryInstruction": "为这个句子生成表示以用于检索相关文章：",
+      "recommendedChunkSize": 400,
+      "license": "MIT",
+      "files": [
+        {
+          "path": "config.json",
+          "sizeBytes": 716,
+          "sha256": "d4193ead3a810fd694fa8a31d7fc72fbaebc0668b603e398734bf2f6538ff42f",
+          "urls": [
+            "https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/config.json",
+            "https://hf-mirror.com/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/config.json"
+          ]
+        },
+        {
+          "path": "model_quantized.onnx",
+          "sizeBytes": 24010842,
+          "sha256": "15b717c382bcb518ba457b93ea6850ede7f4f1cd8937454aa06972366cd19bcc",
+          "urls": [
+            "https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/onnx/model_quantized.onnx",
+            "https://hf-mirror.com/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/onnx/model_quantized.onnx"
+          ]
+        },
+        {
+          "path": "special_tokens_map.json",
+          "sizeBytes": 125,
+          "sha256": "b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3",
+          "urls": [
+            "https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/special_tokens_map.json",
+            "https://hf-mirror.com/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/special_tokens_map.json"
+          ]
+        },
+        {
+          "path": "tokenizer_config.json",
+          "sizeBytes": 367,
+          "sha256": "e6f3b96db926a37d4039995fbf5ad17de158dfb8f6343d607e4dbaad18d75f5a",
+          "urls": [
+            "https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/tokenizer_config.json",
+            "https://hf-mirror.com/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/tokenizer_config.json"
+          ]
+        },
+        {
+          "path": "tokenizer.json",
+          "sizeBytes": 439125,
+          "sha256": "48cea5d44424912a6fd1ea647bf4fe50b55ab8b1e5879c3275f80e339e8fae26",
+          "urls": [
+            "https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/tokenizer.json",
+            "https://hf-mirror.com/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/tokenizer.json"
+          ]
+        },
+        {
+          "path": "vocab.txt",
+          "sizeBytes": 109540,
+          "sha256": "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c",
+          "urls": [
+            "https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/vocab.txt",
+            "https://hf-mirror.com/Xenova/bge-small-zh-v1.5/resolve/75c43b069aac4d136ba6bc1122f995fedcfd2781/vocab.txt"
+          ]
+        }
+      ]
+    }
+  ]
+}

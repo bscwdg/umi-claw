@@ -47,7 +47,9 @@ function getEmbeddingCfg() {
     baseUrl: process.env.OBS_EMBEDDING_BASE_URL,
     apiKey: process.env.OBS_EMBEDDING_API_KEY,
     model: process.env.OBS_EMBEDDING_MODEL,
-    adapter: process.env.OBS_EMBEDDING_ADAPTER || 'openai'
+    adapter: process.env.OBS_EMBEDDING_ADAPTER || 'openai',
+    runtimeDir: process.env.OBS_EMBEDDING_LOCAL_RUNTIME_DIR,
+    modelDir: process.env.OBS_EMBEDDING_LOCAL_MODEL_DIR
   }
 }
 
@@ -185,8 +187,14 @@ const TOOLS = [
 // ── 工具实现 ──
 async function searchNotes({ query, limit = 5, tag }) {
   const embeddingCfg = getEmbeddingCfg()
-  if (!embeddingCfg.baseUrl || !embeddingCfg.apiKey || !embeddingCfg.model) {
-    return '未配置 embedding 凭据，无法语义检索。请在 Umi Claw 的「知识库」页配置 embedding 模型并重建索引。'
+  const localMode = embeddingCfg.adapter === 'local'
+  const configured = localMode
+    ? !!(embeddingCfg.runtimeDir && embeddingCfg.modelDir)
+    : !!(embeddingCfg.baseUrl && embeddingCfg.apiKey && embeddingCfg.model)
+  if (!configured) {
+    return localMode
+      ? '本地模型目录缺失，无法语义检索。请在 Umi Claw 的「知识库」页重新安装本地模型，或切换到云端 embedding。'
+      : '未配置 embedding 凭据，无法语义检索。请在 Umi Claw 的「知识库」页配置 embedding 模型并重建索引。'
   }
   const qVec = await embedOne(query, embeddingCfg)
   if (!qVec) return 'query 向量化失败'

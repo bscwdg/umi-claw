@@ -7,7 +7,7 @@
 //   - 去掉与 3.0 无关的 HOT_SOURCE_ERROR（营销热点采集专属）
 //   - 新增 STREAM_TRUNCATED：流式响应体已开始后的传输中断（2.0 v1.21 已从 connect-failed 拆出）
 
-/** §14.2 错误码表（唯一的 code 真相来源，共 12 项） */
+/** §14.2 错误码表（唯一的 code 真相来源，共 18 项） */
 export const ERROR_CODES = {
   /** 参数不合法 */
   VALIDATION_ERROR: 'VALIDATION_ERROR',
@@ -33,6 +33,14 @@ export const ERROR_CODES = {
   FILE_NOT_FOUND: 'FILE_NOT_FOUND',
   /** 原始文件解析失败 */
   FILE_PARSE_ERROR: 'FILE_PARSE_ERROR',
+  /** 本地向量模型未安装（知识库启用 local embedding 前必须先安装） */
+  LOCAL_MODEL_NOT_INSTALLED: 'LOCAL_MODEL_NOT_INSTALLED',
+  /** 本地向量模型下载失败（全部镜像回退后仍失败） */
+  LOCAL_MODEL_DOWNLOAD_FAILED: 'LOCAL_MODEL_DOWNLOAD_FAILED',
+  /** 本地向量模型校验失败（大小/sha256 不符、离线包未知或结构非法） */
+  LOCAL_MODEL_VERIFY_FAILED: 'LOCAL_MODEL_VERIFY_FAILED',
+  /** 本地向量模型运行时不兼容（平台/VC++ 运行库/自检失败） */
+  LOCAL_MODEL_UNSUPPORTED: 'LOCAL_MODEL_UNSUPPORTED',
   /** 流式响应体已开始后的传输中断（应保留已得内容 + 提供重试，而非当作连接失败） */
   STREAM_TRUNCATED: 'STREAM_TRUNCATED',
   /**

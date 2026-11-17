@@ -57,17 +57,23 @@ async function main() {
   const args = parseArgs()
   const vaultPath = args.vault
   const dbPath = args.db
-  const chunkSize = parseInt(args['chunk-size'] || '800', 10)
-  const maxChunks = parseInt(args['max-chunks'] || '50', 10)
-  // 顺手优化：豆包 embedding-large 单批 64。批量超限的 400/422 会在 embeddings.mjs
-  // 内部按报错里的 "max N" 自动降批重试（OpenAI 旧版 32、智谱 10 都能自适应）。
-  const batchSize = parseInt(args['batch-size'] || '64', 10)
   const embeddingCfg = {
     baseUrl: process.env.OBS_EMBEDDING_BASE_URL,
     apiKey: process.env.OBS_EMBEDDING_API_KEY,
     model: process.env.OBS_EMBEDDING_MODEL,
-    adapter: process.env.OBS_EMBEDDING_ADAPTER || 'openai'
+    adapter: process.env.OBS_EMBEDDING_ADAPTER || 'openai',
+    runtimeDir: process.env.OBS_EMBEDDING_LOCAL_RUNTIME_DIR,
+    modelDir: process.env.OBS_EMBEDDING_LOCAL_MODEL_DIR
   }
+  const localMode = embeddingCfg.adapter === 'local'
+  // 本地 bge-small-zh 最大 512 token（中文约 1 字 ≈ 1 token），800 字符会截断；
+  // MCP 增量索引不传 --chunk-size，必须在这里按 adapter 给默认值，否则全量(400)
+  // 与增量(800)分块口径不一致，检索会静默变差。
+  const chunkSize = parseInt(args['chunk-size'] || (localMode ? '400' : '800'), 10)
+  const maxChunks = parseInt(args['max-chunks'] || '50', 10)
+  // 顺手优化：豆包 embedding-large 单批 64。批量超限的 400/422 会在 embeddings.mjs
+  // 内部按报错里的 "max N" 自动降批重试（OpenAI 旧版 32、智谱 10 都能自适应）。
+  const batchSize = parseInt(args['batch-size'] || '64', 10)
   // 不再锁定：收集所有失败原因在 done 里一并输出，不中断后续处理。
   const embedErrors = []
   // 被 maxChunks 截断的笔记路径（原变量名丢失导致 done 引用 undefined，这里补回）
@@ -79,9 +85,13 @@ async function main() {
   }
 
   const db = openDb(dbPath)
-  const needEmbed = !!(embeddingCfg.baseUrl && embeddingCfg.apiKey && embeddingCfg.model)
+  const needEmbed = localMode
+    ? !!(embeddingCfg.runtimeDir && embeddingCfg.modelDir)
+    : !!(embeddingCfg.baseUrl && embeddingCfg.apiKey && embeddingCfg.model)
   if (!needEmbed) {
-    log('未配置 embedding 凭据，仅建立文本索引（向量留空，语义检索不可用）')
+    log(localMode
+      ? '本地 embedding 目录缺失，仅建立文本索引（向量留空，语义检索不可用）'
+      : '未配置 embedding 凭据，仅建立文本索引（向量留空，语义检索不可用）')
   }
 
   // 扫描：--files 指定逗号分隔的绝对路径列表时只处理这些文件（增量模式，
