@@ -226,7 +226,7 @@ function compileChildComponent(fileRelPath, outName) {
 export function compileVuePage(
   fileRelPath,
   outName,
-  { routerStub, realComponents = [] }
+  { routerStub, realComponents = [], stubRelativeVue = false }
 ) {
   const abs = join(repoRoot, fileRelPath)
   const source = readFileSync(abs, 'utf-8')
@@ -277,6 +277,11 @@ export function compileVuePage(
       return real ? `from './${basename(real)}'` : "from '@/stub-component'"
     }
   )
+  // 可选：把页面里剩余的相对 .vue 子组件也换成桩（如角色页的 CharacterSettings/FishState），
+  // 避免测试只为「整页挂载」去编译无关子组件；需要真组件的页面继续显式列 realComponents。
+  if (stubRelativeVue) {
+    code = code.replace(/from\s+(['"])([^'"]+\.vue)\1/g, "from '@/stub-component'")
+  }
   const tplBody = tpl.code.replace(/export\s+function\s+render/, 'function render')
   const assembled = `${code}\n${tplBody}\n__component.render = render\nexport default __component\n`
 
