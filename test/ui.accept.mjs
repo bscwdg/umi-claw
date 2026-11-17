@@ -1943,6 +1943,209 @@ await r.check('U28', '大肥鱼页面所有卡片统一接入 CollapsibleCard', 
   return '公共组件 + 18 张卡片接入 ✓'
 })
 
+// U29：真挂载角色页，走「顶部归档 → 预览 → 只选知识 → 确认导入」真实点击链路。
+// 只读代码/字符串断言抓不到 preview IPC 形状错误（上一轮 P0 就是这么漏的）。
+await r.check('U29', '角色页归档预览真交互：预览弹窗/只选知识/导入 targets 正确', async () => {
+  function* walk(node) {
+    if (!node) return
+    yield node
+    for (const child of node.children ?? []) yield* walk(child)
+  }
+  function findButton(root, text) {
+    for (const node of walk(root)) {
+      const label = (node.children ?? []).map((child) => child.text ?? '').join('')
+      if (node.tag === 'button' && label.includes(text)) return node
+    }
+    return null
+  }
+  const flushTicks = async (n = 6) => {
+    for (let i = 0; i < n; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+  const invokes = []
+  const preview = async (kind) => {
+    invokes.push({ name: 'preview', kind })
+    return {
+      path: '/tmp/示例归档.zip',
+      preview: {
+        source: '/tmp/示例归档.zip',
+        manifest: { schema: 'umi-character-pack/1', name: '示例归档', createdAt: '2026-11-17T00:00:00+08:00' },
+        bytes: 1024,
+        counts: {
+          persona: 4,
+          topics: 1,
+          lineGroups: 1,
+          lines: 2,
+          lifeCards: 1,
+          knowledge: 2,
+          knowledgeByCategory: { 世界书: 2 },
+          overrides: true,
+          relations: 1,
+          diaries: 1
+        },
+        warnings: []
+      }
+    }
+  }
+  const importResult = {
+    source: '/tmp/示例归档.zip',
+    counts: {
+      persona: [],
+      topics: null,
+      lines: null,
+      lifeCards: 0,
+      overridesApplied: false,
+      knowledge: 2,
+      relations: 0,
+      diaries: 0,
+      diariesSkipped: 0
+    },
+    warnings: [],
+    errors: [],
+    backupPath: '/tmp/backup'
+  }
+  const importZip = async (path, targets) => {
+    invokes.push({ name: 'importZip', path, targets })
+    return importResult
+  }
+  const importFolder = async (path, targets) => {
+    invokes.push({ name: 'importFolder', path, targets })
+    return importResult
+  }
+
+  const asyncStub = async () => ({})
+  const character = new Proxy(
+    {
+      onEvent: () => () => {},
+      status: async () => ({
+        enabled: true,
+        ready: true,
+        storeReady: true,
+        agentReady: true,
+        gatewayReady: true,
+        obsidianReady: true,
+        qqReady: false,
+        ttsReady: false,
+        sttReady: false,
+        memorySearchReady: false,
+        chatGen: 0
+      }),
+      state: async () => ({ stage: 0, familiarity: 0, intimacy: 0, mood: '平静', addressForm: '你', streakDays: 0 }),
+      settings: {
+        get: async () => ({
+          relationship: { address: '你', mode: 'companion', taboo: [] },
+          proactive: { enabled: false },
+          safety: { ageConfirmed: true },
+          memory: { autoEnabled: false },
+          voice: {},
+          pet: {}
+        }),
+        set: async () => ({})
+      },
+      chat: { onStream: () => () => {}, send: async () => ({}), cancel: async () => ({}), clear: async () => ({}) },
+      knowledge: {
+        status: async () => ({
+          vaultPath: '/vault',
+          vaultExists: true,
+          obsidianEnabled: true,
+          index: { chunkCount: 3, noteCount: 3 },
+          characterNotes: 3,
+          searchable: true,
+          reasons: [],
+          warnings: []
+        }),
+        import: async () => ({ written: [] })
+      },
+      memory: {
+        list: async () => ({ diaries: [], relations: [] }),
+        read: async () => ({}),
+        save: async () => ({}),
+        delete: async () => ({})
+      },
+      pet: { appearance: { get: async () => null, import: async () => ({}), clear: async () => ({}) } },
+      stickers: { list: async () => [], preview: async () => null },
+      chatChannels: { list: async () => [], set: async () => [], clear: async () => ({}) },
+      content: {
+        overview: async () => ({
+          topics: [],
+          lineGroups: [],
+          builtinTopicCount: 0,
+          userTopicCount: 0,
+          userLineCount: 0
+        })
+      },
+      contentLibrary: {
+        list: async () => [],
+        overrides: async () => ({ kinds: { lines: { disabledGroups: [], disabledLines: [] } } }),
+        upsert: async () => ({}),
+        remove: async () => true,
+        disable: async () => ({}),
+        restore: async () => ({})
+      },
+      pack: { preview, importZip, importFolder, export: async () => ({ canceled: true }) }
+    },
+    {
+      get(target, prop) {
+        if (prop in target) return target[prop]
+        return asyncStub
+      }
+    }
+  )
+  const pageApi = { character }
+
+  const bundle = compileVuePage('src/character/CharacterPage.vue', 'ui-character-archive', {
+    routerStub: stubs.routerStub,
+    realComponents: ['ConfirmDialog.vue', 'CollapsibleCard.vue'],
+    stubRelativeVue: true
+  })
+  const mod = await import(pathToFileURL(bundle).href)
+  const mounted = await mountPage(mod.default, { api: pageApi, flush: 24 })
+  if (mounted.mountError) throw new Error('角色页挂载异常: ' + mounted.mountError.message)
+  await flushTicks(10)
+
+  const openZip = findButton(mounted.root, '导入归档（zip）')
+  assert(openZip, '顶部归档卡应有「导入归档（zip）」按钮')
+  openZip.props.onClick()
+  await flushTicks(12)
+  assertEq(invokes.filter((x) => x.name === 'preview').length, 1, '点击后必须调 pack.preview')
+  assertEq(invokes.find((x) => x.name === 'preview').kind, 'zip', '预览模式 zip')
+
+  const html = serialize(mounted.root)
+  assert(html.includes('示例归档'), '预览弹窗显示归档名')
+  assert(html.includes('知识 2 篇'), '预览弹窗显示知识计数')
+  assert(html.includes('含停用清单'), '预览弹窗显示停用清单标记')
+
+  const onlyKnowledge = findButton(mounted.root, '只选知识')
+  assert(onlyKnowledge, '预览弹窗应有「只选知识」')
+  onlyKnowledge.props.onClick()
+  await flushTicks(4)
+
+  const start = findButton(mounted.root, '开始导入')
+  assert(start, '预览弹窗应有「开始导入」确认按钮')
+  start.props.onClick()
+  await flushTicks(16)
+  const imported = invokes.find((x) => x.name === 'importZip')
+  assert(imported, '确认后必须调 pack.importZip')
+  assertEq(imported.path, '/tmp/示例归档.zip', '导入沿用预览选择的路径')
+  assertDeepEq(imported.targets, ['knowledge'], '只选知识时 targets 只能是 knowledge')
+
+  // 顶部「只导入知识」快捷入口：preview 仍走一次，确认后也只传 knowledge
+  const quick = findButton(mounted.root, '只导入知识')
+  assert(quick, '顶部归档卡应有「只导入知识」')
+  quick.props.onClick()
+  await flushTicks(12)
+  const previews = invokes.filter((x) => x.name === 'preview')
+  assertEq(previews.length, 2, '快捷入口也要先预览')
+  const start2 = findButton(mounted.root, '开始导入')
+  assert(start2, '快捷入口同样弹预览')
+  start2.props.onClick()
+  await flushTicks(16)
+  const imports = invokes.filter((x) => x.name === 'importZip')
+  assertEq(imports.length, 2, '快捷入口确认后再导入一次')
+  assertDeepEq(imports[1].targets, ['knowledge'], '快捷入口也只导知识')
+  assertEq(mounted.warnings.filter((w) => /Unknown|Failed to resolve|Invalid/.test(w)).length, 0, '挂载/交互无 Vue 解析告警')
+  return '真挂载：预览弹窗 + 只选知识 + 导入 targets ✓'
+})
+
 await r.check('U31', '控制台状态卡：操作区恒定一行、左侧文本让位换行（900×600 预算内）', async () => {
   const dashSrc = readFileSync(join(repoRoot, 'src', 'views', 'Dashboard.vue'), 'utf-8')
   /** 取精确选择器的规则体（含单行规则；先剥注释、选择器从行首精确开始，避免跨规则假绿） */
