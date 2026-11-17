@@ -405,7 +405,8 @@ try {
     const rawSql = await main.call('p', { sql: 'DROP TABLE matters' })
     assertEq(rawSql.ok, false, '前端传 SQL 必须被拒')
 
-    // 错误码必须全部落在 §14.2 的 18 项内（4.0：HOT_SOURCE_ERROR 以 deprecated 身份回归，
+    // 错误码必须全部落在 §14.2 的 22 项内（4.0：HOT_SOURCE_ERROR 以 deprecated 身份回归，
+    // 5.0 本地向量模型新增 4 个 LOCAL_MODEL_*）
     // 4.0.2 加 PLUGIN_OPERATION_FAILED；PLAN-5.0 B2 加 PLUGIN_PERMISSION_DENIED；
     // PLAN-5.0 P2 加 PLUGIN_NOT_FOUND：PLUGIN-API §九 早已承诺，隔离子进程未注册方法在用）
     // 供 marketing 热点采集调用点继续编译，见 MERGE-INVENTORY R1；4.0.2 P2 新增
@@ -414,7 +415,7 @@ try {
       pathToFileURL(bundleEntry('electron/main/services/errors.ts', 'errors.mjs')).href
     )
     const allowedCodes = Object.keys(envelopeMod.ERROR_CODES)
-    assertEq(allowedCodes.length, 18, `§14.2 应为 18 项，实际 ${allowedCodes.length}`)
+    assertEq(allowedCodes.length, 22, `§14.2 应为 22 项，实际 ${allowedCodes.length}`)
     assert(allowedCodes.includes('PLUGIN_NOT_FOUND'), 'PLUGIN_NOT_FOUND 应已加入（PLAN-5.0 P2）')
     assert(allowedCodes.includes('PLUGIN_OPERATION_FAILED'), 'PLUGIN_OPERATION_FAILED 应已加入（4.0.2 P2）')
     assert(allowedCodes.includes('HOT_SOURCE_ERROR'), 'HOT_SOURCE_ERROR 应以 deprecated 身份保留')

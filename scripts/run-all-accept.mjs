@@ -88,6 +88,9 @@ const ACCEPT = [
   ['plugin-index', 'test/plugin-index.accept.mjs'],
   ['plugin-dev-mode', 'test/plugin-dev-mode.accept.mjs'],
   ['consent', 'test/consent.accept.mjs'],
+  // 本地向量模型：安装器（下载/校验/镜像回退/取消/卸载/离线导入）+ 分词与知识体检
+  ['obsidian-local-model', 'test/obsidian-local-model.accept.mjs'],
+  ['obsidian-local-embedding', 'test/obsidian-local-embedding.accept.mjs'],
   ['ui', 'test/ui.accept.mjs']
 ]
 // 全部单模块绿后
