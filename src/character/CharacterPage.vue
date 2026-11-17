@@ -1108,6 +1108,7 @@ const KNOWLEDGE_REASON_TEXT: Record<string, string> = {
   'no-notes': '大肥鱼/ 下还没有笔记（先导入知识）',
   'index-empty': '还没建索引',
   'index-other-vault': '索引属于另一个 vault（切换后需重建）',
+  'embedding-not-configured': '向量模型未配置/未安装（语义检索不可用）',
   'indexing': '正在索引',
   'index-error': '上次索引失败'
 }

@@ -28,6 +28,7 @@ export type KnowledgeBlocker =
   | 'no-notes'
   | 'index-empty'
   | 'index-other-vault'
+  | 'embedding-not-configured'
 export type KnowledgeWarning = 'indexing' | 'index-error'
 export type KnowledgeReason = KnowledgeBlocker | KnowledgeWarning
 
@@ -89,12 +90,19 @@ export function buildKnowledgeHealth(input: {
   obsidianEnabled: boolean
   index: KnowledgeIndexLike | null
   characterNotes: number
+  /**
+   * embedding 是否真的可用（云端有凭据 / 本地模型已安装）。
+   * 不传时按 true 处理，保持既有纯函数测试与旧调用方的语义不变；
+   * 正式宿主（characterHost）必须显式传入，避免「没配向量模型却显示可检索」。
+   */
+  embeddingReady?: boolean
 }): KnowledgeHealth {
   const vaultPath = String(input.vaultPath ?? '').trim()
   const vaultExists = Boolean(input.vaultExists)
   const obsidianEnabled = Boolean(input.obsidianEnabled)
   const index = input.index ?? null
   const characterNotes = Number.isFinite(input.characterNotes) ? Math.max(0, input.characterNotes) : 0
+  const embeddingReady = input.embeddingReady !== false
   const blockers: KnowledgeBlocker[] = []
   const warnings: KnowledgeWarning[] = []
   if (!vaultPath) blockers.push('no-vault')
@@ -107,6 +115,9 @@ export function buildKnowledgeHealth(input: {
   else if (index.vaultPath && !sameVault(index.vaultPath, vaultPath)) {
     blockers.push('index-other-vault')
   }
+  // 没有向量模型时，索引里只有文本块，search_notes 无法语义检索——
+  // 之前只判断 chunkCount>0，会显示“可检索”但实际查询报错。
+  if (!embeddingReady) blockers.push('embedding-not-configured')
   if (index?.indexing) warnings.push('indexing')
   if (index?.lastError) warnings.push('index-error')
   return {

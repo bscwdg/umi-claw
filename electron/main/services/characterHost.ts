@@ -155,12 +155,16 @@ export function buildCharacterDeps(src: CharacterHostSources): CharacterWiringDe
       const vaultExists = Boolean(vaultPath) && existsSync(vaultPath)
       const index = src.obsidianManager?.getIndexStatus() ?? null
       const characterNotes = vaultExists ? countCharacterNotes(vaultPath) : 0
+      const embeddingReady = typeof src.obsidianManager?.isEmbeddingConfigured === 'function'
+        ? src.obsidianManager.isEmbeddingConfigured()
+        : true
       return buildKnowledgeHealth({
         vaultPath,
         vaultExists,
         obsidianEnabled: Boolean(cfg?.enabled && vaultPath),
         index,
-        characterNotes
+        characterNotes,
+        embeddingReady
       })
     },
     voice: {
@@ -264,7 +268,7 @@ export function buildCharacterDeps(src: CharacterHostSources): CharacterWiringDe
       }
     },
     ttsReady: () => src.voiceManager !== null,
-    // 记忆检索就绪 = Obsidian 集成开启 + MCP 已注入 + 索引有数据 + vault 存在
+    // 记忆检索就绪 = Obsidian 集成开启 + MCP 已注入 + 索引有数据 + vault 存在 + embedding 真的可用
     memorySearchReady: () => {
       try {
         const obs = src.configManager.getConfig().obsidian
@@ -272,7 +276,10 @@ export function buildCharacterDeps(src: CharacterHostSources): CharacterWiringDe
         const mcp = src.obsidianManager?.buildMcpServerConfig?.()
         const status = src.obsidianManager?.getIndexStatus?.()
         const chunkCount = Number((status as { chunkCount?: number } | undefined)?.chunkCount ?? 0)
-        return Boolean(mcp && chunkCount > 0)
+        const embeddingReady = typeof src.obsidianManager?.isEmbeddingConfigured === 'function'
+          ? src.obsidianManager.isEmbeddingConfigured()
+          : true
+        return Boolean(mcp && chunkCount > 0 && embeddingReady)
       } catch {
         return false
       }
